@@ -72,6 +72,19 @@ function clickByText(container: HTMLElement, label: string): boolean {
   return true;
 }
 
+function clickByLabel(container: HTMLElement, prefix: string): boolean {
+  const button = container.querySelector(`button[aria-label^="${prefix}"]`);
+  if (!(button instanceof HTMLElement)) return false;
+  button.click();
+  return true;
+}
+
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+}
+
 export async function runSmoke(): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
   const check = (name: string, ok: boolean, detail = ''): void => {
@@ -116,6 +129,36 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(8);
   check('搜索弹窗渲染', (document.body.textContent ?? '').includes('输入关键词开始搜索'), '');
   check('回到课表', switchedToTimeline, '');
+  if (clickByText(document.body, '取消') === false) {
+    // 弹窗没有取消按钮时直接继续，不影响后续断言
+  }
+  await flush(4);
+
+  clickByText(view.container, '设置');
+  await flush(10);
+  check('学期设置显示编辑与删除入口', clickByLabel(view.container, '编辑学期'), '');
+  await flush(6);
+  const editDialogText = document.body.textContent ?? '';
+  check('打开学期编辑弹窗', editDialogText.includes('开学日期') && editDialogText.includes('总周数'), '');
+
+  const nameInput = [...document.querySelectorAll('input')].find(
+    (item) => item.value === '2026-2027 第一学期',
+  );
+  if (nameInput !== undefined) setInputValue(nameInput, '改名后的学期');
+  await flush(6);
+  if (clickByText(document.body, '保存')) {
+    await flush(20);
+  }
+  check('保存后学期名更新', (view.container.textContent ?? '').includes('改名后的学期'), '');
+
+  clickByLabel(view.container, '删除学期');
+  await flush(8);
+  const deleteDialogText = document.body.textContent ?? '';
+  check('删除确认说明后果', deleteDialogText.includes('不可撤销'), deleteDialogText.slice(-40));
+  if (clickByText(document.body, '确认删除')) {
+    await flush(24);
+  }
+  check('删除后回到引导页', (view.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
   view.root.unmount();
   return results;

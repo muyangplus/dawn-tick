@@ -44,6 +44,29 @@ export function createPlatformFetch(): PlatformFetch {
     };
   }
 
+  // 本地开发：交给开发服务器转发，绕过浏览器同源策略
+  if (platform === 'web' && import.meta.env.DEV) {
+    return async (url, init) => {
+      const response = await fetch('/__dev/http', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          method: init?.method ?? 'GET',
+          headers: init?.headers ?? {},
+          body: init?.body ?? null,
+        }),
+      });
+      const payload = (await response.json()) as { status?: number; text?: string; setCookie?: string[]; error?: string };
+      if (payload.error !== undefined) throw new Error(payload.error);
+      return {
+        status: payload.status ?? 0,
+        text: async () => payload.text ?? '',
+        setCookie: payload.setCookie ?? [],
+      };
+    };
+  }
+
   return async (url, init) => {
     const response = await fetch(url, { ...init, credentials: 'include' });
     return {
@@ -55,6 +78,8 @@ export function createPlatformFetch(): PlatformFetch {
 }
 
 export function fetchHint(platform = detectPlatform()): string {
-  if (platform === 'web') return '浏览器受同源策略限制，可改用 CSV/Excel 或 ICS 导入';
-  return '可检查教务地址是否正确，或改用 CSV/Excel 与 ICS 导入';
+  if (platform !== 'web') return '可检查教务地址是否正确，或改用 CSV/Excel 与 ICS 导入';
+  return import.meta.env.DEV
+    ? '本地开发已启用跨域转发，若仍失败请检查教务地址'
+    : '浏览器受同源策略限制，可改用 CSV/Excel 或 ICS 导入';
 }

@@ -223,6 +223,86 @@ export async function deleteSemester(storage: Storage, id: string, options: Writ
   await remove(context(storage, options), 'semesters', id);
 }
 
+export interface SemesterDeleteReport {
+  courses: number;
+  schedules: number;
+  slots: number;
+  events: number;
+  reminders: number;
+}
+
+function isAlive(row: Row): boolean {
+  return row['deleted_at'] === null || row['deleted_at'] === undefined;
+}
+
+/**
+ * 删除学期并连带删除其课程、排课、节次、日程与提醒。
+ * 删除当前学期后自动切到最近开学的一个；没有剩余学期时由界面回到引导页。
+ */
+export async function deleteSemesterDeep(
+  storage: Storage,
+  id: string,
+  options: WriteOptions = {},
+): Promise<SemesterDeleteReport> {
+  const ctx = context(storage, options);
+  const semester = await storage.collection<Row>('semesters').get(id);
+  if (semester === undefined || !isAlive(semester)) {
+    return { courses: 0, schedules: 0, slots: 0, events: 0, reminders: 0 };
+  }
+
+  const courses = (await storage.collection<Row>('courses').getAll()).filter(
+    (row) => isAlive(row) && row['semester_id'] === id,
+  );
+  const courseIds = new Set(courses.map((row) => String(row['id'])));
+  const schedules = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => isAlive(row) && courseIds.has(String(row['course_id'])),
+  );
+  const scheduleIds = new Set(schedules.map((row) => String(row['id'])));
+  const slots = (await storage.collection<Row>('time_slots').getAll()).filter(
+    (row) => isAlive(row) && row['semester_id'] === id,
+  );
+  const events = (await storage.collection<Row>('events').getAll()).filter(
+    (row) => isAlive(row) && row['semester_id'] === id,
+  );
+  const eventIds = new Set(events.map((row) => String(row['id'])));
+  const reminders = (await storage.collection<Row>('reminders').getAll()).filter((row) => {
+    if (!isAlive(row)) return false;
+    const target = String(row['target_id']);
+    if (row['target_type'] === 'course') return courseIds.has(target);
+    if (row['target_type'] === 'schedule') return scheduleIds.has(target);
+    if (row['target_type'] === 'event') return eventIds.has(target);
+    return false;
+  });
+
+  for (const row of reminders) await remove(ctx, 'reminders', String(row['id']));
+  for (const row of schedules) await remove(ctx, 'course_schedules', String(row['id']));
+  for (const row of courses) await remove(ctx, 'courses', String(row['id']));
+  for (const row of slots) await remove(ctx, 'time_slots', String(row['id']));
+  for (const row of events) await remove(ctx, 'events', String(row['id']));
+
+  const wasActive = semester['is_active'] === 1;
+  const userId = semester['user_id'];
+  await remove(ctx, 'semesters', id);
+
+  if (wasActive) {
+    const rest = (await storage.collection<Row>('semesters').getAll())
+      .filter((row) => isAlive(row) && row['user_id'] === userId)
+      .sort((left, right) => String(right['start_date']).localeCompare(String(left['start_date'])));
+    const next = rest[0];
+    if (next !== undefined) {
+      await patch(ctx, 'semesters', String(next['id']), { is_active: 1 });
+    }
+  }
+
+  return {
+    courses: courses.length,
+    schedules: schedules.length,
+    slots: slots.length,
+    events: events.length,
+    reminders: reminders.length,
+  };
+}
+
 export interface CreateCourseInput {
   semesterId: string;
   name: string;

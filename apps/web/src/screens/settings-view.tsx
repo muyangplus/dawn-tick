@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react';
-import { BadgeCheck, Bell, Database, Info, Palette, Plus, Upload } from 'lucide-react';
+import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import {
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
   createSemester,
+  deleteSemesterDeep,
   exportBackup,
   formatDateTime,
   importBackup,
@@ -20,6 +21,7 @@ import {
 import { PRESETS } from '../design/tokens.ts';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
+import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -76,8 +78,59 @@ export function SettingsView({
   const [semesterWeeks, setSemesterWeeks] = useState(20);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<SemesterRow | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editStart, setEditStart] = useState('');
+  const [editWeeks, setEditWeeks] = useState(20);
+  const [editZone, setEditZone] = useState('');
+  const [removing, setRemoving] = useState<SemesterRow | null>(null);
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
   const next = reminders.upcoming[0];
+
+  function startEdit(semester: SemesterRow): void {
+    setEditing(semester);
+    setEditName(semester.name);
+    setEditStart(semester.start_date);
+    setEditWeeks(semester.total_weeks);
+    setEditZone(semester.time_zone);
+  }
+
+  async function saveEdit(): Promise<void> {
+    if (editing === null) return;
+    if (editName.trim().length === 0 || editStart.length === 0 || !isValidTimeZone(editZone)) {
+      toast.error('请检查学期名称、开学日期与时区');
+      return;
+    }
+    setBusy(true);
+    try {
+      await updateSemester(storage, editing.id, {
+        name: editName.trim(),
+        start_date: editStart,
+        total_weeks: Math.min(30, Math.max(1, editWeeks)),
+        time_zone: editZone,
+      });
+      toast.success('已保存学期设置');
+      setEditing(null);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmRemove(): Promise<void> {
+    if (removing === null) return;
+    setBusy(true);
+    try {
+      const report = await deleteSemesterDeep(storage, removing.id);
+      toast.success(
+        `已删除「${removing.name}」，连带清理课程 ${report.courses} · 排课 ${report.schedules} · 节次 ${report.slots} · 日程 ${report.events} · 提醒 ${report.reminders}`,
+      );
+      setRemoving(null);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function downloadBackup(): Promise<void> {
     setBusy(true);
@@ -157,13 +210,33 @@ export function SettingsView({
                     {semester.start_date} 起 · {semester.total_weeks} 周 · {semester.time_zone}
                   </span>
                 </span>
-                {semester.id === activeSemesterId ? (
-                  <span className="shrink-0 text-xs text-primary-strong">当前</span>
-                ) : (
-                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => void activate(semester.id)}>
-                    切换
+                <div className="flex shrink-0 items-center gap-1">
+                  {semester.id === activeSemesterId ? (
+                    <span className="text-xs text-primary-strong">当前</span>
+                  ) : (
+                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void activate(semester.id)}>
+                      切换
+                    </Button>
+                  )}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`编辑学期 ${semester.name}`}
+                    disabled={busy}
+                    onClick={() => startEdit(semester)}
+                  >
+                    <Pencil className="size-4" aria-hidden />
                   </Button>
-                )}
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`删除学期 ${semester.name}`}
+                    disabled={busy}
+                    onClick={() => setRemoving(semester)}
+                  >
+                    <Trash2 className="size-4 text-danger-strong" aria-hidden />
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -349,6 +422,68 @@ export function SettingsView({
           https://github.com/muyangplus/dawn-tick
         </a>
       </Card>
+
+      <Dialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+      >
+        <DialogContent title="编辑学期" description="修改会立即影响周次与课表计算">
+          <Field label="学期名称">
+            <Input value={editName} onChange={(event) => setEditName(event.target.value)} />
+          </Field>
+          <Field label="开学日期" hint="该周记为第 1 周">
+            <Input type="date" value={editStart} onChange={(event) => setEditStart(event.target.value)} />
+          </Field>
+          <Field label="总周数">
+            <Input
+              type="number"
+              min={1}
+              max={30}
+              value={editWeeks}
+              onChange={(event) => setEditWeeks(Number(event.target.value))}
+            />
+          </Field>
+          <Field label="时区">
+            <Input value={editZone} onChange={(event) => setEditZone(event.target.value)} />
+          </Field>
+          {!isValidTimeZone(editZone) && <span className="text-xs text-danger-strong">时区名无效</span>}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditing(null)}>
+              取消
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={() => void saveEdit()}>
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={removing !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoving(null);
+        }}
+      >
+        <DialogContent
+          title="删除学期"
+          description={
+            removing === null
+              ? ''
+              : `将删除「${removing.name}」及其课程、排课、节次、日程与提醒，本操作不可撤销`
+          }
+        >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRemoving(null)}>
+              取消
+            </Button>
+            <Button variant="danger" disabled={busy} onClick={() => void confirmRemove()}>
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

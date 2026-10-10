@@ -10,12 +10,15 @@ import {
   createSemester,
   deleteCourse,
   deleteEvent,
+  deleteSemesterDeep,
   ensureUser,
   listReschedules,
   setReminder,
   updateCourse,
   uuidv7,
 } from '../src/mutations.ts';
+
+type Row = Record<string, unknown>;
 import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.ts';
 import { weekView } from '../src/repository.ts';
 import { ValidationError } from '../src/validation.ts';
@@ -285,6 +288,67 @@ test('调课记录缺少字段时被校验拒绝', async () => {
       }),
     /new_date|new_period|校验/,
   );
+});
+
+test('级联删除学期会清理课程、排课、节次、日程与提醒', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: 's-1',
+    onDate: '2026-09-21',
+    action: 'move',
+    newDate: '2026-09-22',
+    newPeriodStart: 3,
+    newPeriodEnd: 4,
+  });
+  await setReminder(storage, {
+    userId: USER_ID,
+    targetType: 'course',
+    targetId: 'c-1',
+    advanceMinutes: 10,
+  });
+
+  const report = await deleteSemesterDeep(storage, SEMESTER_ID);
+  assert.ok(report.courses >= 1, `课程应被清理，实际 ${report.courses}`);
+  assert.ok(report.schedules >= 1, `排课应被清理，实际 ${report.schedules}`);
+  assert.ok(report.slots >= 1, `节次应被清理，实际 ${report.slots}`);
+  assert.ok(report.events >= 1, `日程应被清理，实际 ${report.events}`);
+  assert.ok(report.reminders >= 1, `提醒应被清理，实际 ${report.reminders}`);
+  assert.equal((await storage.collection<Row>('semesters').get(SEMESTER_ID))?.['deleted_at'] === null, false);
+  assert.deepEqual(
+    (await storage.collection<Row>('courses').getAll()).filter((row) => row['deleted_at'] === null),
+    [],
+  );
+
+  const second = await createSemester(storage, {
+    userId: USER_ID,
+    name: '第二个学期',
+    startDate: '2027-02-22',
+    totalWeeks: 18,
+  });
+  const third = await createSemester(storage, {
+    userId: USER_ID,
+    name: '第三个学期',
+    startDate: '2027-09-06',
+    totalWeeks: 18,
+  });
+  await deleteSemesterDeep(storage, String(third['id']));
+  const active = await storage.collection<Row>('semesters').get(String(second['id']));
+  assert.equal(active?.['is_active'], 1, '删除当前学期后应切到剩余学期');
+});
+
+test('删除不存在的学期不报错且返回全零', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  assert.deepEqual(await deleteSemesterDeep(storage, 'sem-missing'), {
+    courses: 0,
+    schedules: 0,
+    slots: 0,
+    events: 0,
+    reminders: 0,
+  });
 });
 
 test('新建学期使用固定 id 生成器便于断言', async () => {
