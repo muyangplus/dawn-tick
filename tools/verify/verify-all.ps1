@@ -89,6 +89,13 @@ if (Test-Path $exe) {
 } else {
     Report 'SKIP' 'Windows exe' '未构建，运行 pnpm -C apps/desktop exec tauri build --no-bundle'
 }
+$installers = Get-ChildItem (Join-Path $repo 'apps/desktop/src-tauri/target/release/bundle/nsis') -Filter '*setup.exe' -ErrorAction SilentlyContinue
+if ($installers) {
+    $installer = $installers | Select-Object -First 1
+    Report 'PASS' 'Windows 安装包' "$($installer.Name) $([math]::Round($installer.Length / 1MB, 2)) MB"
+} else {
+    Report 'SKIP' 'Windows 安装包' '未构建，需设置 TAURI_BUNDLER_TOOLS_GITHUB_MIRROR 后运行 tauri build'
+}
 
 Section '7. Android 产物'
 $apk = Join-Path $repo 'apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk'
