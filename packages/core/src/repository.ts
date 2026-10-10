@@ -27,6 +27,11 @@ export async function activeSemester(storage: Storage, userId: string): Promise<
   return rows.find((row) => row.is_active === 1);
 }
 
+export async function loadSemester(storage: Storage, semesterId: string): Promise<SemesterRow | undefined> {
+  const row = await storage.collection<SemesterRow>('semesters').get(semesterId);
+  return row === undefined || row.deleted_at !== null ? undefined : row;
+}
+
 export async function listTimeSlots(storage: Storage, semesterId: string): Promise<TimeSlotRow[]> {
   const rows = await storage.collection<TimeSlotRow>('time_slots').getAll();
   return rows

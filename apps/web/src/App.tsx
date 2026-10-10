@@ -12,6 +12,7 @@ import { openIndexedDbStorage } from './db/idb-storage.ts';
 import { loadAppData, type AppData } from './data.ts';
 import { applyTheme } from './theme.ts';
 import { CourseForm } from './screens/CourseForm.tsx';
+import { ImportDialog } from './screens/ImportDialog.tsx';
 import { Onboarding } from './screens/Onboarding.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { TodayView } from './screens/TodayView.tsx';
@@ -27,6 +28,7 @@ export function App() {
   const [data, setData] = useState<AppData | null>(null);
   const [view, setView] = useState<View>('week');
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -135,6 +137,9 @@ export function App() {
             设置
           </button>
         </div>
+        <button type="button" onClick={() => setImporting(true)}>
+          导入
+        </button>
         <button type="button" className="primary" onClick={() => setAdding(true)}>
           添加课程
         </button>
@@ -151,6 +156,17 @@ export function App() {
       )}
       {view === 'today' && <TodayView data={data} timeZone={data.timeZone} />}
       {view === 'settings' && <Settings settings={settings} persistent={persistent} onPatch={patch} />}
+
+      {importing && (
+        <ImportDialog
+          storage={storage}
+          semesterId={data.semester.id}
+          onDone={() => {
+            setImporting(false);
+            void reload(storage, settings);
+          }}
+        />
+      )}
 
       {adding && (
         <CourseForm
