@@ -20,6 +20,7 @@ import {
   setReminder,
   setSchedules,
   updateCourse,
+  updateTimeSlot,
   uuidv7,
 } from '../src/mutations.ts';
 import { listTimeSlots } from '../src/repository.ts';
@@ -439,6 +440,29 @@ test('课程管理列表带出排课并可整体替换排课', async () => {
     (await storage.collection<Row>('course_schedules').get(target))?.['deleted_at'] === null,
     false,
   );
+});
+
+test('可单独修改某节课次的时间', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const before = await listTimeSlots(storage, SEMESTER_ID);
+  const third = before.find((slot) => slot.period_no === 3);
+  assert.ok(third !== undefined, '默认时间表应有第 3 节');
+
+  const updated = await updateTimeSlot(storage, third.id, { startTime: '10:20', endTime: '11:05' });
+  assert.equal(updated['start_time'], '10:20');
+  assert.equal(updated['end_time'], '11:05');
+  assert.equal(updated['section'], 'am');
+
+  const after = await listTimeSlots(storage, SEMESTER_ID);
+  assert.equal(after.find((slot) => slot.period_no === 3)?.start_time, '10:20');
+  assert.equal(after.find((slot) => slot.period_no === 2)?.start_time, '08:55', '其他课次不受影响');
+
+  await assert.rejects(() => updateTimeSlot(storage, third.id, { startTime: '25:00' }), /超出范围/);
+  await assert.rejects(() => updateTimeSlot(storage, third.id, { startTime: '十点' }), /HH:MM/);
+
+  const evening = await updateTimeSlot(storage, third.id, { startTime: '19:30' });
+  assert.equal(evening['section'], 'night', '时段归属随开始时间更新');
 });
 
 test('新建学期使用固定 id 生成器便于断言', async () => {

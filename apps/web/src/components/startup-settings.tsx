@@ -3,8 +3,8 @@ import { Power } from 'lucide-react';
 import type { AppSettings } from '@dawn-tick/core';
 import { Card, CardTitle } from './ui/card.tsx';
 import { Switch } from './ui/controls.tsx';
-import { readAutoStart, saveStartupPrefs, writeAutoStart } from '../autostart.ts';
-import { logWarn } from '../log.ts';
+import { Button } from './ui/button.tsx';
+import { elevateAutoStart, readAutoStart, saveStartupPrefs, writeAutoStart } from '../autostart.ts';
 
 export interface StartupSettingsProps {
   supported: boolean;
@@ -15,6 +15,8 @@ export interface StartupSettingsProps {
 export function StartupSettings({ supported, settings, onPatch }: StartupSettingsProps) {
   const [registered, setRegistered] = useState<boolean | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [canElevate, setCanElevate] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!supported) return;
@@ -22,10 +24,11 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
     void (async () => {
       const enabled = await readAutoStart();
       if (!cancelled) setRegistered(enabled);
-      // 与系统实际状态对齐：设置说开就注册，说关就移除
       if (enabled !== null && enabled !== settings.autoStart) {
-        const ok = await writeAutoStart(settings.autoStart);
-        if (!cancelled && ok) setRegistered(settings.autoStart);
+        const result = await writeAutoStart(settings.autoStart);
+        if (cancelled) return;
+        if (result.ok) setRegistered(settings.autoStart);
+        else setCanElevate(true);
       }
     })();
     return () => {
@@ -40,14 +43,47 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
 
   async function toggleAutoStart(value: boolean): Promise<void> {
     setMessage(null);
-    const ok = await writeAutoStart(value);
-    if (!ok) {
-      setMessage('注册失败，请检查系统权限');
-      logWarn('autostart', '切换开机自启未成功', { value });
-      return;
+    setCanElevate(false);
+    setBusy(true);
+    try {
+      const result = await writeAutoStart(value);
+      if (result.ok) {
+        setRegistered(value);
+        await onPatch({ autoStart: value });
+        return;
+      }
+      setMessage(`注册失败：${result.error ?? '未知原因'}`);
+      if (value) setCanElevate(true);
+    } finally {
+      setBusy(false);
     }
-    setRegistered(value);
-    await onPatch({ autoStart: value });
+  }
+
+  /** 失败后申请管理员权限，由提权实例写机器级启动项。 */
+  async function elevate(): Promise<void> {
+    setBusy(true);
+    setMessage('正在申请管理员权限，请在系统提示中允许…');
+    try {
+      const requested = await elevateAutoStart();
+      if (!requested) {
+        setMessage('申请管理员权限失败，请在系统提示中允许或手动以管理员身份运行一次');
+        return;
+      }
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const status = await readAutoStart();
+        if (status === true) {
+          setRegistered(true);
+          setCanElevate(false);
+          setMessage('已通过管理员权限注册开机自启');
+          await onPatch({ autoStart: true });
+          return;
+        }
+      }
+      setMessage('提权后仍未检测到启动项，请手动以管理员身份运行一次程序');
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!supported) return null;
@@ -66,8 +102,18 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
             当前状态：{registered === null ? '未注册' : registered ? '已注册' : '未注册'}
           </span>
         </span>
-        <Switch checked={settings.autoStart} onCheckedChange={(value) => void toggleAutoStart(value)} />
+        <Switch
+          checked={settings.autoStart}
+          disabled={busy}
+          onCheckedChange={(value) => void toggleAutoStart(value)}
+        />
       </label>
+
+      {canElevate && (
+        <Button variant="secondary" size="sm" disabled={busy} onClick={() => void elevate()}>
+          以管理员权限注册
+        </Button>
+      )}
 
       <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
         <span className="flex flex-col">
@@ -80,7 +126,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
         />
       </label>
 
-      {message !== null && <span className="text-xs text-danger-strong">{message}</span>}
+      {message !== null && <span className="text-xs text-muted">{message}</span>}
     </Card>
   );
 }

@@ -144,7 +144,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   clickByText(view.container, '设置');
   await flush(10);
 
-  const countPeriods = (text: string): number => (text.match(/第 \d+ 节 ·/g) ?? []).length;
+  const startInputs = (root: HTMLElement): HTMLInputElement[] =>
+    [...root.querySelectorAll('input[aria-label$="节开始时间"]')].filter(
+      (item): item is HTMLInputElement => item instanceof window.HTMLInputElement,
+    );
   const panelText = view.container.textContent ?? '';
   check(
     '时间表与课程管理渲染',
@@ -157,20 +160,25 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     panelText.includes('填充示例数据') && panelText.includes('导出日志') && panelText.includes('开发版'),
     '',
   );
+  check(
+    '课次时间可逐节编辑',
+    view.container.querySelector('input[aria-label="第 1 节开始时间"]') !== null &&
+      view.container.querySelector('input[aria-label="第 1 节结束时间"]') !== null,
+    '',
+  );
 
-  const beforePeriods = countPeriods(panelText);
+  const beforePeriods = startInputs(view.container).length;
   if (clickByText(view.container, '自动生成课次')) await flush(26);
-  const afterGenerateText = view.container.textContent ?? '';
-  const afterGenerate = countPeriods(afterGenerateText);
+  const generated = startInputs(view.container);
   check(
     '自动生成课次按固定时长重算',
-    afterGenerate >= 10 && afterGenerateText.includes('09:50'),
-    `生成后 ${afterGenerate} 节，第三节课 09:50 起`,
+    generated.length >= 10 && generated[2]?.value === '09:50',
+    `生成后 ${generated.length} 节，第三节课 ${generated[2]?.value ?? '?'} 起`,
   );
 
   if (clickByText(view.container, '追加一节')) await flush(22);
-  const afterAppend = countPeriods(view.container.textContent ?? '');
-  check('追加一节生效', afterAppend === afterGenerate + 1, `${afterGenerate} → ${afterAppend}（原 ${beforePeriods}）`);
+  const appended = startInputs(view.container).length;
+  check('追加一节生效', appended === generated.length + 1, `${generated.length} → ${appended}（原 ${beforePeriods}）`);
 
   check('学期设置显示编辑与删除入口', clickByLabel(view.container, '编辑学期'), '');
   await flush(6);

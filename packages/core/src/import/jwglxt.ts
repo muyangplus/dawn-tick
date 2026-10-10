@@ -395,7 +395,14 @@ export async function fetchTimetable(
     log({
       step: 'login-post',
       message: rejected ? '登录被拒' : '登录已提交',
-      detail: { url: urls.login, status: loginResult.status, encoding, bodyBytes: attempt.length, rejected },
+      detail: {
+        url: urls.login,
+        status: loginResult.status,
+        encoding,
+        bodyBytes: attempt.length,
+        cookies: cookies.length,
+        rejected,
+      },
     });
     if (!rejected) break;
   }

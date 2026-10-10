@@ -6,6 +6,7 @@ import {
   generatePeriods,
   listTimeSlots,
   replaceTimeSlots,
+  updateTimeSlot,
   type Storage,
   type TimeSlotRow,
 } from '@dawn-tick/core';
@@ -85,8 +86,20 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     }
   }
 
-  async function remove(periodNo: number): Promise<void> {
-    setBusy(true);
+  /** 单节课次改时间，用于大课间等个别调整。 */
+  async function saveTime(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): Promise<void> {
+    setMessage(null);
+    try {
+      await updateTimeSlot(storage, slot.id, changes);
+      logInfo('timetable', '修改课次时间', { periodNo: slot.period_no, ...changes });
+      await reload();
+      onChanged();
+    } catch (cause: unknown) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function remove(periodNo: number): Promise<void> {    setBusy(true);
     setMessage(null);
     try {
       const result = await deleteTimeSlot(storage, semesterId, periodNo);
@@ -180,11 +193,24 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
 
       <ul className="flex flex-col gap-1">
         {slots.map((slot) => (
-          <li key={slot.id} className="flex min-h-tap items-center justify-between gap-2 text-sm">
-            <span className="tabular text-ink">
-              第 {slot.period_no} 节 · {slot.start_time}–{slot.end_time}
-              <span className="ml-2 text-xs text-muted">{SECTION_LABEL[slot.section ?? 'am']}</span>
-            </span>
+          <li key={slot.id} className="flex min-h-tap items-center gap-2 text-sm">
+            <span className="tabular w-16 shrink-0 text-ink">第 {slot.period_no} 节</span>
+            <Input
+              type="time"
+              className="w-28"
+              aria-label={`第 ${slot.period_no} 节开始时间`}
+              value={slot.start_time}
+              onChange={(event) => void saveTime(slot, { startTime: event.target.value })}
+            />
+            <span className="text-muted">–</span>
+            <Input
+              type="time"
+              className="w-28"
+              aria-label={`第 ${slot.period_no} 节结束时间`}
+              value={slot.end_time}
+              onChange={(event) => void saveTime(slot, { endTime: event.target.value })}
+            />
+            <span className="ml-auto text-xs text-muted">{SECTION_LABEL[slot.section ?? 'am']}</span>
             <Button
               size="icon"
               variant="ghost"
@@ -198,6 +224,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         ))}
         {slots.length === 0 && <li className="text-xs text-muted">还没有课次，先点「自动生成课次」</li>}
       </ul>
+      <span className="text-xs text-muted">每节的起止时间可单独修改，用于安排大课间或个别调整。</span>
     </Card>
   );
 }

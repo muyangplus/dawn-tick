@@ -1,5 +1,5 @@
 import { DEFAULT_TIME_ZONE } from './time.ts';
-import { addMinutes, sectionOf } from './timetable.ts';
+import { addMinutes, parseClock, sectionOf } from './timetable.ts';
 import { maskToWeeks, weeksToMask } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { assertValid } from './validation.ts';
@@ -236,6 +236,33 @@ export async function appendTimeSlot(
     rev: 0,
     dirty: 1,
   });
+}
+
+/** 修改单节课次的时间；用于大课间等个别调整。 */
+export async function updateTimeSlot(
+  storage: Storage,
+  id: string,
+  changes: { startTime?: string; endTime?: string; label?: string | null },
+  options: WriteOptions = {},
+): Promise<Row> {
+  const ctx = context(storage, options);
+  const patchRow: Row = {};
+  if (changes.startTime !== undefined) {
+    parseClock(changes.startTime);
+    patchRow['start_time'] = changes.startTime;
+    patchRow['section'] = sectionOf(changes.startTime);
+  }
+  if (changes.endTime !== undefined) {
+    parseClock(changes.endTime);
+    patchRow['end_time'] = changes.endTime;
+  }
+  if (changes.label !== undefined) patchRow['label'] = changes.label;
+  if (Object.keys(patchRow).length === 0) {
+    const existing = await storage.collection<Row>('time_slots').get(id);
+    if (existing === undefined) throw new Error(`time_slots 不存在: ${id}`);
+    return existing;
+  }
+  return patch(ctx, 'time_slots', id, patchRow);
 }
 
 /** 删除一节；被排课引用时拒绝，返回引用数量。 */

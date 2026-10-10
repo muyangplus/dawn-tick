@@ -34,6 +34,8 @@ fn append_log(message: &str) {
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 开机自启注册的命令行参数：只有带该参数启动才按「启动时隐藏窗口」处理。
 const HIDDEN_ARG: &str = "--hidden";
+/// 提权实例的标记参数：只写机器级启动项后退出。
+const REGISTER_ARG: &str = "--register-autostart";
 const MAIN_WINDOW: &str = "main";
 
 fn app_dir() -> Option<PathBuf> {
@@ -591,10 +593,251 @@ fn save_startup_prefs_inner(hidden: bool) {
     }
 }
 
+/// 开机自启：直接写注册表，用户级失败时可提权写机器级。
+#[cfg(windows)]
+mod autostart_reg {
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+        HKEY, KEY_READ, KEY_SET_VALUE, REG_SZ,
+    };
+
+    pub const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const VALUE_NAME: &str = "DawnTick";
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    pub fn command_line() -> Result<String, String> {
+        let exe = std::env::current_exe().map_err(|error| format!("获取程序路径失败: {error}"))?;
+        Ok(format!("\"{}\" {}", exe.display(), super::HIDDEN_ARG))
+    }
+
+    fn open(root: HKEY, key_path: &str, access: u32) -> Option<HKEY> {
+        let path = wide(key_path);
+        let mut key: HKEY = 0;
+        let status = unsafe { RegOpenKeyExW(root, path.as_ptr(), 0, access, &mut key) };
+        if status == ERROR_SUCCESS {
+            Some(key)
+        } else {
+            None
+        }
+    }
+
+    pub fn write_to(root: HKEY, key_path: &str, value_name: &str, value: &str) -> Result<(), String> {
+        let path = wide(key_path);
+        let mut key: HKEY = 0;
+        let status = unsafe {
+            RegCreateKeyExW(
+                root,
+                path.as_ptr(),
+                0,
+                std::ptr::null(),
+                0,
+                KEY_SET_VALUE,
+                std::ptr::null(),
+                &mut key,
+                std::ptr::null_mut(),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(format!("打开注册表项失败，代码 {status}"));
+        }
+        let mut data: Vec<u8> = value.encode_utf16().flat_map(|unit| unit.to_le_bytes()).collect();
+        data.extend_from_slice(&[0, 0]);
+        let name = wide(value_name);
+        let status =
+            unsafe { RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, data.as_ptr(), data.len() as u32) };
+        unsafe { RegCloseKey(key) };
+        if status != ERROR_SUCCESS {
+            return Err(format!("写入启动项失败，代码 {status}"));
+        }
+        Ok(())
+    }
+
+    pub fn read_from(root: HKEY, key_path: &str, value_name: &str) -> Option<String> {
+        let key = open(root, key_path, KEY_READ)?;
+        let name = wide(value_name);
+        let mut size: u32 = 0;
+        let status = unsafe {
+            RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut size,
+            )
+        };
+        if status != ERROR_SUCCESS || size == 0 {
+            unsafe { RegCloseKey(key) };
+            return None;
+        }
+        let mut buffer = vec![0u8; size as usize];
+        let status = unsafe {
+            RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr(),
+                &mut size,
+            )
+        };
+        unsafe { RegCloseKey(key) };
+        if status == ERROR_FILE_NOT_FOUND || status != ERROR_SUCCESS {
+            return None;
+        }
+        let units: Vec<u16> = buffer
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .take_while(|unit| *unit != 0)
+            .collect();
+        Some(String::from_utf16_lossy(&units))
+    }
+
+    pub fn remove_from(root: HKEY, key_path: &str, value_name: &str) -> bool {
+        let Some(key) = open(root, key_path, KEY_SET_VALUE) else {
+            return false;
+        };
+        let name = wide(value_name);
+        let status = unsafe { RegDeleteValueW(key, name.as_ptr()) };
+        unsafe { RegCloseKey(key) };
+        status == ERROR_SUCCESS
+    }
+
+    pub fn write(root: HKEY, value: &str) -> Result<(), String> {
+        write_to(root, RUN_KEY, VALUE_NAME, value)
+    }
+
+    pub fn read(root: HKEY) -> Option<String> {
+        read_from(root, RUN_KEY, VALUE_NAME)
+    }
+
+    pub fn remove(root: HKEY) -> bool {
+        remove_from(root, RUN_KEY, VALUE_NAME)
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AutostartStatus {
+    user: bool,
+    machine: bool,
+}
+
+#[cfg(windows)]
+fn autostart_status_inner() -> AutostartStatus {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    AutostartStatus {
+        user: autostart_reg::read(HKEY_CURRENT_USER).is_some(),
+        machine: autostart_reg::read(HKEY_LOCAL_MACHINE).is_some(),
+    }
+}
+
+#[cfg(not(windows))]
+fn autostart_status_inner() -> AutostartStatus {
+    AutostartStatus {
+        user: false,
+        machine: false,
+    }
+}
+
+#[tauri::command]
+fn autostart_status() -> AutostartStatus {
+    autostart_status_inner()
+}
+
+#[tauri::command]
+fn set_autostart(enabled: bool) -> Result<AutostartStatus, String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        if enabled {
+            let command = autostart_reg::command_line()?;
+            autostart_reg::write(HKEY_CURRENT_USER, &command)?;
+            append_log("已写入用户级开机自启");
+        } else {
+            let user = autostart_reg::remove(HKEY_CURRENT_USER);
+            let machine = autostart_reg::remove(HKEY_LOCAL_MACHINE);
+            append_log(&format!("已移除开机自启（用户级={user} 机器级={machine}）"));
+        }
+        Ok(autostart_status_inner())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+        Err("当前平台不支持开机自启".to_string())
+    }
+}
+
+/// 申请管理员权限重启，由提权实例写入机器级启动项。
+#[tauri::command]
+fn relaunch_elevated_autostart() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let exe = std::env::current_exe().map_err(|error| format!("获取程序路径失败: {error}"))?;
+        let to_wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
+        let verb = to_wide("runas");
+        let file = to_wide(&exe.to_string_lossy());
+        let params = to_wide(REGISTER_ARG);
+        let result = unsafe {
+            ShellExecuteW(
+                0,
+                verb.as_ptr(),
+                file.as_ptr(),
+                params.as_ptr(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if (result as isize) <= 32 {
+            return Err(format!("申请管理员权限失败，代码 {}", result as isize));
+        }
+        append_log("已请求提权实例写入机器级启动项");
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台不支持".to_string())
+    }
+}
+
+/// 提权实例启动时的分支：只写机器级启动项，不创建窗口。
+#[cfg(windows)]
+fn run_elevated_registration() -> bool {
+    if !std::env::args().any(|arg| arg == REGISTER_ARG) {
+        return false;
+    }
+    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
+    append_log("提权实例：写入机器级开机自启");
+    let result = autostart_reg::command_line()
+        .and_then(|command| autostart_reg::write(HKEY_LOCAL_MACHINE, &command));
+    match result {
+        Ok(()) => {
+            append_log("机器级开机自启已写入");
+            show_error_box("晓刻 DawnTick", "已注册开机自启（机器级），可直接关闭本提示。");
+        }
+        Err(error) => {
+            append_log(&format!("机器级开机自启写入失败: {error}"));
+            show_error_box("晓刻 DawnTick 注册失败", &error);
+        }
+    }
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
     append_log(&format!("应用启动 v{APP_VERSION}"));
+
+    // 提权实例只做注册，不进入正常启动流程
+    #[cfg(windows)]
+    if run_elevated_registration() {
+        return;
+    }
 
     // 先判单实例：已有实例时直接唤回它的窗口并退出，不触碰 WebView2 目录
     #[cfg(windows)]
@@ -613,7 +856,13 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
 
     let builder = builder
-        .invoke_handler(tauri::generate_handler![log_event, save_startup_prefs])
+        .invoke_handler(tauri::generate_handler![
+            log_event,
+            save_startup_prefs,
+            autostart_status,
+            set_autostart,
+            relaunch_elevated_autostart
+        ])
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
@@ -628,11 +877,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec![HIDDEN_ARG]),
-        ));
+        .plugin(tauri_plugin_http::init());
 
     #[cfg(desktop)]
     let builder = builder
@@ -721,5 +966,48 @@ mod tests {
         assert!(is_our_app("DAWNTICK.EXE"));
         assert!(!is_our_app("msedgewebview2.exe"));
         assert!(!is_our_app("explorer.exe"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn registry_write_read_delete_roundtrip() {
+        use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
+        // 用临时子键，避免触碰真实启动项
+        let key_path = "Software\\DawnTickTest";
+        let value_name = "Probe";
+        let sample = "\"C:\\tmp\\DawnTick.exe\" --hidden";
+
+        match autostart_reg::write_to(HKEY_CURRENT_USER, key_path, value_name, sample) {
+            Ok(()) => {}
+            Err(error) if error.contains("代码 5") => {
+                // 受限令牌下无法写 HKCU，跳过而不是误报
+                eprintln!("跳过：当前进程无权写注册表（{error}）");
+                return;
+            }
+            Err(error) => panic!("写入失败: {error}"),
+        }
+        assert_eq!(
+            autostart_reg::read_from(HKEY_CURRENT_USER, key_path, value_name).as_deref(),
+            Some(sample),
+            "读回内容应与写入一致"
+        );
+        assert!(
+            autostart_reg::remove_from(HKEY_CURRENT_USER, key_path, value_name),
+            "删除应成功"
+        );
+        assert!(
+            autostart_reg::read_from(HKEY_CURRENT_USER, key_path, value_name).is_none(),
+            "删除后应读不到"
+        );
+    }
+
+    #[test]
+    fn autostart_command_contains_hidden_flag() {
+        #[cfg(windows)]
+        {
+            let command = autostart_reg::command_line().expect("应能取到程序路径");
+            assert!(command.contains(HIDDEN_ARG), "启动项需带 --hidden: {command}");
+            assert!(command.starts_with('"'), "程序路径需加引号: {command}");
+        }
     }
 }

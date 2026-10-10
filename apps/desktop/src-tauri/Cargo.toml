@@ -17,8 +17,11 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-notification = "2"
 # 关闭 cookies 特性：该特性会在启动时独占打开缓存目录里的 .cookies，
 # 已有实例在托盘运行时第二次启动会因此失败退出（os error 5）
-tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy"] }
-tauri-plugin-autostart = "2"
+# 关闭 cookies 特性：该特性会在启动时独占打开缓存目录里的 .cookies，
+# 已有实例在托盘运行时第二次启动会因此失败退出（os error 5）。
+# 教务抓取需要手动携带 Cookie 头，而插件默认按 fetch 规范丢弃该头，
+# 因此开启 unsafe-headers；会话 Cookie 由 core 的导入适配器自行收集与回传。
+tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy", "unsafe-headers"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -31,7 +34,9 @@ windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Registry",
     "Win32_System_Threading",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
