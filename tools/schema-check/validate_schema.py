@@ -1,18 +1,7 @@
-"""数据模型 v3 校验脚本（非产品代码）。
+"""校验 docs/01-数据模型设计.md 的建表 SQL、约束与关键查询。不参与产品运行。"""
 
-对应文档：docs/01-数据模型设计.md（v3 定稿）
-运行：python tools/schema-check/validate_schema.py
-
-v3 相对 v2 的变化：
-  - 全部用户数据表新增同步预留字段 rev / dirty（默认 0）
-  - app_meta 保持不同步，故无这两个字段
-  - 周次编码确认为位图 weeks_mask（不依赖 SQLite JSON 函数）
-"""
 import sqlite3
 import sys
-
-# 每个用户数据表共有的同步预留字段
-SYNC_COLS = "  rev         INTEGER NOT NULL DEFAULT 0,\n  dirty       INTEGER NOT NULL DEFAULT 0\n"
 
 DDL = r"""
 CREATE TABLE users (
@@ -100,6 +89,7 @@ CREATE TABLE events (
   id               TEXT PRIMARY KEY,
   user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   semester_id      TEXT REFERENCES semesters(id) ON DELETE SET NULL,
+  parent_id        TEXT REFERENCES events(id) ON DELETE CASCADE,
   type             TEXT NOT NULL CHECK (type IN (
                      'exam','todo','temp','reschedule','holiday','makeup','workday')),
   title            TEXT NOT NULL,
@@ -110,6 +100,10 @@ CREATE TABLE events (
   location         TEXT,
   note             TEXT,
   done             INTEGER NOT NULL DEFAULT 0,
+  priority         INTEGER CHECK (priority IN (1,2,3)),
+  due_at           TEXT,
+  subject          TEXT,
+  seat_no          TEXT,
   ref_schedule_id  TEXT REFERENCES course_schedules(id) ON DELETE CASCADE,
   action           TEXT CHECK (action IN ('move','cancel','room_change','add')),
   new_date         TEXT,
@@ -124,6 +118,11 @@ CREATE TABLE events (
   rev              INTEGER NOT NULL DEFAULT 0,
   dirty            INTEGER NOT NULL DEFAULT 0,
 
+  CHECK (parent_id IS NULL OR parent_id <> id),
+  CHECK (priority IS NULL OR type = 'todo'),
+  CHECK (due_at   IS NULL OR type = 'todo'),
+  CHECK (subject  IS NULL OR type = 'exam'),
+  CHECK (seat_no  IS NULL OR type = 'exam'),
   CHECK (type <> 'reschedule' OR (ref_schedule_id IS NOT NULL AND action IS NOT NULL)),
   CHECK (type <> 'reschedule' OR action <> 'move' OR new_date IS NOT NULL),
   CHECK (type NOT IN ('holiday','makeup','workday') OR on_date IS NOT NULL),
@@ -134,6 +133,7 @@ CREATE TABLE events (
 CREATE INDEX ix_events_user_time ON events(user_id, start_at);
 CREATE INDEX ix_events_semester  ON events(semester_id);
 CREATE INDEX ix_events_type_date ON events(type, on_date);
+CREATE INDEX ix_events_parent    ON events(parent_id);
 CREATE UNIQUE INDEX ux_events_day_kind
   ON events(semester_id, on_date)
   WHERE type IN ('holiday','makeup','workday') AND deleted_at IS NULL;
@@ -146,6 +146,10 @@ CREATE TABLE reminders (
   advance_minutes INTEGER NOT NULL DEFAULT 10 CHECK (advance_minutes BETWEEN 0 AND 1440),
   enabled         INTEGER NOT NULL DEFAULT 1,
   skip_holidays   INTEGER NOT NULL DEFAULT 1,
+  sound           INTEGER NOT NULL DEFAULT 1,
+  vibrate         INTEGER NOT NULL DEFAULT 1,
+  dnd             INTEGER NOT NULL DEFAULT 0,
+  snooze_minutes  INTEGER CHECK (snooze_minutes IS NULL OR snooze_minutes BETWEEN 1 AND 120),
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
   deleted_at      INTEGER,
@@ -160,7 +164,6 @@ CREATE TABLE app_meta (
 );
 """
 
-# 第 N 周某天的课（位图判定，不依赖 SQLite JSON 函数）
 WEEK_VIEW_SQL = """
 SELECT c.name, c.short_name, c.color, cs.period_start, cs.period_end,
        COALESCE(cs.room, c.location) AS room
@@ -171,6 +174,14 @@ WHERE c.semester_id = :sid
   AND (cs.weeks_mask >> (:week - 1)) & 1 = 1
   AND cs.deleted_at IS NULL AND c.deleted_at IS NULL
 ORDER BY cs.period_start
+"""
+
+DAY_KIND_SQL = """
+SELECT type, as_day_of_week, source FROM events
+WHERE semester_id = ? AND on_date = ?
+  AND type IN ('holiday','makeup','workday') AND deleted_at IS NULL
+ORDER BY CASE source WHEN 'manual' THEN 1 WHEN 'from_school' THEN 2 ELSE 3 END
+LIMIT 1
 """
 
 results = []
@@ -194,7 +205,7 @@ def expect_reject(name, fn):
 
 
 def mask_of(weeks):
-    """周次集合 -> 位图：第 N 周 = 第 (N-1) 位"""
+    """周次集合 -> 位图：第 N 周 = 第 (N-1) 位。"""
     return sum(1 << (w - 1) for w in weeks)
 
 
@@ -245,18 +256,19 @@ def add_schedule(sid, course, dow, ps, pe, mask, raw=None, room=None):
 
 
 EVENT_COLS = (
-    "id,user_id,semester_id,type,title,on_date,start_at,end_at,all_day,location,note,done,"
-    "ref_schedule_id,action,new_date,new_period_start,new_period_end,new_room,"
-    "as_day_of_week,source,created_at,updated_at"
+    "id,user_id,semester_id,parent_id,type,title,on_date,start_at,end_at,all_day,location,"
+    "note,done,priority,due_at,subject,seat_no,ref_schedule_id,action,new_date,"
+    "new_period_start,new_period_end,new_room,as_day_of_week,source,created_at,updated_at"
 )
 
 
 def insert_event(**kw):
     vals = {
-        "id": "e-x", "user_id": U, "semester_id": S1, "type": "temp", "title": "t",
-        "on_date": None, "start_at": None, "end_at": None, "all_day": 0, "location": None,
-        "note": None, "done": 0, "ref_schedule_id": None, "action": None, "new_date": None,
-        "new_period_start": None, "new_period_end": None, "new_room": None,
+        "id": "e-x", "user_id": U, "semester_id": S1, "parent_id": None, "type": "temp",
+        "title": "t", "on_date": None, "start_at": None, "end_at": None, "all_day": 0,
+        "location": None, "note": None, "done": 0, "priority": None, "due_at": None,
+        "subject": None, "seat_no": None, "ref_schedule_id": None, "action": None,
+        "new_date": None, "new_period_start": None, "new_period_end": None, "new_room": None,
         "as_day_of_week": None, "source": None, "created_at": NOW, "updated_at": NOW,
     }
     vals.update(kw)
@@ -267,7 +279,7 @@ def insert_event(**kw):
     )
 
 
-# ---------- 基础数据 ----------
+# 基础数据
 con.execute(
     "INSERT INTO users (id,nickname,created_at,updated_at) VALUES (?,?,?,?)",
     (U, "我", NOW, NOW),
@@ -294,7 +306,7 @@ add_schedule("s-2", "c-2", 3, 3, 4, mask_of(range(2, 17, 2)), "2-16周(双)")
 add_schedule("s-3", "c-3", 5, 5, 6, mask_of([1, 3, 5, 7]), "1,3,5,7周")
 ok("基础数据写入", "1 用户 / 1 学期 / 6 节次 / 3 课程 / 3 排课（连续·双周·碎片）")
 
-# ---------- 同步预留字段（v3 新增） ----------
+# 同步预留字段
 row = con.execute("SELECT rev, dirty FROM courses WHERE id='c-1'").fetchone()
 if row == (0, 0):
     ok("同步预留字段默认值为 0", f"rev={row[0]}, dirty={row[1]}")
@@ -308,15 +320,13 @@ if row == (1, 1):
 else:
     fail("同步预留字段可写入", str(row))
 
-meta_cols = [
-    r[1] for r in con.execute("PRAGMA table_info(app_meta)").fetchall()
-]
+meta_cols = [r[1] for r in con.execute("PRAGMA table_info(app_meta)").fetchall()]
 if "rev" not in meta_cols and "dirty" not in meta_cols:
-    ok("app_meta 不含同步字段", "本地元数据表不同步，符合设计")
+    ok("app_meta 不含同步字段", "本地键值表不参与同步")
 else:
     fail("app_meta 不该有同步字段", str(meta_cols))
 
-# ---------- 位图语义 ----------
+# 位图编码
 for label, weeks, want in [
     ("第1-16周 = 65535", range(1, 17), 65535),
     ("第1/3/5/7周 = 85", [1, 3, 5, 7], 85),
@@ -328,7 +338,7 @@ for label, weeks, want in [
     else:
         fail(f"位图：{label}", f"得到 {got}，期望 {want}")
 
-# ---------- 约束校验 ----------
+# 约束
 expect_reject(
     "每用户仅一个当前学期（部分唯一索引）",
     lambda: con.execute(
@@ -359,10 +369,12 @@ expect_reject(
     ),
 )
 
-# ---------- events 单表 7 种语义 ----------
+# events 七种语义
 insert_event(id="e-exam", type="exam", title="高等数学期末",
-             start_at="2027-01-10T09:00:00+08:00")
-insert_event(id="e-todo", type="todo", title="交实验报告")
+             start_at="2027-01-10T09:00:00+08:00", subject="高等数学",
+             location="教三-201", seat_no="A-12")
+insert_event(id="e-todo", type="todo", title="交实验报告", priority=3,
+             due_at="2026-10-20T22:00:00+08:00")
 insert_event(id="e-temp", type="temp", title="班会", start_at="2026-10-15T19:00:00+08:00")
 insert_event(id="e-holiday", type="holiday", title="国庆节", on_date="2026-10-01",
              source="builtin")
@@ -373,8 +385,54 @@ insert_event(id="e-move", type="reschedule", title="高数改期", on_date="2026
              new_period_start=3, new_period_end=4, new_room="教三-305")
 insert_event(id="e-cancel", type="reschedule", title="大物停课", on_date="2026-10-14",
              ref_schedule_id="s-2", action="cancel")
-ok("events 合法写入", "考试/待办/临时/放假/调休补课/调课改期/调课取消 共 7 条")
+ok("events 合法写入", "考试(含科目/考场/座位)/待办(含优先级/截止)/临时/放假/调休补课/调课改期/调课取消")
 
+# 子任务（events 自关联）
+insert_event(id="e-sub1", type="todo", parent_id="e-todo", title="写实验一")
+insert_event(id="e-sub2", type="todo", parent_id="e-todo", title="写实验二")
+subs = con.execute(
+    "SELECT COUNT(*) FROM events WHERE parent_id='e-todo' AND deleted_at IS NULL"
+).fetchone()[0]
+if subs == 2:
+    ok("待办子任务写入", f"父任务下有 {subs} 条子任务")
+else:
+    fail("待办子任务写入", f"子任务数 {subs}")
+
+con.execute("DELETE FROM events WHERE id='e-todo'")
+left = con.execute("SELECT COUNT(*) FROM events WHERE parent_id='e-todo'").fetchone()[0]
+if left == 0:
+    ok("删除父任务级联删除子任务", "ON DELETE CASCADE 生效")
+else:
+    fail("删除父任务未级联子任务", f"剩余 {left} 条")
+
+expect_reject(
+    "非待办类型带 priority 被拦截",
+    lambda: insert_event(id="e-bad7", type="temp", title="坏优先级", priority=1),
+)
+expect_reject(
+    "非待办类型带 due_at 被拦截",
+    lambda: insert_event(id="e-bad8", type="exam", title="坏截止", due_at="2026-11-01"),
+)
+expect_reject(
+    "非考试类型带 subject 被拦截",
+    lambda: insert_event(id="e-bad9", type="temp", title="坏科目", subject="数学"),
+)
+expect_reject(
+    "priority 越界(4)被拦截",
+    lambda: insert_event(id="e-bad10", type="todo", title="坏等级", priority=4),
+)
+expect_reject(
+    "events 自引用 parent_id 指向自己被拦截",
+    lambda: insert_event(id="e-bad11", type="todo", title="自引用", parent_id="e-bad11"),
+)
+expect_reject(
+    "snooze_minutes 越界(121)被拦截",
+    lambda: con.execute(
+        "INSERT INTO reminders (id,user_id,target_type,target_id,snooze_minutes,created_at,"
+        "updated_at) VALUES (?,?,?,?,?,?,?)",
+        ("r-y", U, "event", "e-temp", 121, NOW, NOW),
+    ),
+)
 expect_reject(
     "调课缺 ref_schedule_id 被拦截",
     lambda: insert_event(id="e-bad1", type="reschedule", title="坏调课", action="cancel"),
@@ -403,7 +461,23 @@ expect_reject(
                          new_period_start=5, new_period_end=3),
 )
 
-# ---------- 周视图查询 ----------
+# 提醒默认值
+con.execute(
+    "INSERT INTO reminders (id,user_id,target_type,target_id,created_at,updated_at) "
+    "VALUES (?,?,?,?,?,?)",
+    ("r-1", U, "course", "c-1", NOW, NOW),
+)
+row = con.execute(
+    "SELECT advance_minutes, enabled, skip_holidays, sound, vibrate, dnd, snooze_minutes "
+    "FROM reminders WHERE id='r-1'"
+).fetchone()
+if row == (10, 1, 1, 1, 1, 0, None):
+    ok("提醒默认值", "advance=10, enabled=1, skip_holidays=1, sound=1, vibrate=1, dnd=0, snooze=NULL")
+else:
+    fail("提醒默认值", str(row))
+
+
+# 周视图
 def week_view(week, dow):
     return con.execute(WEEK_VIEW_SQL, {"sid": S1, "dow": dow, "week": week}).fetchall()
 
@@ -429,25 +503,18 @@ for week, dow, want_name, label in [
         else:
             fail(f"周视图：{label}", str(r))
 
-# ---------- 调休（含来源优先级 D22）与调课查询 ----------
-r = con.execute(
-    "SELECT type, as_day_of_week, source FROM events WHERE semester_id=? AND on_date=? "
-    "AND type IN ('holiday','makeup','workday') AND deleted_at IS NULL "
-    "ORDER BY CASE source WHEN 'manual' THEN 1 WHEN 'from_school' THEN 2 ELSE 3 END LIMIT 1",
-    (S1, "2026-10-11"),
-).fetchall()
+# 调休与来源优先级
+r = con.execute(DAY_KIND_SQL, (S1, "2026-10-11")).fetchall()
 if len(r) == 1 and r[0][0] == "makeup" and r[0][1] == 3:
     ok("调休查询：10/11 为补课日且按周三上课", str(r))
 else:
     fail("调休查询：10/11", str(r))
 
-# 一天只能有一条「放假/调休/上课日」记录（DB 强制）
-# → 因此 D22 的优先级是「写入/导入时的覆盖决策」，而不是查询时在多行里挑
 POLICY = {"manual": 1, "from_school": 2, "builtin": 3}
 
 
 def apply_day_kind(ev_id, on_date, kind, source, title):
-    """按 D22 优先级写入：仅当新来源优先级更高时才覆盖既有行"""
+    """按来源优先级写入某天的放假/调休判定。"""
     cur = con.execute(
         "SELECT id, source FROM events WHERE semester_id=? AND on_date=? "
         "AND type IN ('holiday','makeup','workday') AND deleted_at IS NULL",
@@ -478,7 +545,7 @@ insert_event(id="e-p1", type="holiday", title="内置放假", on_date="2026-10-0
 act1 = apply_day_kind("e-p2", "2026-10-03", "holiday", "from_school", "教务校历")
 rows1 = day_kind_rows("2026-10-03")
 if act1 == "overwrite" and len(rows1) == 1 and rows1[0][0] == "from_school":
-    ok("来源优先级：教务校历覆盖内置（D22），且每天仍只有一条",
+    ok("来源优先级：教务校历覆盖内置，每天仅一条",
        f"action={act1}, source={rows1[0][0]}, 行数={len(rows1)}")
 else:
     fail("来源优先级覆盖失败", f"action={act1}, rows={rows1}")
@@ -488,12 +555,12 @@ insert_event(id="e-p3", type="holiday", title="手动改判", on_date="2026-10-0
 act2 = apply_day_kind("e-p4", "2026-10-04", "holiday", "builtin", "内置放假")
 rows2 = day_kind_rows("2026-10-04")
 if act2 == "skip" and len(rows2) == 1 and rows2[0][0] == "manual":
-    ok("来源优先级：内置不得覆盖手动（D22）", f"action={act2}, source={rows2[0][0]}")
+    ok("来源优先级：内置不覆盖手动", f"action={act2}, source={rows2[0][0]}")
 else:
     fail("内置错误覆盖了手动", f"action={act2}, rows={rows2}")
 
 expect_reject(
-    "同一天插入第二条放假记录被部分唯一索引拦截（优先级必须走写入策略）",
+    "同一天插入第二条放假记录被部分唯一索引拦截",
     lambda: insert_event(id="e-p5", type="holiday", title="重复", on_date="2026-10-03",
                          source="manual"),
 )
@@ -508,7 +575,7 @@ if len(r) == 1 and r[0][0] == "move" and r[0][1] == "2026-10-14":
 else:
     fail("调课查询：s-1 @ 2026-10-12", str(r))
 
-# ---------- 级联与软删除 ----------
+# 级联与软删除
 con.execute("DELETE FROM courses WHERE id=?", ("c-2",))
 left = con.execute(
     "SELECT COUNT(*) FROM course_schedules WHERE course_id=?", ("c-2",)
@@ -534,7 +601,6 @@ try:
 except sqlite3.Error as e:
     fail("软删除后重建记录被拦", str(e))
 
-print("\n=== 数据模型 v3 SQLite 校验结果 ===")
 for status, name, detail in results:
     print(f"[{status}] {name}" + (f"  — {detail}" if detail else ""))
 failed = [r for r in results if r[0] == "FAIL"]
