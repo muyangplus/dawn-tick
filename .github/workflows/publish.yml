@@ -22,6 +22,10 @@ permissions:
   contents: write
 
 jobs:
+  checks:
+    name: 发布前检查
+    uses: ./.github/workflows/ci.yml
+
   plan:
     name: 计算渠道与标签
     runs-on: ubuntu-latest
@@ -61,7 +65,7 @@ jobs:
 
   windows:
     name: Windows 安装包
-    needs: plan
+    needs: [plan, checks]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -82,12 +86,14 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+          path: |
+            apps/desktop/src-tauri/target/release/*.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
 
   android:
     name: Android APK
-    needs: plan
+    needs: [plan, checks]
     runs-on: ubuntu-latest
     env:
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -140,7 +146,7 @@ jobs:
 
   web:
     name: Web 静态包
-    needs: plan
+    needs: [plan, checks]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -186,8 +192,13 @@ jobs:
           mkdir -p out
           SUFFIX="DawnTick-${VERSION}-${CHANNEL}"
 
-          setup=$(find artifacts/windows -name '*.exe' | head -n 1)
+          setup=$(find artifacts/windows -path '*bundle/nsis*' -name '*.exe' | head -n 1)
           cp "$setup" "out/${SUFFIX}-windows-x64-setup.exe"
+
+          portable=$(find artifacts/windows -name '*.exe' -not -path '*nsis*' | head -n 1)
+          mkdir -p portable
+          cp "$portable" portable/DawnTick.exe
+          (cd portable && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-windows-x64-portable.zip" DawnTick.exe)
 
           apk=$(find artifacts/android -name '*.apk' | head -n 1)
           cp "$apk" "out/${SUFFIX}-android.apk"
@@ -195,7 +206,7 @@ jobs:
           (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 
           cd out
-          for file in "${SUFFIX}-windows-x64-setup.exe" "${SUFFIX}-android.apk" "${SUFFIX}-web.zip"; do
+          for file in $(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.apk' -o -name '*.zip' \) -printf '%f\n'); do
             sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
           done
           ls -l
