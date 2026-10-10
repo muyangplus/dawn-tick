@@ -1,0 +1,69 @@
+# ---- 晓刻 .gitignore ----
+# 说明：本期技术栈未定，这里先覆盖各候选技术栈的通用产物，定稿后再精简。
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/settings.json.example
+*.swp
+*~
+
+# Node / Web
+node_modules/
+.pnpm-store/
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# .NET / Windows
+bin/
+obj/
+*.user
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+*.g.dart
+*.freezed.dart
+
+# Rust / Tauri
+target/
+
+# 本地数据库与用户数据（绝不入库）
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+/data/
+/backups/
+
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+*.local
+
+# 临时/调研产物
+/tmp/
+*.log

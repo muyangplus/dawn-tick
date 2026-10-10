@@ -1,0 +1,26 @@
+# 统一换行符：仓库内一律 LF，避免 Windows 与 Android/Linux 协作时整文件 diff
+# ⚠ 本文件由我方按跨平台惯例添加，若你另有约定可随时撤销
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary
+*.woff  binary
+*.woff2 binary
+*.zip  binary
+*.xlsx binary
+*.docx binary
+
+# Windows 脚本保留 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 语言统计
+docs/* linguist-documentation
