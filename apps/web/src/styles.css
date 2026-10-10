@@ -1,0 +1,111 @@
+:root {
+  color-scheme: light dark;
+  --line: color-mix(in srgb, currentColor 14%, transparent);
+  --muted: color-mix(in srgb, currentColor 55%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  height: 100vh;
+}
+
+.bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.error {
+  color: #d64545;
+  white-space: pre-wrap;
+}
+
+.grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 56px repeat(5, minmax(0, 1fr));
+  grid-auto-rows: minmax(56px, auto);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  overflow: auto;
+}
+
+.corner,
+.head,
+.period,
+.cell {
+  background: Canvas;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  padding: 6px 0;
+}
+
+.head.today {
+  color: #2f6fed;
+}
+
+.rowGroup {
+  display: contents;
+}
+
+.period {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.periodNo {
+  font-weight: 600;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  min-width: 0;
+}
+
+.lesson {
+  border-left: 3px solid transparent;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  padding: 3px 5px;
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

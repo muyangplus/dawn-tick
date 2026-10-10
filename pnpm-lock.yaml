@@ -168,6 +168,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@dawn-tick/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@sqlite.org/sqlite-wasm':
         specifier: 3.53.4-build2
         version: 3.53.4-build2
