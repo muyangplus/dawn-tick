@@ -147,7 +147,7 @@ CREATE TABLE reminders (
   skip_holidays   INTEGER NOT NULL DEFAULT 1,
   sound           INTEGER NOT NULL DEFAULT 1,
   vibrate         INTEGER NOT NULL DEFAULT 1,
-  dnd             INTEGER NOT NULL DEFAULT 0,
+  dnd             INTEGER NOT NULL DEFAULT 0 CHECK (dnd IN (0, 1, 2)),
   snooze_minutes  INTEGER CHECK (snooze_minutes IS NULL OR snooze_minutes BETWEEN 1 AND 120),
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,

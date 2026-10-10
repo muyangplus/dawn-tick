@@ -8,7 +8,7 @@
     "./schema/001_init.sql": "./src/schema/001_init.sql"
   },
   "scripts": {
-    "test": "node --test test/time.test.ts test/weeks.test.ts test/migrate.test.ts test/schema.test.ts test/repository.test.ts test/expand.test.ts test/sync.test.ts",
+    "test": "node --test test/time.test.ts test/weeks.test.ts test/migrate.test.ts test/schema.test.ts test/repository.test.ts test/expand.test.ts test/sync.test.ts test/validation.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
