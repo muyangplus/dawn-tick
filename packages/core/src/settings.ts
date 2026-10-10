@@ -16,6 +16,10 @@ export interface AppSettings {
   theme: ThemeMode;
   themePreset: ThemePreset;
   widgetBackground: WidgetBackground;
+  /** 注册开机自启 */
+  autoStart: boolean;
+  /** 开机自启时隐藏主窗口，仅驻留托盘 */
+  startHidden: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -25,6 +29,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   themePreset: 'vivid',
   widgetBackground: 'light',
+  autoStart: false,
+  startHidden: true,
 };
 
 const KEYS = {
@@ -34,6 +40,8 @@ const KEYS = {
   theme: 'theme',
   themePreset: 'theme_preset',
   widgetBackground: 'widget_background',
+  autoStart: 'auto_start',
+  startHidden: 'start_hidden',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -50,8 +58,11 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.theme),
     storage.readMeta(KEYS.themePreset),
     storage.readMeta(KEYS.widgetBackground),
+    storage.readMeta(KEYS.autoStart),
+    storage.readMeta(KEYS.startHidden),
   ]);
-  const [timeZone, autoTimeZone, viewDays, theme, themePreset, widgetBackground] = entries;
+  const [timeZone, autoTimeZone, viewDays, theme, themePreset, widgetBackground, autoStart, startHidden] =
+    entries;
   const parsedDays = Number(viewDays);
 
   return {
@@ -68,6 +79,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       widgetBackground !== undefined && (WIDGET_BACKGROUNDS as readonly string[]).includes(widgetBackground)
         ? (widgetBackground as WidgetBackground)
         : DEFAULT_SETTINGS.widgetBackground,
+    autoStart: parseBoolean(autoStart, DEFAULT_SETTINGS.autoStart),
+    startHidden: parseBoolean(startHidden, DEFAULT_SETTINGS.startHidden),
   };
 }
 
@@ -94,6 +107,10 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   if (patch.themePreset !== undefined) await storage.writeMeta(KEYS.themePreset, patch.themePreset);
   if (patch.widgetBackground !== undefined) {
     await storage.writeMeta(KEYS.widgetBackground, patch.widgetBackground);
+  }
+  if (patch.autoStart !== undefined) await storage.writeMeta(KEYS.autoStart, patch.autoStart ? '1' : '0');
+  if (patch.startHidden !== undefined) {
+    await storage.writeMeta(KEYS.startHidden, patch.startHidden ? '1' : '0');
   }
 
   return readSettings(storage);

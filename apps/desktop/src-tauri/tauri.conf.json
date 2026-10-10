@@ -16,7 +16,8 @@
         "title": "晓刻 DawnTick",
         "width": 1000,
         "height": 720,
-        "resizable": true
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {

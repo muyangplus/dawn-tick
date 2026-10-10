@@ -198,14 +198,36 @@ test('设置默认值与读写回环', async () => {
   const storage = new MemoryStorage();
   assert.deepEqual(await readSettings(storage), DEFAULT_SETTINGS);
 
-  const saved = await writeSettings(storage, { viewDays: 7, theme: 'dark', themePreset: 'muted', autoTimeZone: true });
+  const saved = await writeSettings(storage, {
+    viewDays: 7,
+    theme: 'dark',
+    themePreset: 'muted',
+    autoTimeZone: true,
+    autoStart: true,
+    startHidden: false,
+  });
   assert.equal(saved.viewDays, 7);
   assert.equal(saved.theme, 'dark');
   assert.equal(saved.themePreset, 'muted');
   assert.equal(saved.autoTimeZone, true);
+  assert.equal(saved.autoStart, true);
+  assert.equal(saved.startHidden, false);
   assert.equal(saved.timeZone, DEFAULT_SETTINGS.timeZone);
 
   assert.deepEqual(await readSettings(storage), saved);
+});
+
+test('开机自启默认关闭，隐藏窗口默认开启', async () => {
+  const storage = new MemoryStorage();
+  const settings = await readSettings(storage);
+  assert.equal(settings.autoStart, false);
+  assert.equal(settings.startHidden, true);
+
+  await storage.writeMeta('auto_start', '1');
+  await storage.writeMeta('start_hidden', '0');
+  const loaded = await readSettings(storage);
+  assert.equal(loaded.autoStart, true);
+  assert.equal(loaded.startHidden, false);
 });
 
 test('设置非法值被拒或回退', async () => {

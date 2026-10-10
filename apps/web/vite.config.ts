@@ -1,9 +1,21 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
+
+function appVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+      version?: string;
+    };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
 
 /**
  * 本地开发用的 HTTP 转发：请求由开发服务器发出，浏览器侧不再受同源策略限制。
@@ -59,6 +71,10 @@ function devHttpBridge(): Plugin {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), devHttpBridge()],
+  define: {
+    __DT_CHANNEL__: JSON.stringify(process.env.DT_CHANNEL ?? 'dev'),
+    __DT_VERSION__: JSON.stringify(process.env.DT_VERSION ?? appVersion()),
+  },
   build: {
     rollupOptions: {
       input: {

@@ -152,6 +152,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   check('课程管理提供编辑与删除', hasLabel(view.container, '编辑课程') && hasLabel(view.container, '删除课程'), '');
+  check(
+    '开发版独占入口可见',
+    panelText.includes('填充示例数据') && panelText.includes('导出日志') && panelText.includes('开发版'),
+    '',
+  );
 
   const beforePeriods = countPeriods(panelText);
   if (clickByText(view.container, '自动生成课次')) await flush(26);

@@ -4,14 +4,19 @@ import {
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
+  createCourse,
+  createEvent,
   createSemester,
   deleteSemesterDeep,
   exportBackup,
+  formatDate,
   formatDateTime,
   importBackup,
   isValidTimeZone,
   parseBackup,
+  setSchedules,
   updateSemester,
+  weekStart,
   type AppSettings,
   type SemesterRow,
   type Storage,
@@ -20,8 +25,11 @@ import {
   type WidgetBackground,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
+import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
+import { StartupSettings } from '../components/startup-settings.tsx';
+import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
@@ -163,6 +171,58 @@ export function SettingsView({
     downloadText(`DawnTick-日志-${new Date().toISOString().slice(0, 10)}.txt`, entries === '' ? '暂无日志' : entries);
     setBackupMessage(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
     void clearLogs();
+  }
+
+  /** 渠道独占：仅 dev 渠道提供，用于快速构造可测试的课表。 */
+  async function seedSampleData(): Promise<void> {
+    setBusy(true);
+    try {
+      const palette = PRESETS[settings.themePreset].courses;
+      const today = formatDate(Date.now(), settings.timeZone);
+      const semester = await createSemester(storage, {
+        userId,
+        name: '示例学期',
+        startDate: weekStart(today),
+        totalWeeks: 20,
+        timeZone: settings.timeZone,
+      });
+      const demo = [
+        { name: '高等数学', teacher: '张老师', location: '教三-201', slots: [[1, 1, 2], [3, 3, 4]] },
+        { name: '大学物理', teacher: '李老师', location: '理科楼-105', slots: [[2, 5, 6]] },
+        { name: '程序设计', teacher: '王老师', location: '信息楼-302', slots: [[4, 7, 8]] },
+      ];
+      for (const [index, item] of demo.entries()) {
+        const course = await createCourse(storage, {
+          semesterId: String(semester['id']),
+          name: item.name,
+          teacher: item.teacher,
+          location: item.location,
+          color: palette[index % palette.length] ?? '#4F8DFD',
+        });
+        await setSchedules(
+          storage,
+          String(course['id']),
+          item.slots.map(([day, start, end]) => ({
+            dayOfWeek: day as number,
+            periodStart: start as number,
+            periodEnd: end as number,
+            weeks: Array.from({ length: 16 }, (_, week) => week + 1),
+          })),
+        );
+      }
+      await createEvent(storage, {
+        userId,
+        type: 'temp',
+        semesterId: String(semester['id']),
+        title: '交作业',
+        onDate: formatDate(Date.now() + 3 * 86_400_000, settings.timeZone),
+      });
+      logInfo('sample', '生成示例数据', { courses: demo.length });
+      toast.success('已生成示例学期与 3 门课程');
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function downloadBackup(): Promise<void> {
@@ -434,6 +494,8 @@ export function SettingsView({
         </label>
       </Card>
 
+      <StartupSettings supported={isAutoStartSupported()} settings={settings} onPatch={onPatch} />
+
       <Card className="flex flex-col gap-3">
         <CardTitle className="flex items-center gap-2">
           <Database className="size-4" aria-hidden />
@@ -452,9 +514,16 @@ export function SettingsView({
             <Upload className="size-4" aria-hidden />
             导入备份
           </Button>
-          <Button size="sm" variant="secondary" onClick={exportLogs}>
-            导出日志
-          </Button>
+          {featureVisible('diagnostics') && (
+            <Button size="sm" variant="secondary" onClick={exportLogs}>
+              导出日志
+            </Button>
+          )}
+          {featureVisible('sampleData') && (
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void seedSampleData()}>
+              填充示例数据
+            </Button>
+          )}
           <input
             ref={fileInput}
             type="file"
@@ -476,6 +545,9 @@ export function SettingsView({
           关于
         </CardTitle>
         <span className="text-xs text-muted">晓刻 DawnTick · 课表与日程提醒工具</span>
+        <span className="tabular text-xs text-muted">
+          版本 {appVersion()} · {CHANNEL_LABEL[CHANNEL]}
+        </span>
         <span className="text-xs text-muted">许可证 Apache-2.0</span>
         <a className="text-xs text-primary-strong underline" href="https://github.com/muyangplus/dawn-tick">
           https://github.com/muyangplus/dawn-tick

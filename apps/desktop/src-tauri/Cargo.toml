@@ -18,7 +18,6 @@ tauri-plugin-notification = "2"
 # 关闭 cookies 特性：该特性会在启动时独占打开缓存目录里的 .cookies，
 # 已有实例在托盘运行时第二次启动会因此失败退出（os error 5）
 tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy"] }
-tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -28,7 +27,12 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # MSVC 14.51 编译 libsqlite3-sys 的 C 源码时，/Z7 会触发 cl.exe D8050。
 [profile.dev]
