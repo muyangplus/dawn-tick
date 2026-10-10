@@ -83,4 +83,4 @@
 | beta | `beta` | 手动 | `vX.Y.Z-beta.<n>` | 预发布，保留历史 |
 | release | `main` | 打标签 | `vX.Y.Z` | 正式 Release |
 
-产物：Windows NSIS 安装包、Android APK、Web 静态包、`SHA256SUMS.txt`。
+产物：`DawnTick-<version>-<channel>-windows-x64-setup.exe`、`DawnTick-<version>-<channel>-android.apk`、`DawnTick-<version>-<channel>-web.zip`，每个产物附同名 `.sha256` 文件。

@@ -184,7 +184,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          SUFFIX="dawn-tick-${VERSION}-${CHANNEL}"
+          SUFFIX="DawnTick-${VERSION}-${CHANNEL}"
 
           setup=$(find artifacts/windows -name '*.exe' | head -n 1)
           cp "$setup" "out/${SUFFIX}-windows-x64-setup.exe"
@@ -195,7 +195,9 @@ jobs:
           (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 
           cd out
-          sha256sum * > SHA256SUMS.txt
+          for file in "${SUFFIX}-windows-x64-setup.exe" "${SUFFIX}-android.apk" "${SUFFIX}-web.zip"; do
+            sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
+          done
           ls -l
 
       - name: 滚动渠道先删除旧发布
