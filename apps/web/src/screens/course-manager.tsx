@@ -9,7 +9,7 @@ import {
   type TimeSlotRow,
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
-import { Card, CardTitle } from '../components/ui/card.tsx';
+import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { CourseForm } from './course-form.tsx';
@@ -99,13 +99,7 @@ export function CourseManager({
   }
 
   return (
-    <Card className="flex flex-col gap-3">
-      <CardTitle className="flex items-center gap-2">
-        <BookOpen className="size-4" aria-hidden />
-        课程管理
-        <span className="text-xs font-normal text-muted">{courses.length} 门</span>
-      </CardTitle>
-
+    <CollapsibleCard id="courses" title="课程管理" icon={BookOpen} badge={`${courses.length} 门`}>
       {courses.length === 0 ? (
         <span className="text-xs text-muted">当前学期还没有课程，可在导入页添加或导入</span>
       ) : (
@@ -194,6 +188,6 @@ export function CourseManager({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </CollapsibleCard>
   );
 }

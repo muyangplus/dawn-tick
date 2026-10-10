@@ -11,7 +11,7 @@ import {
   type TimeSlotRow,
 } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
-import { Card, CardTitle } from './ui/card.tsx';
+import { CollapsibleCard } from './ui/collapsible-card.tsx';
 import { Field, Input } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
 import { logInfo } from '../log.ts';
@@ -120,12 +120,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   }
 
   return (
-    <Card className="flex flex-col gap-3">
-      <CardTitle className="flex items-center gap-2">
-        <CalendarRange className="size-4" aria-hidden />
-        时间表
-      </CardTitle>
-
+    <CollapsibleCard id="timetable" title="时间表" icon={CalendarRange}>
       <div className="grid gap-2 tablet:grid-cols-2">
         <Field label="固定上课时长（分钟）">
           <Input
@@ -225,6 +220,6 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         {slots.length === 0 && <li className="text-xs text-muted">还没有课次，先点「自动生成课次」</li>}
       </ul>
       <span className="text-xs text-muted">每节的起止时间可单独修改，用于安排大课间或个别调整。</span>
-    </Card>
+    </CollapsibleCard>
   );
 }

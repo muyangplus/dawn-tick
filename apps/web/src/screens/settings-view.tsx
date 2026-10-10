@@ -32,7 +32,7 @@ import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
 import { Button } from '../components/ui/button.tsx';
-import { Card, CardTitle } from '../components/ui/card.tsx';
+import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
@@ -296,12 +296,8 @@ export function SettingsView({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card className="flex flex-col gap-3">
-        <CardTitle className="flex items-center gap-2">
-          <BadgeCheck className="size-4" aria-hidden />
-          学期设置
-        </CardTitle>
+    <div className="flex flex-col gap-3">
+      <CollapsibleCard id="semesters" title="学期设置" icon={BadgeCheck} badge={`${semesters.length} 个`}>
         {semesters.length > 0 && (
           <ul className="flex flex-col gap-1">
             {semesters.map((semester) => (
@@ -369,7 +365,7 @@ export function SettingsView({
             </Button>
           </div>
         </details>
-      </Card>
+      </CollapsibleCard>
 
       <PeriodSettings storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
 
@@ -385,11 +381,7 @@ export function SettingsView({
         />
       )}
 
-      <Card className="flex flex-col gap-3">
-        <CardTitle className="flex items-center gap-2">
-          <Bell className="size-4" aria-hidden />
-          提醒设置
-        </CardTitle>
+      <CollapsibleCard id="reminders" title="提醒设置" icon={Bell}>
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
           <span>通知权限：{PERMISSION_LABEL[reminders.permission]}</span>
           <Button
@@ -407,13 +399,9 @@ export function SettingsView({
           {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
         </span>
         <span className="text-xs text-muted">在课表里点击课程即可设置课前 5/10/15/30 分钟或自定义提醒。</span>
-      </Card>
+      </CollapsibleCard>
 
-      <Card className="flex flex-col gap-3">
-        <CardTitle className="flex items-center gap-2">
-          <Palette className="size-4" aria-hidden />
-          外观
-        </CardTitle>
+      <CollapsibleCard id="appearance" title="外观" icon={Palette}>
         <Field label="主题风格">
           <Select
             value={settings.themePreset}
@@ -492,15 +480,11 @@ export function SettingsView({
           />
           时区跟随设备
         </label>
-      </Card>
+      </CollapsibleCard>
 
       <StartupSettings supported={isAutoStartSupported()} settings={settings} onPatch={onPatch} />
 
-      <Card className="flex flex-col gap-3">
-        <CardTitle className="flex items-center gap-2">
-          <Database className="size-4" aria-hidden />
-          同步与数据
-        </CardTitle>
+      <CollapsibleCard id="data" title="同步与数据" icon={Database}>
         <span className="text-xs text-muted">本地存储：{storageKind}</span>
         <span className="text-xs text-muted">
           浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
@@ -537,13 +521,9 @@ export function SettingsView({
           />
         </div>
         {backupMessage !== null && <span className="text-xs text-muted">{backupMessage}</span>}
-      </Card>
+      </CollapsibleCard>
 
-      <Card className="flex flex-col gap-2">
-        <CardTitle className="flex items-center gap-2">
-          <Info className="size-4" aria-hidden />
-          关于
-        </CardTitle>
+      <CollapsibleCard id="about" title="关于" icon={Info}>
         <span className="text-xs text-muted">晓刻 DawnTick · 课表与日程提醒工具</span>
         <span className="tabular text-xs text-muted">
           版本 {appVersion()} · {CHANNEL_LABEL[CHANNEL]}
@@ -552,7 +532,7 @@ export function SettingsView({
         <a className="text-xs text-primary-strong underline" href="https://github.com/muyangplus/dawn-tick">
           https://github.com/muyangplus/dawn-tick
         </a>
-      </Card>
+      </CollapsibleCard>
 
       <Dialog
         open={editing !== null}

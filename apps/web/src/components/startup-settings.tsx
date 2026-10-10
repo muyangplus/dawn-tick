@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Power } from 'lucide-react';
 import type { AppSettings } from '@dawn-tick/core';
-import { Card, CardTitle } from './ui/card.tsx';
+import { CollapsibleCard } from './ui/collapsible-card.tsx';
 import { Switch } from './ui/controls.tsx';
 import { Button } from './ui/button.tsx';
 import { elevateAutoStart, readAutoStart, saveStartupPrefs, writeAutoStart } from '../autostart.ts';
@@ -89,12 +89,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
   if (!supported) return null;
 
   return (
-    <Card className="flex flex-col gap-3">
-      <CardTitle className="flex items-center gap-2">
-        <Power className="size-4" aria-hidden />
-        启动
-      </CardTitle>
-
+    <CollapsibleCard id="startup" title="启动" icon={Power}>
       <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
         <span className="flex flex-col">
           <span>开机自动启动</span>
@@ -127,6 +122,6 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
       </label>
 
       {message !== null && <span className="text-xs text-muted">{message}</span>}
-    </Card>
+    </CollapsibleCard>
   );
 }

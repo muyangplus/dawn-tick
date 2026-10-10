@@ -72,6 +72,16 @@ function clickByText(container: HTMLElement, label: string): boolean {
   return true;
 }
 
+/** 卡片式按钮的文字后面还有说明，用前缀匹配。 */
+function clickByTextStart(container: HTMLElement, prefix: string): boolean {
+  const button = [...container.querySelectorAll('button')].find((item) =>
+    (item.textContent ?? '').trim().startsWith(prefix),
+  );
+  if (button === undefined) return false;
+  button.click();
+  return true;
+}
+
 function clickByLabel(container: HTMLElement, prefix: string): boolean {
   const button = container.querySelector(`button[aria-label^="${prefix}"]`);
   if (!(button instanceof HTMLElement)) return false;
@@ -83,11 +93,26 @@ function hasLabel(container: HTMLElement, prefix: string): boolean {
   return container.querySelector(`button[aria-label^="${prefix}"]`) !== null;
 }
 
-function setInputValue(input: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-  setter?.call(input, value);
-  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+function clickByAriaPrefix(container: HTMLElement, prefix: string): boolean {
+  const element = container.querySelector(`button[aria-label^="${prefix}"]`);
+  if (!(element instanceof HTMLElement)) return false;
+  element.click();
+  return true;
 }
+
+function setInputValue(element: HTMLElement, value: string): void {
+  const prototype =
+    element instanceof window.HTMLTextAreaElement
+      ? window.HTMLTextAreaElement.prototype
+      : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(element, value);
+  element.dispatchEvent(new window.Event('input', { bubbles: true }));
+}
+
+const PAGE_SAMPLE = `<table id="kbtable"><tr>
+  <td id="1-1"><div><span class="title">网页导入课程</span><p>张老师</p><p>教三-401</p><p>1-16周</p></div></td>
+  <td id="2-1"><div><span class="title">网页导入课程二</span><p>李老师</p><p>理科楼-201</p><p>2-16周(双)</p></div></td>
+</tr></table>`;
 
 export async function runSmoke(): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
@@ -136,6 +161,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(8);
   check('搜索弹窗渲染', (document.body.textContent ?? '').includes('输入关键词开始搜索'), '');
   check('回到课表', switchedToTimeline, '');
+
+  clickByText(view.container, '导入');
+  await flush(10);
+  const importText = view.container.textContent ?? '';
+  check('导入页提供网页课表方式', importText.includes('网页课表') && importText.includes('自己登录后粘贴'), '');
+  if (clickByTextStart(view.container, '网页课表')) await flush(10);
+  check(
+    '网页导入提供书签与粘贴',
+    view.container.querySelector('textarea[aria-label="书签小工具代码"]') !== null &&
+      view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]') !== null &&
+      (view.container.textContent ?? '').includes('识别并预览'),
+    '',
+  );
+  const pasteBox = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
+  if (pasteBox instanceof window.HTMLTextAreaElement) {
+    setInputValue(pasteBox, PAGE_SAMPLE);
+    await flush(6);
+    if (clickByText(view.container, '识别并预览')) await flush(22);
+  }
+  check('网页识别进入预览', (view.container.textContent ?? '').includes('解析到'), '');
   if (clickByText(document.body, '取消') === false) {
     // 弹窗没有取消按钮时直接继续，不影响后续断言
   }
@@ -166,6 +211,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('input[aria-label="第 1 节结束时间"]') !== null,
     '',
   );
+
+  const hadAppearance = (view.container.textContent ?? '').includes('主题风格');
+  if (clickByAriaPrefix(view.container, '外观')) await flush(8);
+  const collapsedAppearance = !(view.container.textContent ?? '').includes('主题风格');
+  check('设置项可收起', hadAppearance && collapsedAppearance, '');
+  if (clickByAriaPrefix(view.container, '外观')) await flush(8);
+  check('设置项可再展开', (view.container.textContent ?? '').includes('主题风格'), '');
 
   const beforePeriods = startInputs(view.container).length;
   if (clickByText(view.container, '自动生成课次')) await flush(26);

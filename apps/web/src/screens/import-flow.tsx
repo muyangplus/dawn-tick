@@ -1,7 +1,9 @@
 import { useRef, useState } from 'react';
-import { FileSpreadsheet, FileText, Globe, PencilLine } from 'lucide-react';
+import { Bookmark, FileSpreadsheet, FileText, Globe, PencilLine } from 'lucide-react';
 import {
+  PAGE_BOOKMARKLET,
   applyImport,
+  extractTimetableFromHtml,
   fetchTimetable,
   icsToSchedules,
   loadSemester,
@@ -9,6 +11,7 @@ import {
   parseIcs,
   parseTimetableMatrix,
   listTimeSlots,
+  stripPageMarkers,
   type ImportedSchedule,
   type Storage,
 } from '@dawn-tick/core';
@@ -20,11 +23,12 @@ import { createPlatformFetch, fetchHint } from '../http.ts';
 import { logError, logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
 
-type Method = 'jwglxt' | 'file' | 'ics' | 'manual';
+type Method = 'page' | 'jwglxt' | 'file' | 'ics' | 'manual';
 type Step = 1 | 2 | 3 | 4;
 
 const METHODS: Array<{ id: Method; label: string; icon: typeof Globe; hint: string }> = [
-  { id: 'jwglxt', label: '教务系统', icon: Globe, hint: '正方教务' },
+  { id: 'page', label: '网页课表', icon: Bookmark, hint: '自己登录后粘贴课表页' },
+  { id: 'jwglxt', label: '正方教务', icon: Globe, hint: '程序代登录抓取' },
   { id: 'file', label: 'CSV / Excel', icon: FileSpreadsheet, hint: '二维矩阵' },
   { id: 'ics', label: 'ICS', icon: FileText, hint: '日历文件' },
   { id: 'manual', label: '手动添加', icon: PencilLine, hint: '逐门录入' },
@@ -71,6 +75,36 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [password, setPassword] = useState('');
   const [xnm, setXnm] = useState('');
   const [xqm, setXqm] = useState('');
+  const [pageText, setPageText] = useState('');
+  const [bookmarkCopied, setBookmarkCopied] = useState(false);
+
+  async function copyBookmarklet(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(PAGE_BOOKMARKLET);
+      setBookmarkCopied(true);
+      toast.success('已复制，粘贴到浏览器书签的地址栏');
+    } catch {
+      setError('浏览器未允许写入剪贴板，请手动复制下方代码');
+    }
+  }
+
+  /** 通用网页导入：识别粘贴进来的课表页面，不绑定具体学校。 */
+  function runPage(): void {
+    setError(null);
+    const html = stripPageMarkers(pageText);
+    const result = extractTimetableFromHtml(html);
+    if (result.schedules.length === 0) {
+      setError(result.warnings.join('；'));
+      logError('page-import', '未识别到课表', { shape: result.shape, tables: result.tables });
+      return;
+    }
+    logInfo('page-import', '识别课表页面', {
+      shape: result.shape,
+      tables: result.tables,
+      schedules: result.schedules.length,
+    });
+    accept(result.schedules, result.warnings);
+  }
 
   function accept(next: ImportedSchedule[], nextWarnings: string[]): void {
     setSchedules(next);
@@ -222,6 +256,43 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             );
           })}
         </div>
+      )}
+
+      {step === 2 && method === 'page' && (
+        <Card className="flex flex-col gap-3">
+          <span className="text-sm text-ink">1. 在浏览器里自行登录教务并打开课表页</span>
+          <span className="text-xs text-muted">
+            2. 把下面代码存成书签：新建书签，名称随意，地址粘贴这段代码；在课表页点一下该书签，页面内容会复制到剪贴板
+          </span>
+          <textarea
+            readOnly
+            value={PAGE_BOOKMARKLET}
+            aria-label="书签小工具代码"
+            className="h-20 w-full rounded-md border border-line bg-surface-muted p-2 text-[11px] text-muted"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => void copyBookmarklet()}>
+              复制书签代码
+            </Button>
+            {bookmarkCopied && <span className="text-xs text-muted">已复制</span>}
+          </div>
+          <span className="text-sm text-ink">3. 回到这里粘贴，自动识别课表</span>
+          <textarea
+            value={pageText}
+            aria-label="粘贴课表页面内容"
+            placeholder="把课表页面的内容（或书签复制的内容）粘贴到这里"
+            onChange={(event) => setPageText(event.target.value)}
+            className="h-28 w-full rounded-md border border-line bg-surface p-2 text-xs text-ink"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="primary" disabled={busy || pageText.trim().length === 0} onClick={runPage}>
+              识别并预览
+            </Button>
+            <Button variant="ghost" onClick={() => setStep(1)}>
+              返回
+            </Button>
+          </div>
+        </Card>
       )}
 
       {step === 2 && method === 'jwglxt' && (
