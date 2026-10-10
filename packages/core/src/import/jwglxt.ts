@@ -22,7 +22,7 @@ function stripTags(html: string): string {
 /** 解析正方课表页：新版为按 `id="日-节"` 标记的网格，旧版为 kbtable 表格。 */
 export function parseTimetableCells(html: string): JwglxtCell[] {
   const cells: JwglxtCell[] = [];
-  const grid = /<td\b[^>]*id\s*=\s*["'](\d+)-(\d+)["'][^>]*>([\s\S]*?)<\/td>/gi;
+  const grid = /<td\b[^>]*id\s*=\s*["'](\d{1,2})[-_](\d{1,2})["'][^>]*>([\s\S]*?)<\/td>/gi;
   for (const match of html.matchAll(grid)) {
     const day = Number(match[1]);
     const period = Number(match[2]);

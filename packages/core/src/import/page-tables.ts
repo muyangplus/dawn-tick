@@ -262,7 +262,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
     };
   }
 
-  if (/id\s*=\s*["']?\d{1,2}-\d{1,2}["']?/i.test(html) || /id\s*=\s*["']?kbtable/i.test(html)) {
+  if (/id\s*=\s*["']?\d{1,2}[-_]\d{1,2}["']?/i.test(html) || /id\s*=\s*["']?kbtable/i.test(html)) {
     const cells = parseTimetableCells(html);
     if (cells.length > 0) {
       const parsed = parseTimetable(html, { totalWeeks });
@@ -326,8 +326,13 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
   }
 
   if (best === null || best.schedules.length === 0) {
-    warnings.push('未在页面中识别到课表，请确认已打开课表页，或改用文件导入');
-    return { schedules: [], warnings, shape: 'none', tables: tables.length };
+    const tableCount = tables.length;
+    const frameCount = countPastedFrames(html);
+    warnings.push(
+      `未在页面中识别到课表（表格 ${tableCount} 个，页面片段 ${frameCount} 段）。` +
+        '请确认已打开课表页；若课表在弹窗或新标签页中，请在该页面点击书签后重新粘贴',
+    );
+    return { schedules: [], warnings, shape: 'none', tables: tableCount };
   }
   if (best.headerRow > 0) warnings.push('表头不在首行，已按识别到的星期列解析');
   if (system.id !== 'unknown') warnings.push(`页面形态：${system.label}`);
@@ -336,7 +341,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
 
 /** 页面里是否出现了课表特征，用于判断用户是否已到课表页。 */
 export function looksLikeTimetablePage(html: string): boolean {
-  if (/id\s*=\s*["']?\d{1,2}-\d{1,2}["']?/i.test(html)) return true;
+  if (/id\s*=\s*["']?\d{1,2}[-_]\d{1,2}["']?/i.test(html)) return true;
   const tables = parseTables(html);
   for (const rows of tables) {
     for (const row of rows.slice(0, 3)) {
@@ -351,9 +356,21 @@ export function looksLikeTimetablePage(html: string): boolean {
   return false;
 }
 
-/** 书签小工具：在教务页面点一下即把页面源码复制到剪贴板。 */
-export const PAGE_BOOKMARKLET = `javascript:(()=>{const h='<<<DAWNTICK>>>'+document.documentElement.outerHTML+'<<<END>>>';navigator.clipboard.writeText(h).then(()=>alert('课表页面已复制，回到晓刻粘贴即可')).catch(()=>prompt('复制下面的内容，回晓刻粘贴',h));})();`;
+/** 多帧页面之间的分隔标记，书签小工具用它拼接同源 iframe 内容。 */
+export const PAGE_FRAME_SEPARATOR = '<<<FRAME>>>';
+
+/**
+ * 书签小工具：在教务页面点一下即把页面源码复制到剪贴板。
+ * 同时收集同源 iframe（最多两层），因为多数教务系统把课表放在 iframe 内。
+ */
+export const PAGE_BOOKMARKLET = `javascript:(()=>{const seen=new Set();const out=[];const walk=(doc,d)=>{if(!doc||d>2||seen.has(doc))return;seen.add(doc);try{out.push(doc.documentElement.outerHTML)}catch(e){};let frames=[];try{frames=[...doc.querySelectorAll('iframe,frame')]}catch(e){};frames.forEach(f=>{try{walk(f.contentDocument,d+1)}catch(e){}})};walk(document,0);const h='<<<DAWNTICK>>>'+out.join('${PAGE_FRAME_SEPARATOR}')+'<<<END>>>';navigator.clipboard.writeText(h).then(()=>alert('已复制 '+out.length+' 个页面内容（含 iframe），回晓刻粘贴即可')).catch(()=>prompt('复制下面的内容，回晓刻粘贴',h));})();`;
 
 export function stripPageMarkers(text: string): string {
   return text.replace(/^[\s\S]*?<<<DAWNTICK>>>/, '').replace(/<<<END>>>[\s\S]*$/, '');
+}
+
+/** 粘贴内容里包含的页面片段数量（书签会拼接同源 iframe）。 */
+export function countPastedFrames(text: string): number {
+  const body = stripPageMarkers(text);
+  return body.split(PAGE_FRAME_SEPARATOR).length;
 }

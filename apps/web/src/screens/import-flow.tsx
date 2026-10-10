@@ -3,6 +3,7 @@ import { Bookmark, FileSpreadsheet, FileText, PencilLine, SlidersHorizontal } fr
 import {
   PAGE_BOOKMARKLET,
   applyImport,
+  countPastedFrames,
   extractTimetableFromHtml,
   icsToSchedules,
   inspectPage,
@@ -119,12 +120,17 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     const result = extractTimetableFromHtml(html);
     if (result.schedules.length === 0) {
       setError(result.warnings.join('；'));
-      logError('page-import', '未识别到课表', { shape: result.shape, tables: result.tables });
+      logError('page-import', '未识别到课表', {
+        shape: result.shape,
+        tables: result.tables,
+        frames: countPastedFrames(pageText),
+      });
       return;
     }
     logInfo('page-import', '识别课表页面', {
       shape: result.shape,
       tables: result.tables,
+      frames: countPastedFrames(pageText),
       schedules: result.schedules.length,
     });
     accept(result.schedules, result.warnings);

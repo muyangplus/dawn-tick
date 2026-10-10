@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PAGE_BOOKMARKLET,
+  PAGE_FRAME_SEPARATOR,
+  countPastedFrames,
   detectSystem,
   extractTimetableFromHtml,
   inspectPage,
@@ -93,7 +95,39 @@ test('书签小工具标记可剥离', () => {
   assert.equal(stripPageMarkers(payload), '<table></table>');
   assert.match(PAGE_BOOKMARKLET, /^javascript:/);
   assert.match(PAGE_BOOKMARKLET, /<<<DAWNTICK>>>/);
+  assert.match(PAGE_BOOKMARKLET, /iframe/, '书签需收集 iframe 内容');
   assert.equal(stripPageMarkers(GRID_PAGE), GRID_PAGE, '无标记时原样返回');
+});
+
+test('课表在 iframe 里也能识别', () => {
+  const outer = `<html><head><title>个人课表查询</title></head><body><iframe id="iframe1" src="/jwglxt/xskb/xskb_list.do"></iframe></body></html>`;
+  const pasted = `<<<DAWNTICK>>>${outer}${PAGE_FRAME_SEPARATOR}${GRID_PAGE}<<<END>>>`;
+
+  assert.equal(countPastedFrames(pasted), 2);
+  const result = extractTimetableFromHtml(stripPageMarkers(pasted), { totalWeeks: 20 });
+  assert.equal(result.shape, 'grid');
+  assert.equal(result.schedules.length, 3);
+  assert.equal(result.schedules[0]?.courseName, '高等数学');
+});
+
+test('识别失败时给出页面诊断', () => {
+  const result = extractTimetableFromHtml(`<<<DAWNTICK>>>${OTHER_PAGE}<<<END>>>`);
+  assert.equal(result.schedules.length, 0);
+  assert.match(result.warnings.join('；'), /表格 \d+ 个/);
+  assert.match(result.warnings.join('；'), /页面片段 \d+ 段/);
+});
+
+test('兼容下划线分隔的日-节网格', () => {
+  const page = `<table><tr>
+    <td id="1_1"><div><span class="title">下划线网格课程</span><p>张老师</p><p>教三-101</p><p>1-16周</p></div></td>
+    <td id="4_3"><div><span class="title">下划线网格课程二</span><p>1-8周</p></div></td>
+  </tr></table>`;
+  const result = extractTimetableFromHtml(page, { totalWeeks: 20 });
+  assert.equal(result.shape, 'grid');
+  assert.equal(result.schedules.length, 2);
+  assert.equal(result.schedules[0]?.dayOfWeek, 1);
+  assert.equal(result.schedules[1]?.dayOfWeek, 4);
+  assert.equal(result.schedules[1]?.periodStart, 3);
 });
 
 test('识别常见教务系统标记', () => {
