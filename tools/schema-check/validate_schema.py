@@ -1,5 +1,13 @@
-"""一次性校验脚本（非项目代码）：验证 docs/01 草案 DDL 在真实 SQLite 上是否成立。
-运行：python tmp/validate_schema.py
+"""数据模型 v2 校验脚本（非产品代码）。
+
+对应文档：docs/01-数据模型设计.md（v2）
+运行：python tools/schema-check/validate_schema.py
+
+v2 相对 v1 的变化：
+  - course_schedules 周次改为位图 weeks_mask（+ weeks_raw 保留原文），删除 week_start/week_end/week_type
+  - 删除 course_adjustments / day_overrides，调课与调休并入 events（7 种 type + 条件 CHECK）
+  - courses 增加 short_name / credits / note
+  - time_slots.period_no 上界 20 -> 40，新增 section
 """
 import sqlite3
 import sys
@@ -30,10 +38,11 @@ CREATE UNIQUE INDEX ux_semesters_active
 CREATE TABLE time_slots (
   id          TEXT PRIMARY KEY,
   semester_id TEXT NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
-  period_no   INTEGER NOT NULL CHECK (period_no BETWEEN 1 AND 20),
+  period_no   INTEGER NOT NULL CHECK (period_no BETWEEN 1 AND 40),
   start_time  TEXT NOT NULL,
   end_time    TEXT NOT NULL,
   label       TEXT,
+  section     TEXT CHECK (section IN ('am','pm','night')),
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
   deleted_at  INTEGER
@@ -46,9 +55,11 @@ CREATE TABLE courses (
   id          TEXT PRIMARY KEY,
   semester_id TEXT NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
   name        TEXT NOT NULL,
+  short_name  TEXT,
   teacher     TEXT,
   location    TEXT,
   color       TEXT NOT NULL DEFAULT '#4F8DFD',
+  credits     REAL CHECK (credits IS NULL OR credits >= 0),
   note        TEXT,
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL,
@@ -57,25 +68,61 @@ CREATE TABLE courses (
 CREATE INDEX ix_courses_semester ON courses(semester_id);
 
 CREATE TABLE course_schedules (
-  id           TEXT PRIMARY KEY,
-  course_id    TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-  day_of_week  INTEGER NOT NULL CHECK (day_of_week BETWEEN 1 AND 7),
-  period_start INTEGER NOT NULL CHECK (period_start BETWEEN 1 AND 20),
-  period_end   INTEGER NOT NULL CHECK (period_end   BETWEEN 1 AND 20),
-  week_start   INTEGER NOT NULL DEFAULT 1  CHECK (week_start BETWEEN 1 AND 30),
-  week_end     INTEGER NOT NULL DEFAULT 20 CHECK (week_end   BETWEEN 1 AND 30),
-  week_type    TEXT NOT NULL DEFAULT 'all'
-                 CHECK (week_type IN ('all','odd','even','custom')),
-  weeks        TEXT,
-  room         TEXT,
-  created_at   INTEGER NOT NULL,
-  updated_at   INTEGER NOT NULL,
-  deleted_at   INTEGER,
-  CHECK (period_end >= period_start),
-  CHECK (week_end  >= week_start)
+  id            TEXT PRIMARY KEY,
+  course_id     TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  day_of_week   INTEGER NOT NULL CHECK (day_of_week BETWEEN 1 AND 7),
+  period_start  INTEGER NOT NULL CHECK (period_start BETWEEN 1 AND 40),
+  period_end    INTEGER NOT NULL CHECK (period_end   BETWEEN 1 AND 40),
+  weeks_mask    INTEGER NOT NULL CHECK (weeks_mask > 0),
+  weeks_raw     TEXT,
+  room          TEXT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  deleted_at    INTEGER,
+  CHECK (period_end >= period_start)
 );
 CREATE INDEX ix_schedules_course ON course_schedules(course_id);
 CREATE INDEX ix_schedules_day    ON course_schedules(day_of_week);
+
+CREATE TABLE events (
+  id               TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  semester_id      TEXT REFERENCES semesters(id) ON DELETE SET NULL,
+  type             TEXT NOT NULL CHECK (type IN (
+                     'exam','todo','temp','reschedule','holiday','makeup','workday')),
+  title            TEXT NOT NULL,
+  on_date          TEXT,
+  start_at         TEXT,
+  end_at           TEXT,
+  all_day          INTEGER NOT NULL DEFAULT 0,
+  location         TEXT,
+  note             TEXT,
+  done             INTEGER NOT NULL DEFAULT 0,
+  ref_schedule_id  TEXT REFERENCES course_schedules(id) ON DELETE CASCADE,
+  action           TEXT CHECK (action IN ('move','cancel','room_change','add')),
+  new_date         TEXT,
+  new_period_start INTEGER CHECK (new_period_start BETWEEN 1 AND 40),
+  new_period_end   INTEGER CHECK (new_period_end   BETWEEN 1 AND 40),
+  new_room         TEXT,
+  as_day_of_week   INTEGER CHECK (as_day_of_week BETWEEN 1 AND 7),
+  source           TEXT CHECK (source IN ('builtin','manual','from_school')),
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  deleted_at       INTEGER,
+
+  CHECK (type <> 'reschedule' OR (ref_schedule_id IS NOT NULL AND action IS NOT NULL)),
+  CHECK (type <> 'reschedule' OR action <> 'move' OR new_date IS NOT NULL),
+  CHECK (type NOT IN ('holiday','makeup','workday') OR on_date IS NOT NULL),
+  CHECK (type <> 'makeup'      OR as_day_of_week IS NOT NULL),
+  CHECK (type <> 'reschedule'  OR (new_period_end IS NULL OR new_period_start IS NOT NULL)),
+  CHECK (new_period_end IS NULL OR new_period_start IS NULL OR new_period_end >= new_period_start)
+);
+CREATE INDEX ix_events_user_time ON events(user_id, start_at);
+CREATE INDEX ix_events_semester  ON events(semester_id);
+CREATE INDEX ix_events_type_date ON events(type, on_date);
+CREATE UNIQUE INDEX ux_events_day_kind
+  ON events(semester_id, on_date)
+  WHERE type IN ('holiday','makeup','workday') AND deleted_at IS NULL;
 
 CREATE TABLE reminders (
   id              TEXT PRIMARY KEY,
@@ -91,79 +138,23 @@ CREATE TABLE reminders (
 );
 CREATE INDEX ix_reminders_target ON reminders(target_type, target_id);
 
-CREATE TABLE events (
-  id          TEXT PRIMARY KEY,
-  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  semester_id TEXT REFERENCES semesters(id) ON DELETE SET NULL,
-  type        TEXT NOT NULL CHECK (type IN ('exam','todo','reschedule','temp')),
-  title       TEXT NOT NULL,
-  start_at    TEXT,
-  end_at      TEXT,
-  all_day     INTEGER NOT NULL DEFAULT 0,
-  location    TEXT,
-  note        TEXT,
-  done        INTEGER NOT NULL DEFAULT 0,
-  remind_at   INTEGER,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  deleted_at  INTEGER
-);
-CREATE INDEX ix_events_user_time ON events(user_id, start_at);
-CREATE INDEX ix_events_semester  ON events(semester_id);
-CREATE INDEX ix_events_type      ON events(type);
-
-CREATE TABLE course_adjustments (
-  id                TEXT PRIMARY KEY,
-  schedule_id       TEXT NOT NULL REFERENCES course_schedules(id) ON DELETE CASCADE,
-  original_date     TEXT NOT NULL,
-  new_date          TEXT,
-  new_period_start  INTEGER,
-  new_period_end    INTEGER,
-  new_room          TEXT,
-  action            TEXT NOT NULL CHECK (action IN ('move','cancel','room_change','add')),
-  note              TEXT,
-  created_at        INTEGER NOT NULL,
-  updated_at        INTEGER NOT NULL,
-  deleted_at        INTEGER
-);
-CREATE INDEX ix_adjust_schedule ON course_adjustments(schedule_id);
-CREATE INDEX ix_adjust_dates    ON course_adjustments(original_date, new_date);
-
-CREATE TABLE day_overrides (
-  id             TEXT PRIMARY KEY,
-  semester_id    TEXT NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
-  date           TEXT NOT NULL,
-  kind           TEXT NOT NULL CHECK (kind IN ('holiday','makeup','workday')),
-  as_day_of_week INTEGER CHECK (as_day_of_week BETWEEN 1 AND 7),
-  name           TEXT,
-  created_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL,
-  deleted_at     INTEGER
-);
-CREATE UNIQUE INDEX ux_day_overrides ON day_overrides(semester_id, date)
-  WHERE deleted_at IS NULL;
-
 CREATE TABLE app_meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 """
 
-# 第 N 周某天的课（周视图核心查询）
+# 第 N 周某天的课（位图判定，不依赖 SQLite JSON 函数）
 WEEK_VIEW_SQL = """
-SELECT c.name, c.color, s.period_start, s.period_end, COALESCE(s.room, c.location) AS room
-FROM course_schedules s
-JOIN courses c ON c.id = s.course_id
+SELECT c.name, c.short_name, c.color, cs.period_start, cs.period_end,
+       COALESCE(cs.room, c.location) AS room
+FROM course_schedules cs
+JOIN courses c ON c.id = cs.course_id
 WHERE c.semester_id = :sid
-  AND s.day_of_week = :dow
-  AND :week BETWEEN s.week_start AND s.week_end
-  AND ( s.week_type = 'all'
-     OR (s.week_type = 'odd'  AND :week % 2 = 1)
-     OR (s.week_type = 'even' AND :week % 2 = 0)
-     OR (s.week_type = 'custom'
-         AND EXISTS (SELECT 1 FROM json_each(s.weeks) WHERE json_each.value = :week)) )
-  AND s.deleted_at IS NULL AND c.deleted_at IS NULL
-ORDER BY s.period_start
+  AND cs.day_of_week = :dow
+  AND (cs.weeks_mask >> (:week - 1)) & 1 = 1
+  AND cs.deleted_at IS NULL AND c.deleted_at IS NULL
+ORDER BY cs.period_start
 """
 
 results = []
@@ -178,13 +169,17 @@ def fail(name, detail=""):
 
 
 def expect_reject(name, fn):
-    """期望这条 SQL 被数据库拒绝"""
     try:
         fn()
     except sqlite3.Error as e:
         ok(name, f"按预期被拒绝: {type(e).__name__}")
         return
     fail(name, "本应被拒绝，但成功了")
+
+
+def mask_of(weeks):
+    """把周次集合编成位图：第 N 周 -> 第 (N-1) 位"""
+    return sum(1 << (w - 1) for w in weeks)
 
 
 con = sqlite3.connect(":memory:")
@@ -207,191 +202,246 @@ NOW = 1759900000000
 U = "user-1"
 S1 = "sem-1"
 S2 = "sem-2"
-C1 = "course-1"
 
-con.execute("INSERT INTO users VALUES (?,?,?,?,NULL)", (U, "我", NOW, NOW))
+
+def add_time_slot(sid, no, st, en, sec):
+    con.execute(
+        "INSERT INTO time_slots (id,semester_id,period_no,start_time,end_time,label,section,"
+        "created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (sid, S1, no, st, en, None, sec, NOW, NOW),
+    )
+
+
+def add_course(cid, name, short, teacher, loc, color, credits, note):
+    con.execute(
+        "INSERT INTO courses (id,semester_id,name,short_name,teacher,location,color,credits,"
+        "note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (cid, S1, name, short, teacher, loc, color, credits, note, NOW, NOW),
+    )
+
+
+def add_schedule(sid, course, dow, ps, pe, mask, raw=None, room=None):
+    con.execute(
+        "INSERT INTO course_schedules (id,course_id,day_of_week,period_start,period_end,"
+        "weeks_mask,weeks_raw,room,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (sid, course, dow, ps, pe, mask, raw, room, NOW, NOW),
+    )
+
+
+EVENT_COLS = (
+    "id,user_id,semester_id,type,title,on_date,start_at,end_at,all_day,location,note,done,"
+    "ref_schedule_id,action,new_date,new_period_start,new_period_end,new_room,"
+    "as_day_of_week,source,created_at,updated_at"
+)
+
+
+def insert_event(**kw):
+    vals = {
+        "id": "e-x", "user_id": U, "semester_id": S1, "type": "temp", "title": "t",
+        "on_date": None, "start_at": None, "end_at": None, "all_day": 0, "location": None,
+        "note": None, "done": 0, "ref_schedule_id": None, "action": None, "new_date": None,
+        "new_period_start": None, "new_period_end": None, "new_room": None,
+        "as_day_of_week": None, "source": None, "created_at": NOW, "updated_at": NOW,
+    }
+    vals.update(kw)
+    cols = EVENT_COLS.split(",")
+    con.execute(
+        f"INSERT INTO events ({EVENT_COLS}) VALUES ({','.join(['?'] * len(cols))})",
+        tuple(vals[c] for c in cols),
+    )
+
+
+# ---------- 基础数据 ----------
 con.execute(
-    "INSERT INTO semesters VALUES (?,?,?,?,?,?,?,?,NULL)",
+    "INSERT INTO users (id,nickname,created_at,updated_at) VALUES (?,?,?,?)",
+    (U, "我", NOW, NOW),
+)
+con.execute(
+    "INSERT INTO semesters (id,user_id,name,start_date,total_weeks,is_active,created_at,updated_at)"
+    " VALUES (?,?,?,?,?,?,?,?)",
     (S1, U, "2026-2027 第一学期", "2026-09-07", 20, 1, NOW, NOW),
 )
-con.execute(
-    "INSERT INTO time_slots VALUES (?,?,?,?,?,?,?,?,NULL)",
-    ("ts-1", S1, 1, "08:00", "08:45", None, NOW, NOW),
-)
-con.execute(
-    "INSERT INTO courses VALUES (?,?,?,?,?,?,?,?,?,NULL)",
-    (C1, S1, "高等数学", "张老师", "教三-201", "#4F8DFD", None, NOW, NOW),
-)
-# 高数：周一 1-2 节，1-16 周
-con.execute(
-    "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-    ("sch-1", C1, 1, 1, 2, 1, 16, "all", None, None, NOW, NOW),
-)
-# 大学物理：周三 3-4 节，仅双周 2-16 周
-con.execute(
-    "INSERT INTO courses VALUES (?,?,?,?,?,?,?,?,?,NULL)",
-    ("course-2", S1, "大学物理", "李老师", "理科楼-105", "#F2994A", None, NOW, NOW),
-)
-con.execute(
-    "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-    ("sch-2", "course-2", 3, 3, 4, 2, 16, "even", None, None, NOW, NOW),
-)
-# 大学英语：周五 5-6 节，仅第 1/3/5/7 周（自定义周次，碎片规则）
-con.execute(
-    "INSERT INTO courses VALUES (?,?,?,?,?,?,?,?,?,NULL)",
-    ("course-3", S1, "大学英语", "王老师", "外语楼-302", "#27AE60", None, NOW, NOW),
-)
-con.execute(
-    "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-    ("sch-3", "course-3", 5, 5, 6, 1, 20, "custom", "[1,3,5,7]", None, NOW, NOW),
-)
-ok("基础数据写入", "用户/学期/节次/3 门课程/3 条排课（含自定义周次）")
 
-# --- 约束校验 ---
+for no, (st, en, sec) in enumerate(
+    [("08:00", "08:45", "am"), ("08:55", "09:40", "am"), ("10:00", "10:45", "am"),
+     ("10:55", "11:40", "am"), ("14:00", "14:45", "pm"), ("14:55", "15:40", "pm")],
+    start=1,
+):
+    add_time_slot(f"ts-{no}", no, st, en, sec)
+
+add_course("c-1", "高等数学", "高数", "张老师", "教三-201", "#4F8DFD", 5.0, None)
+add_course("c-2", "大学物理", "大物", "李老师", "理科楼-105", "#F2994A", 3.5, "需带计算器")
+add_course("c-3", "大学英语", "大英", "王老师", "外语楼-302", "#27AE60", 2.0, None)
+
+# 高数：周一 1-2 节，第 1-16 周（连续）
+add_schedule("s-1", "c-1", 1, 1, 2, mask_of(range(1, 17)), "1-16周")
+# 大物：周三 3-4 节，双周 2-16
+add_schedule("s-2", "c-2", 3, 3, 4, mask_of(range(2, 17, 2)), "2-16周(双)")
+# 大英：周五 5-6 节，仅第 1/3/5/7 周（碎片规则）
+add_schedule("s-3", "c-3", 5, 5, 6, mask_of([1, 3, 5, 7]), "1,3,5,7周")
+ok("基础数据写入", "1 用户 / 1 学期 / 6 节次 / 3 课程 / 3 排课（连续·双周·碎片）")
+
+# ---------- 位图语义 ----------
+for label, weeks, want in [
+    ("第1-16周 = 65535", range(1, 17), 65535),
+    ("第1/3/5/7周 = 85", [1, 3, 5, 7], 85),
+    ("双周2-16 = 43690", range(2, 17, 2), 43690),
+]:
+    got = mask_of(weeks)
+    if got == want:
+        ok(f"位图：{label}", "与手算一致")
+    else:
+        fail(f"位图：{label}", f"得到 {got}，期望 {want}")
+
+# ---------- 约束校验 ----------
 expect_reject(
     "每用户仅一个当前学期（部分唯一索引）",
     lambda: con.execute(
-        "INSERT INTO semesters VALUES (?,?,?,?,?,?,?,?,NULL)",
+        "INSERT INTO semesters (id,user_id,name,start_date,total_weeks,is_active,created_at,"
+        "updated_at) VALUES (?,?,?,?,?,?,?,?)",
         (S2, U, "2026-2027 第二学期", "2027-02-22", 20, 1, NOW, NOW),
     ),
 )
-expect_reject(
-    "节次区间倒置被 CHECK 拦截",
-    lambda: con.execute(
-        "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-        ("sch-bad", C1, 1, 5, 3, 1, 16, "all", None, None, NOW, NOW),
-    ),
-)
-expect_reject(
-    "星期越界(8)被拦截",
-    lambda: con.execute(
-        "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-        ("sch-bad2", C1, 8, 1, 2, 1, 16, "all", None, None, NOW, NOW),
-    ),
-)
+expect_reject("节次区间倒置被 CHECK 拦截", lambda: add_schedule("x1", "c-1", 1, 5, 3, 1))
+expect_reject("星期越界(8)被拦截", lambda: add_schedule("x2", "c-1", 8, 1, 2, 1))
+expect_reject("空周次位图(0)被拦截", lambda: add_schedule("x3", "c-1", 2, 1, 2, 0))
+expect_reject("节次上限 41 被拦截", lambda: add_time_slot("ts-x", 41, "22:00", "22:45", None))
 expect_reject(
     "同学期同节次重复被部分唯一索引拦截",
-    lambda: con.execute(
-        "INSERT INTO time_slots VALUES (?,?,?,?,?,?,?,?,NULL)",
-        ("ts-dup", S1, 1, "09:00", "09:45", None, NOW, NOW),
-    ),
+    lambda: add_time_slot("ts-dup", 1, "09:00", "09:45", None),
 )
+expect_reject("排课指向不存在的课程被外键拦截", lambda: add_schedule("x4", "nope", 2, 1, 2, 1))
 expect_reject(
-    "排课指向不存在的课程被外键拦截",
-    lambda: con.execute(
-        "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-        ("sch-fk", "no-such-course", 2, 1, 2, 1, 16, "all", None, None, NOW, NOW),
-    ),
-)
-expect_reject(
-    "week_type 非法枚举被拦截",
-    lambda: con.execute(
-        "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
-        ("sch-bad3", C1, 2, 1, 2, 1, 16, "every-other", None, None, NOW, NOW),
-    ),
+    "学分负数被拦截",
+    lambda: add_course("c-x", "坏课", None, None, None, "#000000", -1.0, None),
 )
 expect_reject(
     "提前分钟越界(1441)被拦截",
     lambda: con.execute(
-        "INSERT INTO reminders VALUES (?,?,?,?,?,?,?,?,?,NULL)",
-        ("rem-bad", U, "course", C1, 1441, 1, 1, NOW, NOW),
+        "INSERT INTO reminders (id,user_id,target_type,target_id,advance_minutes,enabled,"
+        "skip_holidays,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        ("r-x", U, "course", "c-1", 1441, 1, 1, NOW, NOW),
     ),
 )
 
-# --- 周视图查询校验（这是模型是否可用的关键） ---
+# ---------- events 单表 7 种语义 ----------
+insert_event(id="e-exam", type="exam", title="高等数学期末",
+             start_at="2027-01-10T09:00:00+08:00")
+insert_event(id="e-todo", type="todo", title="交实验报告")
+insert_event(id="e-temp", type="temp", title="班会", start_at="2026-10-15T19:00:00+08:00")
+insert_event(id="e-holiday", type="holiday", title="国庆节", on_date="2026-10-01",
+             source="builtin")
+insert_event(id="e-makeup", type="makeup", title="国庆调休补课", on_date="2026-10-11",
+             as_day_of_week=3, source="from_school")
+insert_event(id="e-move", type="reschedule", title="高数改期", on_date="2026-10-12",
+             ref_schedule_id="s-1", action="move", new_date="2026-10-14",
+             new_period_start=3, new_period_end=4, new_room="教三-305")
+insert_event(id="e-cancel", type="reschedule", title="大物停课", on_date="2026-10-14",
+             ref_schedule_id="s-2", action="cancel")
+ok("events 合法写入", "考试/待办/临时/放假/调休补课/调课改期/调课取消 共 7 条")
+
+expect_reject(
+    "调课缺 ref_schedule_id 被拦截",
+    lambda: insert_event(id="e-bad1", type="reschedule", title="坏调课", action="cancel"),
+)
+expect_reject(
+    "调课 action=move 缺 new_date 被拦截",
+    lambda: insert_event(id="e-bad2", type="reschedule", title="坏调课", on_date="2026-10-12",
+                         ref_schedule_id="s-1", action="move"),
+)
+expect_reject(
+    "放假缺 on_date 被拦截",
+    lambda: insert_event(id="e-bad3", type="holiday", title="坏放假"),
+)
+expect_reject(
+    "调休补课缺 as_day_of_week 被拦截",
+    lambda: insert_event(id="e-bad4", type="makeup", title="坏调休", on_date="2026-10-18"),
+)
+expect_reject(
+    "同学期同一天重复定义放假/调休被拦截",
+    lambda: insert_event(id="e-bad5", type="holiday", title="重复放假", on_date="2026-10-01"),
+)
+expect_reject(
+    "调课新节次区间倒置被拦截",
+    lambda: insert_event(id="e-bad6", type="reschedule", title="坏节次", on_date="2026-10-12",
+                         ref_schedule_id="s-1", action="move", new_date="2026-10-13",
+                         new_period_start=5, new_period_end=3),
+)
+
+# ---------- 周视图查询 ----------
 def week_view(week, dow):
     return con.execute(WEEK_VIEW_SQL, {"sid": S1, "dow": dow, "week": week}).fetchall()
 
 
-r = week_view(3, 1)  # 第 3 周周一 → 应有高数
-if len(r) == 1 and r[0][0] == "高等数学":
-    ok("周视图：第3周周一命中高数 1-2 节", str(r))
+for week, dow, want_name, label in [
+    (3, 1, "高等数学", "第3周周一命中高数 1-2 节"),
+    (3, 3, None, "第3周(单周)周三无双周大物"),
+    (4, 3, "大学物理", "第4周(双周)周三命中大物"),
+    (17, 1, None, "第17周超出周次范围，无课"),
+    (5, 5, "大学英语", "第5周周五命中碎片周次课程"),
+    (6, 5, None, "第6周周五不在周次集合内，无课"),
+    (7, 5, "大学英语", "第7周周五命中周次上界"),
+]:
+    r = week_view(week, dow)
+    if want_name is None:
+        if r == []:
+            ok(f"周视图：{label}", "正确")
+        else:
+            fail(f"周视图：{label}", str(r))
+    else:
+        if len(r) == 1 and r[0][0] == want_name:
+            ok(f"周视图：{label}", str(r))
+        else:
+            fail(f"周视图：{label}", str(r))
+
+# ---------- 调休 / 调课查询 ----------
+r = con.execute(
+    "SELECT type, as_day_of_week, source FROM events WHERE semester_id=? AND on_date=? "
+    "AND type IN ('holiday','makeup','workday') AND deleted_at IS NULL",
+    (S1, "2026-10-11"),
+).fetchall()
+if len(r) == 1 and r[0][0] == "makeup" and r[0][1] == 3:
+    ok("调休查询：10/11 为补课日且按周三上课", str(r))
 else:
-    fail("周视图：第3周周一", str(r))
+    fail("调休查询：10/11", str(r))
 
-r = week_view(3, 3)  # 第 3 周周三，单周 → 物理是双周，应无课
-if r == []:
-    ok("周视图：第3周(单周)周三无双周物理课", "正确")
+r = con.execute(
+    "SELECT action, new_date, new_period_start, new_period_end, new_room FROM events "
+    "WHERE type='reschedule' AND ref_schedule_id=? AND on_date=? AND deleted_at IS NULL",
+    ("s-1", "2026-10-12"),
+).fetchall()
+if len(r) == 1 and r[0][0] == "move" and r[0][1] == "2026-10-14":
+    ok("调课查询：10/12 的高数改到 10/14 第3-4节 教三-305", str(r))
 else:
-    fail("周视图：第3周周三本应无课", str(r))
+    fail("调课查询：s-1 @ 2026-10-12", str(r))
 
-r = week_view(4, 3)  # 第 4 周周三，双周 → 应有物理
-if len(r) == 1 and r[0][0] == "大学物理":
-    ok("周视图：第4周(双周)周三命中物理", str(r))
-else:
-    fail("周视图：第4周周三", str(r))
-
-r = week_view(17, 1)  # 第 17 周，超出 1-16 周范围
-if r == []:
-    ok("周视图：第17周超出周次范围，无课", "正确")
-else:
-    fail("周视图：第17周本应无课", str(r))
-
-# 自定义周次（碎片规则 [1,3,5,7]）—— 用 json_each 查询验证
-r = week_view(5, 5)  # 第 5 周周五 → 自定义周次含 5，应有大学英语
-if len(r) == 1 and r[0][0] == "大学英语":
-    ok("周视图：第5周周五命中自定义周次课程", str(r))
-else:
-    fail("周视图：第5周周五", str(r))
-
-r = week_view(6, 5)  # 第 6 周周五 → [1,3,5,7] 不含 6，应无课
-if r == []:
-    ok("周视图：第6周周五不在自定义周次内，无课", "正确")
-else:
-    fail("周视图：第6周周五本应无课", str(r))
-
-r = week_view(7, 5)  # 第 7 周周五 → 含 7，应有课（边界值验证）
-if len(r) == 1 and r[0][0] == "大学英语":
-    ok("周视图：第7周周五命中自定义周次上界", str(r))
-else:
-    fail("周视图：第7周周五", str(r))
-
-# --- 备选方案验证：周次位图（完全不依赖 JSON 函数，跨平台兼容性更好） ---
-# 背景：json_each 需要 SQLite 启用 JSON 函数；Android 系统自带 SQLite 版本不一，
-#      若不能保证启用，则「位图整数」是更稳的自定义周次方案。
-con.execute("CREATE TABLE _mask_demo (id TEXT PRIMARY KEY, weeks_mask INTEGER NOT NULL)")
-_mask = sum(1 << (w - 1) for w in (1, 3, 5, 7))  # 第 1/3/5/7 周
-con.execute("INSERT INTO _mask_demo VALUES (?,?)", ("d1", _mask))
-
-
-def _mask_has_week(week):
-    return con.execute(
-        "SELECT id FROM _mask_demo WHERE (weeks_mask >> :w) & 1 = 1", {"w": week - 1}
-    ).fetchall()
-
-
-_checks = {5: True, 6: False, 7: True, 8: False, 1: True, 2: False}
-_bad = [w for w, want in _checks.items() if bool(_mask_has_week(w)) != want]
-if not _bad:
-    ok(
-        "备选方案：周次位图查询正确（不依赖 JSON 函数）",
-        f"[1,3,5,7] 在位图下判定全部正确，mask={_mask}",
-    )
-else:
-    fail("备选方案：周次位图判定错误", f"周次 {_bad} 判定不符预期")
-
-# --- 删除课程是否级联 ---
-con.execute("DELETE FROM courses WHERE id=?", ("course-2",))
+# ---------- 级联与软删除 ----------
+con.execute("DELETE FROM courses WHERE id=?", ("c-2",))
 left = con.execute(
-    "SELECT COUNT(*) FROM course_schedules WHERE course_id=?", ("course-2",)
+    "SELECT COUNT(*) FROM course_schedules WHERE course_id=?", ("c-2",)
 ).fetchone()[0]
 if left == 0:
     ok("删除课程级联删除其排课", "ON DELETE CASCADE 生效")
 else:
     fail("删除课程未级联排课", f"剩余 {left} 条")
 
-# --- 软删除与部分唯一索引的相互作用（风险 R3） ---
+con.execute("DELETE FROM course_schedules WHERE id=?", ("s-1",))
+left = con.execute(
+    "SELECT COUNT(*) FROM events WHERE ref_schedule_id=?", ("s-1",)
+).fetchone()[0]
+if left == 0:
+    ok("删除排课级联删除其调课记录", "events.ref_schedule_id 级联生效")
+else:
+    fail("删除排课未级联调课", f"剩余 {left} 条")
+
 con.execute("UPDATE time_slots SET deleted_at=? WHERE id=?", (NOW, "ts-1"))
 try:
-    con.execute(
-        "INSERT INTO time_slots VALUES (?,?,?,?,?,?,?,?,NULL)",
-        ("ts-new", S1, 1, "08:00", "08:45", None, NOW, NOW),
-    )
+    add_time_slot("ts-new", 1, "08:00", "08:45", "am")
     ok("软删除后可在同一节次重建记录", "部分唯一索引按预期放行")
 except sqlite3.Error as e:
     fail("软删除后重建记录被拦", str(e))
 
-print("\n=== 数据模型草案 SQLite 校验结果 ===")
+print("\n=== 数据模型 v2 SQLite 校验结果 ===")
 for status, name, detail in results:
     print(f"[{status}] {name}" + (f"  — {detail}" if detail else ""))
 failed = [r for r in results if r[0] == "FAIL"]
