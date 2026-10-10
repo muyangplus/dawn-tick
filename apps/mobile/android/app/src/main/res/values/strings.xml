@@ -4,4 +4,10 @@
     <string name="title_activity_main">晓刻</string>
     <string name="package_name">com.dawntick.app</string>
     <string name="custom_url_scheme">com.dawntick.app</string>
+    <string name="widget_next_label">下一节课</string>
+    <string name="widget_today_label">今日课表</string>
+    <string name="widget_no_lesson">暂无后续课程</string>
+    <string name="widget_no_data">尚未同步数据</string>
+    <string name="widget_today_header">今日课表 · 第 %1$d 周</string>
+    <string name="widget_today_empty">今天没有课</string>
 </resources>

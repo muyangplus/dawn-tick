@@ -1,20 +1,17 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const crossOriginIsolation = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp',
-};
+const root = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
-  server: {
-    headers: crossOriginIsolation,
-  },
-  preview: {
-    headers: crossOriginIsolation,
-  },
-  optimizeDeps: {
-    exclude: ['@sqlite.org/sqlite-wasm'],
+  build: {
+    rollupOptions: {
+      input: {
+        main: `${root}index.html`,
+        mini: `${root}mini.html`,
+      },
+    },
   },
 });

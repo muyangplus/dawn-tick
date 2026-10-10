@@ -17,6 +17,7 @@ import { Settings } from './screens/Settings.tsx';
 import { TodayView } from './screens/TodayView.tsx';
 import { WeekView } from './screens/WeekView.tsx';
 import { useReminders } from './useReminders.ts';
+import { writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
 
 const USER_ID = 'u1';
@@ -42,7 +43,9 @@ export function App() {
         setStorage(opened);
         setSettings(loaded);
         applyTheme(loaded.themePreset, loaded.theme);
-        setData(await loadAppData(opened, loaded));
+        const initial = await loadAppData(opened, loaded);
+        setData(initial);
+        await writeWidgetSnapshot(opened, initial);
         const manager = globalThis.navigator?.storage;
         if (manager !== undefined && typeof manager.persist === 'function') {
           const granted = await manager.persist();
@@ -69,7 +72,9 @@ export function App() {
   }, [settings.theme, settings.themePreset]);
 
   const reload = useCallback(async (target: Storage, current: AppSettings) => {
-    setData(await loadAppData(target, current));
+    const next = await loadAppData(target, current);
+    setData(next);
+    await writeWidgetSnapshot(target, next);
   }, []);
 
   const patch = useCallback(
@@ -97,7 +102,11 @@ export function App() {
   }
 
   if (storage === null || data === null) {
-    return <main className="app" />;
+    return (
+      <main className="app">
+        <p className="muted">载入中</p>
+      </main>
+    );
   }
 
   if (data.semester === null) {
@@ -162,7 +171,20 @@ export function App() {
       )}
       {view === 'today' && <TodayView data={data} timeZone={data.timeZone} />}
       {view === 'settings' && (
-        <Settings settings={settings} persistent={persistent} reminders={reminders} onPatch={patch} />
+        <Settings
+          settings={settings}
+          persistent={persistent}
+          reminders={reminders}
+          storage={storage}
+          onPatch={patch}
+          onRestored={() => {
+            void (async () => {
+              const restored = await readSettings(storage);
+              setSettings(restored);
+              await reload(storage, restored);
+            })();
+          }}
+        />
       )}
 
       {importing && (
