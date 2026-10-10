@@ -1,4 +1,4 @@
-import { AA_LARGE, AA_TEXT, contrastRatio } from '../../apps/web/src/design/contrast.ts';
+import { AA_LARGE, AA_TEXT, contrastRatio, mix } from '../../apps/web/src/design/contrast.ts';
 import {
   BREAKPOINT,
   FONT_FAMILY,
@@ -66,6 +66,10 @@ export function checkStaticTokens(stylesSource = readFileSync(STYLES_PATH, 'utf8
     const css = theme[`--spacing-${key}`];
     if (css === undefined || toPx(css) !== toPx(value)) failures.push(`间距 ${key}: css=${css} ts=${value}`);
   }
+  const tapCss = theme['--spacing-tap'];
+  if (tapCss === undefined || toPx(tapCss) !== TAP_MIN) {
+    failures.push(`触控令牌 --spacing-tap: css=${tapCss} ts=${TAP_MIN}px`);
+  }
   for (const [key, value] of Object.entries(RADIUS)) {
     if (key === 'full') continue;
     const css = theme[`--radius-${key}`];
@@ -107,9 +111,14 @@ export function runChecks(stylesSource) {
       }
       for (const [index, color] of tokens.courses.entries()) {
         const tint = courseTint(colors.surface, color);
-        const ratio = contrastRatio(colors.text, tint);
-        const ok = ratio >= AA_TEXT;
-        if (!ok) failures.push(`${preset}/${mode} 课程色 ${index} 块内文字 = ${ratio.toFixed(2)} < ${AA_TEXT}`);
+        // 色块内文字只用 ink 或 ink 降到 80% 不透明度；muted 在部分课程色上不达标，禁止使用。
+        const ink80 = mix(tint, colors.text, 0.8);
+        for (const [role, foreground] of [['text', colors.text], ['text@80%', ink80]]) {
+          const ratio = contrastRatio(foreground, tint);
+          if (ratio < AA_TEXT) {
+            failures.push(`${preset}/${mode} 课程色 ${index} 块内 ${role} = ${ratio.toFixed(2)} < ${AA_TEXT}`);
+          }
+        }
       }
     }
   }
