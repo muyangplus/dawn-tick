@@ -155,7 +155,7 @@ export async function loadAppData(
     todayOfWeek: dayOfWeek(today),
     week: currentWeek,
     viewWeek,
-    weekStartDate: weekStart(semester.start_date) === today ? today : weekDateOf(semester, viewWeek, 1),
+    weekStartDate: weekDateOf(semester, viewWeek, 1),
     semester,
     semesters: semesters.filter((row) => row.is_active === 0 || row.id === semester.id),
     slots,

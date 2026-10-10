@@ -89,7 +89,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         totalWeeks: semester?.total_weeks ?? 20,
         ...(xnm.trim().length > 0 && xqm.trim().length > 0 ? { term: { xnm: xnm.trim(), xqm: xqm.trim() } } : {}),
         fetchImpl: async (url, init) => {
-          const response = await fetch(url, init);
+          const response = await fetch(url, { ...init, credentials: 'include' });
           return {
             status: response.status,
             text: () => response.text(),

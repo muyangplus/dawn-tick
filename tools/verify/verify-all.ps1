@@ -94,6 +94,11 @@ Run-Check 'web 构建与双入口' {
     $main = Get-ChildItem (Join-Path $dist 'assets') -Filter '*.js' | Sort-Object Length -Descending | Select-Object -First 1
     "index.html + mini.html，最大分包 $([math]::Round($main.Length / 1KB, 1)) KB"
 }
+Run-Check '界面冒烟（jsdom 渲染与切页）' {
+    $out = node tools/verify/smoke-ui.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    (($out.Trim() -split "`n") | Select-Object -Last 1)
+}
 
 Section '7. Windows 产物'
 $exe = Join-Path $repo 'apps/desktop/src-tauri/target/release/dawn-tick-desktop.exe'

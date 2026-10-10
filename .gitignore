@@ -15,6 +15,7 @@ Desktop.ini
 node_modules/
 .pnpm-store/
 dist/
+smoke-dist/
 build/
 out/
 .next/

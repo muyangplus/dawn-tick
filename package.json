@@ -13,6 +13,10 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "version:current": "node tools/release/version.mjs --current",
     "version:set": "node tools/release/version.mjs",
-    "version:check": "node tools/release/version.mjs --check"
+    "version:check": "node tools/release/version.mjs --check",
+    "ui:smoke": "node tools/verify/smoke-ui.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.2"
   }
 }

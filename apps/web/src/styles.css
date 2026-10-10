@@ -63,8 +63,32 @@
 }
 
 @layer base {
+  /* 默认值取「青春活力 + 浅色」，保证 applyTheme 运行前界面已着色 */
   :root {
     color-scheme: light;
+    --dt-bg: #fff7f2;
+    --dt-surface: #ffffff;
+    --dt-surface-muted: #fffbf9;
+    --dt-border: #f0e4dc;
+    --dt-border-strong: #9a8b84;
+    --dt-text: #1f1b24;
+    --dt-muted: #6b6475;
+    --dt-primary: #ff6b4a;
+    --dt-on-primary: #111111;
+    --dt-primary-strong: #b13a1c;
+    --dt-accent: #6c5ce7;
+    --dt-accent-strong: #4a37c9;
+    --dt-success: #2ed573;
+    --dt-success-strong: #0f7a41;
+    --dt-warning: #ffb020;
+    --dt-warning-strong: #8a5600;
+    --dt-danger: #ff4757;
+    --dt-danger-strong: #b3121f;
+    --dt-info: #4d96ff;
+    --dt-info-strong: #0a53c0;
+    --dt-overlay: rgba(0, 0, 0, 0.36);
+    --dt-course-0: #ff6b4a;
+    --dt-course-0-tint: #fffaf7;
   }
 
   :root[data-theme='dark'] {
