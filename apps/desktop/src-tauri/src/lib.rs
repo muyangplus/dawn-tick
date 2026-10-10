@@ -7,26 +7,28 @@ pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
-fn log_dir() -> Option<PathBuf> {
-    let base = std::env::var("LOCALAPPDATA").ok()?;
-    Some(PathBuf::from(base).join("com.dawntick.app"))
+fn log_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(base) = std::env::var("LOCALAPPDATA") {
+        dirs.push(PathBuf::from(base).join("com.dawntick.app"));
+    }
+    if let Ok(temp) = std::env::var("TEMP") {
+        dirs.push(PathBuf::from(temp).join("DawnTick"));
+    }
+    dirs
 }
 
 fn append_log(message: &str) {
-    let Some(dir) = log_dir() else {
-        eprintln!("{message}");
-        return;
-    };
-    if create_dir_all(&dir).is_err() {
-        eprintln!("{message}");
-        return;
-    }
-    match OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
-        Ok(mut file) => {
-            let _ = writeln!(file, "{message}");
+    for dir in log_dirs() {
+        if create_dir_all(&dir).is_err() {
+            continue;
         }
-        Err(_) => eprintln!("{message}"),
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
+            let _ = writeln!(file, "{message}");
+            return;
+        }
     }
+    eprintln!("{message}");
 }
 
 /// release 版没有控制台，panic 信息必须落盘才能排查。
@@ -34,8 +36,74 @@ fn install_panic_logger() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         append_log(&format!("panic: {info}"));
+        show_error_box("晓刻 DawnTick 启动失败", &info.to_string());
         default_hook(info);
     }));
+}
+
+/// 启动失败时给出可见提示，避免进程静默退出。
+#[cfg(windows)]
+fn show_error_box(title: &str, message: &str) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
+    let title_wide = wide(title);
+    let message_wide = wide(message);
+    unsafe {
+        MessageBoxW(0, message_wide.as_ptr(), title_wide.as_ptr(), MB_OK | MB_ICONERROR);
+    }
+}
+
+#[cfg(not(windows))]
+fn show_error_box(_title: &str, _message: &str) {}
+
+/// WebView2 的用户数据目录同一时刻只能被一个进程使用，且目录若由提权进程创建，
+/// 普通权限将无法写入，表现为「双击没反应」。三层兜底：可用则不动，
+/// 不可用先改名让 WebView2 重建，改名也失败就改用可写目录。
+#[cfg(windows)]
+fn ensure_webview_folder_writable() {
+    let Some(base) = std::env::var("LOCALAPPDATA").ok() else {
+        return;
+    };
+    let app_dir = PathBuf::from(&base).join("com.dawntick.app");
+    let dir = app_dir.join("EBWebView");
+    if !dir.exists() || is_writable(&dir) {
+        return;
+    }
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0);
+    let backup = dir.with_file_name(format!("EBWebView.bak-{stamp}"));
+    if std::fs::rename(&dir, &backup).is_ok() {
+        append_log(&format!("WebView2 数据目录不可写，已改名重建: {}", backup.display()));
+        return;
+    }
+
+    let mut candidates = vec![PathBuf::from(&base).join("DawnTick").join("EBWebView")];
+    candidates.push(std::env::temp_dir().join("DawnTick").join("EBWebView"));
+    for folder in candidates {
+        if std::fs::create_dir_all(&folder).is_err() || !is_writable(&folder) {
+            continue;
+        }
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
+        append_log(&format!("WebView2 数据目录改用可写位置: {}", folder.display()));
+        return;
+    }
+    append_log("WebView2 数据目录不可写，且没有可写兜底目录");
+}
+
+#[cfg(windows)]
+fn is_writable(dir: &std::path::Path) -> bool {
+    let probe = dir.join(".dt-write-probe");
+    match OpenOptions::new().create(true).write(true).truncate(true).open(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 #[cfg(desktop)]
@@ -137,8 +205,26 @@ fn log_event(level: String, scope: String, message: String) {
 pub fn run() {
     install_panic_logger();
     append_log("应用启动");
+    #[cfg(windows)]
+    ensure_webview_folder_writable();
 
-    let builder = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // 单实例：第二次启动只把已有窗口唤到前台。窗口关闭是隐藏到托盘，
+    // 没有这一层时用户再点一次图标会以为是「打不开」。
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    let builder = builder
         .invoke_handler(tauri::generate_handler![log_event])
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -178,7 +264,9 @@ pub fn run() {
         });
 
     if let Err(error) = builder.run(tauri::generate_context!()) {
-        append_log(&format!("运行 Tauri 应用失败: {error}"));
-        eprintln!("运行 Tauri 应用失败: {error}");
+        let message = format!("运行 Tauri 应用失败: {error}");
+        append_log(&message);
+        eprintln!("{message}");
+        show_error_box("晓刻 DawnTick 启动失败", &message);
     }
 }
