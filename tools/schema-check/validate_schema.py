@@ -160,7 +160,8 @@ WHERE c.semester_id = :sid
   AND ( s.week_type = 'all'
      OR (s.week_type = 'odd'  AND :week % 2 = 1)
      OR (s.week_type = 'even' AND :week % 2 = 0)
-     OR  s.week_type = 'custom' )
+     OR (s.week_type = 'custom'
+         AND EXISTS (SELECT 1 FROM json_each(s.weeks) WHERE json_each.value = :week)) )
   AND s.deleted_at IS NULL AND c.deleted_at IS NULL
 ORDER BY s.period_start
 """
@@ -235,7 +236,16 @@ con.execute(
     "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
     ("sch-2", "course-2", 3, 3, 4, 2, 16, "even", None, None, NOW, NOW),
 )
-ok("基础数据写入", "用户/学期/节次/课程/两条排课")
+# 大学英语：周五 5-6 节，仅第 1/3/5/7 周（自定义周次，碎片规则）
+con.execute(
+    "INSERT INTO courses VALUES (?,?,?,?,?,?,?,?,?,NULL)",
+    ("course-3", S1, "大学英语", "王老师", "外语楼-302", "#27AE60", None, NOW, NOW),
+)
+con.execute(
+    "INSERT INTO course_schedules VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+    ("sch-3", "course-3", 5, 5, 6, 1, 20, "custom", "[1,3,5,7]", None, NOW, NOW),
+)
+ok("基础数据写入", "用户/学期/节次/3 门课程/3 条排课（含自定义周次）")
 
 # --- 约束校验 ---
 expect_reject(
@@ -316,6 +326,49 @@ if r == []:
     ok("周视图：第17周超出周次范围，无课", "正确")
 else:
     fail("周视图：第17周本应无课", str(r))
+
+# 自定义周次（碎片规则 [1,3,5,7]）—— 用 json_each 查询验证
+r = week_view(5, 5)  # 第 5 周周五 → 自定义周次含 5，应有大学英语
+if len(r) == 1 and r[0][0] == "大学英语":
+    ok("周视图：第5周周五命中自定义周次课程", str(r))
+else:
+    fail("周视图：第5周周五", str(r))
+
+r = week_view(6, 5)  # 第 6 周周五 → [1,3,5,7] 不含 6，应无课
+if r == []:
+    ok("周视图：第6周周五不在自定义周次内，无课", "正确")
+else:
+    fail("周视图：第6周周五本应无课", str(r))
+
+r = week_view(7, 5)  # 第 7 周周五 → 含 7，应有课（边界值验证）
+if len(r) == 1 and r[0][0] == "大学英语":
+    ok("周视图：第7周周五命中自定义周次上界", str(r))
+else:
+    fail("周视图：第7周周五", str(r))
+
+# --- 备选方案验证：周次位图（完全不依赖 JSON 函数，跨平台兼容性更好） ---
+# 背景：json_each 需要 SQLite 启用 JSON 函数；Android 系统自带 SQLite 版本不一，
+#      若不能保证启用，则「位图整数」是更稳的自定义周次方案。
+con.execute("CREATE TABLE _mask_demo (id TEXT PRIMARY KEY, weeks_mask INTEGER NOT NULL)")
+_mask = sum(1 << (w - 1) for w in (1, 3, 5, 7))  # 第 1/3/5/7 周
+con.execute("INSERT INTO _mask_demo VALUES (?,?)", ("d1", _mask))
+
+
+def _mask_has_week(week):
+    return con.execute(
+        "SELECT id FROM _mask_demo WHERE (weeks_mask >> :w) & 1 = 1", {"w": week - 1}
+    ).fetchall()
+
+
+_checks = {5: True, 6: False, 7: True, 8: False, 1: True, 2: False}
+_bad = [w for w, want in _checks.items() if bool(_mask_has_week(w)) != want]
+if not _bad:
+    ok(
+        "备选方案：周次位图查询正确（不依赖 JSON 函数）",
+        f"[1,3,5,7] 在位图下判定全部正确，mask={_mask}",
+    )
+else:
+    fail("备选方案：周次位图判定错误", f"周次 {_bad} 判定不符预期")
 
 # --- 删除课程是否级联 ---
 con.execute("DELETE FROM courses WHERE id=?", ("course-2",))
