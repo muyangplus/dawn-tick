@@ -302,7 +302,7 @@ export function App() {
   );
 
   return (
-    <div className="flex min-h-dvh bg-page text-ink">
+    <div className="flex h-dvh overflow-hidden bg-page text-ink">
       {isDesktop && (
         <AppSidebar
           current={view}
@@ -312,7 +312,7 @@ export function App() {
         />
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <AppToolbar
           semester={data.semester}
           semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
@@ -328,7 +328,9 @@ export function App() {
           onAdd={() => setCourseFormOpen(true)}
           compact={!isDesktop}
         />
-        <main className="flex-1 overflow-y-auto p-3 pb-24 tablet:p-4 desktop:pb-4">{content}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-24 tablet:p-4 desktop:pb-4">
+          {content}
+        </main>
       </div>
 
       {isDesktop && detail !== null && (

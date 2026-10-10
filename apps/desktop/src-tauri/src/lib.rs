@@ -1,11 +1,72 @@
+use std::fs::{create_dir_all, OpenOptions};
+use std::io::Write;
+use std::path::PathBuf;
+
 /// 与 Web 端、移动端共用的建表 SQL。
 pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/001_init.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
+fn log_dir() -> Option<PathBuf> {
+    let base = std::env::var("LOCALAPPDATA").ok()?;
+    Some(PathBuf::from(base).join("com.dawntick.app"))
+}
+
+fn append_log(message: &str) {
+    let Some(dir) = log_dir() else {
+        eprintln!("{message}");
+        return;
+    };
+    if create_dir_all(&dir).is_err() {
+        eprintln!("{message}");
+        return;
+    }
+    match OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{message}");
+        }
+        Err(_) => eprintln!("{message}"),
+    }
+}
+
+/// release 版没有控制台，panic 信息必须落盘才能排查。
+fn install_panic_logger() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        append_log(&format!("panic: {info}"));
+        default_hook(info);
+    }));
+}
+
+#[cfg(desktop)]
+fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+    if let Some(window) = app.get_webview_window("mini") {
+        return Some(window);
+    }
+    let built = WebviewWindowBuilder::new(app, "mini", WebviewUrl::App("mini.html".into()))
+        .title("晓刻 DawnTick · 下一节课")
+        .inner_size(240.0, 104.0)
+        .resizable(false)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .transparent(true)
+        .visible(false)
+        .build();
+    match built {
+        Ok(window) => Some(window),
+        Err(error) => {
+            append_log(&format!("创建紧凑条失败: {error}"));
+            None
+        }
+    }
+}
+
 /// 常驻托盘（D29）：主窗口关闭时隐藏而不退出，紧凑条由托盘控制。
 #[cfg(desktop)]
-fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::Manager;
@@ -17,7 +78,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&show_main, &show_mini, &hide_mini, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
-        .tooltip("晓刻")
+        .tooltip("晓刻 DawnTick")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -28,7 +89,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 }
             }
             "show_mini" => {
-                if let Some(window) = app.get_webview_window("mini") {
+                if let Some(window) = ensure_mini(app) {
                     let _ = window.show();
                 }
             }
@@ -47,13 +108,14 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                if let Some(window) = tray.app_handle().get_webview_window("mini") {
-                    let visible = window.is_visible().unwrap_or(false);
-                    if visible {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                    }
+                let Some(window) = ensure_mini(tray.app_handle()) else {
+                    return;
+                };
+                let visible = window.is_visible().unwrap_or(false);
+                if visible {
+                    let _ = window.hide();
+                } else {
+                    let _ = window.show();
                 }
             }
         });
@@ -67,6 +129,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_logger();
+
     let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -82,6 +146,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -90,7 +155,10 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .setup(|app| {
-            setup_tray(app)?;
+            // 托盘失败不阻止应用启动，仅记录
+            if let Err(error) = setup_tray(app.handle()) {
+                append_log(&format!("托盘初始化失败: {error}"));
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -102,7 +170,8 @@ pub fn run() {
             }
         });
 
-    builder
-        .run(tauri::generate_context!())
-        .expect("运行 Tauri 应用失败");
+    if let Err(error) = builder.run(tauri::generate_context!()) {
+        append_log(&format!("运行 Tauri 应用失败: {error}"));
+        eprintln!("运行 Tauri 应用失败: {error}");
+    }
 }

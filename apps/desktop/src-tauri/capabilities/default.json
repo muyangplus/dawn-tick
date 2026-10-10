@@ -8,6 +8,8 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-always-on-top",
     "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-hide",
     "sql:default",
     "sql:allow-load",
     "sql:allow-execute",
@@ -19,6 +21,10 @@
     "notification:allow-is-permission-granted",
     "autostart:allow-enable",
     "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "autostart:allow-is-enabled",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
+    }
   ]
 }

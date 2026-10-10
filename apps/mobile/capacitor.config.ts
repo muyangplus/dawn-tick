@@ -8,6 +8,12 @@ const config: CapacitorConfig = {
     allowMixedContent: false,
     webContentsDebuggingEnabled: true,
   },
+  plugins: {
+    // 接管 fetch：教务抓取走原生请求，绕过 WebView 的同源策略
+    CapacitorHttp: {
+      enabled: true,
+    },
+  },
 };
 
 export default config;

@@ -16,6 +16,7 @@ import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { toast } from '../components/ui/toaster.tsx';
+import { createPlatformFetch, fetchHint } from '../http.ts';
 import { cn } from '../lib/cn.ts';
 
 type Method = 'jwglxt' | 'file' | 'ics' | 'manual';
@@ -88,20 +89,13 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         password,
         totalWeeks: semester?.total_weeks ?? 20,
         ...(xnm.trim().length > 0 && xqm.trim().length > 0 ? { term: { xnm: xnm.trim(), xqm: xqm.trim() } } : {}),
-        fetchImpl: async (url, init) => {
-          const response = await fetch(url, { ...init, credentials: 'include' });
-          return {
-            status: response.status,
-            text: () => response.text(),
-            setCookie: response.headers.getSetCookie?.() ?? [],
-          };
-        },
+        fetchImpl: createPlatformFetch(),
       });
       if (result.schedules.length === 0) throw new Error('登录成功但未解析到课程');
       accept(result.schedules, result.warnings);
     } catch (cause: unknown) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      setError(`${message}。浏览器可能被同源策略拦截，可改用 CSV/Excel 或 ICS 导入`);
+      setError(`${message}。${fetchHint()}`);
     } finally {
       setBusy(false);
     }

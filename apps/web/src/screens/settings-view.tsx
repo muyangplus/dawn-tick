@@ -346,7 +346,7 @@ export function SettingsView({
         <span className="text-xs text-muted">晓刻 DawnTick · 课表与日程提醒工具</span>
         <span className="text-xs text-muted">许可证 Apache-2.0</span>
         <a className="text-xs text-primary-strong underline" href="https://github.com/muyangplus/dawn-tick">
-          github.com/muyangplus/dawn-tick
+          https://github.com/muyangplus/dawn-tick
         </a>
       </Card>
     </div>

@@ -110,7 +110,7 @@
 }
 
 @layer components {
-  html,
+  /* 仅紧凑条窗口：透明背景且自身不滚动；不要命中主窗口的 html */
   body.mini-body {
     background: transparent;
     overflow: hidden;

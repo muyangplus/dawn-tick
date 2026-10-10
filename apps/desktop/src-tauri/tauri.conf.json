@@ -17,19 +17,6 @@
         "width": 1000,
         "height": 720,
         "resizable": true
-      },
-      {
-        "label": "mini",
-        "title": "晓刻 DawnTick · 下一节课",
-        "url": "mini.html",
-        "width": 240,
-        "height": 104,
-        "resizable": false,
-        "decorations": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "transparent": true,
-        "visible": false
       }
     ],
     "security": {

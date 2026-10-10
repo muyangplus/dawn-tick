@@ -211,7 +211,15 @@ jobs:
           portable=$(find artifacts/windows -name '*.exe' -not -path '*nsis*' | head -n 1)
           mkdir -p portable
           cp "$portable" portable/DawnTick.exe
-          (cd portable && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-windows-x64-portable.zip" DawnTick.exe)
+          cat > portable/README-portable.txt <<'EOF'
+晓刻 DawnTick 便携版
+
+数据与日志目录：%LOCALAPPDATA%\com.dawntick.app
+启动异常时请查看该目录下的 startup.log
+
+首次运行会补齐 Windows 上的本地数据库；若原生数据库不可用，应用会回退到浏览器存储并提示。
+EOF
+          (cd portable && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-windows-x64-portable.zip" .)
 
           apk=$(find artifacts/android -name '*.apk' | head -n 1)
           cp "$apk" "out/${SUFFIX}-android.apk"
