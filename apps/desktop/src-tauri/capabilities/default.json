@@ -18,10 +18,6 @@
     "notification:default",
     "notification:allow-notify",
     "notification:allow-request-permission",
-    "notification:allow-is-permission-granted",
-    {
-      "identifier": "http:default",
-      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
-    }
+    "notification:allow-is-permission-granted"
   ]
 }

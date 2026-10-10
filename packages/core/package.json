@@ -8,7 +8,7 @@
     "./schema/001_init.sql": "./src/schema/001_init.sql"
   },
   "scripts": {
-    "test": "node --test test/time.test.ts test/weeks.test.ts test/timetable.test.ts test/migrate.test.ts test/schema.test.ts test/repository.test.ts test/expand.test.ts test/sync.test.ts test/validation.test.ts test/mutations.test.ts test/import-weeks.test.ts test/import-csv.test.ts test/import-ics.test.ts test/import-apply.test.ts test/reminders.test.ts test/backup.test.ts test/search.test.ts test/jwglxt.test.ts test/page-tables.test.ts",
+    "test": "node --test test/time.test.ts test/weeks.test.ts test/timetable.test.ts test/migrate.test.ts test/schema.test.ts test/repository.test.ts test/expand.test.ts test/sync.test.ts test/validation.test.ts test/mutations.test.ts test/import-weeks.test.ts test/import-csv.test.ts test/import-ics.test.ts test/import-apply.test.ts test/reminders.test.ts test/backup.test.ts test/search.test.ts test/page-tables.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

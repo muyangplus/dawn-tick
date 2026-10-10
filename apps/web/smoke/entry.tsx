@@ -171,6 +171,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   const importText = view.container.textContent ?? '';
   check('导入页提供网页课表方式', importText.includes('网页课表') && importText.includes('自己登录后粘贴'), '');
+  check(
+    '已移除程序代登录入口',
+    !importText.includes('正方教务') && !importText.includes('程序代登录') && !importText.includes('学号'),
+    '',
+  );
   if (clickByTextStart(view.container, '网页课表')) await flush(10);
   check(
     '网页导入提供书签与粘贴',

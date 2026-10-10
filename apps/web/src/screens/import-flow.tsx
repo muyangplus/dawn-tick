@@ -1,10 +1,9 @@
 import { useRef, useState } from 'react';
-import { Bookmark, FileSpreadsheet, FileText, Globe, PencilLine, SlidersHorizontal } from 'lucide-react';
+import { Bookmark, FileSpreadsheet, FileText, PencilLine, SlidersHorizontal } from 'lucide-react';
 import {
   PAGE_BOOKMARKLET,
   applyImport,
   extractTimetableFromHtml,
-  fetchTimetable,
   icsToSchedules,
   inspectPage,
   loadSemester,
@@ -21,16 +20,14 @@ import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { createPlatformFetch, fetchHint } from '../http.ts';
 import { logError, logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
 
-type Method = 'page' | 'jwglxt' | 'file' | 'ics' | 'manual';
+type Method = 'page' | 'file' | 'ics' | 'manual';
 type Step = 1 | 2 | 3 | 4;
 
-const METHODS: Array<{ id: Method; label: string; icon: typeof Globe; hint: string }> = [
+const METHODS: Array<{ id: Method; label: string; icon: typeof Bookmark; hint: string }> = [
   { id: 'page', label: '网页课表', icon: Bookmark, hint: '自己登录后粘贴课表页' },
-  { id: 'jwglxt', label: '正方教务', icon: Globe, hint: '程序代登录抓取' },
   { id: 'file', label: 'CSV / Excel', icon: FileSpreadsheet, hint: '二维矩阵' },
   { id: 'ics', label: 'ICS', icon: FileText, hint: '日历文件' },
   { id: 'manual', label: '手动添加', icon: PencilLine, hint: '逐门录入' },
@@ -64,7 +61,7 @@ async function readMatrix(file: File): Promise<string[][]> {
 
 export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: ImportFlowProps) {
   const [step, setStep] = useState<Step>(1);
-  const [method, setMethod] = useState<Method>('jwglxt');
+  const [method, setMethod] = useState<Method>('page');
   const [schedules, setSchedules] = useState<ImportedSchedule[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -72,11 +69,6 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const [baseUrl, setBaseUrl] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [xnm, setXnm] = useState('');
-  const [xqm, setXqm] = useState('');
   const [pageText, setPageText] = useState('');
   const [bookmarkCopied, setBookmarkCopied] = useState(false);
   const [inspection, setInspection] = useState<PageInspection | null>(null);
@@ -143,31 +135,6 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     setWarnings(nextWarnings);
     setSelected(new Set(next.map((_, index) => index)));
     setStep(3);
-  }
-
-  async function runJwglxt(): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      const semester = await loadSemester(storage, semesterId);
-      const result = await fetchTimetable({
-        baseUrl,
-        username,
-        password,
-        totalWeeks: semester?.total_weeks ?? 20,
-        ...(xnm.trim().length > 0 && xqm.trim().length > 0 ? { term: { xnm: xnm.trim(), xqm: xqm.trim() } } : {}),
-        fetchImpl: createPlatformFetch(),
-        onLog: (entry) => logInfo('jwglxt', entry.message, { step: entry.step, ...entry.detail }),
-      });
-      if (result.schedules.length === 0) throw new Error('登录成功但未解析到课程');
-      accept(result.schedules, result.warnings);
-    } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      logError('jwglxt', '抓取失败', { message });
-      setError(`${message}。${fetchHint()}`);
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function runFile(file: File): Promise<void> {
@@ -406,40 +373,6 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               )}
             </div>
           </details>
-        </Card>
-      )}
-
-      {step === 2 && method === 'jwglxt' && (
-        <Card className="flex flex-col gap-3">
-          <Field label="教务地址" hint="如 jw.example.edu.cn，可粘贴登录页地址">
-            <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="jw.example.edu.cn" />
-          </Field>
-          <Field label="学号">
-            <Input value={username} onChange={(event) => setUsername(event.target.value)} />
-          </Field>
-          <Field label="密码" hint="仅用于本次登录，不写入本地数据库">
-            <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </Field>
-          <div className="flex flex-wrap gap-3">
-            <Field label="学年（可选）">
-              <Input value={xnm} onChange={(event) => setXnm(event.target.value)} placeholder="2026" />
-            </Field>
-            <Field label="学期（可选）">
-              <Input value={xqm} onChange={(event) => setXqm(event.target.value)} placeholder="3" />
-            </Field>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="primary"
-              disabled={busy || baseUrl.trim().length === 0 || username.trim().length === 0}
-              onClick={() => void runJwglxt()}
-            >
-              登录并读取课表
-            </Button>
-            <Button variant="ghost" onClick={() => setStep(1)}>
-              返回
-            </Button>
-          </div>
         </Card>
       )}
 

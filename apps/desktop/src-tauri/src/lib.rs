@@ -876,8 +876,7 @@ pub fn run() {
                 )
                 .build(),
         )
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_http::init());
+        .plugin(tauri_plugin_notification::init());
 
     #[cfg(desktop)]
     let builder = builder
