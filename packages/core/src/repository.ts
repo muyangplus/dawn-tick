@@ -1,15 +1,17 @@
 import { hasWeek } from './weeks.ts';
 import type { Storage } from './storage.ts';
+import { expand, type ExpandCourse, type ExpandDayKind, type ExpandInput, type ExpandReschedule, type ExpandSchedule, type ExpandTimeSlot, type Occurrence } from './expand.ts';
 import type {
   CourseRow,
   CourseScheduleRow,
   DayKindRow,
+  EventRow,
   HolidaySource,
+  ReminderRow,
   SemesterRow,
   TimeSlotRow,
   WeekViewRow,
 } from './types.ts';
-import type { ExpandCourse, ExpandDayKind, ExpandInput, ExpandReschedule, ExpandSchedule, ExpandTimeSlot } from './expand.ts';
 
 const SOURCE_RANK: Record<HolidaySource, number> = { manual: 1, from_school: 2, builtin: 3 };
 
@@ -270,4 +272,38 @@ export async function listRemindersFor(storage: Storage, targetType: string, tar
   return rows.filter(
     (row) => row['deleted_at'] === null && row['target_type'] === targetType && row['target_id'] === targetId,
   );
+}
+
+export interface ReminderData {
+  occurrences: Occurrence[];
+  reminders: ReminderRow[];
+  events: EventRow[];
+  dayKinds: ExpandDayKind[];
+  timeZone: string;
+}
+
+/** 装载提醒计算所需的一切：展开后的课次、提醒规则、日程与日期判定。 */
+export async function loadReminderData(
+  storage: Storage,
+  semesterId: string,
+  from: string,
+  to: string,
+): Promise<ReminderData | undefined> {
+  const input = await loadExpandInput(storage, semesterId, from, to);
+  if (input === undefined) return undefined;
+
+  const reminders = (await storage.collection<ReminderRow>('reminders').getAll()).filter(
+    (row) => row.deleted_at === null,
+  );
+  const events = (await storage.collection<EventRow>('events').getAll()).filter(
+    (row) => row.deleted_at === null && row.semester_id === semesterId,
+  );
+
+  return {
+    occurrences: expand(input),
+    reminders,
+    events,
+    dayKinds: [...(input.dayKinds ?? [])],
+    timeZone: input.semester.time_zone,
+  };
 }

@@ -17,6 +17,7 @@ import { Onboarding } from './screens/Onboarding.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { TodayView } from './screens/TodayView.tsx';
 import { WeekView } from './screens/WeekView.tsx';
+import { useReminders } from './useReminders.ts';
 import './styles.css';
 
 const USER_ID = 'u1';
@@ -80,6 +81,12 @@ export function App() {
       await reload(storage, next);
     },
     [storage, reload],
+  );
+
+  const reminders = useReminders(
+    storage,
+    data?.semester?.id ?? null,
+    data?.timeZone ?? settings.timeZone,
   );
 
   if (error !== null) {
@@ -155,7 +162,9 @@ export function App() {
         />
       )}
       {view === 'today' && <TodayView data={data} timeZone={data.timeZone} />}
-      {view === 'settings' && <Settings settings={settings} persistent={persistent} onPatch={patch} />}
+      {view === 'settings' && (
+        <Settings settings={settings} persistent={persistent} reminders={reminders} onPatch={patch} />
+      )}
 
       {importing && (
         <ImportDialog

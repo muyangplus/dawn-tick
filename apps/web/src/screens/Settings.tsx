@@ -1,22 +1,33 @@
 import {
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
+  formatDateTime,
   isValidTimeZone,
   type AppSettings,
   type ThemePreset,
 } from '@dawn-tick/core';
+import type { ReminderView } from '../useReminders.ts';
 import { THEMES } from '../theme.ts';
 
 interface Props {
   settings: AppSettings;
   persistent: boolean | null;
+  reminders: ReminderView;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
 }
 
+const PERMISSION_LABEL: Record<ReminderView['permission'], string> = {
+  unsupported: '当前环境不支持通知',
+  default: '未申请',
+  granted: '已授权',
+  denied: '已被拒绝',
+};
+
 const PRESET_LABELS = THEMES as Record<ThemePreset, { label: string }>;
 
-export function Settings({ settings, persistent, onPatch }: Props) {
+export function Settings({ settings, persistent, reminders, onPatch }: Props) {
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
+  const next = reminders.upcoming[0];
 
   return (
     <div className="list">
@@ -78,6 +89,24 @@ export function Settings({ settings, persistent, onPatch }: Props) {
           />
           <span>时区自动同步（跟随设备）</span>
         </label>
+      </div>
+
+      <div className="card">
+        <div className="row">
+          <span className="muted">通知权限：{PERMISSION_LABEL[reminders.permission]}</span>
+          <button
+            type="button"
+            onClick={() => void reminders.request()}
+            disabled={reminders.permission === 'unsupported' || reminders.permission === 'granted'}
+          >
+            申请通知权限
+          </button>
+        </div>
+        <div className="muted">网页关闭后无法提醒（页面打开时才生效）</div>
+        <div className="muted">
+          接下来 7 天待提醒 {reminders.upcoming.length} 条
+          {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
+        </div>
       </div>
 
       <div className="card">
