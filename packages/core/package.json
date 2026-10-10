@@ -1,0 +1,14 @@
+{
+  "name": "@dawn-tick/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema/001_init.sql": "./src/schema/001_init.sql"
+  },
+  "scripts": {
+    "test": "node --test test/time.test.ts test/weeks.test.ts test/migrate.test.ts test/schema.test.ts test/expand.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

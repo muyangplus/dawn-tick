@@ -1,0 +1,14 @@
+{
+  "name": "dawn-tick",
+  "version": "0.0.0",
+  "private": true,
+  "description": "晓刻：课表与日程提醒工具",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck"
+  }
+}
