@@ -173,6 +173,9 @@ jobs:
       TITLE: ${{ needs.plan.outputs.title }}
       BUILD_REF: ${{ needs.plan.outputs.buildRef }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
