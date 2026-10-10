@@ -163,9 +163,9 @@ export function App() {
       {view === 'week' && (
         <WeekView
           storage={storage}
+          userId={USER_ID}
           data={data}
           viewDays={settings.viewDays}
-          timeZone={data.timeZone}
           onChanged={() => void reload(storage, settings)}
         />
       )}
@@ -193,6 +193,7 @@ export function App() {
           semesterId={data.semester.id}
           onDone={() => {
             setImporting(false);
+            if (reminders.permission === 'default') void reminders.request();
             void reload(storage, settings);
           }}
         />

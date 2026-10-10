@@ -1,21 +1,24 @@
 import { useState } from 'react';
 import {
   deleteCourse,
+  deleteReminder,
   deleteSchedule,
-  formatTime,
+  setReminder,
   type CourseRow,
   type CourseScheduleRow,
+  type ReminderRow,
   type Storage,
 } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const ADVANCE_OPTIONS = [5, 10, 15, 30];
 
 interface Props {
   storage: Storage;
+  userId: string;
   data: AppData;
   viewDays: number;
-  timeZone: string;
   onChanged: () => void;
 }
 
@@ -23,20 +26,83 @@ interface Detail {
   cell: LessonCell;
   course: CourseRow | undefined;
   schedules: CourseScheduleRow[];
+  reminder: ReminderRow | undefined;
 }
 
-export function WeekView({ storage, data, viewDays, timeZone, onChanged }: Props) {
+export function WeekView({ storage, userId, data, viewDays, onChanged }: Props) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [busy, setBusy] = useState(false);
+  const [advance, setAdvance] = useState(10);
+  const [custom, setCustom] = useState(false);
+  const [skipHolidays, setSkipHolidays] = useState(true);
+  const [snooze, setSnooze] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   async function open(cell: LessonCell): Promise<void> {
-    const course = await storage.collection<CourseRow>('courses').get(cell.courseId);
-    const all = await storage.collection<CourseScheduleRow>('course_schedules').getAll();
+    const [course, all, reminders] = await Promise.all([
+      storage.collection<CourseRow>('courses').get(cell.courseId),
+      storage.collection<CourseScheduleRow>('course_schedules').getAll(),
+      storage.collection<ReminderRow>('reminders').getAll(),
+    ]);
+    const reminder = reminders.find(
+      (row) => row.deleted_at === null && row.target_type === 'course' && row.target_id === cell.courseId,
+    );
+    setAdvance(reminder?.advance_minutes ?? 10);
+    setCustom(reminder !== undefined && !ADVANCE_OPTIONS.includes(reminder.advance_minutes));
+    setSkipHolidays((reminder?.skip_holidays ?? 1) === 1);
+    setSnooze(reminder?.snooze_minutes !== null && reminder?.snooze_minutes !== undefined);
+    setMessage(null);
     setDetail({
       cell,
       course,
       schedules: all.filter((row) => row.course_id === cell.courseId && row.deleted_at === null),
+      reminder,
     });
+  }
+
+  async function refreshDetail(): Promise<void> {
+    if (detail === null) return;
+    const reminders = await storage.collection<ReminderRow>('reminders').getAll();
+    const reminder = reminders.find(
+      (row) =>
+        row.deleted_at === null &&
+        row.target_type === 'course' &&
+        row.target_id === detail.cell.courseId,
+    );
+    setDetail({ ...detail, reminder });
+  }
+
+  async function saveReminder(): Promise<void> {
+    if (detail === null) return;
+    setBusy(true);
+    try {
+      await setReminder(storage, {
+        userId,
+        targetType: 'course',
+        targetId: detail.cell.courseId,
+        advanceMinutes: advance,
+        skipHolidays,
+        snoozeMinutes: snooze ? 5 : null,
+      });
+      await refreshDetail();
+      setMessage(`已设置课前 ${advance} 分钟提醒`);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeReminder(): Promise<void> {
+    if (detail?.reminder === undefined) return;
+    setBusy(true);
+    try {
+      await deleteReminder(storage, detail.reminder.id);
+      await refreshDetail();
+      setMessage('已删除提醒');
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function removeSchedule(id: string): Promise<void> {
@@ -111,10 +177,79 @@ export function WeekView({ storage, data, viewDays, timeZone, onChanged }: Props
             <div className="muted">
               {detail.schedules.map((row) => (
                 <div key={row.id}>
-                  {WEEKDAYS[(row.day_of_week ?? 1) - 1]} 第 {row.period_start}-{row.period_end} 节 · {row.weeks_raw ?? '—'}
+                  {WEEKDAYS[(row.day_of_week ?? 1) - 1]} 第 {row.period_start}-{row.period_end} 节 ·{' '}
+                  {row.weeks_raw ?? '—'}
                 </div>
               ))}
             </div>
+
+            <div className="field">
+              <span>课前提醒（分钟）</span>
+              <div className="row">
+                {ADVANCE_OPTIONS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={!custom && advance === option}
+                    className={!custom && advance === option ? 'primary' : ''}
+                    onClick={() => {
+                      setCustom(false);
+                      setAdvance(option);
+                    }}
+                  >
+                    {option}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  aria-pressed={custom}
+                  className={custom ? 'primary' : ''}
+                  onClick={() => setCustom(true)}
+                >
+                  自定义
+                </button>
+              </div>
+              {custom && (
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={advance}
+                  onChange={(event) => setAdvance(Number(event.target.value))}
+                />
+              )}
+            </div>
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={skipHolidays}
+                onChange={(event) => setSkipHolidays(event.target.checked)}
+              />
+              <span>放假当天不提醒</span>
+            </label>
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={snooze}
+                onChange={(event) => setSnooze(event.target.checked)}
+              />
+              <span>允许贪睡 5 分钟</span>
+            </label>
+            <div className="row">
+              <button type="button" className="primary" disabled={busy} onClick={() => void saveReminder()}>
+                保存提醒
+              </button>
+              {detail.reminder !== undefined && (
+                <button type="button" disabled={busy} onClick={() => void removeReminder()}>
+                  删除提醒
+                </button>
+              )}
+            </div>
+            {detail.reminder !== undefined && (
+              <div className="muted">当前：课前 {detail.reminder.advance_minutes} 分钟</div>
+            )}
+            {message !== null && <div className="muted">{message}</div>}
+
             {detail.schedules.length > 0 && (
               <div className="row">
                 {detail.schedules.map((row) => (
@@ -141,11 +276,6 @@ export function WeekView({ storage, data, viewDays, timeZone, onChanged }: Props
                 关闭
               </button>
             </div>
-            {data.todayLessons.length > 0 && (
-              <div className="muted">
-                第一节课 {formatTime(data.todayLessons[0]?.startAt ?? 0, timeZone)}
-              </div>
-            )}
           </div>
         </div>
       )}
