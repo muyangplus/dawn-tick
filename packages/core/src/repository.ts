@@ -60,6 +60,7 @@ export async function weekView(
     .map((schedule) => {
       const course = courses.get(schedule.course_id);
       return {
+        course_id: schedule.course_id,
         name: course?.name ?? '',
         short_name: course?.short_name ?? null,
         color: course?.color ?? '#4F8DFD',

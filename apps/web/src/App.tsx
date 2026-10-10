@@ -1,87 +1,84 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  activeSemester,
-  dayOfWeek,
-  formatDate,
-  listTimeSlots,
-  resolveTimeZone,
-  weekOfDate,
-  weekView,
-  type SemesterRow,
+  DEFAULT_SETTINGS,
+  formatTime,
+  readSettings,
+  validatedStorage,
+  writeSettings,
+  type AppSettings,
   type Storage,
-  type TimeSlotRow,
 } from '@dawn-tick/core';
 import { openIndexedDbStorage } from './db/idb-storage.ts';
-import { SAMPLE_USER, seedSample } from './db/sample.ts';
+import { loadAppData, type AppData } from './data.ts';
+import { applyTheme } from './theme.ts';
+import { CourseForm } from './screens/CourseForm.tsx';
+import { Onboarding } from './screens/Onboarding.tsx';
+import { Settings } from './screens/Settings.tsx';
+import { TodayView } from './screens/TodayView.tsx';
+import { WeekView } from './screens/WeekView.tsx';
 import './styles.css';
 
-const VIEW_DAYS = 5;
-const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五'];
-
-interface Cell {
-  name: string;
-  room: string | null;
-  color: string;
-}
-
-interface Screen {
-  kind: Storage['kind'];
-  semester: SemesterRow | null;
-  week: number;
-  todayOfWeek: number;
-  slots: TimeSlotRow[];
-  grid: Map<string, Cell[]>;
-}
-
-async function loadScreen(storage: Storage): Promise<Screen> {
-  const autoSync = (await storage.readMeta('auto_time_zone')) === '1';
-  const timeZone = resolveTimeZone(await storage.readMeta('time_zone'), autoSync);
-  const today = formatDate(Date.now(), timeZone);
-  const semester = (await activeSemester(storage, SAMPLE_USER)) ?? null;
-  if (semester === null) {
-    return { kind: storage.kind, semester: null, week: 1, todayOfWeek: 0, slots: [], grid: new Map() };
-  }
-
-  const slots = await listTimeSlots(storage, semester.id);
-  const week = Math.max(1, weekOfDate(today, semester.start_date));
-  const grid = new Map<string, Cell[]>();
-  for (let day = 1; day <= VIEW_DAYS; day += 1) {
-    for (const row of await weekView(storage, semester.id, day, week)) {
-      for (let period = row.period_start; period <= row.period_end; period += 1) {
-        const key = `${day}:${period}`;
-        const list = grid.get(key) ?? [];
-        list.push({ name: row.short_name ?? row.name, room: row.room, color: row.color });
-        grid.set(key, list);
-      }
-    }
-  }
-  return { kind: storage.kind, semester, week, todayOfWeek: dayOfWeek(today), slots, grid };
-}
+const USER_ID = 'u1';
+type View = 'week' | 'today' | 'settings';
 
 export function App() {
   const [storage, setStorage] = useState<Storage | null>(null);
-  const [screen, setScreen] = useState<Screen | null>(null);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [data, setData] = useState<AppData | null>(null);
+  const [view, setView] = useState<View>('week');
+  const [adding, setAdding] = useState(false);
+  const [persistent, setPersistent] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  async function refresh(target: Storage): Promise<void> {
-    setScreen(await loadScreen(target));
-  }
 
   useEffect(() => {
     let cancelled = false;
-    openIndexedDbStorage()
-      .then(async (opened) => {
+    void (async () => {
+      try {
+        const opened = validatedStorage(await openIndexedDbStorage());
+        const loaded = await readSettings(opened);
         if (cancelled) return;
         setStorage(opened);
-        await refresh(opened);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setError(String(cause));
-      });
+        setSettings(loaded);
+        applyTheme(loaded.themePreset, loaded.theme);
+        setData(await loadAppData(opened, loaded));
+        const manager = globalThis.navigator?.storage;
+        if (manager !== undefined && typeof manager.persist === 'function') {
+          const granted = await manager.persist();
+          if (!cancelled) setPersistent(granted);
+        }
+      } catch (cause: unknown) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    applyTheme(settings.themePreset, settings.theme);
+    if (settings.theme !== 'system' || typeof globalThis.matchMedia !== 'function') return;
+    const media = globalThis.matchMedia('(prefers-color-scheme: dark)');
+    const listener = (): void => {
+      applyTheme(settings.themePreset, settings.theme);
+    };
+    media.addEventListener('change', listener);
+    return () => media.removeEventListener('change', listener);
+  }, [settings.theme, settings.themePreset]);
+
+  const reload = useCallback(async (target: Storage, current: AppSettings) => {
+    setData(await loadAppData(target, current));
+  }, []);
+
+  const patch = useCallback(
+    async (partial: Partial<AppSettings>) => {
+      if (storage === null) return;
+      const next = await writeSettings(storage, partial);
+      setSettings(next);
+      await reload(storage, next);
+    },
+    [storage, reload],
+  );
 
   if (error !== null) {
     return (
@@ -91,71 +88,84 @@ export function App() {
     );
   }
 
-  if (storage === null || screen === null) {
+  if (storage === null || data === null) {
     return <main className="app" />;
   }
 
-  if (screen.semester === null) {
+  if (data.semester === null) {
     return (
-      <main className="app">
-        <button
-          type="button"
-          onClick={() => {
-            void (async () => {
-              await seedSample(storage, '2026-09-07', 'Asia/Shanghai');
-              await refresh(storage);
-            })();
-          }}
-        >
-          载入示例数据
-        </button>
-      </main>
+      <Onboarding
+        storage={storage}
+        userId={USER_ID}
+        timeZone={settings.timeZone}
+        onDone={() => {
+          void (async () => {
+            await reload(storage, settings);
+            setView('week');
+          })();
+        }}
+      />
     );
   }
 
   return (
     <main className="app">
       <header className="bar">
-        <span className="title">{screen.semester.name}</span>
-        <span className="muted">第 {screen.week} 周</span>
+        <span className="title">{data.semester.name}</span>
+        <span className="muted">
+          第 {data.week} 周 · {data.today}
+          {data.nextLesson !== undefined && ` · 下一节 ${formatTime(data.nextLesson.startAt, data.timeZone)}`}
+        </span>
       </header>
-      <div className="grid">
-        <div className="corner" />
-        {WEEKDAY_LABELS.map((label, index) => (
-          <div key={label} className={index + 1 === screen.todayOfWeek ? 'head today' : 'head'}>
-            {label}
-          </div>
-        ))}
-        {screen.slots.map((slot) => (
-          <div key={`row-${slot.period_no}`} className="rowGroup">
-            <div className="period">
-              <span className="periodNo">{slot.period_no}</span>
-              <span className="periodTime">{slot.start_time}</span>
-            </div>
-            {Array.from({ length: VIEW_DAYS }, (_, index) => {
-              const cells = screen.grid.get(`${index + 1}:${slot.period_no}`) ?? [];
-              return (
-                <div key={`c-${slot.period_no}-${index}`} className="cell">
-                  {cells.map((cell, cellIndex) => (
-                    <span
-                      key={`${cell.name}-${cellIndex}`}
-                      className="lesson"
-                      style={{ borderLeftColor: cell.color }}
-                      title={cell.room ?? ''}
-                    >
-                      {cell.name}
-                    </span>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+
+      <div className="bar">
+        <div className="tabs">
+          <button type="button" className="tab" aria-current={view === 'week'} onClick={() => setView('week')}>
+            周视图
+          </button>
+          <button type="button" className="tab" aria-current={view === 'today'} onClick={() => setView('today')}>
+            今日
+          </button>
+          <button
+            type="button"
+            className="tab"
+            aria-current={view === 'settings'}
+            onClick={() => setView('settings')}
+          >
+            设置
+          </button>
+        </div>
+        <button type="button" className="primary" onClick={() => setAdding(true)}>
+          添加课程
+        </button>
       </div>
-      <footer className="bar">
-        <span className="muted">{screen.semester.time_zone}</span>
-        <span className="muted">{screen.kind}</span>
-      </footer>
+
+      {view === 'week' && (
+        <WeekView
+          storage={storage}
+          data={data}
+          viewDays={settings.viewDays}
+          timeZone={data.timeZone}
+          onChanged={() => void reload(storage, settings)}
+        />
+      )}
+      {view === 'today' && <TodayView data={data} timeZone={data.timeZone} />}
+      {view === 'settings' && <Settings settings={settings} persistent={persistent} onPatch={patch} />}
+
+      {adding && (
+        <CourseForm
+          storage={storage}
+          semesterId={data.semester.id}
+          semesterStart={data.semester.start_date}
+          totalWeeks={data.semester.total_weeks}
+          preset={settings.themePreset}
+          slots={data.slots}
+          onDone={() => {
+            setAdding(false);
+            void reload(storage, settings);
+          }}
+        />
+      )}
     </main>
   );
 }

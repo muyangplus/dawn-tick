@@ -7,5 +7,7 @@ export * from './sqlite-storage.ts';
 export * from './types.ts';
 export * from './expand.ts';
 export * from './repository.ts';
+export * from './mutations.ts';
+export * from './settings.ts';
 export * from './sync.ts';
 export * from './validation.ts';
