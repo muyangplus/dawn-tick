@@ -176,11 +176,17 @@ fn ensure_webview_folder_writable() {
     append_log("改名失败，目录被占用");
 
     let mut candidates = Vec::new();
-    if let Ok(roaming) = std::env::var("APPDATA") {
-        candidates.push(PathBuf::from(roaming).join("com.dawntick.app").join("EBWebView"));
+    // 首选程序所在目录：便携版放在任意可写位置（含 U 盘）都能自包含运行。
+    // WebView2 会在给定目录下自行创建 EBWebView 子目录，这里给的是它的上级目录。
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(program_dir) = exe.parent() {
+            candidates.push(program_dir.join("DawnTick-data"));
+        }
     }
-    candidates.push(PathBuf::from(&base).join("DawnTick").join("EBWebView"));
-    candidates.push(std::env::temp_dir().join("DawnTick").join("EBWebView"));
+    // 其次与数据库同根的用户目录
+    if let Ok(roaming) = std::env::var("APPDATA") {
+        candidates.push(PathBuf::from(roaming).join("com.dawntick.app"));
+    }
 
     let mut failures = Vec::new();
     for folder in candidates {
@@ -196,7 +202,10 @@ fn ensure_webview_folder_writable() {
             continue;
         }
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
-        append_log(&format!("WebView2 数据目录改用可写位置: {}", folder.display()));
+        append_log(&format!(
+            "WebView2 数据目录改用可写位置: {}（其下生成 EBWebView）",
+            folder.display()
+        ));
         return;
     }
 
@@ -205,7 +214,7 @@ fn ensure_webview_folder_writable() {
     }
     let restricted = failures.iter().all(|line| line.contains("os error 5"));
     let hint = if restricted {
-        "三次兜底目录都因「拒绝访问」失败，说明当前进程对用户目录没有写权限（可能以受限权限或沙箱方式启动）。请用普通双击方式运行本程序。"
+        "兜底目录都因「拒绝访问」失败，说明当前进程对程序目录与用户目录都没有写权限（可能以受限权限或沙箱方式启动）。请用普通双击方式运行本程序。"
     } else {
         "请结束上述进程（或在任务管理器里结束残留的 msedgewebview2.exe）后重试。"
     };
