@@ -1,0 +1,13 @@
+[package]
+name = "dawn-tick-desktop"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "dawn_tick_desktop"
+path = "src/lib.rs"
+
+[dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -10,5 +10,9 @@
   "scripts": {
     "test": "node --test test/time.test.ts test/weeks.test.ts test/migrate.test.ts test/schema.test.ts test/expand.test.ts",
     "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
   }
 }

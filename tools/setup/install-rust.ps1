@@ -1,4 +1,6 @@
 $ErrorActionPreference = 'Continue'
+$env:RUSTUP_DIST_SERVER = 'https://mirrors.tuna.tsinghua.edu.cn/rustup'
+$env:RUSTUP_UPDATE_ROOT = 'https://mirrors.tuna.tsinghua.edu.cn/rustup/rustup'
 $dir = 'E:\work\dsh\rustup'
 $exe = Join-Path $dir 'rustup-init.exe'
 
