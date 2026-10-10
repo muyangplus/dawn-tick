@@ -6,7 +6,7 @@
     android:orientation="vertical"
     android:gravity="center_vertical"
     android:padding="12dp"
-    android:background="@drawable/widget_background">
+    android:background="@drawable/widget_bg_light">
 
     <TextView
         android:id="@+id/widget_label"

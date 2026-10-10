@@ -12,11 +12,29 @@ data class WidgetLesson(
     val endsAt: Long,
 )
 
+data class WidgetGridLesson(
+    val title: String,
+    val room: String?,
+    val color: String,
+    val dayOfWeek: Int,
+    val periodStart: Int,
+    val periodEnd: Int,
+)
+
+data class WidgetExam(
+    val title: String,
+    val date: String,
+    val startAt: Long,
+)
+
 data class WidgetSnapshot(
     val week: Int,
     val updatedAt: Long,
+    val background: String,
     val next: WidgetLesson?,
     val today: List<WidgetLesson>,
+    val grid: List<WidgetGridLesson>,
+    val exams: List<WidgetExam>,
 )
 
 /** 读取 Web 层写入 app_meta.widget_snapshot 的快照，避免小组件重复实现课表逻辑。 */
@@ -34,19 +52,53 @@ object WidgetStore {
         val json = readSnapshot(context) ?: return null
         return try {
             val root = JSONObject(json)
+
             val today = mutableListOf<WidgetLesson>()
             root.optJSONArray("today")?.let { array ->
                 for (index in 0 until array.length()) {
-                    val item = array.optJSONObject(index) ?: continue
-                    today.add(parseLesson(item))
+                    array.optJSONObject(index)?.let { today.add(parseLesson(it)) }
                 }
             }
-            val next = root.optJSONObject("next")?.let { parseLesson(it) }
+
+            val grid = mutableListOf<WidgetGridLesson>()
+            root.optJSONArray("grid")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    grid.add(
+                        WidgetGridLesson(
+                            title = item.optString("title"),
+                            room = item.optString("room").ifEmpty { null },
+                            color = item.optString("color"),
+                            dayOfWeek = item.optInt("dayOfWeek", 1),
+                            periodStart = item.optInt("periodStart", 1),
+                            periodEnd = item.optInt("periodEnd", 1),
+                        ),
+                    )
+                }
+            }
+
+            val exams = mutableListOf<WidgetExam>()
+            root.optJSONArray("exams")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    exams.add(
+                        WidgetExam(
+                            title = item.optString("title"),
+                            date = item.optString("date"),
+                            startAt = item.optLong("startAt"),
+                        ),
+                    )
+                }
+            }
+
             WidgetSnapshot(
                 week = root.optInt("week", 0),
                 updatedAt = root.optLong("updatedAt", 0L),
-                next = next,
+                background = root.optString("background", "light"),
+                next = root.optJSONObject("next")?.let { parseLesson(it) },
                 today = today,
+                grid = grid,
+                exams = exams,
             )
         } catch (_: Exception) {
             null

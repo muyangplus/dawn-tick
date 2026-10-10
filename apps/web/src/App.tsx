@@ -1,37 +1,90 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   DEFAULT_SETTINGS,
-  formatTime,
+  createReschedule,
   readSettings,
+  updateSchedule,
+  updateSemester,
   writeSettings,
   type AppSettings,
+  type SearchHit,
   type Storage,
 } from '@dawn-tick/core';
+import { AppToolbar } from './components/app-toolbar.tsx';
+import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
+import { LessonDetail } from './components/lesson-detail.tsx';
+import { SearchDialog } from './components/search-dialog.tsx';
+import { Button } from './components/ui/button.tsx';
+import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
+import { Sheet } from './components/ui/sheet.tsx';
+import { Toaster, toast } from './components/ui/toaster.tsx';
+import { Plus } from 'lucide-react';
+import { loadAppData, loadCourseDetail, weekDateOf, type AppData, type CourseDetail, type LessonCell } from './data.ts';
 import { openStorage } from './db/platform.ts';
-import { loadAppData, type AppData } from './data.ts';
+import { CourseForm } from './screens/course-form.tsx';
+import { ImportFlow } from './screens/import-flow.tsx';
+import { Onboarding } from './screens/onboarding.tsx';
+import { ScheduleView } from './screens/schedule-view.tsx';
+import { SettingsView } from './screens/settings-view.tsx';
+import { TodayView } from './screens/today-view.tsx';
+import { TodoForm } from './screens/todo-form.tsx';
+import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
-import { CourseForm } from './screens/CourseForm.tsx';
-import { ImportDialog } from './screens/ImportDialog.tsx';
-import { Onboarding } from './screens/Onboarding.tsx';
-import { Settings } from './screens/Settings.tsx';
-import { TodayView } from './screens/TodayView.tsx';
-import { WeekView } from './screens/WeekView.tsx';
+import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
 
 const USER_ID = 'u1';
-type View = 'week' | 'today' | 'settings';
+const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+const STORAGE_LABEL: Record<Storage['kind'], string> = {
+  indexeddb: '浏览器 IndexedDB',
+  sqlite: '原生 SQLite',
+  memory: '内存（测试）',
+};
+
+interface DetailState {
+  cell: LessonCell;
+  detail: CourseDetail;
+}
+
+interface MoveState {
+  cell: LessonCell;
+  dayOfWeek: number;
+  period: number;
+}
 
 export function App() {
   const [storage, setStorage] = useState<Storage | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [data, setData] = useState<AppData | null>(null);
-  const [view, setView] = useState<View>('week');
-  const [adding, setAdding] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [view, setView] = useState<NavId>('timetable');
+  const [mode, setMode] = useState<'week' | 'today'>('week');
+  const [viewWeek, setViewWeek] = useState<number | null>(null);
+  const [detail, setDetail] = useState<DetailState | null>(null);
+  const [move, setMove] = useState<MoveState | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [courseFormOpen, setCourseFormOpen] = useState(false);
+  const [todoFormOpen, setTodoFormOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
+  const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
   const [error, setError] = useState<string | null>(null);
+  const breakpoint = useBreakpoint();
+  const isDesktop = breakpoint === 'desktop';
+  const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone);
+
+  const reload = useCallback(
+    async (target: Storage | null, current: AppSettings, week?: number | null) => {
+      if (target === null) return;
+      const next = await loadAppData(target, current, week === undefined || week === null ? {} : { viewWeek: week });
+      setData(next);
+      setViewWeek(next.viewWeek);
+      await writeWidgetSnapshot(target, next, current);
+    },
+    [],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -42,10 +95,8 @@ export function App() {
         if (cancelled) return;
         setStorage(opened);
         setSettings(loaded);
-        applyTheme(loaded.themePreset, loaded.theme);
-        const initial = await loadAppData(opened, loaded);
-        setData(initial);
-        await writeWidgetSnapshot(opened, initial);
+        setResolvedMode(applyTheme(loaded.themePreset, loaded.theme));
+        await reload(opened, loaded);
         const manager = globalThis.navigator?.storage;
         if (manager !== undefined && typeof manager.persist === 'function') {
           const granted = await manager.persist();
@@ -58,161 +109,362 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reload]);
 
   useEffect(() => {
-    applyTheme(settings.themePreset, settings.theme);
+    setResolvedMode(applyTheme(settings.themePreset, settings.theme));
     if (settings.theme !== 'system' || typeof globalThis.matchMedia !== 'function') return;
     const media = globalThis.matchMedia('(prefers-color-scheme: dark)');
-    const listener = (): void => {
-      applyTheme(settings.themePreset, settings.theme);
-    };
+    const listener = (): void => setResolvedMode(applyTheme(settings.themePreset, settings.theme));
     media.addEventListener('change', listener);
     return () => media.removeEventListener('change', listener);
   }, [settings.theme, settings.themePreset]);
 
-  const reload = useCallback(async (target: Storage, current: AppSettings) => {
-    const next = await loadAppData(target, current);
-    setData(next);
-    await writeWidgetSnapshot(target, next);
-  }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (event.key === 'ArrowLeft') setViewWeek((week) => shiftWeek(week ?? 1, -1));
+      else if (event.key === 'ArrowRight') setViewWeek((week) => shiftWeek(week ?? 1, 1));
+      else if (event.key === 't' || event.key === 'T') setViewWeek(data?.week ?? 1);
+      else if (event.key === '/') {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    globalThis.addEventListener('keydown', onKeyDown);
+    return () => globalThis.removeEventListener('keydown', onKeyDown);
+  }, [data?.week]);
+
+  useEffect(() => {
+    if (storage === null || viewWeek === null || data === null) return;
+    if (viewWeek === data.viewWeek) return;
+    void reload(storage, settings, viewWeek);
+  }, [viewWeek, data, storage, settings, reload]);
 
   const patch = useCallback(
     async (partial: Partial<AppSettings>) => {
       if (storage === null) return;
       const next = await writeSettings(storage, partial);
       setSettings(next);
-      await reload(storage, next);
+      await reload(storage, next, viewWeek);
     },
-    [storage, reload],
+    [storage, reload, viewWeek],
   );
 
-  const reminders = useReminders(
-    storage,
-    data?.semester?.id ?? null,
-    data?.timeZone ?? settings.timeZone,
-  );
+  const refresh = useCallback(() => {
+    void reload(storage, settings, viewWeek);
+  }, [reload, storage, settings, viewWeek]);
+
+  async function openLesson(cell: LessonCell): Promise<void> {
+    if (storage === null) return;
+    const loaded = await loadCourseDetail(storage, cell.courseId);
+    setDetail({ cell, detail: loaded });
+  }
+
+  async function applyMove(target: 'week' | 'always'): Promise<void> {
+    if (storage === null || data?.semester == null || move === null) return;
+    const semester = data.semester;
+    const span = move.cell.periodEnd - move.cell.periodStart;
+    if (target === 'always') {
+      await updateSchedule(storage, move.cell.scheduleId, {
+        day_of_week: move.dayOfWeek,
+        period_start: move.period,
+        period_end: move.period + span,
+      });
+      toast.success('已改为每周该时间');
+    } else {
+      await createReschedule(storage, {
+        userId: USER_ID,
+        semesterId: semester.id,
+        refScheduleId: move.cell.scheduleId,
+        onDate: weekDateOf(semester, data.viewWeek, move.cell.dayOfWeek),
+        action: 'move',
+        newDate: weekDateOf(semester, data.viewWeek, move.dayOfWeek),
+        newPeriodStart: move.period,
+        newPeriodEnd: move.period + span,
+        asDayOfWeek: move.dayOfWeek,
+      });
+      toast.success('已仅调整本周');
+    }
+    setMove(null);
+    refresh();
+  }
+
+  async function switchSemester(id: string): Promise<void> {
+    if (storage === null || data === null) return;
+    for (const semester of data.semesters) {
+      if (semester.id !== id && semester.is_active === 1) {
+        await updateSemester(storage, semester.id, { is_active: 0 });
+      }
+    }
+    await updateSemester(storage, id, { is_active: 1 });
+    setViewWeek(null);
+    refresh();
+  }
+
+  function pickSearchHit(hit: SearchHit): void {
+    if (hit.kind === 'event') {
+      setView('schedule');
+      return;
+    }
+    if (hit.dayOfWeek !== undefined && hit.periodStart !== undefined && hit.courseId !== undefined) {
+      const lessons = [...(data?.grid.values() ?? [])].flat();
+      const cell = lessons.find(
+        (lesson) => lesson.courseId === hit.courseId && lesson.periodStart === hit.periodStart,
+      );
+      if (cell !== undefined) {
+        void openLesson(cell);
+        return;
+      }
+    }
+    setView('timetable');
+  }
 
   if (error !== null) {
     return (
-      <main className="app">
-        <p className="error">{error}</p>
+      <main className="flex min-h-dvh items-center justify-center bg-page p-4">
+        <p className="text-sm text-danger-strong">{error}</p>
       </main>
     );
   }
 
   if (storage === null || data === null) {
     return (
-      <main className="app">
-        <p className="muted">载入中</p>
+      <main className="flex min-h-dvh items-center justify-center bg-page">
+        <p className="text-sm text-muted">载入中</p>
       </main>
     );
   }
 
   if (data.semester === null) {
     return (
-      <Onboarding
-        storage={storage}
-        userId={USER_ID}
-        timeZone={settings.timeZone}
-        onDone={() => {
-          void (async () => {
-            await reload(storage, settings);
-            setView('week');
-          })();
-        }}
-      />
-    );
-  }
-
-  return (
-    <main className="app">
-      <header className="bar">
-        <span className="title">{data.semester.name}</span>
-        <span className="muted">
-          第 {data.week} 周 · {data.today}
-          {data.nextLesson !== undefined && ` · 下一节 ${formatTime(data.nextLesson.startAt, data.timeZone)}`}
-        </span>
-      </header>
-
-      <div className="bar">
-        <div className="tabs">
-          <button type="button" className="tab" aria-current={view === 'week'} onClick={() => setView('week')}>
-            周视图
-          </button>
-          <button type="button" className="tab" aria-current={view === 'today'} onClick={() => setView('today')}>
-            今日
-          </button>
-          <button
-            type="button"
-            className="tab"
-            aria-current={view === 'settings'}
-            onClick={() => setView('settings')}
-          >
-            设置
-          </button>
-        </div>
-        <button type="button" onClick={() => setImporting(true)}>
-          导入
-        </button>
-        <button type="button" className="primary" onClick={() => setAdding(true)}>
-          添加课程
-        </button>
-      </div>
-
-      {view === 'week' && (
-        <WeekView
+      <>
+        <Onboarding
           storage={storage}
           userId={USER_ID}
-          data={data}
-          viewDays={settings.viewDays}
-          onChanged={() => void reload(storage, settings)}
-        />
-      )}
-      {view === 'today' && <TodayView data={data} timeZone={data.timeZone} />}
-      {view === 'settings' && (
-        <Settings
-          settings={settings}
-          persistent={persistent}
-          reminders={reminders}
-          storage={storage}
-          onPatch={patch}
-          onRestored={() => {
+          timeZone={settings.timeZone}
+          onDone={() => {
             void (async () => {
-              const restored = await readSettings(storage);
-              setSettings(restored);
-              await reload(storage, restored);
+              await reload(storage, settings, null);
+              setView('timetable');
             })();
           }}
         />
-      )}
+        <Toaster mode={resolvedMode} />
+      </>
+    );
+  }
 
-      {importing && (
-        <ImportDialog
+  const content = (
+    <>
+      {view === 'timetable' &&
+        (mode === 'week' ? (
+          <WeekView
+            data={data}
+            viewDays={settings.viewDays}
+            onSelectLesson={(cell) => void openLesson(cell)}
+            onMoveLesson={(cell, dayOfWeek, period) => setMove({ cell, dayOfWeek, period })}
+            onPrevWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, -1))}
+            onNextWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, 1))}
+          />
+        ) : (
+          <TodayView data={data} />
+        ))}
+      {view === 'schedule' && <ScheduleView data={data} storage={storage} onChanged={refresh} />}
+      {view === 'import' && (
+        <ImportFlow
           storage={storage}
           semesterId={data.semester.id}
-          onDone={() => {
-            setImporting(false);
-            if (reminders.permission === 'default') void reminders.request();
-            void reload(storage, settings);
+          onManual={() => {
+            setView('timetable');
+            setCourseFormOpen(true);
           }}
+          onDone={refresh}
+          onClose={() => setView('timetable')}
         />
       )}
-
-      {adding && (
-        <CourseForm
+      {view === 'settings' && (
+        <SettingsView
           storage={storage}
-          semesterId={data.semester.id}
-          semesterStart={data.semester.start_date}
-          totalWeeks={data.semester.total_weeks}
-          preset={settings.themePreset}
-          slots={data.slots}
-          onDone={() => {
-            setAdding(false);
-            void reload(storage, settings);
-          }}
+          userId={USER_ID}
+          settings={settings}
+          semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
+          activeSemesterId={data.semester.id}
+          persistent={persistent}
+          reminders={reminders}
+          storageKind={STORAGE_LABEL[storage.kind]}
+          onPatch={patch}
+          onChanged={refresh}
         />
       )}
-    </main>
+    </>
   );
+
+  return (
+    <div className="flex min-h-dvh bg-page text-ink">
+      {isDesktop && (
+        <AppSidebar
+          current={view}
+          onSelect={setView}
+          appName="晓刻 DawnTick"
+          subtitle={`${data.semester.name} · 第 ${data.week} 周`}
+        />
+      )}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <AppToolbar
+          semester={data.semester}
+          semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
+          onSelectSemester={(id) => void switchSemester(id)}
+          viewWeek={data.viewWeek}
+          currentWeek={data.week}
+          onPrevWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, -1))}
+          onNextWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, 1))}
+          onToday={() => setViewWeek(data.week)}
+          mode={mode}
+          onModeChange={setMode}
+          onSearch={() => setSearchOpen(true)}
+          onAdd={() => setCourseFormOpen(true)}
+          compact={!isDesktop}
+        />
+        <main className="flex-1 overflow-y-auto p-3 pb-24 tablet:p-4 desktop:pb-4">{content}</main>
+      </div>
+
+      {isDesktop && detail !== null && (
+        <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label="课程详情">
+          <LessonDetail
+            storage={storage}
+            userId={USER_ID}
+            cell={detail.cell}
+            detail={detail.detail}
+            onChanged={refresh}
+            onClose={() => setDetail(null)}
+          />
+        </aside>
+      )}
+
+      {!isDesktop && <BottomNav current={view} onSelect={setView} />}
+
+      {!isDesktop && (
+        <button
+          type="button"
+          aria-label="快速添加"
+          onClick={() => setAddMenuOpen(true)}
+          className="fixed bottom-20 right-4 z-30 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary shadow-lg"
+        >
+          <Plus className="size-6" aria-hidden />
+        </button>
+      )}
+
+      <Sheet
+        open={!isDesktop && detail !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetail(null);
+        }}
+        side={breakpoint === 'tablet' ? 'right' : 'bottom'}
+        title={detail?.detail.course?.name ?? detail?.cell.name ?? '课程详情'}
+      >
+        {detail !== null && (
+          <LessonDetail
+            storage={storage}
+            userId={USER_ID}
+            cell={detail.cell}
+            detail={detail.detail}
+            onChanged={refresh}
+            onClose={() => setDetail(null)}
+          />
+        )}
+      </Sheet>
+
+      <Dialog open={addMenuOpen} onOpenChange={setAddMenuOpen}>
+        <DialogContent title="快速添加">
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setAddMenuOpen(false);
+                setCourseFormOpen(true);
+              }}
+            >
+              添加课程
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setAddMenuOpen(false);
+                setTodoFormOpen(true);
+              }}
+            >
+              添加待办
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={move !== null}
+        onOpenChange={(open) => {
+          if (!open) setMove(null);
+        }}
+      >
+        <DialogContent
+          title="调整课程时间"
+          description={
+            move === null
+              ? ''
+              : `把「${move.cell.name}」移到 ${WEEKDAYS[move.dayOfWeek - 1]} 第 ${move.period} 节`
+          }
+        >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setMove(null)}>
+              取消
+            </Button>
+            <Button variant="secondary" onClick={() => void applyMove('week')}>
+              仅本周
+            </Button>
+            <Button variant="primary" onClick={() => void applyMove('always')}>
+              从本周起每周
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <SearchDialog
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        storage={storage}
+        semesterId={data.semester.id}
+        onPick={pickSearchHit}
+      />
+
+      <CourseForm
+        open={courseFormOpen}
+        onOpenChange={setCourseFormOpen}
+        storage={storage}
+        semesterId={data.semester.id}
+        semesterStart={data.semester.start_date}
+        totalWeeks={data.semester.total_weeks}
+        preset={settings.themePreset}
+        slots={data.slots}
+        onCreated={refresh}
+      />
+
+      <TodoForm
+        open={todoFormOpen}
+        onOpenChange={setTodoFormOpen}
+        storage={storage}
+        userId={USER_ID}
+        semesterId={data.semester.id}
+        timeZone={data.timeZone}
+        onCreated={refresh}
+      />
+
+      <Toaster mode={resolvedMode} />
+    </div>
+  );
+}
+
+function shiftWeek(week: number, delta: number): number {
+  return Math.max(1, week + delta);
 }

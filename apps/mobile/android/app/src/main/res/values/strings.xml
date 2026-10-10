@@ -10,4 +10,9 @@
     <string name="widget_no_data">尚未同步数据</string>
     <string name="widget_today_header">今日课表 · 第 %1$d 周</string>
     <string name="widget_today_empty">今天没有课</string>
+    <string name="widget_week_label">本周课表</string>
+    <string name="widget_week_header">本周课表 · 第 %1$d 周</string>
+    <string name="widget_week_empty_row">%1$s 无课</string>
+    <string name="widget_exam_label">考试倒计时</string>
+    <string name="widget_exam_none">暂无考试</string>
 </resources>
