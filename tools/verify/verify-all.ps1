@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = 'utf-8'
@@ -70,7 +70,20 @@ Run-Check 'schema-check (Python)' {
     ($out.Trim() -split "`n" | Select-Object -Last 1)
 }
 
-Section '5. Web 构建产物'
+Section '5. 设计令牌与无障碍'
+Run-Check '对比度与触控尺寸' {
+    $out = node tools/design/check-a11y.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    (($out.Trim() -split "`n") | Select-Object -First 1)
+}
+Run-Check '令牌与样式一致' {
+    $out = node --test tools/design/check-a11y.test.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE" }
+    $pass = ([regex]::Match($out, 'pass (\d+)')).Groups[1].Value
+    "pass=$pass"
+}
+
+Section '6. Web 构建产物'
 Run-Check 'web 构建与双入口' {
     pnpm -C apps/web build 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE" }
@@ -82,7 +95,7 @@ Run-Check 'web 构建与双入口' {
     "index.html + mini.html，最大分包 $([math]::Round($main.Length / 1KB, 1)) KB"
 }
 
-Section '6. Windows 产物'
+Section '7. Windows 产物'
 $exe = Join-Path $repo 'apps/desktop/src-tauri/target/release/dawn-tick-desktop.exe'
 if (Test-Path $exe) {
     Report 'PASS' 'Windows exe' "$([math]::Round((Get-Item $exe).Length / 1MB, 2)) MB"
@@ -97,7 +110,7 @@ if ($installers) {
     Report 'SKIP' 'Windows 安装包' '未构建，需设置 TAURI_BUNDLER_TOOLS_GITHUB_MIRROR 后运行 tauri build'
 }
 
-Section '7. Android 产物'
+Section '8. Android 产物'
 $apk = Join-Path $repo 'apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk'
 if (-not (Test-Path $apk)) {
     Report 'SKIP' 'Android APK' '未构建，运行 gradlew assembleDebug'
@@ -161,7 +174,7 @@ if (-not (Test-Path $apk)) {
     }
 }
 
-Section '8. Rust 壳'
+Section '9. Rust 壳'
 $cargo = Join-Path $env:USERPROFILE '.cargo\bin\cargo.exe'
 if (-not (Test-Path $cargo)) {
     Report 'SKIP' 'cargo check' 'cargo 未找到'

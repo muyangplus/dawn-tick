@@ -27,7 +27,7 @@
 |---|---|
 | 领域逻辑 | TypeScript，`packages/core` |
 | 存储抽象 | `Storage` / `Collection`，各端实现（IndexedDB / SQLite） |
-| 界面 | React 19 + Vite 8 |
+| 界面 | React 19 + Vite 8 + Tailwind CSS v4 + Radix 原语（shadcn 风格组件）+ lucide 图标 |
 | 桌面 | Tauri 2（Rust）+ tauri-plugin-sql |
 | 移动 | Capacitor + Kotlin 小组件 |
 | 测试 | `node --test`（Node 24 原生类型擦除）、内存存储、`node:sqlite` 与 Python 跨引擎校验 |
@@ -73,6 +73,7 @@
 | [06 配色方案](docs/06-配色方案.md) | 四套主题色值 |
 | [07 发布与版本规范](docs/07-发布与版本规范.md) | 渠道、标签、产物、密钥、仓库设置 |
 | [08 开发环境与验证](docs/08-开发环境与验证.md) | 工具链、镜像、脚本、验证、环境坑 |
+| [设计令牌 JSON](docs/design-tokens.json) | 四套主题语义令牌与静态令牌导出 |
 | [records](docs/records) | 各阶段校验与修复记录 |
 
 ## 发布渠道

@@ -5,7 +5,6 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import '../styles.css';
-import './mini.css';
 
 const REFRESH_MS = 60_000;
 
