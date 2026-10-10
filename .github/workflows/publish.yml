@@ -184,15 +184,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          SUFFIX="${VERSION}-${CHANNEL}"
+          SUFFIX="dawn-tick-${VERSION}-${CHANNEL}"
 
           setup=$(find artifacts/windows -name '*.exe' | head -n 1)
-          cp "$setup" "out/晓刻-${SUFFIX}-windows-x64-setup.exe"
+          cp "$setup" "out/${SUFFIX}-windows-x64-setup.exe"
 
           apk=$(find artifacts/android -name '*.apk' | head -n 1)
-          cp "$apk" "out/晓刻-${SUFFIX}-android.apk"
+          cp "$apk" "out/${SUFFIX}-android.apk"
 
-          (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/晓刻-${SUFFIX}-web.zip" .)
+          (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 
           cd out
           sha256sum * > SHA256SUMS.txt
