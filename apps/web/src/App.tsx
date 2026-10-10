@@ -3,19 +3,20 @@ import {
   activeSemester,
   dayOfWeek,
   formatDate,
+  listTimeSlots,
   resolveTimeZone,
   weekOfDate,
   weekView,
   type SemesterRow,
-  type SqlDriver,
+  type Storage,
   type TimeSlotRow,
-  type WeekViewRow,
 } from '@dawn-tick/core';
-import { openWebDatabase, type WebDatabase } from './db/driver.ts';
-import { SAMPLE_SEMESTER, SAMPLE_USER, seedSample } from './db/sample.ts';
+import { openIndexedDbStorage } from './db/idb-storage.ts';
+import { SAMPLE_USER, seedSample } from './db/sample.ts';
 import './styles.css';
 
 const VIEW_DAYS = 5;
+const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五'];
 
 interface Cell {
   name: string;
@@ -24,19 +25,28 @@ interface Cell {
 }
 
 interface Screen {
-  engine: string;
-  storage: WebDatabase['storage'];
+  kind: Storage['kind'];
   semester: SemesterRow | null;
   week: number;
-  today: string;
+  todayOfWeek: number;
   slots: TimeSlotRow[];
   grid: Map<string, Cell[]>;
 }
 
-function buildGrid(db: SqlDriver, semester: SemesterRow, week: number, slots: TimeSlotRow[]): Map<string, Cell[]> {
+async function loadScreen(storage: Storage): Promise<Screen> {
+  const autoSync = (await storage.readMeta('auto_time_zone')) === '1';
+  const timeZone = resolveTimeZone(await storage.readMeta('time_zone'), autoSync);
+  const today = formatDate(Date.now(), timeZone);
+  const semester = (await activeSemester(storage, SAMPLE_USER)) ?? null;
+  if (semester === null) {
+    return { kind: storage.kind, semester: null, week: 1, todayOfWeek: 0, slots: [], grid: new Map() };
+  }
+
+  const slots = await listTimeSlots(storage, semester.id);
+  const week = Math.max(1, weekOfDate(today, semester.start_date));
   const grid = new Map<string, Cell[]>();
   for (let day = 1; day <= VIEW_DAYS; day += 1) {
-    for (const row of weekView(db, semester.id, day, week)) {
+    for (const row of await weekView(storage, semester.id, day, week)) {
       for (let period = row.period_start; period <= row.period_end; period += 1) {
         const key = `${day}:${period}`;
         const list = grid.get(key) ?? [];
@@ -45,53 +55,25 @@ function buildGrid(db: SqlDriver, semester: SemesterRow, week: number, slots: Ti
       }
     }
   }
-  return grid;
+  return { kind: storage.kind, semester, week, todayOfWeek: dayOfWeek(today), slots, grid };
 }
 
 export function App() {
-  const [database, setDatabase] = useState<WebDatabase | null>(null);
+  const [storage, setStorage] = useState<Storage | null>(null);
   const [screen, setScreen] = useState<Screen | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function refresh(db: WebDatabase): void {
-    const timeZone = resolveTimeZone(undefined, false);
-    const today = formatDate(Date.now(), timeZone);
-    const semester = activeSemester(db.driver, SAMPLE_USER) ?? null;
-    if (semester === null) {
-      setScreen({
-        engine: db.engine,
-        storage: db.storage,
-        semester: null,
-        week: 1,
-        today,
-        slots: [],
-        grid: new Map(),
-      });
-      return;
-    }
-    const slots = db.driver.all<TimeSlotRow>(
-      'SELECT * FROM time_slots WHERE semester_id = ? AND deleted_at IS NULL ORDER BY period_no',
-      [semester.id],
-    );
-    const week = Math.max(1, weekOfDate(today, semester.start_date));
-    setScreen({
-      engine: db.engine,
-      storage: db.storage,
-      semester,
-      week,
-      today,
-      slots,
-      grid: buildGrid(db.driver, semester, week, slots),
-    });
+  async function refresh(target: Storage): Promise<void> {
+    setScreen(await loadScreen(target));
   }
 
   useEffect(() => {
     let cancelled = false;
-    openWebDatabase()
-      .then((db) => {
+    openIndexedDbStorage()
+      .then(async (opened) => {
         if (cancelled) return;
-        setDatabase(db);
-        refresh(db);
+        setStorage(opened);
+        await refresh(opened);
       })
       .catch((cause: unknown) => {
         if (!cancelled) setError(String(cause));
@@ -109,12 +91,8 @@ export function App() {
     );
   }
 
-  if (database === null || screen === null) {
-    return (
-      <main className="app">
-        <p className="muted">SQLite</p>
-      </main>
-    );
+  if (storage === null || screen === null) {
+    return <main className="app" />;
   }
 
   if (screen.semester === null) {
@@ -123,8 +101,10 @@ export function App() {
         <button
           type="button"
           onClick={() => {
-            seedSample(database.driver, '2026-09-07', 'Asia/Shanghai');
-            refresh(database);
+            void (async () => {
+              await seedSample(storage, '2026-09-07', 'Asia/Shanghai');
+              await refresh(storage);
+            })();
           }}
         >
           载入示例数据
@@ -133,21 +113,17 @@ export function App() {
     );
   }
 
-  const todayOfWeek = dayOfWeek(screen.today);
-
   return (
     <main className="app">
       <header className="bar">
         <span className="title">{screen.semester.name}</span>
-        <span className="muted">
-          第 {screen.week} 周 · {SAMPLE_SEMESTER}
-        </span>
+        <span className="muted">第 {screen.week} 周</span>
       </header>
       <div className="grid">
         <div className="corner" />
-        {Array.from({ length: VIEW_DAYS }, (_, index) => (
-          <div key={`h-${index}`} className={index + 1 === todayOfWeek ? 'head today' : 'head'}>
-            {['周一', '周二', '周三', '周四', '周五'][index]}
+        {WEEKDAY_LABELS.map((label, index) => (
+          <div key={label} className={index + 1 === screen.todayOfWeek ? 'head today' : 'head'}>
+            {label}
           </div>
         ))}
         {screen.slots.map((slot) => (
@@ -162,7 +138,7 @@ export function App() {
                 <div key={`c-${slot.period_no}-${index}`} className="cell">
                   {cells.map((cell, cellIndex) => (
                     <span
-                      key={`cell-${cellIndex}`}
+                      key={`${cell.name}-${cellIndex}`}
                       className="lesson"
                       style={{ borderLeftColor: cell.color }}
                       title={cell.room ?? ''}
@@ -177,8 +153,8 @@ export function App() {
         ))}
       </div>
       <footer className="bar">
-        <span className="muted">SQLite {screen.engine}</span>
-        <span className="muted">{screen.storage === 'opfs' ? 'OPFS' : '内存'}</span>
+        <span className="muted">{screen.semester.time_zone}</span>
+        <span className="muted">{screen.kind}</span>
       </footer>
     </main>
   );

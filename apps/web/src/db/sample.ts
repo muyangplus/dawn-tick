@@ -1,17 +1,7 @@
-import type { SqlDriver } from '@dawn-tick/core';
-import { weeksToMask } from '@dawn-tick/core';
+import { weeksToMask, type Storage } from '@dawn-tick/core';
 
-const NOW = Date.now();
 export const SAMPLE_USER = 'u1';
 export const SAMPLE_SEMESTER = 'sem-1';
-
-function insert(db: SqlDriver, table: string, row: Record<string, string | number | null>): void {
-  const columns = Object.keys(row);
-  db.run(
-    `INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`,
-    columns.map((column) => row[column] as string | number | null),
-  );
-}
 
 function weekRange(from: number, to: number, step = 1): number[] {
   const out: number[] = [];
@@ -19,9 +9,12 @@ function weekRange(from: number, to: number, step = 1): number[] {
   return out;
 }
 
-export function seedSample(db: SqlDriver, startDate: string, timeZone: string): void {
-  insert(db, 'users', { id: SAMPLE_USER, nickname: '我', created_at: NOW, updated_at: NOW });
-  insert(db, 'semesters', {
+export async function seedSample(storage: Storage, startDate: string, timeZone: string): Promise<void> {
+  const now = Date.now();
+  const sync = { created_at: now, updated_at: now, deleted_at: null, rev: 0, dirty: 1 };
+
+  await storage.collection('users').put({ id: SAMPLE_USER, nickname: '我', ...sync });
+  await storage.collection('semesters').put({
     id: SAMPLE_SEMESTER,
     user_id: SAMPLE_USER,
     name: '示例学期',
@@ -29,8 +22,7 @@ export function seedSample(db: SqlDriver, startDate: string, timeZone: string): 
     total_weeks: 20,
     time_zone: timeZone,
     is_active: 1,
-    created_at: NOW,
-    updated_at: NOW,
+    ...sync,
   });
 
   const slots: Array<[number, string, string, string]> = [
@@ -42,15 +34,15 @@ export function seedSample(db: SqlDriver, startDate: string, timeZone: string): 
     [6, '14:55', '15:40', 'pm'],
   ];
   for (const [periodNo, startTime, endTime, section] of slots) {
-    insert(db, 'time_slots', {
+    await storage.collection('time_slots').put({
       id: `ts-${periodNo}`,
       semester_id: SAMPLE_SEMESTER,
       period_no: periodNo,
       start_time: startTime,
       end_time: endTime,
+      label: null,
       section,
-      created_at: NOW,
-      updated_at: NOW,
+      ...sync,
     });
   }
 
@@ -60,7 +52,7 @@ export function seedSample(db: SqlDriver, startDate: string, timeZone: string): 
     ['c-3', '大学英语', '大英', '王老师', '外语楼-302', '#27AE60', 2],
   ];
   for (const [id, name, shortName, teacher, location, color, credits] of courses) {
-    insert(db, 'courses', {
+    await storage.collection('courses').put({
       id,
       semester_id: SAMPLE_SEMESTER,
       name,
@@ -69,8 +61,8 @@ export function seedSample(db: SqlDriver, startDate: string, timeZone: string): 
       location,
       color,
       credits,
-      created_at: NOW,
-      updated_at: NOW,
+      note: null,
+      ...sync,
     });
   }
 
@@ -80,7 +72,7 @@ export function seedSample(db: SqlDriver, startDate: string, timeZone: string): 
     ['s-3', 'c-3', 5, 5, 6, [1, 3, 5, 7], '1,3,5,7周'],
   ];
   for (const [id, courseId, dayOfWeek, periodStart, periodEnd, weeks, weeksRaw] of schedules) {
-    insert(db, 'course_schedules', {
+    await storage.collection('course_schedules').put({
       id,
       course_id: courseId,
       day_of_week: dayOfWeek,
@@ -88,8 +80,8 @@ export function seedSample(db: SqlDriver, startDate: string, timeZone: string): 
       period_end: periodEnd,
       weeks_mask: weeksToMask(weeks),
       weeks_raw: weeksRaw,
-      created_at: NOW,
-      updated_at: NOW,
+      room: null,
+      ...sync,
     });
   }
 }

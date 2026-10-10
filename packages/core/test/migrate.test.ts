@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openNodeSqlite } from '../src/drivers/node-sqlite.ts';
 import { migrate, readMeta, readSchemaVersion, writeMeta } from '../src/migrate.ts';
-import { createDb, initSql, tableNames } from './helpers.ts';
+import { createSqlite, initSql, tableNames } from './helpers.ts';
 
 test('迁移建立全部表并记录版本', () => {
-  const db = createDb();
+  const db = createSqlite();
   assert.deepEqual(tableNames(db), [
     'app_meta',
     'course_schedules',
@@ -27,12 +27,12 @@ test('迁移可重复执行', () => {
 });
 
 test('外键开关在连接建立时生效', () => {
-  const db = createDb();
+  const db = createSqlite();
   assert.equal(db.get<{ foreign_keys: number }>('PRAGMA foreign_keys')?.foreign_keys, 1);
 });
 
 test('app_meta 读写', () => {
-  const db = createDb();
+  const db = createSqlite();
   writeMeta(db, 'time_zone', 'Asia/Shanghai');
   assert.equal(readMeta(db, 'time_zone'), 'Asia/Shanghai');
   writeMeta(db, 'time_zone', 'America/New_York');
