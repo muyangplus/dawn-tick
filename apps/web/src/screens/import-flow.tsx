@@ -1,20 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
 import { Bookmark, FileSpreadsheet, FileText, PencilLine, SlidersHorizontal } from 'lucide-react';
 import {
+  BUILTIN_SCHOOLS,
   PAGE_BOOKMARKLET,
+  SYSTEM_ENTRIES,
   applyImport,
+  buildEntryUrl,
   countPastedFrames,
   extractTimetableFromHtml,
   icsToSchedules,
   inspectPage,
   loadSemester,
+  matchSchools,
+  mergeSchools,
   parseCsv,
   parseIcs,
   parseTimetableMatrix,
   listTimeSlots,
   stripPageMarkers,
+  systemEntry,
   type ImportedSchedule,
   type PageInspection,
+  type SchoolEntry,
+  type SchoolSystem,
   type Storage,
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
@@ -26,8 +34,10 @@ import {
   canOpenImportWindow,
   closeImportWindow,
   listenImportPayload,
+  loadCustomSchools,
   openImportWindow,
   rememberedImportUrl,
+  saveCustomSchool,
 } from '../import-window.ts';
 import { cn } from '../lib/cn.ts';
 
@@ -81,6 +91,12 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [bookmarkCopied, setBookmarkCopied] = useState(false);
   const [inspection, setInspection] = useState<PageInspection | null>(null);
   const [importUrl, setImportUrl] = useState(() => rememberedImportUrl());
+  const [schoolQuery, setSchoolQuery] = useState('');
+  const [schoolSystem, setSchoolSystem] = useState<SchoolSystem>('jwglxt');
+  const [schoolName, setSchoolName] = useState('');
+  const [schoolId, setSchoolId] = useState('');
+  const [schoolDomain, setSchoolDomain] = useState('');
+  const [customSchools, setCustomSchools] = useState<SchoolEntry[]>(() => loadCustomSchools());
   const [windowNote, setWindowNote] = useState<string | null>(null);
   const [mapHeaderRow, setMapHeaderRow] = useState(0);
   const [mapDayStart, setMapDayStart] = useState(1);
@@ -121,6 +137,9 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       setError('浏览器未允许写入剪贴板，请手动复制下方代码');
     }
   }
+
+  /** 内置学校与本地保存的学校合并，供检索。 */
+  const allSchools = mergeSchools(BUILTIN_SCHOOLS, customSchools);
 
   /** 内嵌教务窗口回传的页面内容，直接走识别。 */
   useEffect(() => {
@@ -307,17 +326,104 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             <div className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3">
               <span className="text-sm text-ink">内嵌窗口导入（推荐）</span>
               <span className="text-xs text-muted">
-                填教务地址后打开窗口，在里面自行登录并进入课表页，点右下角「导入到晓刻」，本页会自动识别
+                选学校或教务系统 → 打开窗口 → 在里面自行登录并进入课表页 → 点右下角「导入到晓刻」，本页自动识别
               </span>
+
+              <Field label="搜索学校">
+                <Input
+                  value={schoolQuery}
+                  placeholder="输入校名或简称，如 苏州科技"
+                  aria-label="搜索学校"
+                  onChange={(event) => setSchoolQuery(event.target.value)}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-1">
+                {matchSchools(allSchools, schoolQuery)
+                  .slice(0, 6)
+                  .map((school) => (
+                    <Button
+                      key={school.id}
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setSchoolSystem(school.system);
+                        setSchoolName(school.name);
+                        setSchoolId(school.id);
+                        setImportUrl(buildEntryUrl(school.system, school.url, school.url.length > 0));
+                        setWindowNote(
+                          school.url.length === 0
+                            ? `${school.name} 还没填教务网址，请在下面填域名后点「按入口补齐」`
+                            : `已按 ${systemEntry(school.system).label} 入口补齐，可直接打开窗口`,
+                        );
+                      }}
+                    >
+                      {school.name}
+                      <span className="ml-1 text-xs text-muted">{systemEntry(school.system).label}</span>
+                    </Button>
+                  ))}
+                {matchSchools(allSchools, schoolQuery).length === 0 && (
+                  <span className="text-xs text-muted">没有匹配的学校，可直接用下面的教务系统入口</span>
+                )}
+              </div>
+
               <div className="flex flex-wrap items-end gap-2">
-                <Field label="教务地址">
+                <Field label="教务系统">
+                  <div className="flex flex-wrap gap-1">
+                    {SYSTEM_ENTRIES.map((entry) => (
+                      <Button
+                        key={entry.id}
+                        size="sm"
+                        variant={schoolSystem === entry.id ? 'primary' : 'secondary'}
+                        onClick={() => {
+                          setSchoolSystem(entry.id);
+                          setWindowNote(`${entry.label}：${entry.loginPath}｜${entry.hint}`);
+                        }}
+                      >
+                        {entry.label}
+                      </Button>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="学校域名">
                   <Input
-                    value={importUrl}
+                    value={schoolDomain}
                     placeholder="jw.example.edu.cn"
-                    aria-label="教务地址"
-                    onChange={(event) => setImportUrl(event.target.value)}
+                    aria-label="学校域名"
+                    onChange={(event) => setSchoolDomain(event.target.value)}
                   />
                 </Field>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={schoolDomain.trim().length === 0}
+                  onClick={() => setImportUrl(buildEntryUrl(schoolSystem, schoolDomain))}
+                >
+                  按入口补齐
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={schoolDomain.trim().length === 0}
+                  onClick={() => {
+                    const name = schoolName.trim().length > 0 ? schoolName : schoolDomain.trim();
+                    const id = schoolId.trim().length > 0 ? schoolId : `user-${name}`;
+                    setCustomSchools(saveCustomSchool({ id, name, system: schoolSystem, url: schoolDomain.trim(), source: 'user' }));
+                    setWindowNote(`已把「${name}」保存到我的学校列表`);
+                  }}
+                >
+                  保存到我的学校
+                </Button>
+              </div>
+
+              <Field label="入口地址">
+                <Input
+                  value={importUrl}
+                  placeholder="https://jw.example.edu.cn/jwglxt/xtgl/login_slogin.html"
+                  aria-label="入口地址"
+                  onChange={(event) => setImportUrl(event.target.value)}
+                />
+              </Field>
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant="primary"
                   disabled={busy || importUrl.trim().length === 0}

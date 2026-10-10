@@ -1,5 +1,6 @@
 import { detectPlatform } from './platform-detect.ts';
 import { logInfo, logWarn } from './log.ts';
+import type { SchoolEntry } from '@dawn-tick/core';
 
 const URL_KEY = 'dt.import.url';
 
@@ -53,4 +54,38 @@ export async function listenImportPayload(handler: (payload: string) => void): P
   if (!canOpenImportWindow()) return () => {};
   const { listen } = await import('@tauri-apps/api/event');
   return listen<string>('import-payload', (event) => handler(event.payload));
+}
+
+const SCHOOLS_KEY = 'dt.import.schools';
+
+/** 本地保存的学校，与内置列表合并后使用。 */
+export function loadCustomSchools(): SchoolEntry[] {
+  try {
+    const raw = globalThis.localStorage?.getItem(SCHOOLS_KEY);
+    if (raw === null || raw === undefined) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item): item is SchoolEntry =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as SchoolEntry).id === 'string' &&
+        typeof (item as SchoolEntry).name === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomSchool(school: SchoolEntry): SchoolEntry[] {
+  const next = [
+    ...loadCustomSchools().filter((item) => item.id !== school.id),
+    { ...school, source: 'user' as const },
+  ];
+  try {
+    globalThis.localStorage?.setItem(SCHOOLS_KEY, JSON.stringify(next));
+  } catch {
+    // 本地存储不可用时仅本次生效
+  }
+  return next;
 }
