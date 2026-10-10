@@ -18,6 +18,7 @@ import {
   parseTimetableMatrix,
   listTimeSlots,
   stripPageMarkers,
+  suggestSchools,
   systemEntry,
   type ImportedSchedule,
   type PageInspection,
@@ -28,8 +29,10 @@ import {
 import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
+import { Combobox } from '../components/ui/combobox.tsx';
 import {
   canOpenImportWindow,
   closeImportWindow,
@@ -140,6 +143,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
 
   /** 内置学校与本地保存的学校合并，供检索。 */
   const allSchools = mergeSchools(BUILTIN_SCHOOLS, customSchools);
+  const schoolSuggestions = suggestSchools(schoolQuery, { schools: allSchools, limit: 20 });
 
   /** 内嵌教务窗口回传的页面内容，直接走识别。 */
   useEffect(() => {
@@ -322,115 +326,105 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
 
       {step === 2 && method === 'page' && (
         <Card className="flex flex-col gap-3">
-          {canOpenImportWindow() && (
-            <div className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3">
-              <span className="text-sm text-ink">内嵌窗口导入（推荐）</span>
-              <span className="text-xs text-muted">
-                选学校或教务系统 → 打开窗口 → 在里面自行登录并进入课表页 → 点右下角「导入到晓刻」，本页自动识别
-              </span>
+          <div className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3">
+            <span className="text-sm text-ink">教务入口</span>
+            <span className="text-xs text-muted">
+              {canOpenImportWindow()
+                ? '选学校 → 打开窗口 → 在里面自行登录并进入课表页 → 点右下角「导入到晓刻」，本页自动识别'
+                : '选学校拿到入口地址，自行在浏览器登录并打开课表页，再回来粘贴内容'}
+            </span>
 
-              <Field label="搜索学校">
-                <Input
-                  value={schoolQuery}
-                  placeholder="输入校名或简称，如 苏州科技"
-                  aria-label="搜索学校"
-                  onChange={(event) => setSchoolQuery(event.target.value)}
-                />
-              </Field>
-              <div className="flex flex-wrap gap-1">
-                {schoolQuery.trim().length === 0 ? (
-                  <span className="text-xs text-muted">输入校名或简称开始搜索，已收录 {allSchools.length} 所学校</span>
-                ) : (
-                  <>
-                    {matchSchools(allSchools, schoolQuery)
-                      .slice(0, 8)
-                      .map((school) => (
-                        <Button
-                          key={school.id}
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            setSchoolSystem(school.system);
-                            setSchoolName(school.name);
-                            setSchoolId(school.id);
-                            setImportUrl(buildEntryUrl(school.system, school.url, school.url.length > 0));
-                            setWindowNote(
-                              school.url.length === 0
-                                ? `${school.name} 还没填教务网址，请在下面填域名后点「按入口补齐」`
-                                : `已填入 ${school.name} 的入口，可直接打开窗口`,
-                            );
-                          }}
-                        >
-                          {school.name}
-                          <span className="ml-1 text-xs text-muted">
-                            {systemEntry(school.system).label} · {school.id}
-                          </span>
-                        </Button>
-                      ))}
-                    {matchSchools(allSchools, schoolQuery).length === 0 && (
-                      <span className="text-xs text-muted">没有匹配的学校，可直接用下面的教务系统入口</span>
-                    )}
-                  </>
+            <Field label="搜索学校">
+              <Combobox
+                items={schoolSuggestions}
+                keyOf={(item) => item.key}
+                ariaLabel="搜索学校"
+                placeholder="输入校名或简称，如 苏州科技"
+                value={schoolQuery}
+                onValueChange={setSchoolQuery}
+                emptyText="名单里没有这所学校，可直接用下面的教务系统入口"
+                onSelect={(item) => {
+                  setSchoolQuery(item.name);
+                  setSchoolName(item.name);
+                  setSchoolId(item.id ?? '');
+                  if (item.hasEntry) {
+                    setSchoolSystem(item.system);
+                    setImportUrl(buildEntryUrl(item.system, item.url, true));
+                    setWindowNote(`已填入 ${item.name} 的教务入口（${systemEntry(item.system).label}）`);
+                  } else {
+                    setSchoolSystem(item.system);
+                    setImportUrl('');
+                    setWindowNote(`${item.name} 没有内置入口：选教务系统并填域名后点「按入口补齐」，可再「保存到我的学校」`);
+                  }
+                }}
+                renderItem={(item) => (
+                  <span className="flex w-full items-center justify-between gap-2">
+                    <span>{item.name}</span>
+                    <span className="shrink-0 text-xs text-muted">
+                      {item.hasEntry ? systemEntry(item.system).label : '需填域名'}
+                    </span>
+                  </span>
                 )}
-              </div>
+              />
+            </Field>
 
-              <div className="flex flex-wrap items-end gap-2">
-                <Field label="教务系统">
-                  <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="教务系统">
+                <Select value={schoolSystem} onValueChange={(value) => setSchoolSystem(value as SchoolSystem)}>
+                  <SelectTrigger aria-label="教务系统" className="w-40">
+                    {systemEntry(schoolSystem).label}
+                  </SelectTrigger>
+                  <SelectContent>
                     {SYSTEM_ENTRIES.map((entry) => (
-                      <Button
-                        key={entry.id}
-                        size="sm"
-                        variant={schoolSystem === entry.id ? 'primary' : 'secondary'}
-                        onClick={() => {
-                          setSchoolSystem(entry.id);
-                          setWindowNote(`${entry.label}：${entry.loginPath}｜${entry.hint}`);
-                        }}
-                      >
+                      <SelectItem key={entry.id} value={entry.id}>
                         {entry.label}
-                      </Button>
+                      </SelectItem>
                     ))}
-                  </div>
-                </Field>
-                <Field label="学校域名">
-                  <Input
-                    value={schoolDomain}
-                    placeholder="jw.example.edu.cn"
-                    aria-label="学校域名"
-                    onChange={(event) => setSchoolDomain(event.target.value)}
-                  />
-                </Field>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={schoolDomain.trim().length === 0}
-                  onClick={() => setImportUrl(buildEntryUrl(schoolSystem, schoolDomain))}
-                >
-                  按入口补齐
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={schoolDomain.trim().length === 0}
-                  onClick={() => {
-                    const name = schoolName.trim().length > 0 ? schoolName : schoolDomain.trim();
-                    const id = schoolId.trim().length > 0 ? schoolId : `user-${name}`;
-                    setCustomSchools(saveCustomSchool({ id, name, system: schoolSystem, url: schoolDomain.trim(), source: 'user' }));
-                    setWindowNote(`已把「${name}」保存到我的学校列表`);
-                  }}
-                >
-                  保存到我的学校
-                </Button>
-              </div>
-
-              <Field label="入口地址">
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="学校域名">
                 <Input
-                  value={importUrl}
-                  placeholder="https://jw.example.edu.cn/jwglxt/xtgl/login_slogin.html"
-                  aria-label="入口地址"
-                  onChange={(event) => setImportUrl(event.target.value)}
+                  value={schoolDomain}
+                  placeholder="jw.example.edu.cn"
+                  aria-label="学校域名"
+                  onChange={(event) => setSchoolDomain(event.target.value)}
                 />
               </Field>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={schoolDomain.trim().length === 0}
+                onClick={() => setImportUrl(buildEntryUrl(schoolSystem, schoolDomain))}
+              >
+                按入口补齐
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={schoolDomain.trim().length === 0}
+                onClick={() => {
+                  const name = schoolName.trim().length > 0 ? schoolName : schoolDomain.trim();
+                  const id = schoolId.trim().length > 0 ? schoolId : `user-${name}`;
+                  setCustomSchools(
+                    saveCustomSchool({ id, name, system: schoolSystem, url: schoolDomain.trim(), source: 'user' }),
+                  );
+                  setWindowNote(`已把「${name}」保存到我的学校列表`);
+                }}
+              >
+                保存到我的学校
+              </Button>
+            </div>
+
+            <Field label="入口地址">
+              <Input
+                value={importUrl}
+                placeholder="https://jw.example.edu.cn/jwglxt/xtgl/login_slogin.html"
+                aria-label="入口地址"
+                onChange={(event) => setImportUrl(event.target.value)}
+              />
+            </Field>
+            {canOpenImportWindow() && (
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="primary"
@@ -454,9 +448,9 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                   关闭窗口
                 </Button>
               </div>
-              {windowNote !== null && <span className="text-xs text-muted">{windowNote}</span>}
-            </div>
-          )}
+            )}
+            {windowNote !== null && <span className="text-xs text-muted">{windowNote}</span>}
+          </div>
 
           <span className="text-sm text-ink">或用浏览器书签复制</span>
           <span className="text-xs text-muted">

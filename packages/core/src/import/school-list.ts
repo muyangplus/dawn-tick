@@ -1,4 +1,7 @@
 import { WAREHOUSE_SCHOOLS } from './schools-data.ts';
+import { DIRECTORY_NAMES } from './schools-directory.ts';
+
+export { DIRECTORY_NAMES };
 
 export type SchoolSystem = 'jwglxt' | 'qzdatasource' | 'urp' | 'other';
 export interface SystemEntry {
@@ -96,4 +99,68 @@ export function mergeSchools(
   for (const school of builtin) byId.set(school.id, school);
   for (const school of custom) byId.set(school.id, { ...school, source: 'user' });
   return [...byId.values()];
+}
+
+/** 下拉框候选：带教务入口的条目排在前，其次才是名单里只有校名的学校。 */
+export interface SchoolSuggestion {
+  key: string;
+  name: string;
+  system: SchoolSystem;
+  url: string;
+  id: string | null;
+  hasEntry: boolean;
+  source: 'builtin' | 'user' | 'directory';
+}
+
+export interface SuggestSchoolsOptions {
+  schools: readonly SchoolEntry[];
+  directory?: readonly string[];
+  limit?: number;
+}
+
+export function suggestSchools(query: string, options: SuggestSchoolsOptions): SchoolSuggestion[] {
+  const limit = options.limit ?? 20;
+  const directory = options.directory ?? DIRECTORY_NAMES;
+  const keyword = query.trim();
+  const out: SchoolSuggestion[] = [];
+  const covered = new Set<string>();
+
+  const pool =
+    keyword.length === 0
+      ? [...options.schools].sort((left, right) => left.name.localeCompare(right.name))
+      : matchSchools(options.schools, keyword);
+
+  for (const school of pool) {
+    if (out.length >= limit) break;
+    out.push({
+      key: school.id,
+      name: school.name,
+      system: school.system,
+      url: school.url,
+      id: school.id,
+      hasEntry: school.url.length > 0,
+      source: school.source,
+    });
+    covered.add(school.name);
+  }
+
+  if (keyword.length > 0) {
+    const lower = keyword.toLowerCase();
+    for (const name of directory) {
+      if (out.length >= limit) break;
+      if (covered.has(name) || !name.toLowerCase().includes(lower)) continue;
+      out.push({
+        key: `dir:${name}`,
+        name,
+        system: 'other',
+        url: '',
+        id: null,
+        hasEntry: false,
+        source: 'directory',
+      });
+      covered.add(name);
+    }
+  }
+
+  return out;
 }

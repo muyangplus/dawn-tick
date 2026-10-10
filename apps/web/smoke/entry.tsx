@@ -176,6 +176,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     !importText.includes('正方教务') && !importText.includes('程序代登录') && !importText.includes('学号'),
     '',
   );
+
   if (clickByTextStart(view.container, '网页课表')) await flush(10);
   check(
     '网页导入提供书签与粘贴',
@@ -184,6 +185,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (view.container.textContent ?? '').includes('识别并预览'),
     '',
   );
+
+  const schoolInput = view.container.querySelector('input[aria-label="搜索学校"]');
+  check('学校检索为可搜索下拉框', schoolInput instanceof window.HTMLInputElement, '');
+  check('教务系统为下拉框', view.container.querySelector('[aria-label="教务系统"]') !== null, '');
+  if (schoolInput instanceof window.HTMLInputElement) {
+    setInputValue(schoolInput, '苏州');
+    await flush(12);
+    const options = [...view.container.querySelectorAll('[role="option"]')];
+    check(
+      '下拉候选含苏州的学校',
+      options.some((item) => (item.textContent ?? '').includes('苏州科技大学')),
+      '',
+    );
+    const target = options.find((item) => (item.textContent ?? '').includes('苏州科技大学'));
+    if (target instanceof window.HTMLElement) target.click();
+    await flush(10);
+    check('选中无入口学校后给出提示', (view.container.textContent ?? '').includes('没有内置入口'), '');
+  }
   const pasteBox = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBox instanceof window.HTMLTextAreaElement) {
     setInputValue(pasteBox, PAGE_SAMPLE);

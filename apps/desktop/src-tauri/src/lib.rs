@@ -44,26 +44,35 @@ const IMPORT_SCHEME: &str = "dtimport";
 /// 注入到教务页面的脚本：右下角按钮，点击后把页面（含同源 iframe）回传给应用。
 const IMPORT_INJECTION: &str = include_str!("import-injection.js");
 
-fn handle_import_submit(app: &tauri::AppHandle, body: &[u8]) -> bool {
+/// 转发回传内容。自定义协议处理器运行在主线程上，必须立刻返回，
+/// 因此事件派发放到后台线程，避免与主窗口的脚本求值互相等待。
+fn forward_import_payload(app: &tauri::AppHandle, payload: String) -> bool {
     use tauri::Emitter;
-    let payload = String::from_utf8_lossy(body).to_string();
-    if !payload.contains("<<<DAWNTICK>>>") {
-        append_log("教务窗口回传内容缺少标记，已忽略");
-        return false;
-    }
-    append_log(&format!("教务窗口回传 {} 字节", payload.len()));
-    if let Err(error) = app.emit("import-payload", payload) {
-        append_log(&format!("转发回传内容失败: {error}"));
-        return false;
-    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        append_log(&format!("教务窗口回传 {} 字节", payload.len()));
+        if let Err(error) = handle.emit("import-payload", payload) {
+            append_log(&format!("转发回传内容失败: {error}"));
+        }
+    });
     true
 }
 
+fn handle_import_submit(app: &tauri::AppHandle, body: &[u8]) -> bool {
+    let payload = String::from_utf8_lossy(body).to_string();
+    if !payload.contains("<<<DAWNTICK>>>") {
+        return false;
+    }
+    forward_import_payload(app, payload)
+}
+
 /// 打开内嵌教务窗口，由用户自行登录并打开课表页。
+/// 必须用 async：同步命令在主线程上执行，而创建窗口要等待主线程，会自锁。
 #[tauri::command]
-fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
+async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri::Manager;
     let parsed: tauri::Url = url.parse().map_err(|error| format!("网址不正确: {error}"))?;
+    append_log("开始创建教务窗口");
     if let Some(existing) = app.get_webview_window(IMPORT_WINDOW) {
         let _ = existing.close();
     }
@@ -73,13 +82,13 @@ fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), String> 
         .initialization_script(IMPORT_INJECTION)
         .build()
         .map_err(|error| format!("打开教务窗口失败: {error}"))?;
-    append_log("已打开内嵌教务窗口");
+    append_log("教务窗口已创建");
     Ok(())
 }
 
-/// 关闭内嵌教务窗口。
+/// 关闭内嵌教务窗口。同样用 async，避免在窗口销毁上等待主线程。
 #[tauri::command]
-fn close_import_window(app: tauri::AppHandle) {
+async fn close_import_window(app: tauri::AppHandle) {
     use tauri::Manager;
     if let Some(window) = app.get_webview_window(IMPORT_WINDOW) {
         let _ = window.close();

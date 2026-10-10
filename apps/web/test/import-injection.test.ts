@@ -28,20 +28,12 @@ async function runInjection(options: { fail?: boolean } = {}) {
   });
   const { window } = dom;
   let posted: string | null = null;
-  let prompted: string | null = null;
 
   (window as unknown as { fetch: unknown }).fetch = async (_url: string, init: { body: string }) => {
     posted = init.body;
     if (options.fail === true) throw new Error('blocked by CSP');
     return { ok: true, status: 200 };
   };
-  Object.defineProperty(window, 'prompt', {
-    value: (_message: string, value: string) => {
-      prompted = value;
-      return null;
-    },
-    configurable: true,
-  });
 
   window.eval(injectionSource);
   if (window.document.getElementById('dt-import-button') === null) {
@@ -54,7 +46,9 @@ async function runInjection(options: { fail?: boolean } = {}) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  return { posted, prompted, button, window };
+  const panel = window.document.getElementById('dt-import-fallback');
+  const box = panel?.querySelector('textarea');
+  return { posted, fallback: box instanceof window.HTMLTextAreaElement ? box.value : null, panel, button, window };
 }
 
 test('注入脚本挂出按钮并回传页面内容', async () => {
@@ -79,8 +73,9 @@ test('注入脚本挂出按钮并回传页面内容', async () => {
 });
 
 test('回传被页面策略拦截时退回手动复制', async () => {
-  const { prompted, button } = await runInjection({ fail: true });
-  assert.ok(prompted?.includes('<<<DAWNTICK>>>'), '应给出可手动复制的内容');
+  const { fallback, panel, button } = await runInjection({ fail: true });
+  assert.ok(panel !== null && panel !== undefined, '应显示可复制的面板');
+  assert.ok(fallback?.includes('<<<DAWNTICK>>>'), '面板里应给出可复制的内容');
   assert.match(button.textContent ?? '', /请手动复制/);
 });
 

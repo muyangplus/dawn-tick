@@ -1,14 +1,19 @@
-"""依据 shiguang_warehouse 生成内置高校列表。
+"""依据 shiguang_warehouse 与 serverless-colleage 生成内置学校数据。
 
 用法：
-    python tools/import-schools.py <仓库根目录>
+    python tools/import-schools.py <适配仓库根目录> [高校目录 json]
 
-来源：https://github.com/ShiGuangSchedule/shiguang_warehouse （MIT，Copyright (c) 2025 星河欲转）
-生成物：packages/core/src/import/schools-data.ts
+来源：
+    https://github.com/ShiGuangSchedule/shiguang_warehouse （MIT，Copyright (c) 2025 星河欲转）
+    https://github.com/vczero/serverless-colleage （全国普通高等学校名单，教育部公开名单）
+生成物：
+    packages/core/src/import/schools-data.ts       适配条目（含教务入口）
+    packages/core/src/import/schools-directory.ts  高校名单（仅校名，用于检索）
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -16,7 +21,9 @@ from pathlib import Path
 import yaml
 
 REPO_URL = "https://github.com/ShiGuangSchedule/shiguang_warehouse"
+DIRECTORY_REPO_URL = "https://github.com/vczero/serverless-colleage"
 OUT = Path("packages/core/src/import/schools-data.ts")
+OUT_DIRECTORY = Path("packages/core/src/import/schools-directory.ts")
 
 SYSTEM_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("jwglxt", ("jwglxt", "xskb_list", "kbgrid_table")),
@@ -129,6 +136,24 @@ def main() -> int:
     lines.append("")
     OUT.write_text("\n".join(lines), encoding="utf-8")
     print(f"已生成 {OUT}：{len(entries)} 条")
+
+    if len(sys.argv) >= 3:
+        directory_path = Path(sys.argv[2])
+        names = json.loads(directory_path.read_text(encoding="utf-8"))
+        cleaned = sorted({str(name).strip() for name in names if str(name).strip()})
+        out_lines = [
+            "/**",
+            " * 全国普通高等学校名单，由 tools/import-schools.py 生成，请勿手改。",
+            f" * 来源：{DIRECTORY_REPO_URL}（名单出自教育部公开的全国普通高等学校名单）",
+            " * 用途：仅取校名用于检索；带教务入口的条目见 schools-data.ts。",
+            " */",
+            "export const DIRECTORY_NAMES: readonly string[] = [",
+        ]
+        out_lines.extend(f"  {js_string(name)}," for name in cleaned)
+        out_lines.append("];")
+        out_lines.append("")
+        OUT_DIRECTORY.write_text("\n".join(out_lines), encoding="utf-8")
+        print(f"已生成 {OUT_DIRECTORY}：{len(cleaned)} 条")
     return 0
 
 

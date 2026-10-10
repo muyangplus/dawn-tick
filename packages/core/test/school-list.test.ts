@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BUILTIN_SCHOOLS,
+  DIRECTORY_NAMES,
   SYSTEM_ENTRIES,
   buildEntryUrl,
   matchSchools,
   mergeSchools,
+  suggestSchools,
   systemEntry,
   type SchoolEntry,
 } from '../src/import/school-list.ts';
@@ -71,4 +73,47 @@ test('自定义学校覆盖同名内置条目', () => {
   assert.equal(sust?.source, 'user');
   assert.equal(buildEntryUrl('jwglxt', String(sust?.url)), 'https://jw.myschool.edu.cn/jwglxt/xtgl/login_slogin.html');
   assert.ok(merged.some((school) => school.id === 'demo'));
+});
+
+test('下拉候选先给带入口的学校再补名单校名', () => {
+  const suggestions = suggestSchools('苏州', {
+    schools: BUILTIN_SCHOOLS,
+    directory: ['苏州职业大学', '苏州大学'],
+    limit: 10,
+  });
+  assert.ok(
+    suggestions.some((item) => item.name === '苏州科技大学' && !item.hasEntry),
+    '自维护条目应在候选里并标注需填域名',
+  );
+  assert.ok(
+    suggestions.some((item) => item.name === '苏州大学' && item.hasEntry),
+    '带入口的学校应标注已有入口',
+  );
+  const directoryOnly = suggestions.find((item) => item.source === 'directory');
+  assert.ok(directoryOnly !== undefined, '名单里独有的学校应作为候选补充');
+  assert.equal(directoryOnly?.hasEntry, false);
+  assert.equal(directoryOnly?.url, '');
+  assert.equal(directoryOnly?.id, null);
+  const names = suggestions.map((item) => item.name);
+  assert.equal(new Set(names).size, names.length, '候选不应出现同名重复');
+  assert.ok(
+    suggestions.some((item) => item.name === '苏州职业大学'),
+    '名单校名应出现在候选里',
+  );
+
+  const many = suggestSchools('大学', { schools: BUILTIN_SCHOOLS, directory: [], limit: 6 });
+  assert.equal(many.length, 6, '候选数量应受 limit 限制');
+  const empty = suggestSchools('', { schools: BUILTIN_SCHOOLS, directory: ['示例职业学院'], limit: 4 });
+  assert.equal(empty.length, 4);
+  assert.ok(
+    empty.every((item) => item.source !== 'directory'),
+    '空查询只列带入口的条目',
+  );
+});
+
+test('高校名单数据可用于检索', () => {
+  assert.ok(DIRECTORY_NAMES.length >= 2000, `名单条目偏少：${DIRECTORY_NAMES.length}`);
+  assert.ok(DIRECTORY_NAMES.includes('北京大学') || DIRECTORY_NAMES.includes('清华大学'));
+  const hit = suggestSchools('深圳职业技术', { schools: BUILTIN_SCHOOLS, directory: DIRECTORY_NAMES, limit: 5 });
+  assert.ok(hit.length >= 1);
 });
