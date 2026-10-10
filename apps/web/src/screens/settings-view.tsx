@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import {
+  BACKUP_MODULES,
+  BACKUP_MODULE_LABEL,
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
@@ -15,9 +17,13 @@ import {
   isValidTimeZone,
   parseBackup,
   setSchedules,
+  summarizeBackup,
   updateSemester,
   weekStart,
   type AppSettings,
+  type BackupModule,
+  type BackupPayload,
+  type ImportMode,
   type SemesterRow,
   type Storage,
   type ThemePreset,
@@ -96,6 +102,11 @@ export function SettingsView({
   const [semesterWeeks, setSemesterWeeks] = useState(20);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
+  const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
+  const [importModules, setImportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
+  const [importMode, setImportMode] = useState<ImportMode>('skip');
   const [editing, setEditing] = useState<SemesterRow | null>(null);
   const [editName, setEditName] = useState('');
   const [editStart, setEditStart] = useState('');
@@ -228,28 +239,58 @@ export function SettingsView({
   async function downloadBackup(): Promise<void> {
     setBusy(true);
     try {
-      const payload = await exportBackup(storage);
+      const modules = [...exportModules];
+      if (modules.length === 0) {
+        setBackupMessage('请至少勾选一个模块');
+        return;
+      }
+      const payload = await exportBackup(storage, { modules });
       downloadText(
         `DawnTick-备份-${new Date().toISOString().slice(0, 10)}.json`,
         JSON.stringify(payload, null, 2),
         'application/json',
       );
       logInfo('backup', '导出备份', {
+        modules,
         stores: Object.keys(payload.stores).length,
         rows: Object.values(payload.stores).reduce((total, rows) => total + (Array.isArray(rows) ? rows.length : 0), 0),
       });
-      setBackupMessage('已导出备份');
+      setBackupMessage(`已导出 ${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}`);
+      setExportOpen(false);
     } finally {
       setBusy(false);
     }
   }
 
-  async function restoreBackup(file: File): Promise<void> {
+  async function chooseBackupFile(file: File): Promise<void> {
+    try {
+      const payload = parseBackup(await file.text());
+      setPendingImport(payload);
+      const present = summarizeBackup(payload)
+        .filter((item) => item.rows > 0)
+        .map((item) => item.module);
+      setImportModules(new Set(present.length > 0 ? present : BACKUP_MODULES));
+      setImportMode('skip');
+    } catch (cause: unknown) {
+      setBackupMessage(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function confirmImport(): Promise<void> {
+    if (pendingImport === null) return;
     setBusy(true);
     try {
-      const result = await importBackup(storage, parseBackup(await file.text()));
-      logInfo('backup', '导入备份', { imported: result.imported, skipped: result.skipped });
-      setBackupMessage(`已恢复 ${result.imported} 条，跳过 ${result.skipped} 条`);
+      const modules = [...importModules];
+      if (modules.length === 0) {
+        setBackupMessage('请至少勾选一个模块');
+        return;
+      }
+      const result = await importBackup(storage, pendingImport, { mode: importMode, modules });
+      logInfo('backup', '导入备份', { mode: importMode, modules, imported: result.imported, skipped: result.skipped });
+      setBackupMessage(
+        `${importMode === 'skip' ? '保留现有数据' : '覆盖为备份内容'}：写入 ${result.imported} 条，跳过 ${result.skipped} 条`,
+      );
+      setPendingImport(null);
       onChanged();
     } finally {
       setBusy(false);
@@ -491,7 +532,7 @@ export function SettingsView({
         </span>
         <span className="text-xs text-muted">本期无服务端，同步协议已就绪但未启用；跨设备迁移请用 JSON 备份。</span>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => void downloadBackup()}>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
             导出备份
           </Button>
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
@@ -515,7 +556,7 @@ export function SettingsView({
             hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
-              if (file !== undefined) void restoreBackup(file);
+              if (file !== undefined) void chooseBackupFile(file);
               event.target.value = '';
             }}
           />
@@ -591,6 +632,110 @@ export function SettingsView({
             </Button>
             <Button variant="danger" disabled={busy} onClick={() => void confirmRemove()}>
               确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={exportOpen}
+        onOpenChange={(open) => {
+          if (!open) setExportOpen(false);
+        }}
+      >
+        <DialogContent title="导出备份" description="勾选要导出的模块">
+          <div className="flex flex-col gap-1">
+            {BACKUP_MODULES.map((module) => (
+              <label key={module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  checked={exportModules.has(module)}
+                  aria-label={`导出 ${BACKUP_MODULE_LABEL[module]}`}
+                  onChange={(event) =>
+                    setExportModules((current) => {
+                      const next = new Set(current);
+                      if (event.target.checked) next.add(module);
+                      else next.delete(module);
+                      return next;
+                    })
+                  }
+                />
+                {BACKUP_MODULE_LABEL[module]}
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setExportModules(new Set(BACKUP_MODULES))}>
+              全选
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setExportModules(new Set())}>
+              清空
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setExportOpen(false)}>
+              取消
+            </Button>
+            <Button variant="primary" disabled={busy || exportModules.size === 0} onClick={() => void downloadBackup()}>
+              导出
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingImport !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingImport(null);
+        }}
+      >
+        <DialogContent title="导入备份" description="勾选要导入的模块，并选择遇到已有数据时的处理方式">
+          <div className="flex flex-col gap-1">
+            {summarizeBackup(pendingImport ?? { format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} })
+              .filter((item) => item.rows > 0)
+              .map((item) => (
+                <label key={item.module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={importModules.has(item.module)}
+                    aria-label={`导入 ${BACKUP_MODULE_LABEL[item.module]}`}
+                    onChange={(event) =>
+                      setImportModules((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(item.module);
+                        else next.delete(item.module);
+                        return next;
+                      })
+                    }
+                  />
+                  {BACKUP_MODULE_LABEL[item.module]}
+                  <span className="text-xs text-muted">{item.rows} 条</span>
+                </label>
+              ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={importMode === 'skip' ? 'primary' : 'secondary'}
+              onClick={() => setImportMode('skip')}
+            >
+              不覆盖已存在
+            </Button>
+            <Button
+              size="sm"
+              variant={importMode === 'overwrite' ? 'primary' : 'secondary'}
+              onClick={() => setImportMode('overwrite')}
+            >
+              覆盖为备份内容
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingImport(null)}>
+              取消
+            </Button>
+            <Button variant="primary" disabled={busy || importModules.size === 0} onClick={() => void confirmImport()}>
+              导入
             </Button>
           </DialogFooter>
         </DialogContent>

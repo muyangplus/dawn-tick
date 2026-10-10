@@ -243,6 +243,16 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByAriaPrefix(view.container, '外观')) await flush(8);
   check('设置项可再展开', (view.container.textContent ?? '').includes('主题风格'), '');
 
+  if (clickByText(view.container, '导出备份')) await flush(10);
+  check(
+    '导出可选模块',
+    document.body.textContent?.includes('学期与节次') === true &&
+      document.querySelector('input[aria-label="导出 课程与排课"]') !== null &&
+      document.querySelector('input[aria-label="导出 提醒"]') !== null,
+    '',
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+
   const beforePeriods = startInputs(view.container).length;
   if (clickByText(view.container, '自动生成课次')) await flush(26);
   const generated = startInputs(view.container);

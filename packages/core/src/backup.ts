@@ -14,12 +14,63 @@ export const BACKUP_META_KEYS: readonly string[] = [
   'theme_preset',
 ];
 
+/** 备份模块：界面按模块勾选，导出与导入共用同一分组。 */
+export type BackupModule = 'semesters' | 'courses' | 'events' | 'reminders' | 'settings';
+
+export const BACKUP_MODULES: readonly BackupModule[] = [
+  'semesters',
+  'courses',
+  'events',
+  'reminders',
+  'settings',
+];
+
+export const BACKUP_MODULE_LABEL: Record<BackupModule, string> = {
+  semesters: '学期与节次',
+  courses: '课程与排课',
+  events: '日程与待办',
+  reminders: '提醒',
+  settings: '设置',
+};
+
+export const BACKUP_MODULE_STORES: Record<BackupModule, readonly StoreName[]> = {
+  semesters: ['users', 'semesters', 'time_slots'],
+  courses: ['courses', 'course_schedules'],
+  events: ['events'],
+  reminders: ['reminders'],
+  settings: [],
+};
+
+export function moduleStores(modules: readonly BackupModule[]): StoreName[] {
+  const selected = new Set<StoreName>();
+  for (const module of modules) {
+    for (const store of BACKUP_MODULE_STORES[module]) selected.add(store);
+  }
+  return [...selected];
+}
+
+/** 导入冲突处理：skip 保留现有数据，overwrite 用备份内容替换。 */
+export type ImportMode = 'skip' | 'overwrite';
+
+export interface ExportBackupOptions {
+  modules?: readonly BackupModule[];
+  now?: number;
+}
+
+export interface ImportBackupOptions {
+  mode?: ImportMode;
+  modules?: readonly BackupModule[];
+  now?: number;
+}
+
 export interface BackupPayload {
   format: typeof BACKUP_FORMAT;
   version: number;
   exportedAt: number;
   stores: Partial<Record<StoreName, unknown[]>>;
   meta: Record<string, string>;
+  /** 导出时勾选的模块，供导入界面展示 */
+  modules?: BackupModule[];
 }
 
 export interface ImportResult {
@@ -28,19 +79,32 @@ export interface ImportResult {
   warnings: string[];
 }
 
-export async function exportBackup(storage: Storage, now: number = Date.now()): Promise<BackupPayload> {
+export async function exportBackup(
+  storage: Storage,
+  options: ExportBackupOptions = {},
+): Promise<BackupPayload> {
+  const modules = options.modules ?? [...BACKUP_MODULES];
   const stores: Partial<Record<StoreName, unknown[]>> = {};
-  for (const store of STORE_NAMES) {
+  for (const store of moduleStores(modules)) {
     stores[store] = await storage.collection(store).getAll();
   }
 
   const meta: Record<string, string> = {};
-  for (const key of BACKUP_META_KEYS) {
-    const value = await storage.readMeta(key);
-    if (value !== undefined) meta[key] = value;
+  if (modules.includes('settings')) {
+    for (const key of BACKUP_META_KEYS) {
+      const value = await storage.readMeta(key);
+      if (value !== undefined) meta[key] = value;
+    }
   }
 
-  return { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: now, stores, meta };
+  return {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: options.now ?? Date.now(),
+    stores,
+    meta,
+    modules: [...modules],
+  };
 }
 
 export function parseBackup(text: string): BackupPayload {
@@ -69,16 +133,21 @@ export function parseBackup(text: string): BackupPayload {
 export async function importBackup(
   storage: Storage,
   payload: BackupPayload,
-  now: number = Date.now(),
+  options: ImportBackupOptions = {},
 ): Promise<ImportResult> {
   let imported = 0;
   let skipped = 0;
   const warnings: string[] = [];
+  const mode = options.mode ?? 'skip';
+  const modules = options.modules ?? BACKUP_MODULES;
+  const allowed = new Set(moduleStores(modules));
+  const includeSettings = modules.includes('settings');
+  const now = options.now ?? Date.now();
 
   for (const store of STORE_NAMES) {
     const rows = payload.stores[store];
     if (!Array.isArray(rows)) continue;
-    if (store === 'app_meta') continue;
+    if (store === 'app_meta' || !allowed.has(store)) continue;
 
     const collection = storage.collection<Record<string, unknown>>(store);
     for (const raw of rows) {
@@ -87,6 +156,16 @@ export async function importBackup(
         continue;
       }
       const row = raw as Record<string, unknown>;
+      const id = row['id'];
+      if (typeof id !== 'string' || id.length === 0) {
+        skipped += 1;
+        warnings.push(`${store}: 缺少 id`);
+        continue;
+      }
+      if (mode === 'skip' && (await collection.get(id)) !== undefined) {
+        skipped += 1;
+        continue;
+      }
       const violations = await collectViolations(storage, store, row);
       if (violations.length > 0) {
         skipped += 1;
@@ -98,10 +177,29 @@ export async function importBackup(
     }
   }
 
-  for (const [key, value] of Object.entries(payload.meta)) {
-    if (!BACKUP_META_KEYS.includes(key)) continue;
-    await storage.writeMeta(key, value);
+  if (includeSettings) {
+    for (const [key, value] of Object.entries(payload.meta)) {
+      if (!BACKUP_META_KEYS.includes(key)) continue;
+      if (mode === 'skip' && (await storage.readMeta(key)) !== undefined) {
+        skipped += 1;
+        continue;
+      }
+      await storage.writeMeta(key, value);
+      imported += 1;
+    }
   }
 
   return { imported, skipped, warnings };
+}
+
+/** 备份文件里各模块的行数，供导入界面展示与勾选。 */
+export function summarizeBackup(payload: BackupPayload): Array<{ module: BackupModule; rows: number }> {
+  return BACKUP_MODULES.map((module) => {
+    const stores = BACKUP_MODULE_STORES[module];
+    const rows =
+      module === 'settings'
+        ? Object.keys(payload.meta).length
+        : stores.reduce((total, store) => total + (Array.isArray(payload.stores[store]) ? (payload.stores[store]?.length ?? 0) : 0), 0);
+    return { module, rows };
+  });
 }

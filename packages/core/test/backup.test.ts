@@ -6,6 +6,7 @@ import {
   exportBackup,
   importBackup,
   parseBackup,
+  summarizeBackup,
 } from '../src/backup.ts';
 import { createSemester } from '../src/mutations.ts';
 import { writeSettings } from '../src/settings.ts';
@@ -60,7 +61,7 @@ async function seedStorage() {
 
 test('导出包含全部集合与设置项', async () => {
   const { storage } = await seedStorage();
-  const payload = await exportBackup(storage, 1234);
+  const payload = await exportBackup(storage, { now: 1234 });
 
   assert.equal(payload.format, BACKUP_FORMAT);
   assert.equal(payload.exportedAt, 1234);
@@ -85,7 +86,7 @@ test('导出再导入可完整还原', async () => {
   const payload = await exportBackup(storage);
 
   const target = createStorage();
-  const result = await importBackup(target, payload, 999);
+  const result = await importBackup(target, payload, { now: 999 });
   assert.equal(result.skipped, 0);
   assert.ok(result.imported >= 14);
   assert.deepEqual(result.warnings, []);
@@ -127,4 +128,61 @@ test('备份文件格式校验', async () => {
     () => parseBackup(JSON.stringify({ ...payload, version: 99 })),
     /高于当前支持/,
   );
+});
+
+test('可按模块导出', async () => {
+  const { storage } = await seedStorage();
+  const payload = await exportBackup(storage, { modules: ['courses'] });
+
+  assert.deepEqual(payload.modules, ['courses']);
+  assert.equal((payload.stores.courses ?? []).length, 1);
+  assert.equal((payload.stores.course_schedules ?? []).length, 1);
+  assert.equal(payload.stores.semesters, undefined, '未勾选的模块不导出');
+  assert.equal(payload.stores.users, undefined);
+  assert.deepEqual(payload.meta, {}, '未勾选设置时不导出设置项');
+
+  const onlySettings = await exportBackup(storage, { modules: ['settings'] });
+  assert.equal(onlySettings.meta['theme'], 'dark');
+  assert.equal(onlySettings.stores.courses, undefined);
+});
+
+test('导入可保留现有数据或覆盖', async () => {
+  const { storage, semesterId } = await seedStorage();
+  const payload = await exportBackup(storage);
+
+  const target = createStorage();
+  await importBackup(target, payload, { now: 1 });
+  await target.collection('courses').put({ ...(payload.stores.courses?.[0] as Record<string, unknown>), name: '本地改过的课程' });
+
+  const skipResult = await importBackup(target, payload, { mode: 'skip', now: 2 });
+  assert.ok(skipResult.skipped >= 1, '已存在的数据应计入跳过');
+  assert.equal(
+    (await target.collection<Record<string, unknown>>('courses').get('c-1'))?.['name'],
+    '本地改过的课程',
+    'skip 模式不得改动现有数据',
+  );
+
+  const overwriteResult = await importBackup(target, payload, { mode: 'overwrite', now: 3 });
+  assert.equal(overwriteResult.skipped, 0);
+  assert.equal(
+    (await target.collection<Record<string, unknown>>('courses').get('c-1'))?.['name'],
+    '高等数学',
+    'overwrite 模式应恢复为备份内容',
+  );
+
+  // 导入也可按模块筛选
+  const onlySettings = await importBackup(target, payload, { modules: ['settings'], mode: 'overwrite', now: 4 });
+  assert.equal(onlySettings.imported, Object.keys(payload.meta).length);
+  assert.equal((await activeSemester(target, USER_ID))?.id, semesterId);
+});
+
+test('导入摘要给出各模块行数', async () => {
+  const { storage } = await seedStorage();
+  const payload = await exportBackup(storage);
+  const summary = summarizeBackup(payload);
+  const courses = summary.find((item) => item.module === 'courses');
+  const settings = summary.find((item) => item.module === 'settings');
+  assert.equal(courses?.rows, 2, '课程与排课各一行');
+  assert.ok((settings?.rows ?? 0) >= 3, '设置项按 meta 条数统计');
+  assert.equal(summary.length, 5);
 });
