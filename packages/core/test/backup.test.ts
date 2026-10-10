@@ -122,7 +122,7 @@ test('备份文件格式校验', async () => {
 
   assert.equal(parseBackup(text).version, payload.version);
   assert.throws(() => parseBackup('不是 JSON'), /合法 JSON/);
-  assert.throws(() => parseBackup('{"format":"other"}'), /不是晓刻备份文件/);
+  assert.throws(() => parseBackup('{"format":"other"}'), /不是晓刻 DawnTick 备份文件/);
   assert.throws(
     () => parseBackup(JSON.stringify({ ...payload, version: 99 })),
     /高于当前支持/,

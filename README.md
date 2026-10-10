@@ -1,4 +1,4 @@
-# 晓刻 Dawn Tick
+# 晓刻 DawnTick
 
 课表与日程提醒工具：课表导入一次、多端同步、课前准时提醒、桌面与主屏小组件随时看。
 
@@ -84,3 +84,7 @@
 | release | `main` | 打标签 | `vX.Y.Z` | 正式 Release |
 
 产物：`DawnTick-<version>-<channel>-windows-x64-setup.exe`（NSIS 安装包）、`DawnTick-<version>-<channel>-windows-x64-portable.zip`（免安装）、`DawnTick-<version>-<channel>-android.apk`、`DawnTick-<version>-<channel>-web.zip`，每个产物附同名 `.sha256` 文件。
+
+## 许可证
+
+Apache-2.0，见 [LICENSE](LICENSE)。

@@ -49,7 +49,7 @@ export function Settings({ settings, persistent, reminders, storage, onPatch, on
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `晓刻-备份-${new Date().toISOString().slice(0, 10)}.json`;
+      anchor.download = `DawnTick-备份-${new Date().toISOString().slice(0, 10)}.json`;
       anchor.click();
       URL.revokeObjectURL(url);
       setBackupMessage('已导出备份');

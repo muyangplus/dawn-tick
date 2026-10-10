@@ -52,7 +52,7 @@ export function parseBackup(text: string): BackupPayload {
   }
   if (typeof parsed !== 'object' || parsed === null) throw new Error('备份文件结构不正确');
   const payload = parsed as Partial<BackupPayload>;
-  if (payload.format !== BACKUP_FORMAT) throw new Error('不是晓刻备份文件');
+  if (payload.format !== BACKUP_FORMAT) throw new Error('不是晓刻 DawnTick 备份文件');
   if (typeof payload.version !== 'number' || payload.version > BACKUP_VERSION) {
     throw new Error(`备份版本 ${String(payload.version)} 高于当前支持的 ${BACKUP_VERSION}`);
   }

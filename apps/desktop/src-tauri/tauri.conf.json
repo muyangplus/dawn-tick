@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "晓刻",
+  "productName": "晓刻 DawnTick",
   "version": "0.1.0",
   "identifier": "com.dawntick.app",
   "build": {
@@ -13,14 +13,14 @@
     "windows": [
       {
         "label": "main",
-        "title": "晓刻",
+        "title": "晓刻 DawnTick",
         "width": 1000,
         "height": 720,
         "resizable": true
       },
       {
         "label": "mini",
-        "title": "晓刻 · 下一节课",
+        "title": "晓刻 DawnTick · 下一节课",
         "url": "mini.html",
         "width": 240,
         "height": 104,

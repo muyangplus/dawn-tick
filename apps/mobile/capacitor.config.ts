@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.dawntick.app',
-  appName: '晓刻',
+  appName: '晓刻 DawnTick',
   webDir: '../web/dist',
   android: {
     allowMixedContent: false,

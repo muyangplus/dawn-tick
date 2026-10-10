@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">晓刻</string>
-    <string name="title_activity_main">晓刻</string>
+    <string name="app_name">晓刻 DawnTick</string>
+    <string name="title_activity_main">晓刻 DawnTick</string>
     <string name="package_name">com.dawntick.app</string>
     <string name="custom_url_scheme">com.dawntick.app</string>
     <string name="widget_next_label">下一节课</string>
