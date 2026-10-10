@@ -2,8 +2,9 @@ name: Publish
 
 on:
   push:
-    branches: [main, beta, dev]
     tags: ['v*']
+  schedule:
+    - cron: '0 1 * * *'
   workflow_dispatch:
     inputs:
       channel:
@@ -22,23 +23,40 @@ permissions:
 
 jobs:
   plan:
-    name: 计算渠道与版本
+    name: 计算渠道与标签
     runs-on: ubuntu-latest
     outputs:
       channel: ${{ steps.compute.outputs.channel }}
       version: ${{ steps.compute.outputs.version }}
       tag: ${{ steps.compute.outputs.tag }}
+      buildRef: ${{ steps.compute.outputs.buildRef }}
+      rolling: ${{ steps.compute.outputs.rolling }}
       prerelease: ${{ steps.compute.outputs.prerelease }}
       title: ${{ steps.compute.outputs.title }}
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
       - id: compute
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
-        run: node tools/release/plan.mjs --ref="$GITHUB_REF" --run="$GITHUB_RUN_NUMBER" --channel="$INPUT_CHANNEL" --github-output >> "$GITHUB_OUTPUT"
+        run: |
+          TAGS=$(git tag --list 'v*-beta.*' | tr '\n' ',')
+          node tools/release/plan.mjs \
+            --ref="$GITHUB_REF" \
+            --event="$GITHUB_EVENT_NAME" \
+            --run="$GITHUB_RUN_NUMBER" \
+            --channel="$INPUT_CHANNEL" \
+            --existing-tags="$TAGS" \
+            --github-output >> "$GITHUB_OUTPUT"
+      - name: 渠道摘要
+        run: |
+          echo "渠道 ${{ steps.compute.outputs.channel }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "标签 ${{ steps.compute.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "构建自 ${{ steps.compute.outputs.buildRef }}" >> "$GITHUB_STEP_SUMMARY"
 
   windows:
     name: Windows 安装包
@@ -46,8 +64,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -75,24 +95,34 @@ jobs:
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - name: 准备 Android SDK
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" || true
+          ls "$ANDROID_HOME/build-tools" || true
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/mobile exec cap sync android
       - name: 写入签名材料
         if: env.KEYSTORE_BASE64 != ''
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.key"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.key" >> "$GITHUB_ENV"
       - name: 打包正式签名版
         if: env.KEYSTORE_BASE64 != ''
         working-directory: apps/mobile/android
@@ -113,8 +143,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
       - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -135,8 +167,10 @@ jobs:
       CHANNEL: ${{ needs.plan.outputs.channel }}
       VERSION: ${{ needs.plan.outputs.version }}
       TAG: ${{ needs.plan.outputs.tag }}
+      ROLLING: ${{ needs.plan.outputs.rolling }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
       TITLE: ${{ needs.plan.outputs.title }}
+      BUILD_REF: ${{ needs.plan.outputs.buildRef }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -146,7 +180,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out
-          SUFFIX="$VERSION-$CHANNEL"
+          SUFFIX="${VERSION}-${CHANNEL}"
 
           setup=$(find artifacts/windows -name '*.exe' | head -n 1)
           cp "$setup" "out/晓刻-${SUFFIX}-windows-x64-setup.exe"
@@ -160,23 +194,17 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           ls -l
 
-      - name: 清理旧的本渠道预发布
-        if: env.PRERELEASE == 'true'
+      - name: 滚动渠道先删除旧发布
+        if: env.ROLLING == 'true'
         run: |
-          set -euo pipefail
-          keep=1
-          if [[ "$CHANNEL" == beta ]]; then keep=5; fi
-          mapfile -t old < <(gh release list --limit 100 --json tagName --jq '.[].tagName' \
-            | grep -E -- "-${CHANNEL}\." | grep -v "^${TAG}$" | tail -n +$((keep + 1)) || true)
-          for tag in "${old[@]}"; do
-            [[ -z "$tag" ]] && continue
-            echo "删除旧预发布 $tag"
-            gh release delete "$tag" --yes --cleanup-tag || true
-          done
+          gh release delete "$TAG" --yes --cleanup-tag || true
 
       - name: 发布或更新
         run: |
           set -euo pipefail
+          TARGET=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" "refs/heads/${BUILD_REF}" | cut -f1)
+          if [[ -z "$TARGET" ]]; then TARGET="$GITHUB_SHA"; fi
+
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "标签 $TAG 已存在，覆盖产物"
             gh release upload "$TAG" out/* --clobber
@@ -185,7 +213,7 @@ jobs:
             echo "创建标签 $TAG 并发布"
             gh release create "$TAG" out/* \
               --title "$TITLE" \
-              --target "$GITHUB_SHA" \
+              --target "$TARGET" \
               --generate-notes \
               --prerelease=$PRERELEASE
           fi

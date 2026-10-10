@@ -2,54 +2,80 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const CHANNELS = ['release', 'beta', 'dev'];
+export const DEV_ROLLING_TAG = 'dev-latest';
+
+export function nextBetaNumber(existingTags, version) {
+  const pattern = new RegExp(`^v${version.replace(/\./g, '\\.')}-beta\\.(\\d+)$`);
+  let max = 0;
+  for (const tag of existingTags) {
+    const match = pattern.exec(tag.trim());
+    if (match !== null) max = Math.max(max, Number(match[1]));
+  }
+  return max + 1;
+}
 
 /**
  * 渠道与标签规则：
- * - refs/heads/main → release，标签 v<version>
- * - refs/heads/beta → beta，标签 v<version>-beta.<run>
- * - refs/heads/dev  → dev，标签 v<version>-dev.<run>
- * - tag vX.Y.Z           → release，沿用该标签
- * - tag vX.Y.Z-beta.N    → beta，沿用该标签
- * - tag vX.Y.Z-dev.N     → dev，沿用该标签
+ * - dev：固定标签 dev-latest，滚动覆盖；由手动触发或定时任务发布，构建自 dev 分支
+ * - beta：标签 v<version>-beta.<n>，n 从既有标签续号；手动触发，构建自 beta 分支，保留历史
+ * - release：标签 v<version>；由打标签触发自动发布，构建自 main 分支
  */
-export function planRelease({ ref, runNumber = 0, version, dispatchChannel }) {
+export function planRelease({
+  ref,
+  eventName = 'push',
+  runNumber = 0,
+  version,
+  dispatchChannel = '',
+  existingTags = [],
+}) {
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`版本号格式不正确: ${version}`);
   }
 
+  const isTagPush = typeof ref === 'string' && ref.startsWith('refs/tags/');
   let channel;
-  let tag;
 
-  if (typeof ref === 'string' && ref.startsWith('refs/tags/')) {
+  if (eventName === 'schedule') {
+    channel = 'dev';
+  } else if (isTagPush) {
     const name = ref.slice('refs/tags/'.length);
-    if (name.endsWith('.zip')) throw new Error(`非法标签: ${name}`);
     if (/-beta\./.test(name)) channel = 'beta';
     else if (/-dev\./.test(name)) channel = 'dev';
     else channel = 'release';
-    tag = name;
-  } else {
-    if (ref === 'refs/heads/main') channel = 'release';
-    else if (ref === 'refs/heads/beta') channel = 'beta';
-    else channel = 'dev';
-
-    if (tag === undefined) {
-      if (channel === 'release') tag = `v${version}`;
-      else tag = `v${version}-${channel}.${runNumber}`;
-    }
-  }
-
-  if (typeof dispatchChannel === 'string' && dispatchChannel.length > 0) {
+  } else if (typeof dispatchChannel === 'string' && dispatchChannel.length > 0) {
     if (!CHANNELS.includes(dispatchChannel)) throw new Error(`未知渠道: ${dispatchChannel}`);
     channel = dispatchChannel;
-    tag = channel === 'release' ? `v${version}` : `v${version}-${channel}.${runNumber}`;
+  } else if (ref === 'refs/heads/main') {
+    channel = 'release';
+  } else if (ref === 'refs/heads/beta') {
+    channel = 'beta';
+  } else {
+    channel = 'dev';
+  }
+
+  let tag;
+  let buildRef;
+
+  if (channel === 'dev') {
+    tag = DEV_ROLLING_TAG;
+    buildRef = 'dev';
+  } else if (channel === 'beta') {
+    tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}-beta.${nextBetaNumber(existingTags, version)}`;
+    buildRef = isTagPush ? tag : 'beta';
+  } else {
+    tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}`;
+    buildRef = isTagPush ? tag : 'main';
   }
 
   return {
     channel,
     version,
     tag,
+    buildRef,
+    rolling: channel === 'dev',
     prerelease: channel !== 'release',
     title: `晓刻 ${tag}`,
+    runNumber,
   };
 }
 
@@ -66,13 +92,17 @@ if (invokedDirectly) {
   }
   const plan = planRelease({
     ref: args.get('ref') ?? process.env.GITHUB_REF ?? '',
+    eventName: args.get('event') ?? process.env.GITHUB_EVENT_NAME ?? 'push',
     runNumber: Number(args.get('run') ?? process.env.GITHUB_RUN_NUMBER ?? 0),
     version: args.get('version') ?? currentVersion(),
     dispatchChannel: args.get('channel') ?? '',
+    existingTags: (args.get('existing-tags') ?? '').split(',').filter((item) => item.trim().length > 0),
   });
 
   if (args.has('github-output')) {
-    const lines = Object.entries(plan).map(([key, value]) => `${key}=${value}`).join('\n');
+    const lines = ['channel', 'version', 'tag', 'buildRef', 'rolling', 'prerelease', 'title']
+      .map((key) => `${key}=${String(plan[key])}`)
+      .join('\n');
     process.stdout.write(`${lines}\n`);
   } else {
     process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);

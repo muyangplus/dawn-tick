@@ -1,6 +1,6 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 param(
-    [string]$OutDir = 'E:\work\dsh\dawn-tick-keys',
+    [string]$OutDir = (Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'keys'),
     [string]$Alias = 'dawn-tick'
 )
 
