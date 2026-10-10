@@ -66,6 +66,23 @@ struct InstanceStateFile {
     version: String,
 }
 
+/// 接管请求：只认新鲜且非本进程写入的请求，避免遗留文件把后续启动顶掉。
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QuitRequest {
+    pid: u32,
+    version: String,
+    at: u64,
+}
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
+}
+
+const QUIT_REQUEST_MAX_AGE: u64 = 120;
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct StartupPrefs {
     hidden: bool,
@@ -128,6 +145,10 @@ fn show_error_box(_title: &str, _message: &str) {}
 /// 不可用先改名让 WebView2 重建，改名也失败就改用可写目录。
 #[cfg(windows)]
 fn ensure_webview_folder_writable() {
+    // 已由使用者指定数据目录时不再插手
+    if std::env::var("WEBVIEW2_USER_DATA_FOLDER").is_ok() {
+        return;
+    }
     let Some(base) = std::env::var("LOCALAPPDATA").ok() else {
         return;
     };
@@ -137,27 +158,150 @@ fn ensure_webview_folder_writable() {
         return;
     }
 
+    append_log("WebView2 数据目录不可写，可能被其他进程占用");
+    let holders = describe_holders();
+    for line in holders.lines() {
+        append_log(line);
+    }
+
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or(0);
     let backup = dir.with_file_name(format!("EBWebView.bak-{stamp}"));
     if std::fs::rename(&dir, &backup).is_ok() {
-        append_log(&format!("WebView2 数据目录不可写，已改名重建: {}", backup.display()));
+        append_log(&format!("已改名重建: {}", backup.display()));
         return;
     }
+    append_log("改名失败，目录被占用");
 
-    let mut candidates = vec![PathBuf::from(&base).join("DawnTick").join("EBWebView")];
+    let mut candidates = Vec::new();
+    if let Ok(roaming) = std::env::var("APPDATA") {
+        candidates.push(PathBuf::from(roaming).join("com.dawntick.app").join("EBWebView"));
+    }
+    candidates.push(PathBuf::from(&base).join("DawnTick").join("EBWebView"));
     candidates.push(std::env::temp_dir().join("DawnTick").join("EBWebView"));
+
+    let mut failures = Vec::new();
     for folder in candidates {
-        if std::fs::create_dir_all(&folder).is_err() || !is_writable(&folder) {
+        match create_dir_all(&folder) {
+            Ok(()) => {}
+            Err(error) => {
+                failures.push(format!("{} 创建失败({error})", folder.display()));
+                continue;
+            }
+        }
+        if !is_writable(&folder) {
+            failures.push(format!("{} 不可写", folder.display()));
             continue;
         }
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
         append_log(&format!("WebView2 数据目录改用可写位置: {}", folder.display()));
         return;
     }
-    append_log("WebView2 数据目录不可写，且没有可写兜底目录");
+
+    for line in &failures {
+        append_log(&format!("兜底目录不可用: {line}"));
+    }
+    let restricted = failures.iter().all(|line| line.contains("os error 5"));
+    let hint = if restricted {
+        "三次兜底目录都因「拒绝访问」失败，说明当前进程对用户目录没有写权限（可能以受限权限或沙箱方式启动）。请用普通双击方式运行本程序。"
+    } else {
+        "请结束上述进程（或在任务管理器里结束残留的 msedgewebview2.exe）后重试。"
+    };
+    let message = format!(
+        "WebView2 数据目录不可用，应用无法启动。\n\n{}\n\n{}\n\n{}",
+        holders,
+        failures.join("\n"),
+        hint
+    );
+    append_log("没有可写兜底目录，启动将失败");
+    show_error_box("晓刻 DawnTick 启动失败", &message);
+}
+
+/// 列出正在使用或残留占用 WebView2 目录的进程。
+#[cfg(windows)]
+fn describe_holders() -> String {
+    let processes = list_processes();
+    let ours: Vec<&ProcessInfo> = processes.iter().filter(|item| is_our_app(&item.name)).collect();
+    let webviews: Vec<&ProcessInfo> = processes
+        .iter()
+        .filter(|item| item.name.eq_ignore_ascii_case("msedgewebview2.exe"))
+        .collect();
+
+    let mut lines = Vec::new();
+    if ours.is_empty() {
+        lines.push("  未发现运行中的晓刻实例".to_string());
+    } else {
+        for item in &ours {
+            lines.push(format!("  晓刻实例 {} PID {}", item.name, item.pid));
+            for child in webviews.iter().filter(|view| view.parent == item.pid) {
+                lines.push(format!(
+                    "    其 WebView2 进程 {} PID {}",
+                    child.name, child.pid
+                ));
+            }
+        }
+    }
+
+    let alive_pids: Vec<u32> = processes.iter().map(|item| item.pid).collect();
+    let orphans: Vec<&&ProcessInfo> = webviews
+        .iter()
+        .filter(|view| !alive_pids.contains(&view.parent))
+        .collect();
+    if !orphans.is_empty() {
+        lines.push(format!("  上次异常退出残留的 WebView2 进程 {} 个", orphans.len()));
+        for item in orphans.iter().take(8) {
+            lines.push(format!("    {} PID {}", item.name, item.pid));
+        }
+    }
+    if lines.is_empty() {
+        lines.push("  未定位到占用进程".to_string());
+    }
+    lines.join("\n")
+}
+
+#[cfg(windows)]
+struct ProcessInfo {
+    pid: u32,
+    parent: u32,
+    name: String,
+}
+
+#[cfg(windows)]
+fn is_our_app(name: &str) -> bool {
+    name.eq_ignore_ascii_case("DawnTick.exe") || name.eq_ignore_ascii_case("dawn-tick-desktop.exe")
+}
+
+#[cfg(windows)]
+fn list_processes() -> Vec<ProcessInfo> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+    let mut result = Vec::new();
+    let mut ok = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while ok {
+        let name = String::from_utf16_lossy(&entry.szExeFile)
+            .trim_end_matches('\0')
+            .to_string();
+        result.push(ProcessInfo {
+            pid: entry.th32ProcessID,
+            parent: entry.th32ParentProcessID,
+            name,
+        });
+        ok = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe { CloseHandle(snapshot) };
+    result
 }
 
 #[cfg(windows)]
@@ -296,7 +440,14 @@ fn decide_instance() -> InstanceRole {
         state.version
     ));
     if let Some(path) = quit_request_path() {
-        write_json(&path, &InstanceStateFile { pid: std::process::id(), version: APP_VERSION.to_string() });
+        write_json(
+            &path,
+            &QuitRequest {
+                pid: std::process::id(),
+                version: APP_VERSION.to_string(),
+                at: now_seconds(),
+            },
+        );
     }
     for _ in 0..80 {
         if !process_alive(state.pid) {
@@ -320,15 +471,29 @@ fn write_instance_state() {
 /// 监听新版本的接管请求，收到后退出本实例。
 #[cfg(windows)]
 fn spawn_takeover_watcher(app: tauri::AppHandle) {
+    // 启动时清掉上一次运行遗留的请求：那是发给上一个实例的
+    if let Some(path) = quit_request_path() {
+        if std::fs::remove_file(&path).is_ok() {
+            append_log("清理遗留的接管请求文件");
+        }
+    }
+
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(1000));
         let Some(path) = quit_request_path() else {
             continue;
         };
-        let Some(request) = read_json::<InstanceStateFile>(&path) else {
+        let Some(request) = read_json::<QuitRequest>(&path) else {
             continue;
         };
         let _ = std::fs::remove_file(&path);
+        if request.pid == std::process::id() {
+            continue;
+        }
+        if now_seconds().saturating_sub(request.at) > QUIT_REQUEST_MAX_AGE {
+            append_log("忽略过期的接管请求");
+            continue;
+        }
         if version_is_newer(&request.version, APP_VERSION) {
             append_log(&format!("新版本 v{} 请求接管，退出当前实例", request.version));
             app.exit(0);
@@ -421,16 +586,20 @@ fn save_startup_prefs_inner(hidden: bool) {
 pub fn run() {
     install_panic_logger();
     append_log(&format!("应用启动 v{APP_VERSION}"));
+
+    // 先判单实例：已有实例时直接唤回它的窗口并退出，不触碰 WebView2 目录
+    #[cfg(windows)]
+    match decide_instance() {
+        InstanceRole::FocusExisting => {
+            focus_main_window();
+            append_log("本次启动退出");
+            return;
+        }
+        InstanceRole::Owner => write_instance_state(),
+    }
+
     #[cfg(windows)]
     ensure_webview_folder_writable();
-
-    // 已有实例时先探测：新版顶掉老版本，同版本或更老则唤回它的主窗口后退出
-    #[cfg(windows)]
-    if decide_instance() == InstanceRole::FocusExisting {
-        focus_main_window();
-        append_log("本次启动退出");
-        return;
-    }
 
     let mut builder = tauri::Builder::default();
 
@@ -462,10 +631,7 @@ pub fn run() {
             use tauri::Manager;
 
             #[cfg(windows)]
-            {
-                write_instance_state();
-                spawn_takeover_watcher(app.handle().clone());
-            }
+            spawn_takeover_watcher(app.handle().clone());
 
             match app.get_webview_window(MAIN_WINDOW) {
                 Some(window) => {
@@ -536,5 +702,15 @@ mod tests {
         assert_eq!(parse_version("1.2.3-beta.4"), (1, 2, 3));
         assert_eq!(parse_version("1.2"), (1, 2, 0));
         assert_eq!(parse_version("oops"), (0, 0, 0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn our_app_name_matching() {
+        assert!(is_our_app("DawnTick.exe"));
+        assert!(is_our_app("dawn-tick-desktop.exe"));
+        assert!(is_our_app("DAWNTICK.EXE"));
+        assert!(!is_our_app("msedgewebview2.exe"));
+        assert!(!is_our_app("explorer.exe"));
     }
 }
