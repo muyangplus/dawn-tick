@@ -1,5 +1,6 @@
 import type { Storage } from '@dawn-tick/core';
 import type { AppData } from './data.ts';
+import { detectPlatform } from './platform-detect.ts';
 
 export const WIDGET_SNAPSHOT_KEY = 'widget_snapshot';
 
@@ -38,4 +39,12 @@ export function buildWidgetSnapshot(data: AppData, now: number = Date.now()): Wi
 
 export async function writeWidgetSnapshot(storage: Storage, data: AppData): Promise<void> {
   await storage.writeMeta(WIDGET_SNAPSHOT_KEY, JSON.stringify(buildWidgetSnapshot(data)));
+  if (detectPlatform() !== 'capacitor') return;
+  try {
+    const { registerPlugin } = await import('@capacitor/core');
+    const plugin = registerPlugin<{ refresh(): Promise<void> }>('WidgetRefresh');
+    await plugin.refresh();
+  } catch {
+    // 插件未注册时跳过，快照仍会在系统周期刷新时生效
+  }
 }

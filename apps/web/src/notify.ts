@@ -1,4 +1,4 @@
-import { detectPlatform } from './db/platform.ts';
+import { detectPlatform } from './platform-detect.ts';
 
 export type NotifyPermission = 'granted' | 'denied' | 'default' | 'unsupported';
 

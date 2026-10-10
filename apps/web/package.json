@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts",
+    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

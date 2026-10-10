@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Continue'
+﻿$ErrorActionPreference = 'Continue'
 $root = 'E:\work\dsh\jdk21'
 $zip = Join-Path $root 'jdk21.zip'
 $url = 'https://aka.ms/download-jdk/microsoft-jdk-21.0.12-windows-x64.zip'

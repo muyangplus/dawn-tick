@@ -6,21 +6,13 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import schemaSql from '@dawn-tick/core/schema/001_init.sql?raw';
+import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 
-export type Platform = 'web' | 'tauri' | 'capacitor';
+export { detectPlatform };
+export type { Platform };
 
 export const MIGRATIONS: Migration[] = [{ id: '001_init', sql: schemaSql }];
-
-export function detectPlatform(): Platform {
-  const scope = globalThis as {
-    __TAURI_INTERNALS__?: unknown;
-    Capacitor?: { isNativePlatform?: () => boolean };
-  };
-  if (scope.__TAURI_INTERNALS__ !== undefined) return 'tauri';
-  if (scope.Capacitor?.isNativePlatform?.() === true) return 'capacitor';
-  return 'web';
-}
 
 async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Storage> {
   const driver =
