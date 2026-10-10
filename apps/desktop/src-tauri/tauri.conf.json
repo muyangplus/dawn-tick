@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.dawntick.app",
   "build": {
-    "frontendDist": "../web/dist",
+    "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "pnpm -C ../web dev",
     "beforeBuildCommand": "pnpm -C ../web build"

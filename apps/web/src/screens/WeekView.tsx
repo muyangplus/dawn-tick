@@ -99,6 +99,8 @@ export function WeekView({ storage, data, viewDays, timeZone, onChanged }: Props
         ))}
       </div>
 
+      {data.grid.size === 0 && <p className="empty">本学期还没有课程，可用右上角添加或导入</p>}
+
       {detail !== null && (
         <div className="dialog-backdrop" onClick={() => setDetail(null)}>
           <div className="dialog" onClick={(event) => event.stopPropagation()}>

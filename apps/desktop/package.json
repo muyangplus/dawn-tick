@@ -7,5 +7,8 @@
     "tauri": "tauri",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml",
     "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1"
   }
 }
