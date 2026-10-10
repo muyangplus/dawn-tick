@@ -29,12 +29,12 @@ function sample(): {
   };
 }
 
-test('DDL 建表与约束', () => {
-  const db = createSqlite();
-  assert.equal(tableNames(db).length, 8);
+test('DDL 建表与约束', async () => {
+  const db = await createSqlite();
+  assert.equal((await tableNames(db)).length, 8);
 
-  insertSql(db, 'users', { id: USER_ID, nickname: '我', created_at: NOW, updated_at: NOW });
-  insertSql(db, 'semesters', {
+  await insertSql(db, 'users', { id: USER_ID, nickname: '我', created_at: NOW, updated_at: NOW });
+  await insertSql(db, 'semesters', {
     id: SEMESTER_ID,
     user_id: USER_ID,
     name: '第一学期',
@@ -44,7 +44,7 @@ test('DDL 建表与约束', () => {
     created_at: NOW,
     updated_at: NOW,
   });
-  insertSql(db, 'courses', {
+  await insertSql(db, 'courses', {
     id: 'c-1',
     semester_id: SEMESTER_ID,
     name: '高等数学',
@@ -53,20 +53,21 @@ test('DDL 建表与约束', () => {
     updated_at: NOW,
   });
 
-  const bad = (row: Record<string, string | number | null>): void =>
-    insertSql(db, 'course_schedules', {
+  const bad = async (row: Record<string, string | number | null>): Promise<void> => {
+    await insertSql(db, 'course_schedules', {
       course_id: 'c-1',
       weeks_mask: 1,
       created_at: NOW,
       updated_at: NOW,
       ...row,
     });
+  };
 
-  assert.throws(() => bad({ id: 'x1', day_of_week: 1, period_start: 5, period_end: 3 }));
-  assert.throws(() => bad({ id: 'x2', day_of_week: 8, period_start: 1, period_end: 2 }));
-  assert.throws(() => bad({ id: 'x3', day_of_week: 1, period_start: 1, period_end: 2, weeks_mask: 0 }));
-  assert.throws(() => bad({ id: 'x4', course_id: 'nope', day_of_week: 1, period_start: 1, period_end: 2 }));
-  assert.throws(() =>
+  await assert.rejects(() => bad({ id: 'x1', day_of_week: 1, period_start: 5, period_end: 3 }));
+  await assert.rejects(() => bad({ id: 'x2', day_of_week: 8, period_start: 1, period_end: 2 }));
+  await assert.rejects(() => bad({ id: 'x3', day_of_week: 1, period_start: 1, period_end: 2, weeks_mask: 0 }));
+  await assert.rejects(() => bad({ id: 'x4', course_id: 'nope', day_of_week: 1, period_start: 1, period_end: 2 }));
+  await assert.rejects(() =>
     insertSql(db, 'events', {
       id: 'e1',
       user_id: USER_ID,
@@ -77,7 +78,7 @@ test('DDL 建表与约束', () => {
       updated_at: NOW,
     }),
   );
-  assert.throws(() =>
+  await assert.rejects(() =>
     insertSql(db, 'events', {
       id: 'e2',
       user_id: USER_ID,
@@ -89,7 +90,7 @@ test('DDL 建表与约束', () => {
       updated_at: NOW,
     }),
   );
-  assert.throws(() =>
+  await assert.rejects(() =>
     insertSql(db, 'reminders', {
       id: 'r1',
       user_id: USER_ID,
@@ -100,12 +101,23 @@ test('DDL 建表与约束', () => {
       updated_at: NOW,
     }),
   );
+  await assert.rejects(() =>
+    insertSql(db, 'reminders', {
+      id: 'r2',
+      user_id: USER_ID,
+      target_type: 'course',
+      target_id: 'c-1',
+      dnd: 3,
+      created_at: NOW,
+      updated_at: NOW,
+    }),
+  );
 });
 
-test('级联删除', () => {
-  const db = createSqlite();
-  insertSql(db, 'users', { id: USER_ID, nickname: '我', created_at: NOW, updated_at: NOW });
-  insertSql(db, 'semesters', {
+test('级联删除', async () => {
+  const db = await createSqlite();
+  await insertSql(db, 'users', { id: USER_ID, nickname: '我', created_at: NOW, updated_at: NOW });
+  await insertSql(db, 'semesters', {
     id: SEMESTER_ID,
     user_id: USER_ID,
     name: '第一学期',
@@ -115,7 +127,7 @@ test('级联删除', () => {
     created_at: NOW,
     updated_at: NOW,
   });
-  insertSql(db, 'courses', {
+  await insertSql(db, 'courses', {
     id: 'c-1',
     semester_id: SEMESTER_ID,
     name: '高等数学',
@@ -123,7 +135,7 @@ test('级联删除', () => {
     created_at: NOW,
     updated_at: NOW,
   });
-  insertSql(db, 'course_schedules', {
+  await insertSql(db, 'course_schedules', {
     id: 's-1',
     course_id: 'c-1',
     day_of_week: 1,
@@ -133,7 +145,7 @@ test('级联删除', () => {
     created_at: NOW,
     updated_at: NOW,
   });
-  insertSql(db, 'events', {
+  await insertSql(db, 'events', {
     id: 'e-mv',
     user_id: USER_ID,
     semester_id: SEMESTER_ID,
@@ -146,13 +158,13 @@ test('级联删除', () => {
     updated_at: NOW,
   });
 
-  db.run('DELETE FROM courses WHERE id = ?', ['c-1']);
-  assert.equal(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM course_schedules')?.n, 0);
-  assert.equal(db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events')?.n, 0);
+  await db.run('DELETE FROM courses WHERE id = ?', ['c-1']);
+  assert.equal((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM course_schedules'))?.n, 0);
+  assert.equal((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM events'))?.n, 0);
 });
 
 test('sqliteStorage 作为统一存储接口可用', async () => {
-  const db = createSqlite();
+  const db = await createSqlite();
   const storage = sqliteStorage(db);
   const data = sample();
 
@@ -172,7 +184,7 @@ test('sqliteStorage 作为统一存储接口可用', async () => {
 });
 
 test('sqliteStorage 的 put 是 upsert', async () => {
-  const db = createSqlite();
+  const db = await createSqlite();
   const storage = sqliteStorage(db);
   const data = sample();
   await storage.collection<UserRow>('users').put(userRow());

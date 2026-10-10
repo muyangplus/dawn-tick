@@ -70,10 +70,10 @@ function clean(row: Row): Record<string, SqlValue> {
   return out;
 }
 
-function sqliteFixture(): SqlDriver {
-  const db = createSqlite();
-  insertSql(db, 'users', { id: USER_ID, nickname: '我', created_at: NOW, updated_at: NOW });
-  insertSql(db, 'semesters', {
+async function sqliteFixture(): Promise<SqlDriver> {
+  const db = await createSqlite();
+  await insertSql(db, 'users', { id: USER_ID, nickname: '我', created_at: NOW, updated_at: NOW });
+  await insertSql(db, 'semesters', {
     id: SEMESTER_ID,
     user_id: USER_ID,
     name: '第一学期',
@@ -83,7 +83,7 @@ function sqliteFixture(): SqlDriver {
     created_at: NOW,
     updated_at: NOW,
   });
-  insertSql(db, 'courses', {
+  await insertSql(db, 'courses', {
     id: 'c-1',
     semester_id: SEMESTER_ID,
     name: '高等数学',
@@ -91,7 +91,7 @@ function sqliteFixture(): SqlDriver {
     created_at: NOW,
     updated_at: NOW,
   });
-  insertSql(db, 'course_schedules', {
+  await insertSql(db, 'course_schedules', {
     id: 's-1',
     course_id: 'c-1',
     day_of_week: 1,
@@ -147,12 +147,12 @@ test('非法数据在写入前被拒', async () => {
   }
 });
 
-test('校验与 SQLite 约束对拍', () => {
+test('校验与 SQLite 约束对拍', async () => {
   const backed = badCases.filter((item) => item.sqlite);
   assert.ok(backed.length >= 15);
   for (const item of backed) {
-    const db = sqliteFixture();
-    assert.throws(
+    const db = await sqliteFixture();
+    await assert.rejects(
       () => insertSql(db, item.store, clean(item.row)),
       `${item.name}: SQLite 应拒绝`,
     );

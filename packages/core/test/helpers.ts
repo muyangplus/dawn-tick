@@ -31,26 +31,25 @@ export function initSql(): string {
   return readFileSync(new URL('../src/schema/001_init.sql', import.meta.url), 'utf8');
 }
 
-export function createSqlite(): SqlDriver {
+export async function createSqlite(): Promise<SqlDriver> {
   const db = openNodeSqlite(':memory:');
-  migrate(db, [{ id: '001_init', sql: initSql() }]);
+  await migrate(db, [{ id: '001_init', sql: initSql() }]);
   return db;
 }
 
-export function insertSql(db: SqlDriver, table: string, row: Record<string, SqlValue>): void {
+export async function insertSql(db: SqlDriver, table: string, row: Record<string, SqlValue>): Promise<void> {
   const columns = Object.keys(row);
-  db.run(
+  await db.run(
     `INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`,
     columns.map((column) => row[column] as SqlValue),
   );
 }
 
-export function tableNames(db: SqlDriver): string[] {
-  return db
-    .all<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
-    )
-    .map((row) => row.name);
+export async function tableNames(db: SqlDriver): Promise<string[]> {
+  const rows = await db.all<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+  );
+  return rows.map((row) => row.name);
 }
 
 export function userRow(overrides: Partial<UserRow> = {}): UserRow {

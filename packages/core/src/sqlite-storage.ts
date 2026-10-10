@@ -39,7 +39,7 @@ class SqliteCollection<T> implements Collection<T> {
     const sql =
       `INSERT INTO ${this.name} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})` +
       (updates.length > 0 ? ` ON CONFLICT(${primary}) DO UPDATE SET ${updates}` : ` ON CONFLICT(${primary}) DO NOTHING`);
-    this.db.run(
+    await this.db.run(
       sql,
       columns.map((column) => toSqlValue(row[column])),
     );
@@ -50,15 +50,15 @@ class SqliteCollection<T> implements Collection<T> {
   }
 
   async delete(key: string): Promise<void> {
-    this.db.run(`DELETE FROM ${this.name} WHERE ${STORE_KEYS[this.name]} = ?`, [key]);
+    await this.db.run(`DELETE FROM ${this.name} WHERE ${STORE_KEYS[this.name]} = ?`, [key]);
   }
 
   async clear(): Promise<void> {
-    this.db.exec(`DELETE FROM ${this.name}`);
+    await this.db.exec(`DELETE FROM ${this.name}`);
   }
 }
 
-/** SQLite 实现，用于 Windows（tauri-plugin-sql）与 Android（Capacitor SQLite）。 */
+/** SQLite 实现，用于 Windows（tauri-plugin-sql）、Android（Capacitor SQLite）与 Node 测试。 */
 export function sqliteStorage(db: SqlDriver): Storage {
   const cache = new Map<StoreName, SqliteCollection<unknown>>();
   const collection = <T,>(name: StoreName): Collection<T> => {
@@ -80,7 +80,7 @@ export function sqliteStorage(db: SqlDriver): Storage {
       await collection<{ key: string; value: string }>('app_meta').put({ key, value });
     },
     async close(): Promise<void> {
-      db.close();
+      await db.close();
     },
   };
 }

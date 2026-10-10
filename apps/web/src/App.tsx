@@ -3,12 +3,11 @@ import {
   DEFAULT_SETTINGS,
   formatTime,
   readSettings,
-  validatedStorage,
   writeSettings,
   type AppSettings,
   type Storage,
 } from '@dawn-tick/core';
-import { openIndexedDbStorage } from './db/idb-storage.ts';
+import { openStorage } from './db/platform.ts';
 import { loadAppData, type AppData } from './data.ts';
 import { applyTheme } from './theme.ts';
 import { CourseForm } from './screens/CourseForm.tsx';
@@ -37,7 +36,7 @@ export function App() {
     let cancelled = false;
     void (async () => {
       try {
-        const opened = validatedStorage(await openIndexedDbStorage());
+        const opened = await openStorage();
         const loaded = await readSettings(opened);
         if (cancelled) return;
         setStorage(opened);

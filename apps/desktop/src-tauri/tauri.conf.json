@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "晓刻",
+  "version": "0.1.0",
+  "identifier": "com.dawntick.app",
+  "build": {
+    "frontendDist": "../web/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm -C ../web dev",
+    "beforeBuildCommand": "pnpm -C ../web build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "晓刻",
+        "width": 1000,
+        "height": 720,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

@@ -67,3 +67,12 @@ target/
 # 临时/调研产物
 /tmp/
 *.log
+
+# Gradle / Android 构建产物
+.gradle/
+local.properties
+*.apk
+*.aab
+/apps/mobile/android/app/src/main/assets/public/
+/apps/mobile/android/capacitor-cordova-android-plugins/
+/apps/desktop/src-tauri/gen/

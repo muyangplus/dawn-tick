@@ -11,7 +11,13 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "^8.1.1",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/local-notifications": "^8.3.1",
     "@dawn-tick/core": "workspace:*",
+    "@tauri-apps/api": "^2.12.2",
+    "@tauri-apps/plugin-notification": "^2.5.1",
+    "@tauri-apps/plugin-sql": "^2.5.0",
     "exceljs": "^4.4.0",
     "idb": "^8.0.4",
     "react": "^19.3.0",

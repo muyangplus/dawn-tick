@@ -1,16 +1,16 @@
 export type SqlValue = string | number | null;
 
-/** 三端 SQLite 驱动统一接口。 */
+/** 三端 SQLite 驱动统一接口。原生插件为异步 API，故全部返回 Promise。 */
 export interface SqlDriver {
-  exec(sql: string): void;
-  all<T>(sql: string, params?: readonly SqlValue[]): T[];
-  get<T>(sql: string, params?: readonly SqlValue[]): T | undefined;
-  run(sql: string, params?: readonly SqlValue[]): void;
-  close(): void;
+  exec(sql: string): Promise<void>;
+  all<T>(sql: string, params?: readonly SqlValue[]): Promise<T[]>;
+  get<T>(sql: string, params?: readonly SqlValue[]): Promise<T | undefined>;
+  run(sql: string, params?: readonly SqlValue[]): Promise<void>;
+  close(): Promise<void>;
 }
 
-export function hasTable(db: SqlDriver, table: string): boolean {
-  const row = db.get<{ name: string }>(
+export async function hasTable(db: SqlDriver, table: string): Promise<boolean> {
+  const row = await db.get<{ name: string }>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
     [table],
   );

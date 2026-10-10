@@ -9,19 +9,19 @@ export function openNodeSqlite(location: string): SqlDriver {
   const db = new DatabaseSync(location);
   db.exec('PRAGMA foreign_keys = ON');
   return {
-    exec(sql: string): void {
+    async exec(sql: string): Promise<void> {
       db.exec(sql);
     },
-    all<T>(sql: string, params: readonly SqlValue[] = []): T[] {
+    async all<T>(sql: string, params: readonly SqlValue[] = []): Promise<T[]> {
       return db.prepare(sql).all(...params) as T[];
     },
-    get<T>(sql: string, params: readonly SqlValue[] = []): T | undefined {
+    async get<T>(sql: string, params: readonly SqlValue[] = []): Promise<T | undefined> {
       return db.prepare(sql).get(...params) as T | undefined;
     },
-    run(sql: string, params: readonly SqlValue[] = []): void {
+    async run(sql: string, params: readonly SqlValue[] = []): Promise<void> {
       db.prepare(sql).run(...params);
     },
-    close(): void {
+    async close(): Promise<void> {
       db.close();
     },
   };

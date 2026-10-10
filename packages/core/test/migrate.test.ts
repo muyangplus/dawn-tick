@@ -4,9 +4,9 @@ import { openNodeSqlite } from '../src/drivers/node-sqlite.ts';
 import { migrate, readMeta, readSchemaVersion, writeMeta } from '../src/migrate.ts';
 import { createSqlite, initSql, tableNames } from './helpers.ts';
 
-test('迁移建立全部表并记录版本', () => {
-  const db = createSqlite();
-  assert.deepEqual(tableNames(db), [
+test('迁移建立全部表并记录版本', async () => {
+  const db = await createSqlite();
+  assert.deepEqual(await tableNames(db), [
     'app_meta',
     'course_schedules',
     'courses',
@@ -16,26 +16,26 @@ test('迁移建立全部表并记录版本', () => {
     'time_slots',
     'users',
   ]);
-  assert.equal(readSchemaVersion(db), '001_init');
+  assert.equal(await readSchemaVersion(db), '001_init');
 });
 
-test('迁移可重复执行', () => {
+test('迁移可重复执行', async () => {
   const db = openNodeSqlite(':memory:');
   const migrations = [{ id: '001_init', sql: initSql() }];
-  assert.equal(migrate(db, migrations), '001_init');
-  assert.equal(migrate(db, migrations), '001_init');
+  assert.equal(await migrate(db, migrations), '001_init');
+  assert.equal(await migrate(db, migrations), '001_init');
 });
 
-test('外键开关在连接建立时生效', () => {
-  const db = createSqlite();
-  assert.equal(db.get<{ foreign_keys: number }>('PRAGMA foreign_keys')?.foreign_keys, 1);
+test('外键开关在连接建立时生效', async () => {
+  const db = await createSqlite();
+  assert.equal((await db.get<{ foreign_keys: number }>('PRAGMA foreign_keys'))?.foreign_keys, 1);
 });
 
-test('app_meta 读写', () => {
-  const db = createSqlite();
-  writeMeta(db, 'time_zone', 'Asia/Shanghai');
-  assert.equal(readMeta(db, 'time_zone'), 'Asia/Shanghai');
-  writeMeta(db, 'time_zone', 'America/New_York');
-  assert.equal(readMeta(db, 'time_zone'), 'America/New_York');
-  assert.equal(readMeta(db, 'missing'), undefined);
+test('app_meta 读写', async () => {
+  const db = await createSqlite();
+  await writeMeta(db, 'time_zone', 'Asia/Shanghai');
+  assert.equal(await readMeta(db, 'time_zone'), 'Asia/Shanghai');
+  await writeMeta(db, 'time_zone', 'America/New_York');
+  assert.equal(await readMeta(db, 'time_zone'), 'America/New_York');
+  assert.equal(await readMeta(db, 'missing'), undefined);
 });
