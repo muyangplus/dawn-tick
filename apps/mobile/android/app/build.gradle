@@ -1,6 +1,10 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
+// 签名材料只从环境变量读取，不入库：ANDROID_KEYSTORE_PATH / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+def releaseKeystore = System.getenv('ANDROID_KEYSTORE_PATH')
+def hasReleaseKeystore = releaseKeystore != null && !releaseKeystore.trim().isEmpty() && file(releaseKeystore).exists()
+
 android {
     namespace = "com.dawntick.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -8,8 +12,8 @@ android {
         applicationId "com.dawntick.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 100
+        versionName "0.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -24,10 +28,23 @@ android {
     kotlinOptions {
         jvmTarget = '21'
     }
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseKeystore) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

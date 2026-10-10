@@ -63,6 +63,15 @@ target/
 .env.*
 !.env.example
 *.local
+*.key
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+keystore.properties
+/keys/
+/apps/mobile/android/keystore.properties
 
 # 临时/调研产物
 /tmp/

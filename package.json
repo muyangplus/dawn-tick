@@ -1,6 +1,6 @@
 {
   "name": "dawn-tick",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "晓刻：课表与日程提醒工具",
   "packageManager": "pnpm@12.6.0",
@@ -8,7 +8,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "test": "pnpm -r --if-present test && node --test tools/release/plan.test.mjs",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "version:current": "node tools/release/version.mjs --current",
+    "version:set": "node tools/release/version.mjs",
+    "version:check": "node tools/release/version.mjs --check"
   }
 }
