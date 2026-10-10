@@ -127,11 +127,19 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 前端日志落盘：与 panic、启动错误写入同一文件。
+#[tauri::command]
+fn log_event(level: String, scope: String, message: String) {
+    append_log(&format!("[{level}] {scope}: {message}"));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
+    append_log("应用启动");
 
     let builder = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![log_event])
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
@@ -160,8 +168,7 @@ pub fn run() {
                 append_log(&format!("托盘初始化失败: {error}"));
             }
             Ok(())
-        })
-        .on_window_event(|window, event| {
+        })        .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     api.prevent_close();

@@ -56,7 +56,38 @@ export function parsePublicKey(payload: string | { modulus?: string; exponent?: 
   if (typeof modulus !== 'string' || typeof exponent !== 'string' || modulus.length === 0) {
     throw new Error('教务返回的公钥格式不正确');
   }
-  return { modulus, exponent };
+  return { modulus: toHexKey(modulus, '公钥模数'), exponent: toHexKey(exponent, '公钥指数') };
+}
+
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function base64ToHex(input: string): string {
+  const clean = input.replace(/=+$/, '').replace(/\s+/g, '');
+  let bits = '';
+  const bytes: number[] = [];
+  for (const char of clean) {
+    const index = BASE64_ALPHABET.indexOf(char);
+    if (index < 0) throw new Error(`公钥含非法字符: ${char}`);
+    bits += index.toString(2).padStart(6, '0');
+    while (bits.length >= 8) {
+      bytes.push(Number.parseInt(bits.slice(0, 8), 2));
+      bits = bits.slice(8);
+    }
+  }
+  return bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * 正方各部署的公钥编码不一致：十六进制、Base64、少数为十进制。
+ * 统一归一为十六进制；纯数字按十六进制优先（"010001" 即 e=65537）。
+ */
+export function toHexKey(raw: string, label = '公钥'): string {
+  const clean = raw.trim().replace(/^0x/i, '').replace(/\s+/g, '');
+  if (clean.length === 0) throw new Error(`${label}为空`);
+  if (/^[0-9a-f]+$/i.test(clean)) return clean.toLowerCase();
+  if (/^[0-9]+$/.test(clean)) return BigInt(clean).toString(16);
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(clean)) return base64ToHex(clean);
+  throw new Error(`${label}格式无法识别，请确认教务地址`);
 }
 
 function hexToBigInt(hex: string): bigint {
@@ -89,21 +120,41 @@ export function hexToBase64(hex: string): string {
   return btoa(binary);
 }
 
+/**
+ * 正方 RSAUtils 的返回格式：十六进制字符串按 ASCII 再 Base64。
+ * 各校部署存在两种写法，登录时依次尝试。
+ */
+export type PasswordEncoding = 'hex-ascii' | 'hex-binary';
+
+export const PASSWORD_ENCODINGS: readonly PasswordEncoding[] = ['hex-ascii', 'hex-binary'];
+
+function asciiToBase64(text: string): string {
+  let binary = '';
+  for (const char of text) binary += String.fromCharCode(char.charCodeAt(0) & 0xff);
+  return btoa(binary);
+}
+
 /** 正方登录前的 RSA 加密：m^e mod n，按模长左补零输出十六进制。 */
-export function rsaEncryptHex(modulusHex: string, exponentHex: string, plaintext: string): string {
+export function rsaEncryptHex(modulusKey: string, exponentKey: string, plaintext: string): string {
+  const modulusHex = toHexKey(modulusKey, '公钥模数');
   const modulus = hexToBigInt(modulusHex);
-  const exponent = hexToBigInt(exponentHex);
+  const exponent = hexToBigInt(toHexKey(exponentKey, '公钥指数'));
   const bytes = new TextEncoder().encode(plaintext);
   let message = 0n;
   for (const byte of bytes) message = (message << 8n) | BigInt(byte);
 
   const encrypted = modPow(message, exponent, modulus);
-  const width = modulusHex.trim().replace(/^0x/i, '').length;
-  return encrypted.toString(16).padStart(width, '0');
+  return encrypted.toString(16).padStart(modulusHex.length, '0');
 }
 
-export function encryptPassword(modulusHex: string, exponentHex: string, password: string): string {
-  return hexToBase64(rsaEncryptHex(modulusHex, exponentHex, password));
+export function encryptPassword(
+  modulusKey: string,
+  exponentKey: string,
+  password: string,
+  encoding: PasswordEncoding = 'hex-ascii',
+): string {
+  const hex = rsaEncryptHex(modulusKey, exponentKey, password);
+  return encoding === 'hex-ascii' ? asciiToBase64(hex) : hexToBase64(hex);
 }
 
 export interface JwglxtCell {
@@ -246,6 +297,12 @@ export interface JwglxtFetchResponse {
   setCookie?: string[];
 }
 
+export interface JwglxtLogEntry {
+  step: 'login-page' | 'public-key' | 'login-post' | 'retry' | 'timetable' | 'parse';
+  message: string;
+  detail?: Record<string, string | number | boolean>;
+}
+
 export interface JwglxtFetchInput {
   baseUrl: string;
   username: string;
@@ -256,6 +313,15 @@ export interface JwglxtFetchInput {
   ) => Promise<JwglxtFetchResponse>;
   totalWeeks?: number;
   term?: JwglxtTerm;
+  /** 过程日志回调；实现方需保证不写入明文密码与密文。 */
+  onLog?: (entry: JwglxtLogEntry) => void;
+}
+
+function describeKeyEncoding(raw: string): string {
+  const clean = raw.trim().replace(/^0x/i, '').replace(/\s+/g, '');
+  if (clean.length === 0) return 'empty';
+  if (/^[0-9a-f]+$/i.test(clean)) return 'hex';
+  return /^[0-9]+$/.test(clean) ? 'decimal' : 'base64';
 }
 
 /** 密码不落盘：仅在本次调用内用于 RSA 加密后提交。 */
@@ -265,6 +331,7 @@ export async function fetchTimetable(
   const urls = jwglxtUrls(input.baseUrl, input.term);
   const warnings: string[] = [];
   const cookies: string[] = [];
+  const log = (entry: JwglxtLogEntry): void => input.onLog?.(entry);
 
   const collect = (response: JwglxtFetchResponse): void => {
     for (const cookie of response.setCookie ?? []) cookies.push(cookie.split(';')[0] ?? '');
@@ -274,34 +341,88 @@ export async function fetchTimetable(
 
   const loginPage = await input.fetchImpl(urls.login, { headers: cookieHeader() });
   collect(loginPage);
+  const loginHtml = await loginPage.text();
+  const fields = parseLoginForm(loginHtml);
+  log({
+    step: 'login-page',
+    message: '获取登录页',
+    detail: { url: urls.login, status: loginPage.status, fields: Object.keys(fields).length, csrf: fields['csrftoken'] !== undefined },
+  });
   if (loginPage.status !== 200) throw new Error(`登录页返回 ${loginPage.status}`);
-  const fields = parseLoginForm(await loginPage.text());
   if (fields['csrftoken'] === undefined) warnings.push('登录页未包含 csrftoken');
 
   const keyResponse = await input.fetchImpl(urls.publicKey, { headers: cookieHeader() });
   collect(keyResponse);
-  const key = parsePublicKey(await keyResponse.text());
-
-  const body = new URLSearchParams({
-    ...fields,
-    yhm: input.username,
-    mm: encryptPassword(key.modulus, key.exponent, input.password),
-  }).toString();
-
-  const loginResult = await input.fetchImpl(urls.login, {
-    method: 'POST',
-    headers: { ...cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
+  const keyRaw = await keyResponse.text();
+  const key = parsePublicKey(keyRaw);
+  const rawModulus = ((): string => {
+    try {
+      const parsed = JSON.parse(keyRaw) as { modulus?: unknown };
+      return typeof parsed.modulus === 'string' ? parsed.modulus : '';
+    } catch {
+      return '';
+    }
+  })();
+  log({
+    step: 'public-key',
+    message: '解析公钥',
+    detail: {
+      url: urls.publicKey,
+      status: keyResponse.status,
+      modulusEncoding: describeKeyEncoding(rawModulus),
+      modulusHexChars: key.modulus.length,
+    },
   });
-  collect(loginResult);
-  const loginText = await loginResult.text();
-  if (/用户名或密码|密码错误|登录失败/.test(loginText)) throw new Error('教务登录失败：用户名或密码不正确');
+
+  let loginText = '';
+  let usedEncoding = PASSWORD_ENCODINGS[0] ?? 'hex-ascii';
+  for (const [index, encoding] of PASSWORD_ENCODINGS.entries()) {
+    usedEncoding = encoding;
+    if (index > 0) log({ step: 'retry', message: '换用另一种密码编码重试', detail: { encoding } });
+    const attempt = new URLSearchParams({
+      ...fields,
+      yhm: input.username,
+      mm: encryptPassword(key.modulus, key.exponent, input.password, encoding),
+    }).toString();
+    const loginResult = await input.fetchImpl(urls.login, {
+      method: 'POST',
+      headers: { ...cookieHeader(), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: attempt,
+    });
+    collect(loginResult);
+    loginText = await loginResult.text();
+    const rejected = /用户名或密码|密码错误|登录失败/.test(loginText);
+    log({
+      step: 'login-post',
+      message: rejected ? '登录被拒' : '登录已提交',
+      detail: { url: urls.login, status: loginResult.status, encoding, bodyBytes: attempt.length, rejected },
+    });
+    if (!rejected) break;
+  }
+  if (/用户名或密码|密码错误|登录失败/.test(loginText)) {
+    throw new Error('教务登录失败：用户名或密码不正确');
+  }
 
   const page = await input.fetchImpl(urls.timetable, { headers: cookieHeader() });
   collect(page);
   const pageText = await page.text();
+  log({
+    step: 'timetable',
+    message: '获取课表页',
+    detail: { url: urls.timetable, status: page.status, bytes: pageText.length },
+  });
   if (/login_slogin|请先登录/.test(pageText)) throw new Error('教务会话失效，请重新登录');
 
   const parsed = parseTimetable(pageText, { totalWeeks: input.totalWeeks ?? 20 });
-  return { schedules: parsed.schedules, warnings: [...warnings, ...parsed.warnings] };
+  const merged = [...warnings, ...parsed.warnings];
+  log({
+    step: 'parse',
+    message: '解析课表',
+    detail: {
+      encoding: usedEncoding,
+      schedules: parsed.schedules.length,
+      warnings: merged.length,
+    },
+  });
+  return { schedules: parsed.schedules, warnings: merged };
 }

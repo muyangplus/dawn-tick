@@ -30,6 +30,7 @@ import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
 import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
+import { attachLogStorage, loadLogs, logError, logInfo } from './log.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { writeWidgetSnapshot } from './widget-snapshot.ts';
@@ -81,6 +82,14 @@ export function App() {
       const next = await loadAppData(target, current, week === undefined || week === null ? {} : { viewWeek: week });
       setData(next);
       setViewWeek(next.viewWeek);
+      logInfo('data', '加载课表', {
+        week: next.week,
+        viewWeek: next.viewWeek,
+        lessons: [...next.grid.values()].reduce((total, list) => total + list.length, 0),
+        today: next.todayLessons.length,
+        todos: next.todos.length,
+        exams: next.exams.length,
+      });
       await writeWidgetSnapshot(target, next, current);
     },
     [],
@@ -91,19 +100,25 @@ export function App() {
     void (async () => {
       try {
         const opened = await openStorage();
+        attachLogStorage(opened);
+        await loadLogs();
         const loaded = await readSettings(opened);
         if (cancelled) return;
         setStorage(opened);
         setSettings(loaded);
         setResolvedMode(applyTheme(loaded.themePreset, loaded.theme));
+        logInfo('storage', '存储就绪', { kind: opened.kind, theme: loaded.themePreset, mode: loaded.theme });
         await reload(opened, loaded);
         const manager = globalThis.navigator?.storage;
         if (manager !== undefined && typeof manager.persist === 'function') {
           const granted = await manager.persist();
           if (!cancelled) setPersistent(granted);
+          logInfo('storage', '持久化申请', { granted });
         }
       } catch (cause: unknown) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+        const message = cause instanceof Error ? cause.message : String(cause);
+        logError('storage', '存储初始化失败', { message });
+        if (!cancelled) setError(message);
       }
     })();
     return () => {
@@ -291,6 +306,9 @@ export function App() {
           settings={settings}
           semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
           activeSemesterId={data.semester.id}
+          activeStartDate={data.semester.start_date}
+          totalWeeks={data.semester.total_weeks}
+          slots={data.slots}
           persistent={persistent}
           reminders={reminders}
           storageKind={STORAGE_LABEL[storage.kind]}

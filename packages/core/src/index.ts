@@ -1,5 +1,6 @@
 export * from './time.ts';
 export * from './weeks.ts';
+export * from './timetable.ts';
 export * from './db.ts';
 export * from './storage.ts';
 export * from './migrate.ts';

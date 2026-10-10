@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_PERIODS,
+  appendTimeSlot,
   clearReschedules,
   createCourse,
   createEvent,
@@ -11,12 +12,17 @@ import {
   deleteCourse,
   deleteEvent,
   deleteSemesterDeep,
+  deleteTimeSlot,
   ensureUser,
+  listManagedCourses,
   listReschedules,
+  replaceTimeSlots,
   setReminder,
+  setSchedules,
   updateCourse,
   uuidv7,
 } from '../src/mutations.ts';
+import { listTimeSlots } from '../src/repository.ts';
 
 type Row = Record<string, unknown>;
 import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.ts';
@@ -349,6 +355,68 @@ test('删除不存在的学期不报错且返回全零', async () => {
     events: 0,
     reminders: 0,
   });
+});
+
+test('时间表可整体替换、追加与受限删除', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+
+  const replaced = await replaceTimeSlots(storage, SEMESTER_ID, [
+    { periodNo: 1, startTime: '08:00', endTime: '08:45', section: 'am' },
+    { periodNo: 2, startTime: '08:55', endTime: '09:40', section: 'am' },
+  ]);
+  assert.equal(replaced.length, 2);
+  const slots = await listTimeSlots(storage, SEMESTER_ID);
+  assert.deepEqual(
+    slots.map((slot) => `${slot.period_no} ${slot.start_time}`),
+    ['1 08:00', '2 08:55'],
+  );
+
+  const appended = await appendTimeSlot(storage, SEMESTER_ID, 45, 10);
+  assert.equal(appended['period_no'], 3);
+  assert.equal(appended['start_time'], '09:50');
+  assert.equal(appended['end_time'], '10:35');
+
+  // 种子数据里的排课使用第 1-2 节，删除第 1 节应被拒绝
+  const blocked = await deleteTimeSlot(storage, SEMESTER_ID, 1);
+  assert.equal(blocked.deleted, false);
+  assert.ok(blocked.usedBy >= 1);
+
+  // 把全部排课收敛到第 1-2 节后，第 3 节可删除
+  for (const course of await listManagedCourses(storage, SEMESTER_ID)) {
+    await setSchedules(storage, course.id, [
+      { dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: [1, 2, 3] },
+    ]);
+  }
+  const removed = await deleteTimeSlot(storage, SEMESTER_ID, 3);
+  assert.equal(removed.deleted, true);
+  assert.equal((await listTimeSlots(storage, SEMESTER_ID)).length, 2);
+});
+
+test('课程管理列表带出排课并可整体替换排课', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+
+  const list = await listManagedCourses(storage, SEMESTER_ID);
+  const course = list.find((item) => item.name.length > 0);
+  assert.ok(course !== undefined);
+  assert.ok(course.schedules.length >= 1);
+  assert.ok(course.schedules[0]?.weeks.length ?? 0 >= 1);
+
+  const target = course.schedules[0]?.id ?? '';
+  await setSchedules(storage, course.id, [
+    { dayOfWeek: 3, periodStart: 5, periodEnd: 6, weeks: [1, 3, 5], room: '教三-301' },
+  ]);
+  const after = await listManagedCourses(storage, SEMESTER_ID);
+  const updated = after.find((item) => item.id === course.id);
+  assert.equal(updated?.schedules.length, 1);
+  assert.equal(updated?.schedules[0]?.dayOfWeek, 3);
+  assert.deepEqual(updated?.schedules[0]?.weeks, [1, 3, 5]);
+  assert.equal(updated?.schedules[0]?.room, '教三-301');
+  assert.equal(
+    (await storage.collection<Row>('course_schedules').get(target))?.['deleted_at'] === null,
+    false,
+  );
 });
 
 test('新建学期使用固定 id 生成器便于断言', async () => {

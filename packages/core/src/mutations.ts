@@ -1,8 +1,9 @@
 import { DEFAULT_TIME_ZONE } from './time.ts';
-import { weeksToMask } from './weeks.ts';
+import { addMinutes, sectionOf } from './timetable.ts';
+import { maskToWeeks, weeksToMask } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { assertValid } from './validation.ts';
-import type { EventType, HolidaySource, ReminderTargetType } from './types.ts';
+import type { EventType, HolidaySource, PeriodSection, ReminderTargetType } from './types.ts';
 
 type Row = Record<string, unknown>;
 
@@ -152,9 +153,32 @@ export async function seedDefaultTimeSlots(
   semesterId: string,
   options: WriteOptions = {},
 ): Promise<Row[]> {
+  return replaceTimeSlots(storage, semesterId, DEFAULT_PERIODS, options);
+}
+
+export interface PeriodInput {
+  periodNo: number;
+  startTime: string;
+  endTime: string;
+  section: PeriodSection;
+  label?: string | null;
+}
+
+/** 用给定课次替换整个时间表；被课次引用的排课不会被删除。 */
+export async function replaceTimeSlots(
+  storage: Storage,
+  semesterId: string,
+  periods: readonly PeriodInput[],
+  options: WriteOptions = {},
+): Promise<Row[]> {
   const ctx = context(storage, options);
+  const existing = (await storage.collection<Row>('time_slots').getAll()).filter(
+    (row) => isAlive(row) && row['semester_id'] === semesterId,
+  );
+  for (const row of existing) await remove(ctx, 'time_slots', String(row['id']));
+
   const rows: Row[] = [];
-  for (const period of DEFAULT_PERIODS) {
+  for (const period of periods) {
     rows.push(
       await insert(ctx, 'time_slots', {
         id: ctx.id(),
@@ -162,7 +186,7 @@ export async function seedDefaultTimeSlots(
         period_no: period.periodNo,
         start_time: period.startTime,
         end_time: period.endTime,
-        label: null,
+        label: period.label ?? null,
         section: period.section,
         created_at: ctx.now(),
         updated_at: ctx.now(),
@@ -173,6 +197,73 @@ export async function seedDefaultTimeSlots(
     );
   }
   return rows;
+}
+
+async function aliveTimeSlots(storage: Storage, semesterId: string): Promise<Row[]> {
+  const rows = (await storage.collection<Row>('time_slots').getAll()).filter(
+    (row) => isAlive(row) && row['semester_id'] === semesterId,
+  );
+  return rows.sort((left, right) => Number(left['period_no']) - Number(right['period_no']));
+}
+
+/** 在末尾追加一节；时间取最后一节的结束时间加课间，时长为固定上课时长。 */
+export async function appendTimeSlot(
+  storage: Storage,
+  semesterId: string,
+  durationMinutes: number,
+  breakMinutes: number,
+  options: WriteOptions = {},
+): Promise<Row> {
+  const ctx = context(storage, options);
+  const existing = await aliveTimeSlots(storage, semesterId);
+  const last = existing.at(-1);
+  const duration = Math.max(10, Math.round(durationMinutes));
+  const gap = Math.max(0, Math.round(breakMinutes));
+  const startTime = last === undefined ? '08:00' : addMinutes(String(last['end_time']), gap);
+  const periodNo = last === undefined ? 1 : Number(last['period_no']) + 1;
+  if (periodNo > 30) throw new Error('课次不能超过 30 节');
+  return insert(ctx, 'time_slots', {
+    id: ctx.id(),
+    semester_id: semesterId,
+    period_no: periodNo,
+    start_time: startTime,
+    end_time: addMinutes(startTime, duration),
+    label: null,
+    section: sectionOf(startTime),
+    created_at: ctx.now(),
+    updated_at: ctx.now(),
+    deleted_at: null,
+    rev: 0,
+    dirty: 1,
+  });
+}
+
+/** 删除一节；被排课引用时拒绝，返回引用数量。 */
+export async function deleteTimeSlot(
+  storage: Storage,
+  semesterId: string,
+  periodNo: number,
+  options: WriteOptions = {},
+): Promise<{ deleted: boolean; usedBy: number }> {
+  const ctx = context(storage, options);
+  const courses = (await storage.collection<Row>('courses').getAll())
+    .filter((row) => isAlive(row) && row['semester_id'] === semesterId)
+    .map((row) => String(row['id']));
+  const usedBy = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) =>
+      isAlive(row) &&
+      courses.includes(String(row['course_id'])) &&
+      Number(row['period_start']) <= periodNo &&
+      Number(row['period_end']) >= periodNo,
+  ).length;
+  if (usedBy > 0) return { deleted: false, usedBy };
+
+  const target = (await aliveTimeSlots(storage, semesterId)).find(
+    (row) => Number(row['period_no']) === periodNo,
+  );
+  if (target === undefined) return { deleted: false, usedBy: 0 };
+  await remove(ctx, 'time_slots', String(target['id']));
+  return { deleted: true, usedBy: 0 };
 }
 
 export async function createSemester(
@@ -404,6 +495,104 @@ export async function deleteSchedule(storage: Storage, id: string, options: Writ
   const ctx = context(storage, options);
   await dropReminders(ctx, 'schedule', id);
   await remove(ctx, 'course_schedules', id);
+}
+
+export interface ScheduleInput {
+  dayOfWeek: number;
+  periodStart: number;
+  periodEnd: number;
+  weeks: readonly number[];
+  weeksRaw?: string | null;
+  room?: string | null;
+}
+
+/** 用给定排课替换某门课的全部排课。 */
+export async function setSchedules(
+  storage: Storage,
+  courseId: string,
+  list: readonly ScheduleInput[],
+  options: WriteOptions = {},
+): Promise<Row[]> {
+  const ctx = context(storage, options);
+  const existing = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => isAlive(row) && row['course_id'] === courseId,
+  );
+  for (const row of existing) await remove(ctx, 'course_schedules', String(row['id']));
+
+  const rows: Row[] = [];
+  for (const item of list) {
+    rows.push(
+      await insert(ctx, 'course_schedules', {
+        id: ctx.id(),
+        course_id: courseId,
+        day_of_week: item.dayOfWeek,
+        period_start: item.periodStart,
+        period_end: item.periodEnd,
+        weeks_mask: weeksToMask([...item.weeks]),
+        weeks_raw: item.weeksRaw ?? null,
+        room: item.room ?? null,
+        created_at: ctx.now(),
+        updated_at: ctx.now(),
+        deleted_at: null,
+        rev: 0,
+        dirty: 1,
+      }),
+    );
+  }
+  return rows;
+}
+
+export interface ManagedSchedule {
+  id: string;
+  dayOfWeek: number;
+  periodStart: number;
+  periodEnd: number;
+  weeks: number[];
+  room: string | null;
+}
+
+export interface ManagedCourse {
+  id: string;
+  name: string;
+  shortName: string | null;
+  teacher: string | null;
+  location: string | null;
+  color: string;
+  credits: number | null;
+  note: string | null;
+  schedules: ManagedSchedule[];
+}
+
+/** 课程管理列表：课程及其全部排课。 */
+export async function listManagedCourses(storage: Storage, semesterId: string): Promise<ManagedCourse[]> {
+  const courses = (await storage.collection<Row>('courses').getAll())
+    .filter((row) => isAlive(row) && row['semester_id'] === semesterId)
+    .sort((left, right) => String(left['name']).localeCompare(String(right['name'])));
+  const courseIds = new Set(courses.map((row) => String(row['id'])));
+  const schedules = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => isAlive(row) && courseIds.has(String(row['course_id'])),
+  );
+
+  return courses.map((course) => ({
+    id: String(course['id']),
+    name: String(course['name']),
+    shortName: course['short_name'] === null ? null : String(course['short_name']),
+    teacher: course['teacher'] === null ? null : String(course['teacher']),
+    location: course['location'] === null ? null : String(course['location']),
+    color: String(course['color']),
+    credits: course['credits'] === null ? null : Number(course['credits']),
+    note: course['note'] === null ? null : String(course['note']),
+    schedules: schedules
+      .filter((row) => row['course_id'] === course['id'])
+      .map((row) => ({
+        id: String(row['id']),
+        dayOfWeek: Number(row['day_of_week']),
+        periodStart: Number(row['period_start']),
+        periodEnd: Number(row['period_end']),
+        weeks: maskToWeeks(Number(row['weeks_mask'])),
+        room: row['room'] === null ? null : String(row['room']),
+      })),
+  }));
 }
 
 export interface CreateEventInput {

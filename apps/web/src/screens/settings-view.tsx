@@ -16,9 +16,13 @@ import {
   type SemesterRow,
   type Storage,
   type ThemePreset,
+  type TimeSlotRow,
   type WidgetBackground,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
+import { clearLogs, logsText, logInfo } from '../log.ts';
+import { PeriodSettings } from '../components/period-settings.tsx';
+import { CourseManager } from './course-manager.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
@@ -53,6 +57,9 @@ export interface SettingsViewProps {
   settings: AppSettings;
   semesters: readonly SemesterRow[];
   activeSemesterId: string | null;
+  activeStartDate: string;
+  totalWeeks: number;
+  slots: readonly TimeSlotRow[];
   persistent: boolean | null;
   reminders: ReminderView;
   storageKind: string;
@@ -66,6 +73,9 @@ export function SettingsView({
   settings,
   semesters,
   activeSemesterId,
+  activeStartDate,
+  totalWeeks,
+  slots,
   persistent,
   reminders,
   storageKind,
@@ -109,6 +119,12 @@ export function SettingsView({
         total_weeks: Math.min(30, Math.max(1, editWeeks)),
         time_zone: editZone,
       });
+      logInfo('semester', '修改学期', {
+        id: editing.id,
+        startDate: editStart,
+        totalWeeks: editWeeks,
+        timeZone: editZone,
+      });
       toast.success('已保存学期设置');
       setEditing(null);
       onChanged();
@@ -122,6 +138,7 @@ export function SettingsView({
     setBusy(true);
     try {
       const report = await deleteSemesterDeep(storage, removing.id);
+      logInfo('semester', '删除学期', { id: removing.id, ...report });
       toast.success(
         `已删除「${removing.name}」，连带清理课程 ${report.courses} · 排课 ${report.schedules} · 节次 ${report.slots} · 日程 ${report.events} · 提醒 ${report.reminders}`,
       );
@@ -132,16 +149,35 @@ export function SettingsView({
     }
   }
 
+  function downloadText(name: string, content: string, type = 'text/plain'): void {
+    const url = URL.createObjectURL(new Blob([content], { type: `${type};charset=utf-8` }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportLogs(): void {
+    const entries = logsText();
+    downloadText(`DawnTick-日志-${new Date().toISOString().slice(0, 10)}.txt`, entries === '' ? '暂无日志' : entries);
+    setBackupMessage(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
+    void clearLogs();
+  }
+
   async function downloadBackup(): Promise<void> {
     setBusy(true);
     try {
       const payload = await exportBackup(storage);
-      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `DawnTick-备份-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      downloadText(
+        `DawnTick-备份-${new Date().toISOString().slice(0, 10)}.json`,
+        JSON.stringify(payload, null, 2),
+        'application/json',
+      );
+      logInfo('backup', '导出备份', {
+        stores: Object.keys(payload.stores).length,
+        rows: Object.values(payload.stores).reduce((total, rows) => total + (Array.isArray(rows) ? rows.length : 0), 0),
+      });
       setBackupMessage('已导出备份');
     } finally {
       setBusy(false);
@@ -152,6 +188,7 @@ export function SettingsView({
     setBusy(true);
     try {
       const result = await importBackup(storage, parseBackup(await file.text()));
+      logInfo('backup', '导入备份', { imported: result.imported, skipped: result.skipped });
       setBackupMessage(`已恢复 ${result.imported} 条，跳过 ${result.skipped} 条`);
       onChanged();
     } finally {
@@ -169,6 +206,11 @@ export function SettingsView({
         startDate: semesterStart,
         totalWeeks: semesterWeeks,
         timeZone: settings.timeZone,
+      });
+      logInfo('semester', '新建学期', {
+        name: semesterName.trim(),
+        startDate: semesterStart,
+        totalWeeks: semesterWeeks,
       });
       setSemesterName('');
       toast.success('已新建学期并设为当前学期');
@@ -268,6 +310,20 @@ export function SettingsView({
           </div>
         </details>
       </Card>
+
+      <PeriodSettings storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
+
+      {activeSemesterId !== null && (
+        <CourseManager
+          storage={storage}
+          semesterId={activeSemesterId}
+          preset={settings.themePreset}
+          slots={slots}
+          semesterStart={activeStartDate}
+          totalWeeks={totalWeeks}
+          onChanged={onChanged}
+        />
+      )}
 
       <Card className="flex flex-col gap-3">
         <CardTitle className="flex items-center gap-2">
@@ -395,6 +451,9 @@ export function SettingsView({
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
             <Upload className="size-4" aria-hidden />
             导入备份
+          </Button>
+          <Button size="sm" variant="secondary" onClick={exportLogs}>
+            导出日志
           </Button>
           <input
             ref={fileInput}

@@ -10,7 +10,9 @@ import {
   parsePublicKey,
   parseTimetable,
   rsaEncryptHex,
+  toHexKey,
   type JwglxtFetchResponse,
+  type JwglxtLogEntry,
 } from '../src/import/jwglxt.ts';
 
 test('教务地址归一化', () => {
@@ -52,12 +54,38 @@ test('公钥解析', () => {
   assert.throws(() => parsePublicKey('{"modulus":"a1b2"}'), /公钥格式不正确/);
 });
 
+test('公钥编码兼容十六进制、Base64 与前缀写法', () => {
+  assert.equal(toHexKey('010001'), '010001');
+  assert.equal(toHexKey('0x010001'), '010001');
+  assert.equal(toHexKey('AQAB'), '010001');
+  assert.equal(toHexKey('AQAB', '公钥指数'), '010001');
+  assert.throws(() => toHexKey('not*valid', '公钥模数'), /格式无法识别/);
+  assert.throws(() => toHexKey('   '), /为空/);
+});
+
+test('Base64 模数可解析并加密（真实教务返回）', () => {
+  const modulus =
+    'ANacTWk/2veUNxVmmP/C1LUWzeySVtc8f6AlAQv/pR4/iaF1EYazATex0zKv1jaEjNovnpvEdogNxImtXvzuXS60yTYgypcJyefKK2c/teDHHptU1N99heXdQ75QrRN+iQX5jFDhXSc1sCx+A/5sGV23mDiWHkdrhyFj';
+  const key = parsePublicKey(JSON.stringify({ modulus, exponent: '010001' }));
+  assert.equal(key.modulus.length, 246, `Base64 解码应为 123 字节，实际 ${key.modulus.length / 2}`);
+  assert.match(key.modulus, /^[0-9a-f]+$/);
+  assert.equal(key.modulus.slice(0, 2), '00', '保留原始前导零字节');
+  assert.equal(key.exponent, '010001');
+
+  const ascii = encryptPassword(key.modulus, key.exponent, 'password123', 'hex-ascii');
+  const binary = encryptPassword(key.modulus, key.exponent, 'password123', 'hex-binary');
+  assert.equal(ascii.length, 328, '246 位十六进制 ASCII 的 Base64 长度');
+  assert.equal(binary.length, 164, '123 字节密文的 Base64 长度');
+  assert.notEqual(ascii, binary);
+  assert.equal(encryptPassword(modulus, 'AQAB', 'password123', 'hex-ascii'), ascii, 'Base64 与十六进制入口结果一致');
+});
+
 test('RSA 加密与 Base64 转换', () => {
   // n = 0xCA1 = 3233，e = 0x11 = 17，明文 'A' = 65 → 65^17 mod 3233 = 2790
   assert.equal(rsaEncryptHex('CA1', '11', 'A'), 'ae6');
   assert.equal(hexToBase64('ae6'), 'CuY=');
-  assert.equal(encryptPassword('CA1', '11', 'A'), 'CuY=');
-  assert.throws(() => rsaEncryptHex('zz', '11', 'A'), /非法十六进制/);
+  assert.equal(encryptPassword('CA1', '11', 'A', 'hex-binary'), 'CuY=');
+  assert.equal(encryptPassword('CA1', '11', 'A', 'hex-ascii'), 'YWU2');
 });
 
 const GRID_HTML = `
@@ -132,6 +160,38 @@ test('登录流程：密码不以明文提交', async () => {
   assert.ok(post.body?.includes('mm='));
 });
 
+test('过程日志不含明文密码与密文', async () => {
+  const entries: JwglxtLogEntry[] = [];
+  const fetchImpl = async (url: string): Promise<JwglxtFetchResponse> => {
+    const body = url.includes('login_getPublicKey')
+      ? '{"modulus":"CA1","exponent":"11"}'
+      : url.includes('xskb_list')
+        ? GRID_HTML
+        : '<html>ok</html>';
+    return { status: 200, text: async () => body, setCookie: ['JSESSIONID=abc; Path=/'] };
+  };
+
+  await fetchTimetable({
+    baseUrl: 'jw.example.edu.cn',
+    username: '20260001',
+    password: 'secret-password',
+    fetchImpl,
+    totalWeeks: 20,
+    onLog: (entry) => entries.push(entry),
+  });
+
+  const dumped = JSON.stringify(entries);
+  assert.ok(!dumped.includes('secret-password'), '日志不得含明文密码');
+  assert.ok(!dumped.includes('mm='), '日志不得含加密后的提交体');
+  assert.deepEqual(
+    entries.map((entry) => entry.step),
+    ['login-page', 'public-key', 'login-post', 'timetable', 'parse'],
+  );
+  assert.equal(entries.at(-1)?.detail?.['schedules'], 3);
+  assert.equal(entries[1]?.detail?.['modulusHexChars'], 3);
+  assert.equal(entries[1]?.detail?.['modulusEncoding'], 'hex');
+});
+
 test('登录失败与会话失效被识别', async () => {
   const failing = async (url: string): Promise<JwglxtFetchResponse> => ({
     status: 200,
@@ -157,5 +217,53 @@ test('登录失败与会话失效被识别', async () => {
     () =>
       fetchTimetable({ baseUrl: 'jw.example.edu.cn', username: 'u', password: 'p', fetchImpl: expired }),
     /会话失效/,
+  );
+});
+
+test('密码编码不匹配时自动改用另一种重试', async () => {
+  const accepted = encryptPassword('CA1', '11', 'p', 'hex-binary');
+  const posts: string[] = [];
+  const fetchImpl = async (url: string, init?: { body?: string }): Promise<JwglxtFetchResponse> => {
+    if (url.includes('login_getPublicKey')) {
+      return { status: 200, text: async () => '{"modulus":"CA1","exponent":"11"}', setCookie: ['JSESSIONID=x'] };
+    }
+    if (url.includes('login_slogin') && init?.body !== undefined) {
+      posts.push(init.body);
+      const mm = new URLSearchParams(init.body).get('mm');
+      return {
+        status: 200,
+        text: async () => (mm === accepted ? '<html>ok</html>' : '<div>用户名或密码不正确</div>'),
+        setCookie: ['JSESSIONID=y'],
+      };
+    }
+    return { status: 200, text: async () => GRID_HTML, setCookie: [] };
+  };
+
+  const result = await fetchTimetable({
+    baseUrl: 'jw.example.edu.cn',
+    username: 'u',
+    password: 'p',
+    fetchImpl,
+    totalWeeks: 20,
+  });
+  assert.equal(posts.length, 2, '第一次编码被拒后应换编码重试一次');
+  assert.equal(new URLSearchParams(posts[0]).get('mm'), encryptPassword('CA1', '11', 'p', 'hex-ascii'));
+  assert.equal(new URLSearchParams(posts[1]).get('mm'), accepted);
+  assert.ok(result.schedules.length > 0);
+});
+
+test('两种编码都被拒时报密码错误', async () => {
+  const fetchImpl = async (url: string, init?: { body?: string }): Promise<JwglxtFetchResponse> => {
+    if (url.includes('login_getPublicKey')) {
+      return { status: 200, text: async () => '{"modulus":"CA1","exponent":"11"}' };
+    }
+    if (url.includes('login_slogin') && init?.body !== undefined) {
+      return { status: 200, text: async () => '<div>密码错误</div>' };
+    }
+    return { status: 200, text: async () => '<html></html>' };
+  };
+  await assert.rejects(
+    () => fetchTimetable({ baseUrl: 'jw.example.edu.cn', username: 'u', password: 'p', fetchImpl }),
+    /密码不正确/,
   );
 });

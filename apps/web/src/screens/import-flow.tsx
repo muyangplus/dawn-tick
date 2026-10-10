@@ -17,6 +17,7 @@ import { Card } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { createPlatformFetch, fetchHint } from '../http.ts';
+import { logError, logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
 
 type Method = 'jwglxt' | 'file' | 'ics' | 'manual';
@@ -90,11 +91,13 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         totalWeeks: semester?.total_weeks ?? 20,
         ...(xnm.trim().length > 0 && xqm.trim().length > 0 ? { term: { xnm: xnm.trim(), xqm: xqm.trim() } } : {}),
         fetchImpl: createPlatformFetch(),
+        onLog: (entry) => logInfo('jwglxt', entry.message, { step: entry.step, ...entry.detail }),
       });
       if (result.schedules.length === 0) throw new Error('登录成功但未解析到课程');
       accept(result.schedules, result.warnings);
     } catch (cause: unknown) {
       const message = cause instanceof Error ? cause.message : String(cause);
+      logError('jwglxt', '抓取失败', { message });
       setError(`${message}。${fetchHint()}`);
     } finally {
       setBusy(false);
@@ -153,6 +156,13 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       const chosen = schedules.filter((_, index) => selected.has(index));
       const applied = await applyImport(storage, semesterId, chosen);
       setWarnings(applied.warnings);
+      logInfo('import', '应用导入', {
+        method,
+        selected: chosen.length,
+        courses: applied.createdCourses,
+        schedules: applied.createdSchedules,
+        skipped: applied.skippedSchedules,
+      });
       toast.success(`新增课程 ${applied.createdCourses} · 排课 ${applied.createdSchedules} · 跳过重复 ${applied.skippedSchedules}`);
       setStep(4);
       onDone();

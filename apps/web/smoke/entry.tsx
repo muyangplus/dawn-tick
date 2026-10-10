@@ -79,6 +79,10 @@ function clickByLabel(container: HTMLElement, prefix: string): boolean {
   return true;
 }
 
+function hasLabel(container: HTMLElement, prefix: string): boolean {
+  return container.querySelector(`button[aria-label^="${prefix}"]`) !== null;
+}
+
 function setInputValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
   setter?.call(input, value);
@@ -118,7 +122,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const settingsText = view.container.textContent ?? '';
   check(
     '切到设置页',
-    switchedToSettings && settingsText.includes('外观') && settingsText.includes('小组件背景'),
+    switchedToSettings &&
+      settingsText.includes('外观') &&
+      settingsText.includes('小组件背景') &&
+      settingsText.includes('导出日志'),
     settingsText.slice(0, 60),
   );
 
@@ -136,6 +143,30 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   clickByText(view.container, '设置');
   await flush(10);
+
+  const countPeriods = (text: string): number => (text.match(/第 \d+ 节 ·/g) ?? []).length;
+  const panelText = view.container.textContent ?? '';
+  check(
+    '时间表与课程管理渲染',
+    panelText.includes('时间表') && panelText.includes('课程管理') && panelText.includes('高数'),
+    '',
+  );
+  check('课程管理提供编辑与删除', hasLabel(view.container, '编辑课程') && hasLabel(view.container, '删除课程'), '');
+
+  const beforePeriods = countPeriods(panelText);
+  if (clickByText(view.container, '自动生成课次')) await flush(26);
+  const afterGenerateText = view.container.textContent ?? '';
+  const afterGenerate = countPeriods(afterGenerateText);
+  check(
+    '自动生成课次按固定时长重算',
+    afterGenerate >= 10 && afterGenerateText.includes('09:50'),
+    `生成后 ${afterGenerate} 节，第三节课 09:50 起`,
+  );
+
+  if (clickByText(view.container, '追加一节')) await flush(22);
+  const afterAppend = countPeriods(view.container.textContent ?? '');
+  check('追加一节生效', afterAppend === afterGenerate + 1, `${afterGenerate} → ${afterAppend}（原 ${beforePeriods}）`);
+
   check('学期设置显示编辑与删除入口', clickByLabel(view.container, '编辑学期'), '');
   await flush(6);
   const editDialogText = document.body.textContent ?? '';
