@@ -110,6 +110,50 @@ test('课表在 iframe 里也能识别', () => {
   assert.equal(result.schedules[0]?.courseName, '高等数学');
 });
 
+test('解析某校真实课表单元格（校园+教室、教师、周次）', () => {
+  // 取自真实页面：属性顺序为 rowspan 在前，教室写作「石湖  石C6-403」，周次写作「(1-2节)1-15周」
+  const page = `<table id="kbgrid_table_0" class="table table-hover table-bordered text-center timetable1"><tbody>
+    <tr><td colspan="9"><div class="timetable_title"><h6 class="pull-left">2026-2027学年第1学期</h6>徐照杰的课表</div></td></tr>
+    <tr><td><span class="time">时间段</span></td><td><span class="time">节次</span></td><td><span class="time">星期一</span></td><td><span class="time">星期二</span></td><td><span class="time">星期三</span></td></tr>
+    <tr><td rowspan="6"><span class="time">上午</span></td><td><span class="festival">1</span></td>
+      <td rowspan="2" id="1-1" class="td_wrap"><div class="timetable_con text-left"><span class="title"><font color="blue">固体废物处理与处置</font></span><p><span title="节/周"><font color="blue"> (1-2节)1-15周</font></span></p><p><span title="上课地点"><font color="blue"> 石湖  石C6-403</font></span></p><p><span title="教师 "><font color="blue"> 何欣,金伟</font></span></p><p><span title="学分"><font color="blue"> 3</font></span></p></div></td>
+      <td rowspan="2" id="2-1" class="td_wrap"><div class="timetable_con text-left"><span class="title"><font color="blue">大气污染控制工程(一)</font></span><p><font color="blue"> (1-2节)1-13周</font></p><p><font color="blue"> 石湖  石C4-307</font></p><p><font color="blue"> 朱一芝</font></p></div></td>
+      <td rowspan="1" id="3-1" class="td_wrap"></td></tr>
+    <tr><td><span class="festival">2</span></td><td rowspan="1" id="3-2" class="td_wrap"></td></tr>
+    <tr><td><span class="festival">3</span></td>
+      <td rowspan="2" id="1-3" class="td_wrap"><div class="timetable_con text-left"><span class="title"><font color="blue">工程技术经济与管理</font></span><p><font color="blue"> (3-4节)1-13周</font></p><p><font color="blue"> 石湖  石C6-403</font></p><p><font color="blue"> 李雅婕</font></p></div></td>
+      <td rowspan="1" id="2-3" class="td_wrap"></td>
+      <td rowspan="2" id="3-3" class="td_wrap"><div class="timetable_con text-left"><span class="title"><font color="blue">水污染控制工程(一)</font></span><p><font color="blue"> (3-4节)1-13周</font></p><p><font color="blue"> 石湖  石C6-403</font></p><p><font color="blue"> 陈重军,李博达,潘杨</font></p></div></td></tr>
+    <tr><td><span class="festival">4</span></td><td rowspan="1" id="2-4" class="td_wrap"></td></tr>
+    <tr><td><span class="festival">7</span></td>
+      <td rowspan="2" id="5-7" class="td_wrap"><div class="timetable_con text-left"><span class="title"><font color="blue">物理性污染控制工程</font></span><p><font color="blue"> (7-8节)1-11周(单)</font></p><p><font color="blue"> 石湖  石C6-403</font></p><p><font color="blue"> 赵雪涛,梅娟</font></p></div></td>
+      <td rowspan="1" id="6-7" class="td_wrap"></td><td rowspan="1" id="7-7" class="td_wrap"></td></tr>
+    <tr><td><span class="festival">8</span></td><td rowspan="1" id="6-8" class="td_wrap"></td><td rowspan="1" id="7-8" class="td_wrap"></td></tr>
+  </tbody></table>`;
+
+  const result = extractTimetableFromHtml(page, { totalWeeks: 20 });
+  assert.equal(result.shape, 'grid');
+  assert.equal(result.schedules.length, 5, `应为 5 条排课，实际 ${JSON.stringify(result.schedules)}`);
+
+  const solid = result.schedules.find((item) => item.courseName === '固体废物处理与处置');
+  assert.equal(solid?.dayOfWeek, 1);
+  assert.equal(solid?.periodStart, 1);
+  assert.equal(solid?.periodEnd, 2, '连堂应合并');
+  assert.equal(solid?.room, '石湖 石C6-403', '应识别出校园+教室');
+  assert.equal(solid?.teacher, '何欣,金伟');
+  assert.equal(solid?.weeks.length, 15);
+
+  const physics = result.schedules.find((item) => item.courseName === '物理性污染控制工程');
+  assert.equal(physics?.dayOfWeek, 5);
+  assert.equal(physics?.periodStart, 7);
+  assert.deepEqual(physics?.weeks, [1, 3, 5, 7, 9, 11], '单周应被识别');
+
+  const water = result.schedules.find((item) => item.courseName === '水污染控制工程(一)');
+  assert.equal(water?.dayOfWeek, 3);
+  assert.equal(water?.room, '石湖 石C6-403');
+  assert.equal(water?.teacher, '陈重军,李博达,潘杨');
+});
+
 test('识别失败时给出页面诊断', () => {
   const result = extractTimetableFromHtml(`<<<DAWNTICK>>>${OTHER_PAGE}<<<END>>>`);
   assert.equal(result.schedules.length, 0);

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bookmark, FileSpreadsheet, FileText, PencilLine, SlidersHorizontal } from 'lucide-react';
 import {
   PAGE_BOOKMARKLET,
@@ -22,6 +22,13 @@ import { Card } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
+import {
+  canOpenImportWindow,
+  closeImportWindow,
+  listenImportPayload,
+  openImportWindow,
+  rememberedImportUrl,
+} from '../import-window.ts';
 import { cn } from '../lib/cn.ts';
 
 type Method = 'page' | 'file' | 'ics' | 'manual';
@@ -73,6 +80,8 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [pageText, setPageText] = useState('');
   const [bookmarkCopied, setBookmarkCopied] = useState(false);
   const [inspection, setInspection] = useState<PageInspection | null>(null);
+  const [importUrl, setImportUrl] = useState(() => rememberedImportUrl());
+  const [windowNote, setWindowNote] = useState<string | null>(null);
   const [mapHeaderRow, setMapHeaderRow] = useState(0);
   const [mapDayStart, setMapDayStart] = useState(1);
   const [mapDayCount, setMapDayCount] = useState(7);
@@ -112,6 +121,35 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       setError('浏览器未允许写入剪贴板，请手动复制下方代码');
     }
   }
+
+  /** 内嵌教务窗口回传的页面内容，直接走识别。 */
+  useEffect(() => {
+    if (!canOpenImportWindow()) return;
+    let dispose: (() => void) | null = null;
+    void listenImportPayload((payload) => {
+      setPageText(payload);
+      setError(null);
+      const result = extractTimetableFromHtml(payload);
+      if (result.schedules.length === 0) {
+        setWindowNote(result.warnings.join('；'));
+        logError('import-window', '回传内容未识别到课表', { shape: result.shape, tables: result.tables });
+        return;
+      }
+      logInfo('import-window', '教务窗口回传并识别', {
+        shape: result.shape,
+        tables: result.tables,
+        schedules: result.schedules.length,
+      });
+      setWindowNote(`已从教务窗口识别到 ${result.schedules.length} 条排课，请核对后导入`);
+      toast.success(`已从教务窗口识别到 ${result.schedules.length} 条排课`);
+      accept(result.schedules, result.warnings);
+    }).then((unlisten) => {
+      dispose = unlisten;
+    });
+    return () => {
+      dispose?.();
+    };
+  }, []);
 
   /** 通用网页导入：识别粘贴进来的课表页面，不绑定具体学校。 */
   function runPage(): void {
@@ -265,9 +303,50 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
 
       {step === 2 && method === 'page' && (
         <Card className="flex flex-col gap-3">
-          <span className="text-sm text-ink">1. 在浏览器里自行登录教务并打开课表页</span>
+          {canOpenImportWindow() && (
+            <div className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3">
+              <span className="text-sm text-ink">内嵌窗口导入（推荐）</span>
+              <span className="text-xs text-muted">
+                填教务地址后打开窗口，在里面自行登录并进入课表页，点右下角「导入到晓刻」，本页会自动识别
+              </span>
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="教务地址">
+                  <Input
+                    value={importUrl}
+                    placeholder="jw.example.edu.cn"
+                    aria-label="教务地址"
+                    onChange={(event) => setImportUrl(event.target.value)}
+                  />
+                </Field>
+                <Button
+                  variant="primary"
+                  disabled={busy || importUrl.trim().length === 0}
+                  onClick={() => {
+                    void (async () => {
+                      const result = await openImportWindow(importUrl.trim());
+                      setWindowNote(result.ok ? '窗口已打开，登录后点右下角「导入到晓刻」' : (result.error ?? '打开失败'));
+                    })();
+                  }}
+                >
+                  打开教务窗口
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    void closeImportWindow();
+                    setWindowNote('已关闭教务窗口');
+                  }}
+                >
+                  关闭窗口
+                </Button>
+              </div>
+              {windowNote !== null && <span className="text-xs text-muted">{windowNote}</span>}
+            </div>
+          )}
+
+          <span className="text-sm text-ink">或用浏览器书签复制</span>
           <span className="text-xs text-muted">
-            2. 把下面代码存成书签：新建书签，名称随意，地址粘贴这段代码；在课表页点一下该书签，页面内容会复制到剪贴板
+            把下面代码存成书签：新建书签，名称随意，地址粘贴这段代码；在课表页点一下该书签，页面内容会复制到剪贴板
           </span>
           <textarea
             readOnly

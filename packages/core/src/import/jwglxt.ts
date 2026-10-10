@@ -5,6 +5,8 @@ import { parseWeeksText } from './weeks-text.ts';
 export interface JwglxtCell {
   dayOfWeek: number;
   periodNo: number;
+  /** 连堂常以 rowspan 表示，跨的节数在这里 */
+  rowSpan: number;
   raw: string;
 }
 
@@ -19,15 +21,26 @@ function stripTags(html: string): string {
     .replace(/&gt;/gi, '>');
 }
 
+function rowSpanOf(tag: string): number {
+  const match = /rowspan\s*=\s*["']?(\d+)["']?/i.exec(tag);
+  const value = match === null ? 1 : Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? Math.min(20, value) : 1;
+}
+
 /** 解析正方课表页：新版为按 `id="日-节"` 标记的网格，旧版为 kbtable 表格。 */
 export function parseTimetableCells(html: string): JwglxtCell[] {
   const cells: JwglxtCell[] = [];
-  const grid = /<td\b[^>]*id\s*=\s*["'](\d{1,2})[-_](\d{1,2})["'][^>]*>([\s\S]*?)<\/td>/gi;
+  const grid = /<(\w+)\b([^>]*id\s*=\s*["'](\d{1,2})[-_](\d{1,2})["'][^>]*)>([\s\S]*?)<\/\1>/gi;
   for (const match of html.matchAll(grid)) {
-    const day = Number(match[1]);
-    const period = Number(match[2]);
+    const day = Number(match[3]);
+    const period = Number(match[4]);
     if (day < 1 || day > 7 || period < 1 || period > 40) continue;
-    cells.push({ dayOfWeek: day, periodNo: period, raw: stripTags(match[3] ?? '') });
+    cells.push({
+      dayOfWeek: day,
+      periodNo: period,
+      rowSpan: rowSpanOf(match[2] ?? ''),
+      raw: stripTags(match[5] ?? ''),
+    });
   }
   if (cells.length > 0) return cells;
 
@@ -39,7 +52,12 @@ export function parseTimetableCells(html: string): JwglxtCell[] {
     for (const [columnIndex, column] of columns.entries()) {
       const day = columnIndex;
       if (day < 1 || day > 7) continue;
-      cells.push({ dayOfWeek: day, periodNo: rowIndex, raw: stripTags(column) });
+      cells.push({
+        dayOfWeek: day,
+        periodNo: rowIndex,
+        rowSpan: rowSpanOf(/^<td\b[^>]*>/i.exec(column)?.[0] ?? ''),
+        raw: stripTags(column),
+      });
     }
   }
   return cells;
@@ -47,7 +65,8 @@ export function parseTimetableCells(html: string): JwglxtCell[] {
 
 interface ParsedCell {
   dayOfWeek: number;
-  periodNo: number;
+  periodStart: number;
+  periodEnd: number;
   name: string;
   teacher: string | null;
   room: string | null;
@@ -79,7 +98,8 @@ export function parseTimetable(
 
     parsed.push({
       dayOfWeek: cell.dayOfWeek,
-      periodNo: cell.periodNo,
+      periodStart: cell.periodNo,
+      periodEnd: cell.periodNo + Math.max(1, cell.rowSpan) - 1,
       name,
       teacher,
       room,
@@ -104,7 +124,7 @@ export function parseTimetable(
   }
 
   for (const list of groups.values()) {
-    const sorted = [...list].sort((left, right) => left.periodNo - right.periodNo);
+    const sorted = [...list].sort((left, right) => left.periodStart - right.periodStart);
     let runStart = sorted[0] as ParsedCell;
     let previous = runStart;
 
@@ -112,8 +132,8 @@ export function parseTimetable(
       merged.push({
         courseName: start.name,
         dayOfWeek: start.dayOfWeek,
-        periodStart: start.periodNo,
-        periodEnd: end.periodNo,
+        periodStart: start.periodStart,
+        periodEnd: Math.max(end.periodEnd, start.periodEnd),
         weeks: start.weeks ?? Array.from({ length: totalWeeks }, (_, index) => index + 1),
         room: start.room,
         teacher: start.teacher,
@@ -122,7 +142,7 @@ export function parseTimetable(
     };
 
     for (const cell of sorted.slice(1)) {
-      if (cell.periodNo === previous.periodNo + 1) {
+      if (cell.periodStart <= previous.periodEnd + 1) {
         previous = cell;
         continue;
       }

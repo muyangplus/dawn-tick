@@ -129,7 +129,10 @@ function splitCellLines(cell: string): string[] {
 }
 
 export function looksLikeRoom(text: string): boolean {
-  return /楼|教室|教|室|号|馆|场|区|栋|[A-Za-z]{1,4}-?\d{2,4}/.test(text);
+  if (/楼|教室|教|室|号|馆|场|区|栋/.test(text)) return true;
+  if (/[A-Za-z]{1,4}-?\d{2,4}/.test(text)) return true;
+  // 校园或楼名 + 房间号，如「石C6-403」「石7-201」「A区-302」
+  return /[\u4e00-\u9fa5][A-Za-z]{0,2}\d{1,2}[-_]\d{2,4}/.test(text);
 }
 
 /** 解析「星期 × 节次」二维矩阵，单元格内可含课程名、教师、地点与周次文本。 */

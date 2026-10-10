@@ -190,15 +190,16 @@ function tableScore(tableHtml: string): number {
 /** 页面里所有表格的纯文本预览，供手动校正映射使用。 */
 export function inspectPage(html: string, options: { limit?: number } = {}): PageInspection {
   const limit = options.limit ?? 2;
+  const page = stripPageMarkers(html);
   const tables: PageTablePreview[] = [];
-  for (const [index, rows] of parseTables(html).entries()) {
+  for (const [index, rows] of parseTables(page).entries()) {
     if (tables.length >= limit) break;
     tables.push({
       index,
       rows: rows.slice(0, 12).map((row) => row.cells.slice(0, 10).map((cell) => stripTags(cell.html))),
     });
   }
-  return { tables, system: detectSystem(html) };
+  return { tables, system: detectSystem(page) };
 }
 
 /** 按用户指定的映射解析：表头行 + 星期列区间 + 节次列。 */
@@ -245,11 +246,13 @@ function extractByMapping(html: string, mapping: PageMapping, totalWeeks: number
 export function extractTimetableFromHtml(html: string, options: PageExtractOptions = {}): PageExtractResult {
   const totalWeeks = options.totalWeeks ?? 20;
   const warnings: string[] = [];
-  const system = detectSystem(html);
+  const diagnostics = parsePageDiagnostics(html);
+  const page = stripPageMarkers(html);
+  const system = detectSystem(page);
 
   if (options.mapping !== undefined) {
-    const mapped = extractByMapping(html, options.mapping, totalWeeks);
-    const tableCount = parseTables(html).length;
+    const mapped = extractByMapping(page, options.mapping, totalWeeks);
+    const tableCount = parseTables(page).length;
     if (mapped.length === 0) {
       warnings.push('按指定映射未解析到课程，请检查表头行与星期列');
       return { schedules: [], warnings, shape: 'none', tables: tableCount };
@@ -262,20 +265,20 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
     };
   }
 
-  if (/id\s*=\s*["']?\d{1,2}[-_]\d{1,2}["']?/i.test(html) || /id\s*=\s*["']?kbtable/i.test(html)) {
-    const cells = parseTimetableCells(html);
+  if (/id\s*=\s*["']?\d{1,2}[-_]\d{1,2}["']?/i.test(page) || /id\s*=\s*["']?kbtable/i.test(page)) {
+    const cells = parseTimetableCells(page);
     if (cells.length > 0) {
-      const parsed = parseTimetable(html, { totalWeeks });
+      const parsed = parseTimetable(page, { totalWeeks });
       return {
         schedules: parsed.schedules,
         warnings: [...parsed.warnings, `页面形态：${system.label}「日-节」网格`],
         shape: 'grid',
-        tables: parseTables(html).length,
+        tables: parseTables(page).length,
       };
     }
   }
 
-  const tables = parseTables(html)
+  const tables = parseTables(page)
     .map((rows, index) => ({
       rows,
       index,
@@ -327,10 +330,18 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
 
   if (best === null || best.schedules.length === 0) {
     const tableCount = tables.length;
-    const frameCount = countPastedFrames(html);
+    const frameCount = diagnostics?.frames ?? countPastedFrames(html);
+    const legacy = /<<<DAWNTICK>>>/.test(html) && diagnostics === null;
+    const hints: string[] = [];
+    if (legacy) hints.push('检测到旧版书签内容，请在「导入 → 网页课表」里重新复制书签代码后再试');
+    if (diagnostics?.loading === true) hints.push('页面仍在加载，请等课表显示完整后再点书签');
+    if (diagnostics !== null && diagnostics.kbTables === 0 && diagnostics.gridCells === 0) {
+      hints.push('未在页面里找到课表表格，请在课表页本身点击书签');
+    }
+    const kbHint = diagnostics === null ? '' : `（疑似课表 ${diagnostics.kbTables ?? 0} 个，整点 ${diagnostics.gridCells ?? 0} 个）`;
     warnings.push(
-      `未在页面中识别到课表（表格 ${tableCount} 个，页面片段 ${frameCount} 段）。` +
-        '请确认已打开课表页；若课表在弹窗或新标签页中，请在该页面点击书签后重新粘贴',
+      `未在页面中识别到课表：表格 ${tableCount} 个，页面片段 ${frameCount} 段${kbHint}。` +
+        (hints.length > 0 ? hints.join('；') : '请确认已打开课表页后重新点击书签'),
     );
     return { schedules: [], warnings, shape: 'none', tables: tableCount };
   }
@@ -359,14 +370,45 @@ export function looksLikeTimetablePage(html: string): boolean {
 /** 多帧页面之间的分隔标记，书签小工具用它拼接同源 iframe 内容。 */
 export const PAGE_FRAME_SEPARATOR = '<<<FRAME>>>';
 
+/** 书签带回的页面诊断信息。 */
+export interface PageDiagnostics {
+  /** 书签版本；旧版书签不带该字段 */
+  v?: number;
+  url?: string;
+  title?: string;
+  frames?: number;
+  tables?: number;
+  kbTables?: number;
+  gridCells?: number;
+  ready?: string;
+  loading?: boolean;
+}
+
+/** 当前书签版本；与旧版书签区分。 */
+export const BOOKMARKLET_VERSION = 2;
+
 /**
- * 书签小工具：在教务页面点一下即把页面源码复制到剪贴板。
- * 同时收集同源 iframe（最多两层），因为多数教务系统把课表放在 iframe 内。
+ * 书签小工具：等课表渲染出来后再复制，并收集同源 iframe（多数教务把课表放在 iframe 内）。
+ * 复制内容依次为：诊断 JSON、各页面片段（以 PAGE_FRAME_SEPARATOR 分隔）。
  */
-export const PAGE_BOOKMARKLET = `javascript:(()=>{const seen=new Set();const out=[];const walk=(doc,d)=>{if(!doc||d>2||seen.has(doc))return;seen.add(doc);try{out.push(doc.documentElement.outerHTML)}catch(e){};let frames=[];try{frames=[...doc.querySelectorAll('iframe,frame')]}catch(e){};frames.forEach(f=>{try{walk(f.contentDocument,d+1)}catch(e){}})};walk(document,0);const h='<<<DAWNTICK>>>'+out.join('${PAGE_FRAME_SEPARATOR}')+'<<<END>>>';navigator.clipboard.writeText(h).then(()=>alert('已复制 '+out.length+' 个页面内容（含 iframe），回晓刻粘贴即可')).catch(()=>prompt('复制下面的内容，回晓刻粘贴',h));})();`;
+export const PAGE_BOOKMARKLET = `javascript:(()=>{const SEP='${PAGE_FRAME_SEPARATOR}';const seen=new Set();const parts=[];const walk=(doc,d)=>{if(!doc||d>2||seen.has(doc))return;seen.add(doc);try{parts.push(doc.documentElement.outerHTML)}catch(e){};let fr=[];try{fr=[...doc.querySelectorAll('iframe,frame')]}catch(e){};fr.forEach(f=>{try{walk(f.contentDocument,d+1)}catch(e){}})};const scan=()=>{const info={v:${BOOKMARKLET_VERSION},url:location.href,title:document.title,frames:0,tables:0,kbTables:0,gridCells:0,ready:document.readyState,loading:false};const visit=(doc,d)=>{if(!doc||d>2)return;info.frames++;try{const tables=[...doc.querySelectorAll('table')];info.tables+=tables.length;info.kbTables+=tables.filter(x=>/kbtable|^kb|timetable|skb|kbgrid/i.test((x.id||'')+(x.className||''))).length}catch(e){};try{[...doc.querySelectorAll('[id]')].forEach(el=>{if(/^\\d{1,2}[-_]\\d{1,2}$/.test(el.id))info.gridCells++})}catch(e){};try{if(/加载中|loading/i.test(doc.body?doc.body.textContent:''))info.loading=true}catch(e){};try{[...doc.querySelectorAll('iframe,frame')].forEach(f=>visit(f.contentDocument,d+1))}catch(e){}};visit(document,0);return info};const ready=info=>info.kbTables>0||info.gridCells>0||info.tables>=3;const copy=()=>{seen.clear();parts.length=0;walk(document,0);const info=scan();const head='<<<DAWNTICK>>>'+JSON.stringify(info)+SEP;const body=parts.join(SEP);navigator.clipboard.writeText(head+body+'<<<END>>>').then(()=>alert('已复制（书签 v${BOOKMARKLET_VERSION}）：表格 '+info.tables+' 个，疑似课表 '+info.kbTables+' 个，整点 '+info.gridCells+' 个，页面片段 '+info.frames+' 段')).catch(()=>prompt('复制下面的内容，回晓刻粘贴',head+body+'<<<END>>>'))};let tries=0;const wait=()=>{const info=scan();if(ready(info)||tries>=6){copy();return}tries++;setTimeout(wait,700)};wait()})();`;
+
+/** 取出书签带来的诊断 JSON；没有则返回 null。 */
+export function parsePageDiagnostics(text: string): PageDiagnostics | null {
+  const match = /<<<DAWNTICK>>>\s*(\{[\s\S]*?\})\s*(?:<<<FRAME>>>|<<<END>>>)/.exec(text);
+  if (match?.[1] === undefined) return null;
+  try {
+    return JSON.parse(match[1]) as PageDiagnostics;
+  } catch {
+    return null;
+  }
+}
 
 export function stripPageMarkers(text: string): string {
-  return text.replace(/^[\s\S]*?<<<DAWNTICK>>>/, '').replace(/<<<END>>>[\s\S]*$/, '');
+  return text
+    .replace(/^[\s\S]*?<<<DAWNTICK>>>/, '')
+    .replace(/^\s*\{[\s\S]*?\}\s*(?:<<<FRAME>>>|<<<END>>>)/, '')
+    .replace(/<<<END>>>[\s\S]*$/, '');
 }
 
 /** 粘贴内容里包含的页面片段数量（书签会拼接同源 iframe）。 */
