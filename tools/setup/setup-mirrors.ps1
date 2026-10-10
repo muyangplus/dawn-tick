@@ -31,6 +31,22 @@ Write-Output '--- npm / pnpm ---'
 npm config set registry $NpmRegistry 2>&1 | Out-Null
 Write-Output "registry=$(npm config get registry)"
 
+Write-Output '--- NO_PROXY ---'
+# Windows 注册表里的系统代理即使已关闭，cargo 仍会读取；限定镜像域名绕过。
+$noProxyHosts = @(
+    'mirrors.ustc.edu.cn',
+    'mirrors.tuna.tsinghua.edu.cn',
+    'registry.npmmirror.com',
+    'dl.google.com',
+    'static.rust-lang.org',
+    'static.crates.io',
+    'index.crates.io',
+    'crates.io'
+) -join ','
+[Environment]::SetEnvironmentVariable('NO_PROXY', $noProxyHosts, 'User')
+[Environment]::SetEnvironmentVariable('no_proxy', $noProxyHosts, 'User')
+Write-Output "NO_PROXY=$([Environment]::GetEnvironmentVariable('NO_PROXY', 'User'))"
+
 Write-Output '--- pnpm store ---'
 $store = pnpm store path 2>&1
 Write-Output "store=$store"
