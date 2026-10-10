@@ -1,5 +1,6 @@
-export type SchoolSystem = 'jwglxt' | 'qzdatasource' | 'urp' | 'other';
+import { WAREHOUSE_SCHOOLS } from './schools-data.ts';
 
+export type SchoolSystem = 'jwglxt' | 'qzdatasource' | 'urp' | 'other';
 export interface SystemEntry {
   id: SchoolSystem;
   label: string;
@@ -28,12 +29,12 @@ export interface SchoolEntry {
 }
 
 /**
- * 内置学校。网址需与学校实际情况核对，界面里可编辑并保存到本地。
- * 未收录的学校可用「教务系统入口」直接填域名。
+ * 内置学校：上游适配仓库的条目 + 本项目自行维护的条目。
+ * 上游数据由 tools/import-schools.py 生成到 schools-data.ts。
  */
-export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [
+export const MANUAL_SCHOOLS: readonly SchoolEntry[] = [
   {
-    id: 'sust',
+    id: 'usts',
     name: '苏州科技大学',
     system: 'jwglxt',
     url: '',
@@ -41,6 +42,8 @@ export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [
     source: 'builtin',
   },
 ];
+
+export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...WAREHOUSE_SCHOOLS, ...MANUAL_SCHOOLS];
 
 export function systemEntry(system: SchoolSystem): SystemEntry {
   return SYSTEM_ENTRIES.find((entry) => entry.id === system) ?? (SYSTEM_ENTRIES[0] as SystemEntry);

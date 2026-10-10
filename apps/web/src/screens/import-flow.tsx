@@ -338,31 +338,39 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                 />
               </Field>
               <div className="flex flex-wrap gap-1">
-                {matchSchools(allSchools, schoolQuery)
-                  .slice(0, 6)
-                  .map((school) => (
-                    <Button
-                      key={school.id}
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        setSchoolSystem(school.system);
-                        setSchoolName(school.name);
-                        setSchoolId(school.id);
-                        setImportUrl(buildEntryUrl(school.system, school.url, school.url.length > 0));
-                        setWindowNote(
-                          school.url.length === 0
-                            ? `${school.name} 还没填教务网址，请在下面填域名后点「按入口补齐」`
-                            : `已按 ${systemEntry(school.system).label} 入口补齐，可直接打开窗口`,
-                        );
-                      }}
-                    >
-                      {school.name}
-                      <span className="ml-1 text-xs text-muted">{systemEntry(school.system).label}</span>
-                    </Button>
-                  ))}
-                {matchSchools(allSchools, schoolQuery).length === 0 && (
-                  <span className="text-xs text-muted">没有匹配的学校，可直接用下面的教务系统入口</span>
+                {schoolQuery.trim().length === 0 ? (
+                  <span className="text-xs text-muted">输入校名或简称开始搜索，已收录 {allSchools.length} 所学校</span>
+                ) : (
+                  <>
+                    {matchSchools(allSchools, schoolQuery)
+                      .slice(0, 8)
+                      .map((school) => (
+                        <Button
+                          key={school.id}
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setSchoolSystem(school.system);
+                            setSchoolName(school.name);
+                            setSchoolId(school.id);
+                            setImportUrl(buildEntryUrl(school.system, school.url, school.url.length > 0));
+                            setWindowNote(
+                              school.url.length === 0
+                                ? `${school.name} 还没填教务网址，请在下面填域名后点「按入口补齐」`
+                                : `已填入 ${school.name} 的入口，可直接打开窗口`,
+                            );
+                          }}
+                        >
+                          {school.name}
+                          <span className="ml-1 text-xs text-muted">
+                            {systemEntry(school.system).label} · {school.id}
+                          </span>
+                        </Button>
+                      ))}
+                    {matchSchools(allSchools, schoolQuery).length === 0 && (
+                      <span className="text-xs text-muted">没有匹配的学校，可直接用下面的教务系统入口</span>
+                    )}
+                  </>
                 )}
               </div>
 
