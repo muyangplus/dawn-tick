@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
-import { Bookmark, FileSpreadsheet, FileText, Globe, PencilLine } from 'lucide-react';
+import { Bookmark, FileSpreadsheet, FileText, Globe, PencilLine, SlidersHorizontal } from 'lucide-react';
 import {
   PAGE_BOOKMARKLET,
   applyImport,
   extractTimetableFromHtml,
   fetchTimetable,
   icsToSchedules,
+  inspectPage,
   loadSemester,
   parseCsv,
   parseIcs,
@@ -13,6 +14,7 @@ import {
   listTimeSlots,
   stripPageMarkers,
   type ImportedSchedule,
+  type PageInspection,
   type Storage,
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
@@ -77,6 +79,36 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [xqm, setXqm] = useState('');
   const [pageText, setPageText] = useState('');
   const [bookmarkCopied, setBookmarkCopied] = useState(false);
+  const [inspection, setInspection] = useState<PageInspection | null>(null);
+  const [mapHeaderRow, setMapHeaderRow] = useState(0);
+  const [mapDayStart, setMapDayStart] = useState(1);
+  const [mapDayCount, setMapDayCount] = useState(7);
+  const [mapPeriodColumn, setMapPeriodColumn] = useState(0);
+
+  /** 手动映射：识别不准时由用户指定表头行、星期列与节次列。 */
+  function runMapped(): void {
+    setError(null);
+    const html = stripPageMarkers(pageText);
+    const result = extractTimetableFromHtml(html, {
+      mapping: {
+        headerRow: mapHeaderRow,
+        dayStartColumn: mapDayStart,
+        dayCount: mapDayCount,
+        periodColumn: mapPeriodColumn < 0 ? null : mapPeriodColumn,
+      },
+    });
+    if (result.schedules.length === 0) {
+      setError(result.warnings.join('；'));
+      return;
+    }
+    logInfo('page-import', '按手动映射解析', {
+      headerRow: mapHeaderRow,
+      dayStart: mapDayStart,
+      dayCount: mapDayCount,
+      schedules: result.schedules.length,
+    });
+    accept(result.schedules, result.warnings);
+  }
 
   async function copyBookmarklet(): Promise<void> {
     try {
@@ -292,6 +324,88 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               返回
             </Button>
           </div>
+
+          <details className="flex flex-col gap-2">
+            <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm text-ink">
+              <SlidersHorizontal className="size-4" aria-hidden />
+              手动指定表格
+            </summary>
+            <div className="flex flex-col gap-2 pt-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={pageText.trim().length === 0}
+                onClick={() => setInspection(inspectPage(stripPageMarkers(pageText)))}
+              >
+                读取页面表格
+              </Button>
+              {inspection !== null && (
+                <>
+                  <span className="text-xs text-muted">
+                    形态推测：{inspection.system.label} · 预览 {inspection.tables.length} 个表格（行号从 0 起）
+                  </span>
+                  <div className="max-h-56 overflow-auto rounded-md border border-line">
+                    <table className="w-full text-left text-[11px]">
+                      <tbody>
+                        {(inspection.tables[0]?.rows ?? []).map((row, rowIndex) => (
+                          <tr key={rowIndex} className="border-t border-line">
+                            <th className="w-6 p-1 text-muted">{rowIndex}</th>
+                            {row.map((cell, cellIndex) => (
+                              <td key={cellIndex} className="max-w-24 truncate p-1" title={cell}>
+                                {cell === '' ? '—' : cell}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Field label="表头行">
+                      <Input
+                        type="number"
+                        min={0}
+                        className="w-16"
+                        value={mapHeaderRow}
+                        onChange={(event) => setMapHeaderRow(Number(event.target.value))}
+                      />
+                    </Field>
+                    <Field label="星期起始列">
+                      <Input
+                        type="number"
+                        min={0}
+                        className="w-16"
+                        value={mapDayStart}
+                        onChange={(event) => setMapDayStart(Number(event.target.value))}
+                      />
+                    </Field>
+                    <Field label="星期列数">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={7}
+                        className="w-16"
+                        value={mapDayCount}
+                        onChange={(event) => setMapDayCount(Number(event.target.value))}
+                      />
+                    </Field>
+                    <Field label="节次列（-1 用行号）">
+                      <Input
+                        type="number"
+                        min={-1}
+                        className="w-20"
+                        value={mapPeriodColumn}
+                        onChange={(event) => setMapPeriodColumn(Number(event.target.value))}
+                      />
+                    </Field>
+                    <Button variant="primary" size="sm" onClick={runMapped}>
+                      按此映射识别
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </details>
         </Card>
       )}
 

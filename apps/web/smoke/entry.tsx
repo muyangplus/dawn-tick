@@ -114,6 +114,11 @@ const PAGE_SAMPLE = `<table id="kbtable"><tr>
   <td id="2-1"><div><span class="title">网页导入课程二</span><p>李老师</p><p>理科楼-201</p><p>2-16周(双)</p></div></td>
 </tr></table>`;
 
+const PAGE_WEEKDAY_SAMPLE = `<table><tr><td>节次</td><td>星期一</td><td>星期二</td><td>星期三</td></tr>
+  <tr><td>第1节</td><td>手动映射课程<br>1-16周</td><td></td><td></td></tr>
+  <tr><td>第2节</td><td></td><td>手动映射课程二<br>2-16周</td><td></td></tr>
+</table>`;
+
 export async function runSmoke(): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
   const check = (name: string, ok: boolean, detail = ''): void => {
@@ -181,6 +186,25 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     if (clickByText(view.container, '识别并预览')) await flush(22);
   }
   check('网页识别进入预览', (view.container.textContent ?? '').includes('解析到'), '');
+
+  // 手动校正映射：换成星期表头样例，指定表头行与星期列
+  if (clickByText(view.container, '返回')) await flush(10);
+  const pasteBoxSecond = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
+  if (pasteBoxSecond instanceof window.HTMLTextAreaElement) {
+    setInputValue(pasteBoxSecond, PAGE_WEEKDAY_SAMPLE);
+    await flush(6);
+  }
+  const mappingSummary = [...view.container.querySelectorAll('summary')].find((item) =>
+    (item.textContent ?? '').includes('手动指定表格'),
+  );
+  check('提供手动校正映射入口', mappingSummary !== undefined, '');
+  if (mappingSummary instanceof HTMLElement) mappingSummary.click();
+  await flush(8);
+  if (clickByText(view.container, '读取页面表格')) await flush(10);
+  check('页面表格预览可读', (view.container.textContent ?? '').includes('星期一'), '');
+  if (clickByText(view.container, '按此映射识别')) await flush(22);
+  check('按手动映射识别成功', (view.container.textContent ?? '').includes('解析到'), '');
+
   if (clickByText(document.body, '取消') === false) {
     // 弹窗没有取消按钮时直接继续，不影响后续断言
   }

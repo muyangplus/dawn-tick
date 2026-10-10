@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PAGE_BOOKMARKLET,
+  detectSystem,
   extractTimetableFromHtml,
+  inspectPage,
   looksLikeTimetablePage,
   stripPageMarkers,
 } from '../src/import/page-tables.ts';
@@ -92,4 +94,49 @@ test('书签小工具标记可剥离', () => {
   assert.match(PAGE_BOOKMARKLET, /^javascript:/);
   assert.match(PAGE_BOOKMARKLET, /<<<DAWNTICK>>>/);
   assert.equal(stripPageMarkers(GRID_PAGE), GRID_PAGE, '无标记时原样返回');
+});
+
+test('识别常见教务系统标记', () => {
+  assert.equal(detectSystem(GRID_PAGE).id, 'jwglxt');
+  assert.equal(detectSystem('<html><script src="/qzdatasource.js"></script></html>').id, 'qzdatasource');
+  assert.equal(detectSystem('<html><title>教学信息服务平台</title></html>').id, 'urp');
+  assert.equal(detectSystem(OTHER_PAGE).id, 'unknown');
+});
+
+test('手动映射可覆盖启发式', () => {
+  // 表头在第 0 行，星期三列从第 1 列开始共 5 列，节次在第 0 列
+  const page = `<table>
+    <tr><td>节次</td><td>周一</td><td>周二</td><td>周三</td><td>周四</td><td>周五</td></tr>
+    <tr><td>第1节</td><td>课程A<br>1-16周</td><td></td><td>课程C<br>1-8周</td><td></td><td></td></tr>
+    <tr><td>第2节</td><td></td><td>课程B<br>1-16周</td><td></td><td></td><td>课程E<br>3-5周</td></tr>
+  </table>`;
+  const result = extractTimetableFromHtml(page, {
+    totalWeeks: 20,
+    mapping: { headerRow: 0, dayStartColumn: 1, dayCount: 5, periodColumn: 0 },
+  });
+  assert.equal(result.shape, 'weekday-table');
+  assert.equal(result.schedules.length, 4);
+  const courseC = result.schedules.find((item) => item.courseName === '课程C');
+  assert.equal(courseC?.dayOfWeek, 3);
+  assert.equal(courseC?.periodStart, 1);
+  const courseE = result.schedules.find((item) => item.courseName === '课程E');
+  assert.equal(courseE?.dayOfWeek, 5);
+  assert.equal(courseE?.periodStart, 2);
+  assert.match(result.warnings.join('；'), /按手动映射解析/);
+});
+
+test('映射不匹配时给出提示', () => {
+  const result = extractTimetableFromHtml(OTHER_PAGE, {
+    mapping: { headerRow: 0, dayStartColumn: 1, dayCount: 5, periodColumn: 0 },
+  });
+  assert.equal(result.schedules.length, 0);
+  assert.match(result.warnings.join('；'), /按指定映射未解析到课程/);
+});
+
+test('页面表格预览供手动校正', () => {
+  const inspection = inspectPage(WEEKDAY_TABLE_PAGE);
+  assert.ok(inspection.tables.length >= 1);
+  assert.equal(inspection.tables[0]?.rows[0]?.[1], '星期一');
+  assert.equal(inspection.system.id, 'unknown');
+  assert.ok(inspection.tables[0]?.rows.length ?? 0 >= 2);
 });

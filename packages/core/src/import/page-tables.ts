@@ -14,6 +14,33 @@ export interface PageExtractResult {
 
 export interface PageExtractOptions {
   totalWeeks?: number;
+  /** 手动指定映射，给出后不再走启发式 */
+  mapping?: PageMapping;
+}
+
+/** 用户手动校正的映射：表头行、星期起始列与列数、节次列。 */
+export interface PageMapping {
+  headerRow: number;
+  /** 星期列起始序号（0 起） */
+  dayStartColumn: number;
+  dayCount: number;
+  /** 节次所在的列；为 null 时用行号推断 */
+  periodColumn: number | null;
+}
+
+export interface PageTablePreview {
+  index: number;
+  rows: string[][];
+}
+
+export interface PageInspection {
+  tables: PageTablePreview[];
+  system: SystemInfo;
+}
+
+export interface SystemInfo {
+  id: 'jwglxt' | 'qzdatasource' | 'urp' | 'unknown';
+  label: string;
 }
 
 const ENTITIES: Record<string, string> = {
@@ -99,6 +126,12 @@ function pickTeacher(lines: readonly string[], used: readonly (string | null)[])
   return null;
 }
 
+/** 单元格里的节次只在出现「节」或时间范围时才可信，避免把「3-5周」当成节次。 */
+function periodFromCell(text: string): number | null {
+  if (!/节|\d{1,2}:\d{2}/.test(text)) return null;
+  return parsePeriodLabel(text)?.periodStart ?? null;
+}
+
 function buildSchedule(
   rawHtml: string,
   dayOfWeek: number,
@@ -129,12 +162,105 @@ function buildSchedule(
 }
 
 /**
+ * 已知教务系统标记。命中只用于提高命中率与提示，通用启发式仍然生效。
+ */
+export function detectSystem(html: string): SystemInfo {
+  if (/jwglxt|xskb_list|timetable_con|kbgrid_table/i.test(html)) {
+    return { id: 'jwglxt', label: '正方教务' };
+  }
+  if (/qzdatasource|强智|qzjw/i.test(html)) {
+    return { id: 'qzdatasource', label: '强智教务' };
+  }
+  if (/urp|教学信息服务平台|jwgl\.urp/i.test(html)) {
+    return { id: 'urp', label: 'URP 教务' };
+  }
+  return { id: 'unknown', label: '通用识别' };
+}
+
+function tableScore(tableHtml: string): number {
+  let score = 0;
+  if (/id\s*=\s*["']?kbtable/i.test(tableHtml)) score += 5;
+  if (/class\s*=\s*["'][^"']*(kb|timetable|schedule|skb)/i.test(tableHtml)) score += 3;
+  if (/id\s*=\s*["'][^"']*(kb|skb|timetable)/i.test(tableHtml)) score += 3;
+  if (/星期|周一|周二/.test(tableHtml)) score += 2;
+  if (/节次|第\d+节/.test(tableHtml)) score += 1;
+  return score;
+}
+
+/** 页面里所有表格的纯文本预览，供手动校正映射使用。 */
+export function inspectPage(html: string, options: { limit?: number } = {}): PageInspection {
+  const limit = options.limit ?? 2;
+  const tables: PageTablePreview[] = [];
+  for (const [index, rows] of parseTables(html).entries()) {
+    if (tables.length >= limit) break;
+    tables.push({
+      index,
+      rows: rows.slice(0, 12).map((row) => row.cells.slice(0, 10).map((cell) => stripTags(cell.html))),
+    });
+  }
+  return { tables, system: detectSystem(html) };
+}
+
+/** 按用户指定的映射解析：表头行 + 星期列区间 + 节次列。 */
+function extractByMapping(html: string, mapping: PageMapping, totalWeeks: number): ImportedSchedule[] {
+  const dayColumns = new Map<number, number>();
+  for (let offset = 0; offset < mapping.dayCount; offset += 1) {
+    dayColumns.set(mapping.dayStartColumn + offset, Math.min(7, offset + 1));
+  }
+
+  let best: ImportedSchedule[] = [];
+  for (const rows of parseTables(html)) {
+    if (rows[mapping.headerRow] === undefined) continue;
+    const schedules: ImportedSchedule[] = [];
+    for (let rowIndex = mapping.headerRow + 1; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex];
+      if (row === undefined) continue;
+      const fallbackPeriod = Math.max(1, rowIndex - mapping.headerRow);
+      let period = fallbackPeriod;
+      if (mapping.periodColumn !== null) {
+        const label = stripTags(row.cells[mapping.periodColumn]?.html ?? '');
+        period = parsePeriodLabel(label)?.periodStart ?? fallbackPeriod;
+      }
+      let column = 0;
+      for (const cell of row.cells) {
+        const day = dayColumns.get(column);
+        if (day !== undefined) {
+          const cellPeriod = periodFromCell(stripTags(cell.html));
+          const start = cellPeriod ?? period;
+          const schedule = buildSchedule(cell.html, day, start, start, totalWeeks);
+          if (schedule !== null) schedules.push(schedule);
+        }
+        column += cell.colspan;
+      }
+    }
+    if (schedules.length > best.length) best = schedules;
+  }
+  return best;
+}
+
+/**
  * 从任意教务页面识别课表：先按正方式「日-节」网格，再按「星期表头」表格。
- * 只依赖页面结构，不绑定具体学校。
+ * 只依赖页面结构，不绑定具体学校；给出 mapping 时按用户指定的映射解析。
  */
 export function extractTimetableFromHtml(html: string, options: PageExtractOptions = {}): PageExtractResult {
   const totalWeeks = options.totalWeeks ?? 20;
   const warnings: string[] = [];
+  const system = detectSystem(html);
+
+  if (options.mapping !== undefined) {
+    const mapped = extractByMapping(html, options.mapping, totalWeeks);
+    const tableCount = parseTables(html).length;
+    if (mapped.length === 0) {
+      warnings.push('按指定映射未解析到课程，请检查表头行与星期列');
+      return { schedules: [], warnings, shape: 'none', tables: tableCount };
+    }
+    return {
+      schedules: mapped,
+      warnings: [`按手动映射解析（${system.label}）`],
+      shape: 'weekday-table',
+      tables: tableCount,
+    };
+  }
 
   if (/id\s*=\s*["']?\d{1,2}-\d{1,2}["']?/i.test(html) || /id\s*=\s*["']?kbtable/i.test(html)) {
     const cells = parseTimetableCells(html);
@@ -142,16 +268,22 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
       const parsed = parseTimetable(html, { totalWeeks });
       return {
         schedules: parsed.schedules,
-        warnings: parsed.warnings,
+        warnings: [...parsed.warnings, `页面形态：${system.label}「日-节」网格`],
         shape: 'grid',
         tables: parseTables(html).length,
       };
     }
   }
 
-  const tables = parseTables(html);
-  let best: { schedules: ImportedSchedule[]; headerRow: number; table: RawRow[]; dayColumns: Map<number, number> } | null =
-    null;
+  const tables = parseTables(html)
+    .map((rows, index) => ({
+      rows,
+      index,
+      score: tableScore(rows.map((row) => row.cells.map((cell) => cell.html).join('')).join('')),
+    }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((item) => item.rows);
+  let best: { schedules: ImportedSchedule[]; headerRow: number } | null = null;
 
   for (const rows of tables) {
     for (let headerIndex = 0; headerIndex < Math.min(3, rows.length); headerIndex += 1) {
@@ -177,7 +309,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
         for (const cell of row.cells) {
           const day = dayColumns.get(column);
           if (day !== undefined) {
-            const cellPeriod = parsePeriodLabel(stripTags(cell.html))?.periodStart ?? null;
+            const cellPeriod = periodFromCell(stripTags(cell.html));
             const start = cellPeriod ?? period ?? rowIndex - headerIndex;
             const end = cellPeriod ?? period ?? start;
             const schedule = buildSchedule(cell.html, day, start, Math.max(start, end), totalWeeks);
@@ -187,7 +319,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
         }
       }
       if (best === null || schedules.length > best.schedules.length) {
-        best = { schedules, headerRow: headerIndex, table: rows, dayColumns };
+        best = { schedules, headerRow: headerIndex };
       }
       break;
     }
@@ -198,6 +330,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
     return { schedules: [], warnings, shape: 'none', tables: tables.length };
   }
   if (best.headerRow > 0) warnings.push('表头不在首行，已按识别到的星期列解析');
+  if (system.id !== 'unknown') warnings.push(`页面形态：${system.label}`);
   return { schedules: best.schedules, warnings, shape: 'weekday-table', tables: tables.length };
 }
 
