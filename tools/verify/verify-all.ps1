@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = 'utf-8'
@@ -122,6 +122,8 @@ if (-not (Test-Path $apk)) {
         $wanted = @(
             'com/dawntick/app/widget/NextLessonWidget',
             'com/dawntick/app/widget/TodayWidget',
+            'com/dawntick/app/widget/WeekOverviewWidget',
+            'com/dawntick/app/widget/ExamCountdownWidget',
             'com/dawntick/app/widget/WidgetRefreshReceiver',
             'com/dawntick/app/widget/WidgetRefresher',
             'com/dawntick/app/widget/WidgetRefreshPlugin',
@@ -151,6 +153,8 @@ if (-not (Test-Path $apk)) {
         $required = @(
             'com.dawntick.app.widget.NextLessonWidget',
             'com.dawntick.app.widget.TodayWidget',
+            'com.dawntick.app.widget.WeekOverviewWidget',
+            'com.dawntick.app.widget.ExamCountdownWidget',
             'com.dawntick.app.widget.WidgetRefreshReceiver',
             'android.appwidget.action.APPWIDGET_UPDATE',
             'android.intent.action.USER_PRESENT',

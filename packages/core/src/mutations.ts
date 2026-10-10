@@ -394,8 +394,92 @@ export async function updateEvent(
   return patch(context(storage, options), 'events', id, changes);
 }
 
-export async function deleteEvent(storage: Storage, id: string, options: WriteOptions = {}): Promise<void> {
+export interface CreateRescheduleInput {
+  userId: string;
+  semesterId: string;
+  refScheduleId: string;
+  onDate: string;
+  action: 'move' | 'cancel' | 'swap';
+  title?: string;
+  newDate?: string | null;
+  newPeriodStart?: number | null;
+  newPeriodEnd?: number | null;
+  newRoom?: string | null;
+  asDayOfWeek?: number | null;
+}
+
+/** 记录一次调课：只影响 on_date 那一天的原课次。 */
+export async function createReschedule(
+  storage: Storage,
+  input: CreateRescheduleInput,
+  options: WriteOptions = {},
+): Promise<Row> {
   const ctx = context(storage, options);
+  const created = await insert(ctx, 'events', {
+    id: ctx.id(),
+    user_id: input.userId,
+    semester_id: input.semesterId,
+    parent_id: null,
+    type: 'reschedule',
+    title: input.title ?? (input.action === 'cancel' ? '停课' : '调课'),
+    on_date: input.onDate,
+    start_at: null,
+    end_at: null,
+    all_day: 0,
+    location: null,
+    note: null,
+    done: 0,
+    priority: null,
+    due_at: null,
+    subject: null,
+    seat_no: null,
+    ref_schedule_id: input.refScheduleId,
+    action: input.action,
+    new_date: input.newDate ?? null,
+    new_period_start: input.newPeriodStart ?? null,
+    new_period_end: input.newPeriodEnd ?? null,
+    new_room: input.newRoom ?? null,
+    as_day_of_week: input.asDayOfWeek ?? null,
+    source: null,
+    created_at: ctx.now(),
+    updated_at: ctx.now(),
+    deleted_at: null,
+    rev: 0,
+    dirty: 1,
+  });
+  return created;
+}
+
+export async function listReschedules(
+  storage: Storage,
+  refScheduleId: string,
+  onDate: string,
+): Promise<Row[]> {
+  const rows = await storage.collection<Row>('events').getAll();
+  return rows.filter(
+    (row) =>
+      row['deleted_at'] === null &&
+      row['type'] === 'reschedule' &&
+      row['ref_schedule_id'] === refScheduleId &&
+      row['on_date'] === onDate,
+  );
+}
+
+/** 撤销某天已记录的调课，返回撤销条数。 */
+export async function clearReschedules(
+  storage: Storage,
+  refScheduleId: string,
+  onDate: string,
+  options: WriteOptions = {},
+): Promise<number> {
+  const matched = await listReschedules(storage, refScheduleId, onDate);
+  for (const row of matched) {
+    await deleteEvent(storage, String(row['id']), options);
+  }
+  return matched.length;
+}
+
+export async function deleteEvent(storage: Storage, id: string, options: WriteOptions = {}): Promise<void> {  const ctx = context(storage, options);
   const events = await storage.collection<Row>('events').getAll();
   for (const event of events) {
     if (event['deleted_at'] !== null || event['parent_id'] !== id) continue;

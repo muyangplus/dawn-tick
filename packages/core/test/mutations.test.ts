@@ -2,13 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_PERIODS,
+  clearReschedules,
   createCourse,
   createEvent,
+  createReschedule,
   createSchedule,
   createSemester,
   deleteCourse,
   deleteEvent,
   ensureUser,
+  listReschedules,
   setReminder,
   updateCourse,
   uuidv7,
@@ -17,7 +20,7 @@ import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.t
 import { weekView } from '../src/repository.ts';
 import { ValidationError } from '../src/validation.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { SEMESTER_ID, START_DATE, USER_ID, createStorage, weekRange } from './helpers.ts';
+import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './helpers.ts';
 
 const FIXED = (() => {
   let counter = 0;
@@ -231,6 +234,57 @@ test('新建学期会带默认节次时间表', async () => {
   );
   const rows = await storage.collection<Record<string, unknown>>('time_slots').getAll();
   assert.equal(rows.filter((row) => row['semester_id'] === withoutSlots['id']).length, 0);
+});
+
+test('调课记录可写入、查询与撤销', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+
+  const created = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: 'sem-1',
+    refScheduleId: 's-1',
+    onDate: '2026-09-21',
+    action: 'move',
+    newDate: '2026-09-22',
+    newPeriodStart: 3,
+    newPeriodEnd: 4,
+  });
+  assert.equal(created['type'], 'reschedule');
+  assert.equal(created['action'], 'move');
+
+  const found = await listReschedules(storage, 's-1', '2026-09-21');
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.['new_period_start'], 3);
+  assert.deepEqual(await listReschedules(storage, 's-1', '2026-09-28'), []);
+
+  assert.equal(await clearReschedules(storage, 's-1', '2026-09-21'), 1);
+  assert.deepEqual(await listReschedules(storage, 's-1', '2026-09-21'), []);
+
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: 'sem-1',
+    refScheduleId: 's-1',
+    onDate: '2026-09-28',
+    action: 'cancel',
+  });
+  assert.equal(cancel['title'], '停课');
+});
+
+test('调课记录缺少字段时被校验拒绝', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await assert.rejects(
+    () =>
+      createReschedule(storage, {
+        userId: USER_ID,
+        semesterId: 'sem-1',
+        refScheduleId: 's-1',
+        onDate: '2026-09-21',
+        action: 'move',
+      }),
+    /new_date|new_period|校验/,
+  );
 });
 
 test('新建学期使用固定 id 生成器便于断言', async () => {

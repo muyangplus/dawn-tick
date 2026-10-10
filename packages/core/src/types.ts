@@ -103,6 +103,7 @@ export interface ReminderRow extends SyncColumns {
 }
 
 export interface WeekViewRow {
+  schedule_id: string;
   course_id: string;
   name: string;
   short_name: string | null;

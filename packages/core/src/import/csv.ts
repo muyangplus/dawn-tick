@@ -128,7 +128,7 @@ function splitCellLines(cell: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-function looksLikeRoom(text: string): boolean {
+export function looksLikeRoom(text: string): boolean {
   return /楼|教室|教|室|号|馆|场|区|栋|[A-Za-z]{1,4}-?\d{2,4}/.test(text);
 }
 

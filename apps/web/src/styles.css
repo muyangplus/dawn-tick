@@ -1,5 +1,4 @@
 @import 'tailwindcss';
-@import './styles/legacy.css';
 
 /* 静态设计令牌：与 apps/web/src/design/tokens.ts 一致，由 tools/design/check-a11y.mjs 校验。 */
 @theme {
@@ -83,5 +82,84 @@
 
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  html,
+  body.mini-body {
+    background: transparent;
+    overflow: hidden;
+  }
+
+  .mini {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--dt-surface) 92%, transparent);
+    border: 1px solid var(--dt-border);
+    box-shadow: var(--shadow-lg);
+    cursor: grab;
+    user-select: none;
+  }
+
+  .mini:active {
+    cursor: grabbing;
+  }
+
+  .mini-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .mini-label {
+    color: var(--dt-muted);
+    font-size: var(--text-xs);
+  }
+
+  .mini-close {
+    border: 0;
+    background: transparent;
+    color: var(--dt-muted);
+    padding: 0 4px;
+    font-size: var(--text-sm);
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .mini-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mini-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .mini-count {
+    color: var(--dt-primary-strong);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mini-meta,
+  .mini-empty {
+    color: var(--dt-muted);
+    font-size: var(--text-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }

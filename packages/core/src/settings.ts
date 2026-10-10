@@ -3,9 +3,11 @@ import type { Storage } from './storage.ts';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ThemePreset = 'vivid' | 'fresh' | 'mono' | 'muted';
+export type WidgetBackground = 'light' | 'dark' | 'transparent';
 
 export const THEME_PRESETS: readonly ThemePreset[] = ['vivid', 'fresh', 'mono', 'muted'];
 export const VIEW_DAY_OPTIONS: readonly number[] = [5, 6, 7];
+export const WIDGET_BACKGROUNDS: readonly WidgetBackground[] = ['light', 'dark', 'transparent'];
 
 export interface AppSettings {
   timeZone: string;
@@ -13,6 +15,7 @@ export interface AppSettings {
   viewDays: number;
   theme: ThemeMode;
   themePreset: ThemePreset;
+  widgetBackground: WidgetBackground;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -21,6 +24,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   viewDays: 5,
   theme: 'system',
   themePreset: 'vivid',
+  widgetBackground: 'light',
 };
 
 const KEYS = {
@@ -29,6 +33,7 @@ const KEYS = {
   viewDays: 'view_days',
   theme: 'theme',
   themePreset: 'theme_preset',
+  widgetBackground: 'widget_background',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -44,8 +49,9 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.viewDays),
     storage.readMeta(KEYS.theme),
     storage.readMeta(KEYS.themePreset),
+    storage.readMeta(KEYS.widgetBackground),
   ]);
-  const [timeZone, autoTimeZone, viewDays, theme, themePreset] = entries;
+  const [timeZone, autoTimeZone, viewDays, theme, themePreset, widgetBackground] = entries;
   const parsedDays = Number(viewDays);
 
   return {
@@ -58,6 +64,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       themePreset !== undefined && (THEME_PRESETS as readonly string[]).includes(themePreset)
         ? (themePreset as ThemePreset)
         : DEFAULT_SETTINGS.themePreset,
+    widgetBackground:
+      widgetBackground !== undefined && (WIDGET_BACKGROUNDS as readonly string[]).includes(widgetBackground)
+        ? (widgetBackground as WidgetBackground)
+        : DEFAULT_SETTINGS.widgetBackground,
   };
 }
 
@@ -68,6 +78,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   if (patch.timeZone !== undefined && patch.timeZone.length === 0) {
     throw new RangeError('时区不能为空');
   }
+  if (
+    patch.widgetBackground !== undefined &&
+    !(WIDGET_BACKGROUNDS as readonly string[]).includes(patch.widgetBackground)
+  ) {
+    throw new RangeError(`小组件背景只能是 ${WIDGET_BACKGROUNDS.join(' / ')}`);
+  }
 
   if (patch.timeZone !== undefined) await storage.writeMeta(KEYS.timeZone, patch.timeZone);
   if (patch.autoTimeZone !== undefined) {
@@ -76,6 +92,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   if (patch.viewDays !== undefined) await storage.writeMeta(KEYS.viewDays, String(patch.viewDays));
   if (patch.theme !== undefined) await storage.writeMeta(KEYS.theme, patch.theme);
   if (patch.themePreset !== undefined) await storage.writeMeta(KEYS.themePreset, patch.themePreset);
+  if (patch.widgetBackground !== undefined) {
+    await storage.writeMeta(KEYS.widgetBackground, patch.widgetBackground);
+  }
 
   return readSettings(storage);
 }
