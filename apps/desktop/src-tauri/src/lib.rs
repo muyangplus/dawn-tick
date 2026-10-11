@@ -1093,6 +1093,60 @@ fn elevation_status() -> ElevationStatus {
     }
 }
 
+/// 数据库是否可写：目录建写探针 + 数据库文件开写句柄（文件不存在时以目录可写为准）。
+#[cfg(windows)]
+fn database_writable() -> bool {
+    let Some(roaming) = std::env::var("APPDATA").ok() else {
+        return false;
+    };
+    let dir = PathBuf::from(roaming).join("com.dawntick.app");
+    if create_dir_all(&dir).is_err() {
+        return false;
+    }
+    let probe = dir.join("dawntick-write-probe.tmp");
+    if std::fs::write(&probe, b"probe").is_err() {
+        return false;
+    }
+    let _ = std::fs::remove_file(&probe);
+    let file = dir.join("dawn-tick.db");
+    if !file.exists() {
+        return true;
+    }
+    std::fs::OpenOptions::new().write(true).open(&file).is_ok()
+}
+
+#[cfg(not(windows))]
+fn database_writable() -> bool {
+    true
+}
+
+/// 数据库不可写时自动申请管理员权限；用户取消或已提权过则继续以普通权限运行。
+#[cfg(windows)]
+fn elevate_for_database() -> bool {
+    if is_elevated() {
+        append_log("已具备管理员权限，数据库仍不可写");
+        return false;
+    }
+    if std::env::args().any(|arg| arg == ELEVATE_MARKER) {
+        append_log("提权后数据库仍不可写，继续以普通权限运行");
+        return false;
+    }
+    match request_elevation_restart() {
+        Ok(()) => {
+            append_log("数据库不可写，已申请管理员权限，等待提权实例接管");
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                std::process::exit(0);
+            });
+            true
+        }
+        Err(error) => {
+            append_log(&format!("申请管理员权限失败，继续以普通权限运行: {error}"));
+            false
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
@@ -1114,6 +1168,14 @@ pub fn run() {
 
     #[cfg(windows)]
     log_database_status();
+
+    // 数据库不可写（拒绝访问）时自动申请管理员权限并重启
+    #[cfg(windows)]
+    if !database_writable() {
+        if elevate_for_database() {
+            return;
+        }
+    }
 
     let mut builder = tauri::Builder::default();
 
