@@ -1005,7 +1005,6 @@ fn set_autostart(enabled: bool) -> Result<AutostartStatus, String> {
 #[cfg(windows)]
 const ELEVATE_MARKER: &str = "--elevated-attempt";
 #[cfg(windows)]
-const NO_ELEVATE_ARG: &str = "--no-elevate";
 
 /// 是否已具备管理员权限：用机器级 Run 键的写权限做探测。
 #[cfg(windows)]
@@ -1023,33 +1022,17 @@ fn is_elevated() -> bool {
     }
 }
 
-/// 启动时自动申请管理员权限：未提权则用 runas 重新启动自己并让当前实例退出。
-/// 返回 true 表示调用方应立即退出（提权实例会接管后续流程）。
+/// 用户主动请求提权：以管理员身份重新启动自己（弹 UAC）。
 #[cfg(windows)]
-fn auto_elevate() -> bool {
-    if std::env::args().any(|arg| arg == NO_ELEVATE_ARG) {
-        append_log("按参数跳过提权，以普通权限运行");
-        return false;
-    }
+fn request_elevation_restart() -> Result<(), String> {
     if is_elevated() {
-        append_log("已具备管理员权限");
-        return false;
-    }
-    if std::env::args().any(|arg| arg == ELEVATE_MARKER) {
-        append_log("提权后仍未获得管理员权限，以普通权限继续");
-        return false;
+        return Err("已具备管理员权限，无需提权".to_string());
     }
 
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    let exe = match std::env::current_exe() {
-        Ok(value) => value,
-        Err(error) => {
-            append_log(&format!("取程序路径失败，跳提权: {error}"));
-            return false;
-        }
-    };
+    let exe = std::env::current_exe().map_err(|error| format!("取程序路径失败: {error}"))?;
     let mut params: Vec<String> = std::env::args().skip(1).filter(|arg| arg != ELEVATE_MARKER).collect();
     params.push(ELEVATE_MARKER.to_string());
     let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
@@ -1067,22 +1050,53 @@ fn auto_elevate() -> bool {
         )
     };
     if (result as isize) <= 32 {
-        append_log(&format!("申请管理员权限被取消或失败（代码 {}），以普通权限继续", result as isize));
-        return false;
+        return Err(format!("申请管理员权限被取消或失败（代码 {}）", result as isize));
     }
-    append_log("已申请管理员权限，等待提权实例接管");
-    true
+    append_log("用户请求提权，已启动管理员实例");
+    Ok(())
+}
+
+/// 由界面调用：申请管理员权限并以管理员身份重新启动。
+#[tauri::command]
+async fn relaunch_elevated() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        request_elevation_restart()?;
+        // 管理员实例接管单实例后本实例退出
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            std::process::exit(0);
+        });
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台不支持".to_string())
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ElevationStatus {
+    elevated: bool,
+}
+
+/// 当前是否具备管理员权限，供界面显示。
+#[tauri::command]
+fn elevation_status() -> ElevationStatus {
+    #[cfg(windows)]
+    {
+        ElevationStatus { elevated: is_elevated() }
+    }
+    #[cfg(not(windows))]
+    {
+        ElevationStatus { elevated: false }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
     append_log(&format!("应用启动 v{APP_VERSION}"));
-
-    #[cfg(windows)]
-    if auto_elevate() {
-        return;
-    }
 
     // 先判单实例：已有实例时直接唤回它的窗口并退出，不触碰 WebView2 目录
     #[cfg(windows)]
@@ -1109,6 +1123,8 @@ pub fn run() {
             save_startup_prefs,
             autostart_status,
             set_autostart,
+            relaunch_elevated,
+            elevation_status,
             open_import_window,
             close_import_window,
             submit_page_import,

@@ -124,6 +124,32 @@ export function SettingsView({
   const [trayStatus, setTrayStatus] = useState<string | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
+  const [elevated, setElevated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!canUseWidget()) return;
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const status = await invoke<{ elevated: boolean }>('elevation_status');
+        setElevated(status.elevated);
+      } catch {
+        setElevated(null);
+      }
+    })();
+  }, []);
+
+  async function requestElevation(): Promise<void> {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('relaunch_elevated');
+      logInfo('desktop', '请求以管理员身份重新启动');
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setUpdateResult(`提权失败：${message}`);
+      logWarn('desktop', '提权失败', { message });
+    }
+  }
 
   async function runUpdateCheck(): Promise<void> {
     setUpdateBusy(true);
@@ -838,6 +864,22 @@ export function SettingsView({
           </Button>
           {updateResult !== null && <span className="text-xs text-muted">{updateResult}</span>}
         </div>
+        {canUseWidget() && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted">
+              运行权限：{elevated === null ? '读取中…' : elevated ? '管理员' : '普通用户'}
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="以管理员身份重新启动"
+              disabled={elevated !== false}
+              onClick={() => void requestElevation()}
+            >
+              以管理员身份重新启动
+            </Button>
+          </div>
+        )}
         {CHANNEL !== 'dev' && (
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
             <span className="flex min-w-0 flex-col">
