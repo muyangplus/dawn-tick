@@ -201,8 +201,20 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
-  check('日程页含今日课程', scheduleText.includes('今日课程'), '');
+  check(
+    '日程页合并为一条时间线',
+    scheduleText.includes('日程') && scheduleText.includes('考试倒计时') && scheduleText.includes('加日程'),
+    '',
+  );
   check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
+  if (clickByText(view.container, '加考试')) await flush(12);
+  check(
+    '加考试入口打开考试表单',
+    document.body.textContent?.includes('考试倒计时') === true &&
+      document.querySelector('[aria-label="开考时间"]') !== null,
+    '',
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
 
   check('日程页提供课程调整入口', scheduleText.includes('课程调整'), '');
   if (clickByText(view.container, '课程调整')) await flush(12);

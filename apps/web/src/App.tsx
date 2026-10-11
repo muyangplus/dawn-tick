@@ -68,6 +68,7 @@ export function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
+  const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam'>('todo');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
@@ -287,7 +288,21 @@ export function App() {
         ) : (
           <TodayView data={data} />
         ))}
-      {view === 'schedule' && <ScheduleView data={data} storage={storage} onChanged={refresh} />}
+      {view === 'schedule' && (
+        <ScheduleView
+          data={data}
+          storage={storage}
+          onChanged={refresh}
+          onAddTodo={() => {
+            setEventFormKind('todo');
+            setTodoFormOpen(true);
+          }}
+          onAddExam={() => {
+            setEventFormKind('exam');
+            setTodoFormOpen(true);
+          }}
+        />
+      )}
       {view === 'import' && (
         <ImportFlow
           storage={storage}
@@ -478,6 +493,7 @@ export function App() {
         userId={USER_ID}
         semesterId={data.semester.id}
         timeZone={data.timeZone}
+        kind={eventFormKind}
         onCreated={refresh}
       />
 
