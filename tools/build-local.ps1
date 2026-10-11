@@ -39,6 +39,18 @@ if ($Artefact -eq 'nsis') {
 $profile = if ($Channel -eq 'release') { 'release' } else { 'debug' }
 $buildKind = if ($Channel -eq 'release') { 'release' } else { 'debug' }
 $exe = Join-Path $root "apps/desktop/src-tauri/target/$profile/dawn-tick-desktop.exe"
+
+# 必须确认前端资源已嵌入：直接 cargo build 的产物会去加载 devUrl（localhost:5173），
+# 运行后表现为「localhost 拒绝连接」。这里用前端哈希资源名做嵌入校验。
+$assetDir = Join-Path $root 'apps/web/dist/assets'
+$marker = Get-ChildItem $assetDir -Filter '*.js' -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($null -eq $marker) { throw "找不到前端产物：$assetDir，请先构建 web" }
+$exeText = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
+if (-not $exeText.Contains($marker.Name)) {
+  throw "产物未嵌入前端资源（缺少 $($marker.Name)）：请用本脚本构建，不要直接使用 cargo build 的产物"
+}
+Write-Output "已确认前端资源嵌入：$($marker.Name)"
+
 $stage = Join-Path $root 'out-local/stage-portable'
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
