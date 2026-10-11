@@ -1,7 +1,6 @@
-import { WAREHOUSE_SCHOOLS } from './schools-data.ts';
-import { DIRECTORY_NAMES } from './schools-directory.ts';
+import { DIRECTORY_NAMES, MANUAL_SCHOOLS, WAREHOUSE_SCHOOLS } from './schools.ts';
 
-export { DIRECTORY_NAMES };
+export { DIRECTORY_NAMES, MANUAL_SCHOOLS, WAREHOUSE_SCHOOLS };
 
 export type SchoolSystem = 'jwglxt' | 'qzdatasource' | 'urp' | 'other';
 export interface SystemEntry {
@@ -33,19 +32,8 @@ export interface SchoolEntry {
 
 /**
  * 内置学校：上游适配仓库的条目 + 本项目自行维护的条目。
- * 上游数据由 tools/import-schools.py 生成到 schools-data.ts。
+ * 两段数据都在 schools.ts，手工维护段重新生成时不会被覆盖。
  */
-export const MANUAL_SCHOOLS: readonly SchoolEntry[] = [
-  {
-    id: 'usts',
-    name: '苏州科技大学',
-    system: 'jwglxt',
-    url: 'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html',
-    aliases: ['苏科大', '苏州科技'],
-    source: 'builtin',
-  },
-];
-
 export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...WAREHOUSE_SCHOOLS, ...MANUAL_SCHOOLS];
 
 export function systemEntry(system: SchoolSystem): SystemEntry {

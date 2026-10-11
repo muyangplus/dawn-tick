@@ -6,7 +6,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 用途 | `packages/core/src/import/schools-directory.ts` 中的高校名单（仅校名） |
+| 用途 | `packages/core/src/import/schools.ts` 中的高校名单（仅校名，自动生成段） |
 | 来源 | https://github.com/vczero/serverless-colleage |
 | 生成方式 | `python tools/import-schools.py <适配仓库根目录> <该仓库的 大学目录.json>` |
 | 许可说明 | 名单内容为教育部公开的全国普通高等学校名单，属公开事实性数据；上游仓库未附开源许可声明，因此本项目**只取校名用于检索**，不复制其代码或其他内容。若需进一步使用其内容，请先与上游确认授权 |
@@ -15,7 +15,7 @@
 
 | 项 | 内容 |
 |---|---|
-| 用途 | `packages/core/src/import/schools-data.ts` 中的高校与教务入口数据 |
+| 用途 | `packages/core/src/import/schools.ts` 中的高校与教务入口数据（自动生成段） |
 | 来源 | https://github.com/ShiGuangSchedule/shiguang_warehouse |
 | 保留内容 | 适配条目名称、入口地址、学校代码、维护者署名 |
 | 生成方式 | `python tools/import-schools.py <仓库根目录>` |

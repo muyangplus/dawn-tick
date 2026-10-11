@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   BUILTIN_SCHOOLS,
   DIRECTORY_NAMES,
+  MANUAL_SCHOOLS,
   SYSTEM_ENTRIES,
+  WAREHOUSE_SCHOOLS,
   buildEntryUrl,
   entryUrlFor,
   matchSchools,
@@ -101,6 +103,18 @@ test('自定义学校覆盖同名内置条目', () => {
   assert.equal(sust?.source, 'user');
   assert.equal(buildEntryUrl('jwglxt', String(sust?.url)), 'https://jw.myschool.edu.cn/jwglxt/xtgl/login_slogin.html');
   assert.ok(merged.some((school) => school.id === 'demo'));
+});
+
+test('学校数据集中在一个文件且手工段在首位', () => {
+  assert.ok(WAREHOUSE_SCHOOLS.length >= 200, `上游适配条目偏少：${WAREHOUSE_SCHOOLS.length}`);
+  assert.ok(DIRECTORY_NAMES.length >= 2000, `高校名单偏少：${DIRECTORY_NAMES.length}`);
+  assert.ok(MANUAL_SCHOOLS.some((school) => school.id === 'usts'), '手工维护段应含苏州科技大学');
+  assert.equal(BUILTIN_SCHOOLS.length, WAREHOUSE_SCHOOLS.length + MANUAL_SCHOOLS.length);
+  const ids = BUILTIN_SCHOOLS.map((school) => school.id);
+  assert.equal(new Set(ids).size, ids.length, '学校 id 不应重复');
+  for (const school of WAREHOUSE_SCHOOLS) {
+    assert.ok(school.code.length > 0, `${school.name} 缺少学校代码`);
+  }
 });
 
 test('下拉候选先给带入口的学校再补名单校名', () => {
