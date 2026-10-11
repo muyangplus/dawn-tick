@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import {
   BACKUP_MODULES,
@@ -33,8 +33,7 @@ import {
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
-import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
-import { PeriodSettings } from '../components/period-settings.tsx';
+import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
@@ -102,6 +101,20 @@ export function SettingsView({
   const [semesterStart, setSemesterStart] = useState('');
   const [semesterWeeks, setSemesterWeeks] = useState(20);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [trayStatus, setTrayStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canUseWidget()) return;
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const status = await invoke<{ created: boolean; detail: string }>('tray_status');
+        setTrayStatus(`${status.created ? '已创建' : '创建失败'}（${status.detail}）`);
+      } catch (cause: unknown) {
+        setTrayStatus(`不可用（${cause instanceof Error ? cause.message : String(cause)}）`);
+      }
+    })();
+  }, []);
   const [busy, setBusy] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
@@ -566,9 +579,7 @@ export function SettingsView({
           )}
         </label>
         {canUseWidget() && (
-          <span className="text-xs text-muted">
-            托盘图标在任务栏右下角；若看不到，请点「∧」展开隐藏图标，把晓刻拖到任务栏上固定。左键点图标可切换悬浮窗。
-          </span>
+          <span className="text-xs text-muted">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</span>
         )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">

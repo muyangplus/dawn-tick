@@ -37,6 +37,8 @@ const HIDDEN_ARG: &str = "--hidden";
 /// 提权实例的标记参数：只写机器级启动项后退出。
 const REGISTER_ARG: &str = "--register-autostart";
 const MAIN_WINDOW: &str = "main";
+/// 托盘创建结果：(是否成功, 细节)
+static TRAY_STATE: std::sync::Mutex<Option<(bool, String)>> = std::sync::Mutex::new(None);
 /// 内嵌教务窗口的标签。
 const IMPORT_WINDOW: &str = "import";
 
@@ -671,11 +673,38 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         });
 
+    let mut icon_source = "none".to_string();
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
+        icon_source = format!("window-icon {}x{}", icon.width(), icon.height());
     }
-    builder.build(app)?;
-    Ok(())
+    match builder.build(app) {
+        Ok(_) => {
+            append_log(&format!("托盘已创建（{icon_source}）"));
+            if let Ok(mut state) = TRAY_STATE.lock() {
+                *state = Some((true, icon_source));
+            }
+            Ok(())
+        }
+        Err(error) => {
+            append_log(&format!("托盘创建失败: {error}"));
+            if let Ok(mut state) = TRAY_STATE.lock() {
+                *state = Some((false, format!("{icon_source} / {error}")));
+            }
+            Err(error)
+        }
+    }
+}
+
+/// 托盘当前状态，供界面显示，避免靠猜。
+#[tauri::command]
+fn tray_status() -> serde_json::Value {
+    let (created, detail) = TRAY_STATE
+        .lock()
+        .ok()
+        .and_then(|state| state.clone())
+        .unwrap_or((false, "尚未初始化".to_string()));
+    serde_json::json!({ "created": created, "detail": detail })
 }
 
 /// 前端日志落盘：与 panic、启动错误写入同一文件。
@@ -968,7 +997,8 @@ pub fn run() {
             close_import_window,
             submit_page_import,
             show_widget,
-            hide_widget
+            hide_widget,
+            tray_status
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
