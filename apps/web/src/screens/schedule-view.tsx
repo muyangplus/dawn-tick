@@ -52,7 +52,7 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
             setAdjustOpen(true);
           }}
         >
-          调课 / 调休 / 加课
+          课程调整
         </Button>
       </div>
 
@@ -61,6 +61,7 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
           <CalendarClock className="size-4" aria-hidden />
           今日课程
         </span>
+        {data.holidays.includes(data.today) && <span className="text-xs text-muted">今天放假，课程不排</span>}
         {data.todayLessons.length === 0 ? (
           <EmptyState icon={CalendarClock} title="今天没有课" description="可在周视图查看本周安排" />
         ) : (
@@ -96,6 +97,7 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
                   onClick={() => {
                     setAdjustTarget({
                       scheduleId: lesson.scheduleId,
+                      courseId: lesson.courseId,
                       courseName: lesson.courseName,
                       date: lesson.date,
                       periodStart: lesson.periodStart,

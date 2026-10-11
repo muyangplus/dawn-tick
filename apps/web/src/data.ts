@@ -4,6 +4,7 @@ import {
   dayOfWeek,
   expand,
   formatDate,
+  listManagedCourses,
   listSemesters,
   listTimeSlots,
   loadExpandInput,
@@ -17,6 +18,7 @@ import {
   type CourseRow,
   type CourseScheduleRow,
   type EventRow,
+  type ManagedCourse,
   type Occurrence,
   type ReminderRow,
   type SemesterRow,
@@ -38,6 +40,8 @@ export interface LessonCell {
   endTime: string;
   /** 该排课是否落在当前查看的周次；false 表示非本周课程，按设置虚线显示 */
   inWeek: boolean;
+  /** 该课所在日期是否放假，放假则灰显 */
+  holiday: boolean;
 }
 
 export interface AppData {
@@ -49,8 +53,10 @@ export interface AppData {
   weekStartDate: string;
   /** 当前查看周内是否有课，含只在别周上的课程（inWeek = false） */
   hasLessons: boolean;
-  /** 当前学期的课程，供调课与临时加课选择 */
-  courses: CourseRow[];
+  /** 当前学期的课程（含各条排课），供调课与临时加课选择 */
+  courses: ManagedCourse[];
+  /** 当前查看周内的放假日（YYYY-MM-DD），这些列上的课灰显 */
+  holidays: string[];
   semester: SemesterRow | null;
   semesters: SemesterRow[];
   slots: TimeSlotRow[];
@@ -99,6 +105,7 @@ export async function loadAppData(
       grid: new Map(),
       hasLessons: false,
       courses: [],
+      holidays: [],
       todayLessons: [],
       nextLesson: undefined,
       exams: [],
@@ -119,6 +126,14 @@ export async function loadAppData(
   ]);
   const activeCourses = courses.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
   const courseById = new Map(activeCourses.map((row) => [row.id, row]));
+  const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
+  const holidayDates = new Set(
+    semesterEvents
+      .filter((row) => row.type === 'holiday' && row.on_date !== null && row.on_date !== undefined)
+      .map((row) => String(row.on_date)),
+  );
+  const viewWeekStart = weekDateOf(semester, viewWeek, 1);
+  const dateOfDay = (day: number): string => addDays(viewWeekStart, day - 1);
 
   const grid = new Map<string, LessonCell[]>();
   const cellOf = (input: {
@@ -146,6 +161,7 @@ export async function loadAppData(
       startTime: slotByPeriod.get(input.periodStart)?.start_time ?? '',
       endTime: slotByPeriod.get(input.periodEnd)?.end_time ?? '',
       inWeek: input.inWeek,
+      holiday: holidayDates.has(dateOfDay(input.day)),
     };
   };
 
@@ -201,7 +217,6 @@ export async function loadAppData(
   const occurrences = input === undefined ? [] : expand(input);
   const todayLessons = occurrences.filter((item) => item.date === today && !item.cancelled);
 
-  const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
   const exams = semesterEvents
     .filter((row) => row.type === 'exam' && row.start_at !== null)
     .sort((left, right) => (left.start_at ?? 0) - (right.start_at ?? 0));
@@ -224,7 +239,8 @@ export async function loadAppData(
     slots,
     grid,
     hasLessons: [...grid.values()].some((list) => list.some((cell) => cell.inWeek)),
-    courses: [...activeCourses].sort((left, right) => left.name.localeCompare(right.name)),
+    courses: await listManagedCourses(storage, semester.id),
+    holidays: [...holidayDates],
     todayLessons,
     nextLesson: nextOccurrence(occurrences, Date.now()),
     exams,

@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   createCourse,
+  createEvent,
   createSchedule,
   createSemester,
   validatedStorage,
@@ -64,6 +65,14 @@ async function seed(): Promise<void> {
   });
   // 周视图铺满 7 天，才能验证「高亮当天列」
   await writeSettings(storage, { viewDays: 7 });
+  // 第 5 周周一放假，用来验证放假日灰显
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'holiday',
+    title: '国庆调休放假',
+    onDate: '2026-10-05',
+  });
 }
 
 function mount(element: ReactElement): { root: Root; container: HTMLElement } {
@@ -177,6 +186,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       teacherField.className.includes('break-words'),
     '',
   );
+  check('表头显示月日', /\d+\/\d+/.test(text), '');
+  check(
+    '非本周课程标注更浅并写明非本周',
+    text.includes('非本周') && view.container.querySelector('[data-tone="ghost"]') !== null,
+    '',
+  );
+  check(
+    '放假日课程灰显',
+    text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
+    '',
+  );
 
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
@@ -184,14 +204,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('日程页含今日课程', scheduleText.includes('今日课程'), '');
   check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
 
-  check('日程页提供调课入口', scheduleText.includes('调课 / 调休 / 加课'), '');
-  if (clickByText(view.container, '调课 / 调休 / 加课')) await flush(12);
+  check('日程页提供课程调整入口', scheduleText.includes('课程调整'), '');
+  if (clickByText(view.container, '课程调整')) await flush(12);
   const adjustText = document.body.textContent ?? '';
   check(
-    '调课入口含三种模式',
+    '课程调整含三种模式',
     adjustText.includes('调课') && adjustText.includes('调休') && adjustText.includes('临时加课'),
     '',
   );
+  check('调课可直接选课与课次', document.querySelector('[aria-label="哪门课"]') !== null, '');
+  if (clickByText(document.body, '调休')) await flush(8);
+  check(
+    '调休为指定两天',
+    document.querySelector('[aria-label="把哪一天的课表"]') !== null &&
+      document.querySelector('[aria-label="调到哪一天上"]') !== null,
+    '',
+  );
+  if (clickByText(document.body, '临时加课')) await flush(8);
+  check('临时加课可自定义名称', document.querySelector('[aria-label="或自定义课程名称"]') !== null, '');
   if (clickByText(document.body, '取消')) await flush(6);
 
   const switchedToSettings = clickByText(view.container, '设置');

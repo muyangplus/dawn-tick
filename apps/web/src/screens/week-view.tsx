@@ -10,6 +10,19 @@ const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '�
 const ROW_HEIGHT = 56;
 const AXIS_WIDTH = '3.5rem';
 
+/** 查看周里第 day 天的日期（周一为第 1 天）。 */
+function weekDayDate(weekStartDate: string, day: number): string {
+  const base = Date.parse(`${weekStartDate}T00:00:00Z`);
+  if (Number.isNaN(base)) return weekStartDate;
+  return new Date(base + (day - 1) * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** 表头显示月日。 */
+function formatMonthDay(date: string): string {
+  const [, month, day] = date.split('-');
+  return `${Number(month)}/${Number(day)}`;
+}
+
 export interface WeekViewProps {
   data: AppData;
   viewDays: number;
@@ -88,16 +101,22 @@ export function WeekView({
             {WEEKDAYS.slice(0, viewDays).map((label, index) => {
               const day = index + 1;
               const isToday = data.viewWeek === data.week && day === data.todayOfWeek;
+              const date = weekDayDate(data.weekStartDate, day);
+              const isHoliday = data.holidays.includes(date);
               return (
                 <div
                   key={label}
                   className={cn(
                     'px-2 py-2 text-center text-xs',
-                    isToday ? 'font-semibold text-primary-strong' : 'text-ink',
+                    isToday ? 'font-semibold text-primary-strong' : isHoliday ? 'text-muted' : 'text-ink',
                   )}
                 >
-                  {label}
-                  {isToday && <span className="ml-1 text-[10px] text-muted">今天</span>}
+                  <span className="flex flex-col items-center gap-0.5">
+                    <span>{label}</span>
+                    <span className="tabular text-[10px] text-muted">{formatMonthDay(date)}</span>
+                    {isToday && <span className="text-[10px] text-muted">今天</span>}
+                    {isHoliday && <span className="text-[10px] text-muted">放假</span>}
+                  </span>
                 </div>
               );
             })}
@@ -177,7 +196,7 @@ export function WeekView({
                         room={lesson.room}
                         teacher={lesson.teacher}
                         meta={`${lesson.startTime}-${lesson.endTime}`}
-                        dashed={!lesson.inWeek}
+                        tone={!lesson.inWeek ? 'ghost' : lesson.holiday ? 'holiday' : 'solid'}
                         onClick={() => onSelectLesson(lesson)}
                         className="h-full"
                       />
