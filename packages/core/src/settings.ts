@@ -20,6 +20,8 @@ export interface AppSettings {
   autoStart: boolean;
   /** 开机自启时隐藏主窗口，仅驻留托盘 */
   startHidden: boolean;
+  /** 周视图里用虚线显示非本周课程 */
+  showOtherWeeks: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   widgetBackground: 'light',
   autoStart: false,
   startHidden: true,
+  showOtherWeeks: true,
 };
 
 const KEYS = {
@@ -42,6 +45,7 @@ const KEYS = {
   widgetBackground: 'widget_background',
   autoStart: 'auto_start',
   startHidden: 'start_hidden',
+  showOtherWeeks: 'show_other_weeks',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -60,8 +64,9 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.widgetBackground),
     storage.readMeta(KEYS.autoStart),
     storage.readMeta(KEYS.startHidden),
+    storage.readMeta(KEYS.showOtherWeeks),
   ]);
-  const [timeZone, autoTimeZone, viewDays, theme, themePreset, widgetBackground, autoStart, startHidden] =
+  const [timeZone, autoTimeZone, viewDays, theme, themePreset, widgetBackground, autoStart, startHidden, showOtherWeeks] =
     entries;
   const parsedDays = Number(viewDays);
 
@@ -81,6 +86,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
         : DEFAULT_SETTINGS.widgetBackground,
     autoStart: parseBoolean(autoStart, DEFAULT_SETTINGS.autoStart),
     startHidden: parseBoolean(startHidden, DEFAULT_SETTINGS.startHidden),
+    showOtherWeeks: parseBoolean(showOtherWeeks, DEFAULT_SETTINGS.showOtherWeeks),
   };
 }
 
@@ -111,6 +117,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   if (patch.autoStart !== undefined) await storage.writeMeta(KEYS.autoStart, patch.autoStart ? '1' : '0');
   if (patch.startHidden !== undefined) {
     await storage.writeMeta(KEYS.startHidden, patch.startHidden ? '1' : '0');
+  }
+  if (patch.showOtherWeeks !== undefined) {
+    await storage.writeMeta(KEYS.showOtherWeeks, patch.showOtherWeeks ? '1' : '0');
   }
 
   return readSettings(storage);

@@ -13,6 +13,8 @@ const AXIS_WIDTH = '3.5rem';
 export interface WeekViewProps {
   data: AppData;
   viewDays: number;
+  /** 非本周课程是否用虚线显示 */
+  showOtherWeeks: boolean;
   onSelectLesson: (cell: LessonCell) => void;
   onMoveLesson: (cell: LessonCell, dayOfWeek: number, period: number) => void;
   onPrevWeek: () => void;
@@ -28,6 +30,7 @@ function lessonsOf(data: AppData): LessonCell[] {
 export function WeekView({
   data,
   viewDays,
+  showOtherWeeks,
   onSelectLesson,
   onMoveLesson,
   onPrevWeek,
@@ -68,7 +71,7 @@ export function WeekView({
         else onNextWeek();
       }}
     >
-      {lessons.length === 0 && (
+      {!data.hasLessons && (
         <EmptyState
           title={`第 ${data.viewWeek} 周没有课程`}
           description="可用右上角添加课程，或到导入页从 ICS、CSV/Excel 与教务系统导入"
@@ -122,11 +125,20 @@ export function WeekView({
 
             {Array.from({ length: viewDays }, (_, index) => {
               const day = index + 1;
-              const dayLessons = lessons.filter((lesson) => lesson.dayOfWeek === day);
+              const isToday = data.viewWeek === data.week && day === data.todayOfWeek;
+              const dayLessons = lessons
+                .filter((lesson) => lesson.dayOfWeek === day)
+                .filter((lesson) => lesson.inWeek || showOtherWeeks);
               return (
                 <div
                   key={`column-${day}`}
                   className="relative border-r border-line last:border-r-0"
+                  style={
+                    isToday
+                      ? { backgroundColor: 'color-mix(in srgb, var(--dt-primary) 6%, transparent)' }
+                      : undefined
+                  }
+                  data-today={isToday ? 'true' : undefined}
                   onDragOver={(event) => event.preventDefault()}
                   onDrop={(event) => {
                     event.preventDefault();
@@ -148,13 +160,15 @@ export function WeekView({
                   {dayLessons.map((lesson) => (
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}
-                      className="absolute inset-x-1"
+                      className="absolute inset-x-1 min-w-0"
                       style={{
                         top: `${(lesson.periodStart - 1) * ROW_HEIGHT + 2}px`,
                         height: `${(lesson.periodEnd - lesson.periodStart + 1) * ROW_HEIGHT - 4}px`,
                       }}
-                      draggable
-                      onDragStart={() => setDragging(lesson)}
+                      draggable={lesson.inWeek}
+                      onDragStart={() => {
+                        if (lesson.inWeek) setDragging(lesson);
+                      }}
                       onDragEnd={() => setDragging(null)}
                     >
                       <CourseCard
@@ -163,8 +177,9 @@ export function WeekView({
                         room={lesson.room}
                         teacher={lesson.teacher}
                         meta={`${lesson.startTime}-${lesson.endTime}`}
+                        dashed={!lesson.inWeek}
                         onClick={() => onSelectLesson(lesson)}
-                        className="h-full overflow-hidden"
+                        className="h-full"
                       />
                     </div>
                   ))}

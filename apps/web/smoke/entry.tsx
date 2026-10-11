@@ -6,6 +6,7 @@ import {
   createSchedule,
   createSemester,
   validatedStorage,
+  writeSettings,
 } from '@dawn-tick/core';
 import { App } from '../src/App.tsx';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
@@ -47,6 +48,22 @@ async function seed(): Promise<void> {
     periodEnd: 2,
     weeks: Array.from({ length: 20 }, (_, index) => index + 1),
   });
+  // 只在第 1-2 周上的课，用来验证非本周课程的虚线显示
+  const earlyCourse = await createCourse(storage, {    semesterId: String(semester['id']),
+    name: '大学物理',
+    shortName: '大物',
+    teacher: '李老师',
+    location: '理科楼-105',
+  });
+  await createSchedule(storage, {
+    courseId: String(earlyCourse['id']),
+    dayOfWeek: 3,
+    periodStart: 3,
+    periodEnd: 4,
+    weeks: [1, 2],
+  });
+  // 周视图铺满 7 天，才能验证「高亮当天列」
+  await writeSettings(storage, { viewDays: 7 });
 }
 
 function mount(element: ReactElement): { root: Root; container: HTMLElement } {
@@ -141,10 +158,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('课表渲染课程', text.includes('高数'), text.slice(0, 80));
   check('工具栏渲染周次', /第\s*\d+\s*周/.test(text), '');
   check('渲染当前时间指示线', view.container.querySelector('[aria-hidden="true"]') !== null, '');
+  check('高亮当天列', view.container.querySelector('[data-today="true"]') !== null, '');
+  check(
+    '非本周课程用虚线框显示',
+    text.includes('大物') && view.container.querySelector('[data-dashed="true"]') !== null,
+    '',
+  );
 
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
+  check('日程页含今日课程', scheduleText.includes('今日课程'), '');
   check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
 
   const switchedToSettings = clickByText(view.container, '设置');
@@ -271,6 +295,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('设置项可收起', hadAppearance && collapsedAppearance, '');
   if (clickByAriaPrefix(view.container, '外观')) await flush(8);
   check('设置项可再展开', (view.container.textContent ?? '').includes('主题风格'), '');
+  check(
+    '非本周课程开关存在',
+    view.container.querySelector('[aria-label="周视图显示非本周课程"]') !== null,
+    '',
+  );
 
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(

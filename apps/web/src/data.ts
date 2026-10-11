@@ -7,6 +7,7 @@ import {
   listSemesters,
   listTimeSlots,
   loadExpandInput,
+  maskToWeeks,
   nextOccurrence,
   resolveTimeZone,
   weekOfDate,
@@ -35,6 +36,8 @@ export interface LessonCell {
   periodEnd: number;
   startTime: string;
   endTime: string;
+  /** 该排课是否落在当前查看的周次；false 表示非本周课程，按设置虚线显示 */
+  inWeek: boolean;
 }
 
 export interface AppData {
@@ -44,6 +47,8 @@ export interface AppData {
   week: number;
   viewWeek: number;
   weekStartDate: string;
+  /** 当前查看周内是否有课，含只在别周上的课程（inWeek = false） */
+  hasLessons: boolean;
   semester: SemesterRow | null;
   semesters: SemesterRow[];
   slots: TimeSlotRow[];
@@ -90,6 +95,7 @@ export async function loadAppData(
       semesters: [],
       slots: [],
       grid: new Map(),
+      hasLessons: false,
       todayLessons: [],
       nextLesson: undefined,
       exams: [],
@@ -112,28 +118,80 @@ export async function loadAppData(
   const courseById = new Map(activeCourses.map((row) => [row.id, row]));
 
   const grid = new Map<string, LessonCell[]>();
+  const cellOf = (input: {
+    scheduleId: string;
+    courseId: string;
+    fallbackName: string;
+    color: string;
+    room: string | null;
+    periodStart: number;
+    periodEnd: number;
+    day: number;
+    inWeek: boolean;
+  }): LessonCell => {
+    const course = courseById.get(input.courseId);
+    return {
+      scheduleId: input.scheduleId,
+      courseId: input.courseId,
+      name: course?.short_name ?? input.fallbackName,
+      teacher: course?.teacher ?? null,
+      room: input.room ?? course?.location ?? null,
+      color: input.color,
+      dayOfWeek: input.day,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      startTime: slotByPeriod.get(input.periodStart)?.start_time ?? '',
+      endTime: slotByPeriod.get(input.periodEnd)?.end_time ?? '',
+      inWeek: input.inWeek,
+    };
+  };
+
   for (let day = 1; day <= 7; day += 1) {
     for (const row of await weekView(storage, semester.id, day, viewWeek)) {
-      const course = courseById.get(row.course_id);
-      const startSlot = slotByPeriod.get(row.period_start);
-      const endSlot = slotByPeriod.get(row.period_end);
       const key = `${day}:${row.period_start}`;
       const list = grid.get(key) ?? [];
-      list.push({
-        scheduleId: row.schedule_id,
-        courseId: row.course_id,
-        name: course?.short_name ?? row.name,
-        teacher: course?.teacher ?? null,
-        room: row.room ?? course?.location ?? null,
-        color: row.color,
-        dayOfWeek: day,
-        periodStart: row.period_start,
-        periodEnd: row.period_end,
-        startTime: startSlot?.start_time ?? '',
-        endTime: endSlot?.end_time ?? '',
-      });
+      list.push(
+        cellOf({
+          scheduleId: row.schedule_id,
+          courseId: row.course_id,
+          fallbackName: row.name,
+          color: row.color,
+          room: row.room,
+          periodStart: row.period_start,
+          periodEnd: row.period_end,
+          day,
+          inWeek: true,
+        }),
+      );
       grid.set(key, list);
     }
+  }
+
+  // 非本周课程：仍在课表中，但这一周不上，按设置虚线显示
+  const activeIds = new Set(activeCourses.map((row) => row.id));
+  for (const row of schedules) {
+    if (row.deleted_at !== null || !activeIds.has(row.course_id)) continue;
+    if (maskToWeeks(row.weeks_mask, semester.total_weeks).includes(viewWeek)) continue;
+    const course = courseById.get(row.course_id);
+    if (course === undefined) continue;
+    const day = row.day_of_week;
+    const key = `${day}:${row.period_start}`;
+    const list = grid.get(key) ?? [];
+    if (list.some((cell) => cell.scheduleId === row.id)) continue;
+    list.push(
+      cellOf({
+        scheduleId: row.id,
+        courseId: row.course_id,
+        fallbackName: course.name,
+        color: course.color,
+        room: row.room,
+        periodStart: row.period_start,
+        periodEnd: row.period_end,
+        day,
+        inWeek: false,
+      }),
+    );
+    grid.set(key, list);
   }
 
   const input = await loadExpandInput(storage, semester.id, today, addDays(today, LOOKAHEAD_DAYS));
@@ -160,6 +218,7 @@ export async function loadAppData(
     semesters: semesters.filter((row) => row.is_active === 0 || row.id === semester.id),
     slots,
     grid,
+    hasLessons: [...grid.values()].some((list) => list.some((cell) => cell.inWeek)),
     todayLessons,
     nextLesson: nextOccurrence(occurrences, Date.now()),
     exams,

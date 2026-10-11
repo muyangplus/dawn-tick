@@ -176,6 +176,18 @@ test('导入可保留现有数据或覆盖', async () => {
   assert.equal((await activeSemester(target, USER_ID))?.id, semesterId);
 });
 
+test('周视图非本周课程开关随备份迁移', async () => {
+  const { storage } = await seedStorage();
+  await writeSettings(storage, { showOtherWeeks: false });
+  const payload = await exportBackup(storage, { modules: ['settings'] });
+  assert.equal(payload.meta['show_other_weeks'], '0');
+
+  const target = createStorage();
+  await importBackup(target, payload, { modules: ['settings'], mode: 'overwrite' });
+  const settings = await import('../src/settings.ts').then((module) => module.readSettings(target));
+  assert.equal(settings.showOtherWeeks, false);
+});
+
 test('导入摘要给出各模块行数', async () => {
   const { storage } = await seedStorage();
   const payload = await exportBackup(storage);

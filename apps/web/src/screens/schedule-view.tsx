@@ -1,5 +1,5 @@
-import { CalendarClock, GraduationCap, ListChecks } from 'lucide-react';
-import { formatDate, updateEvent, type EventRow, type Storage } from '@dawn-tick/core';
+import { CalendarClock, GraduationCap, ListChecks, MapPin } from 'lucide-react';
+import { formatDate, formatTime, updateEvent, type EventRow, type Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { Countdown } from '../components/countdown.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
@@ -39,6 +39,44 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
 
   return (
     <section className="flex flex-col gap-4" aria-label="日程视图">
+      <div className="flex flex-col gap-2">
+        <span className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <CalendarClock className="size-4" aria-hidden />
+          今日课程
+        </span>
+        {data.todayLessons.length === 0 ? (
+          <EmptyState icon={CalendarClock} title="今天没有课" description="可在周视图查看本周安排" />
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {data.todayLessons.map((lesson) => (
+              <li
+                key={`${lesson.scheduleId}-${lesson.startAt}`}
+                className="flex min-h-tap items-center gap-3 rounded-md border border-line bg-surface px-3"
+                style={{ borderLeft: `4px solid ${lesson.color}` }}
+              >
+                <span className="tabular flex w-24 shrink-0 flex-col text-xs text-ink">
+                  <span>{formatTime(lesson.startAt, data.timeZone)}</span>
+                  <span className="text-muted">{formatTime(lesson.endAt, data.timeZone)}</span>
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm text-ink">{lesson.courseName}</span>
+                  <span className="flex min-w-0 items-center gap-1 truncate text-xs text-muted">
+                    第 {lesson.periodStart}
+                    {lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节
+                    {lesson.room !== null && (
+                      <>
+                        <MapPin className="size-3 shrink-0" aria-hidden />
+                        <span className="min-w-0 truncate">{lesson.room}</span>
+                      </>
+                    )}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="flex flex-col gap-2">
         <span className="flex items-center gap-2 text-sm font-semibold text-ink">
           <GraduationCap className="size-4" aria-hidden />

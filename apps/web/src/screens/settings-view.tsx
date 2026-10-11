@@ -41,7 +41,7 @@ import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import type { ReminderView } from '../useReminders.ts';
 
@@ -491,6 +491,17 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>周视图显示非本周课程</span>
+            <span className="truncate text-xs text-muted">这一周不上的课用虚线框标出</span>
+          </span>
+          <Switch
+            checked={settings.showOtherWeeks}
+            aria-label="周视图显示非本周课程"
+            onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
+          />
+        </label>
         <Field label="小组件背景">
           <Select
             value={settings.widgetBackground}

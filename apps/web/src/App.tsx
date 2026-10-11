@@ -278,6 +278,7 @@ export function App() {
           <WeekView
             data={data}
             viewDays={settings.viewDays}
+            showOtherWeeks={settings.showOtherWeeks}
             onSelectLesson={(cell) => void openLesson(cell)}
             onMoveLesson={(cell, dayOfWeek, period) => setMove({ cell, dayOfWeek, period })}
             onPrevWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, -1))}

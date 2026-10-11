@@ -12,6 +12,10 @@ export const BACKUP_META_KEYS: readonly string[] = [
   'view_days',
   'theme',
   'theme_preset',
+  'widget_background',
+  'auto_start',
+  'start_hidden',
+  'show_other_weeks',
 ];
 
 /** 备份模块：界面按模块勾选，导出与导入共用同一分组。 */
