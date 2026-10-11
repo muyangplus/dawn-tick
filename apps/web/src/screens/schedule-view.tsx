@@ -1,6 +1,8 @@
 import { CalendarClock, GraduationCap, ListChecks, MapPin } from 'lucide-react';
+import { useState } from 'react';
 import { formatDate, formatTime, updateEvent, type EventRow, type Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
+import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx';
 import { Countdown } from '../components/countdown.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { Card } from '../components/ui/card.tsx';
@@ -23,6 +25,8 @@ function groupKey(event: EventRow): string {
 
 export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
   const now = Date.now();
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const groups = new Map<string, EventRow[]>();
   for (const todo of data.todos) {
     const key = groupKey(todo);
@@ -39,6 +43,19 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
 
   return (
     <section className="flex flex-col gap-4" aria-label="日程视图">
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => {
+            setAdjustTarget(null);
+            setAdjustOpen(true);
+          }}
+        >
+          调课 / 调休 / 加课
+        </Button>
+      </div>
+
       <div className="flex flex-col gap-2">
         <span className="flex items-center gap-2 text-sm font-semibold text-ink">
           <CalendarClock className="size-4" aria-hidden />
@@ -71,6 +88,24 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
                     )}
                   </span>
                 </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0"
+                  aria-label={`调课：${lesson.courseName}`}
+                  onClick={() => {
+                    setAdjustTarget({
+                      scheduleId: lesson.scheduleId,
+                      courseName: lesson.courseName,
+                      date: lesson.date,
+                      periodStart: lesson.periodStart,
+                      periodEnd: lesson.periodEnd,
+                    });
+                    setAdjustOpen(true);
+                  }}
+                >
+                  调课
+                </Button>
               </li>
             ))}
           </ul>
@@ -178,6 +213,15 @@ export function ScheduleView({ data, storage, onChanged }: ScheduleViewProps) {
       <Button variant="secondary" size="sm" onClick={() => onChanged()}>
         刷新
       </Button>
+
+      <AdjustDialog
+        open={adjustOpen}
+        onOpenChange={setAdjustOpen}
+        storage={storage}
+        data={data}
+        target={adjustTarget}
+        onChanged={onChanged}
+      />
     </section>
   );
 }

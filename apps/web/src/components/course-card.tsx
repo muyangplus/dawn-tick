@@ -32,27 +32,27 @@ export function CourseCard({
 }: CourseCardProps) {
   const content = (
     <>
-      <span className="flex w-full min-w-0 items-center justify-between gap-1">
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink">{name}</span>
+      <span className="flex w-full min-w-0 items-start justify-between gap-1">
+        <span className="line-clamp-2 min-w-0 flex-1 break-words text-xs font-semibold text-ink">{name}</span>
         {badge}
       </span>
-      {meta !== undefined && <span className="tabular w-full truncate text-[11px] text-ink/80">{meta}</span>}
-      {(room !== undefined && room !== null) || (teacher !== undefined && teacher !== null) ? (
-        <span className="flex w-full min-w-0 items-center gap-1 text-[11px] text-ink/80">
-          {room !== undefined && room !== null && (
-            <>
-              <MapPin className="size-3 shrink-0" aria-hidden />
-              <span className="min-w-0 truncate">{room}</span>
-            </>
-          )}
-          {teacher !== undefined && teacher !== null && (
-            <>
-              <User className="size-3 shrink-0" aria-hidden />
-              <span className="min-w-0 truncate">{teacher}</span>
-            </>
-          )}
+      {meta !== undefined && <span className="tabular w-full text-[11px] text-ink/80">{meta}</span>}
+      {room !== undefined && room !== null && (
+        <span className="flex w-full min-w-0 items-start gap-1 text-[11px] text-ink/80">
+          <MapPin className="mt-0.5 size-3 shrink-0" aria-hidden />
+          <span data-field="room" className="line-clamp-2 min-w-0 flex-1 break-words">
+            {room}
+          </span>
         </span>
-      ) : null}
+      )}
+      {teacher !== undefined && teacher !== null && (
+        <span className="flex w-full min-w-0 items-start gap-1 text-[11px] text-ink/80">
+          <User className="mt-0.5 size-3 shrink-0" aria-hidden />
+          <span data-field="teacher" className="line-clamp-2 min-w-0 flex-1 break-words">
+            {teacher}
+          </span>
+        </span>
+      )}
     </>
   );
 

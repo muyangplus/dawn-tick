@@ -165,11 +165,34 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
+  const roomField = view.container.querySelector('[data-field="room"]');
+  const teacherField = view.container.querySelector('[data-field="teacher"]');
+  check(
+    '地点与老师分两行且可换行',
+    roomField !== null &&
+      teacherField !== null &&
+      !roomField.contains(teacherField) &&
+      !teacherField.contains(roomField) &&
+      roomField.className.includes('break-words') &&
+      teacherField.className.includes('break-words'),
+    '',
+  );
+
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
   check('日程页含今日课程', scheduleText.includes('今日课程'), '');
   check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
+
+  check('日程页提供调课入口', scheduleText.includes('调课 / 调休 / 加课'), '');
+  if (clickByText(view.container, '调课 / 调休 / 加课')) await flush(12);
+  const adjustText = document.body.textContent ?? '';
+  check(
+    '调课入口含三种模式',
+    adjustText.includes('调课') && adjustText.includes('调休') && adjustText.includes('临时加课'),
+    '',
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
 
   const switchedToSettings = clickByText(view.container, '设置');
   await flush(10);

@@ -49,6 +49,8 @@ export interface AppData {
   weekStartDate: string;
   /** 当前查看周内是否有课，含只在别周上的课程（inWeek = false） */
   hasLessons: boolean;
+  /** 当前学期的课程，供调课与临时加课选择 */
+  courses: CourseRow[];
   semester: SemesterRow | null;
   semesters: SemesterRow[];
   slots: TimeSlotRow[];
@@ -96,6 +98,7 @@ export async function loadAppData(
       slots: [],
       grid: new Map(),
       hasLessons: false,
+      courses: [],
       todayLessons: [],
       nextLesson: undefined,
       exams: [],
@@ -205,7 +208,9 @@ export async function loadAppData(
   const todos = semesterEvents
     .filter((row) => row.type === 'temp' || (row.type === 'exam' && row.start_at === null))
     .sort((left, right) => scheduleKey(left) - scheduleKey(right));
-  const reschedules = semesterEvents.filter((row) => row.type === 'reschedule');
+  const reschedules = semesterEvents.filter(
+    (row) => row.type === 'reschedule' || row.type === 'makeup' || row.type === 'holiday',
+  );
 
   return {
     timeZone,
@@ -219,6 +224,7 @@ export async function loadAppData(
     slots,
     grid,
     hasLessons: [...grid.values()].some((list) => list.some((cell) => cell.inWeek)),
+    courses: [...activeCourses].sort((left, right) => left.name.localeCompare(right.name)),
     todayLessons,
     nextLesson: nextOccurrence(occurrences, Date.now()),
     exams,
