@@ -36,6 +36,8 @@ import {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
+import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
+import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
@@ -120,6 +122,40 @@ export function SettingsView({
   const [semesterWeeks, setSemesterWeeks] = useState(20);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [trayStatus, setTrayStatus] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateResult, setUpdateResult] = useState<string | null>(null);
+
+  async function runUpdateCheck(): Promise<void> {
+    setUpdateBusy(true);
+    try {
+      const status = await checkForUpdate({
+        channel: CHANNEL,
+        receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
+        currentVersion: appVersion(),
+      });
+      if (status.error !== null) {
+        setUpdateResult(`检查失败：${status.error}`);
+        logWarn('update', '检查更新失败', { error: status.error, feed: status.feed });
+        return;
+      }
+      const manifest = status.manifest;
+      setUpdateResult(
+        status.available
+          ? `发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在发布页下载`
+          : `已是最新版本（${CHANNEL_LABEL[status.feed]}）`,
+      );
+      logInfo('update', '检查更新', {
+        feed: status.feed,
+        current: status.current,
+        latest: status.latest,
+        available: status.available,
+        verify: verifyHint(status.feed, 'windows'),
+        ...(manifest?.notes === undefined ? {} : { notes: manifest.notes }),
+      });
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!canUseWidget()) return;
@@ -790,6 +826,36 @@ export function SettingsView({
         <a className="text-xs text-primary-strong underline" href="https://github.com/muyangplus/dawn-tick">
           https://github.com/muyangplus/dawn-tick
         </a>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="检查更新"
+            disabled={updateBusy}
+            onClick={() => void runUpdateCheck()}
+          >
+            检查更新
+          </Button>
+          {updateResult !== null && <span className="text-xs text-muted">{updateResult}</span>}
+        </div>
+        {CHANNEL !== 'dev' && (
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span className="flex min-w-0 flex-col">
+              <span>接收测试版更新</span>
+              <span className="truncate text-xs text-muted">
+                {CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后才会收到 beta 版'}
+              </span>
+            </span>
+            <Switch
+              checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
+              aria-label="接收测试版更新"
+              onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
+            />
+          </label>
+        )}
+        {CHANNEL === 'dev' && (
+          <span className="text-xs text-muted">开发渠道：只接收 dev 构建，不参与测试版开关</span>
+        )}
       </CollapsibleCard>
 
       <Dialog

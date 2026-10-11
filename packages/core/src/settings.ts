@@ -39,6 +39,8 @@ export interface AppSettings {
   widgetVariant: WidgetVariant;
   /** 日程页各区块的显示与顺序，逗号分隔，缺省即隐藏 */
   uiScheduleSections: string;
+  /** 是否接收测试版更新；null 表示未设置（beta 渠道默认开，其余默认关） */
+  receiveBeta: boolean | null;
 }
 
 export const SCHEDULE_SECTIONS: readonly string[] = ['actions', 'countdowns', 'exams', 'timeline'];
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   holidayCountdown: true,
   widgetVariant: 'bar',
   uiScheduleSections: 'actions,countdowns,exams,timeline',
+  receiveBeta: null,
 };
 
 const KEYS = {
@@ -86,6 +89,7 @@ const KEYS = {
   holidayCountdown: 'holiday_countdown',
   widgetVariant: 'widget_variant',
   uiScheduleSections: 'ui_schedule_sections',
+  receiveBeta: 'receive_beta',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -112,6 +116,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.holidayCountdown),
     storage.readMeta(KEYS.widgetVariant),
     storage.readMeta(KEYS.uiScheduleSections),
+    storage.readMeta(KEYS.receiveBeta),
   ]);
   const [
     timeZone,
@@ -130,6 +135,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     holidayCountdown,
     widgetVariant,
     uiScheduleSections,
+    receiveBeta,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -165,6 +171,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
         : DEFAULT_SETTINGS.widgetVariant,
     uiScheduleSections:
       uiScheduleSections !== undefined ? parseSections(uiScheduleSections).join(',') : DEFAULT_SETTINGS.uiScheduleSections,
+    receiveBeta:
+      receiveBeta === '1' || receiveBeta === 'true' ? true : receiveBeta === '0' || receiveBeta === 'false' ? false : null,
   };
 }
 
@@ -222,6 +230,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.uiScheduleSections !== undefined) {
     await storage.writeMeta(KEYS.uiScheduleSections, parseSections(patch.uiScheduleSections).join(','));
+  }
+  if (patch.receiveBeta !== undefined && patch.receiveBeta !== null) {
+    await storage.writeMeta(KEYS.receiveBeta, patch.receiveBeta ? '1' : '0');
   }
 
   return readSettings(storage);

@@ -412,6 +412,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="上移区块：考试倒计时"]') !== null,
     '',
   );
+  // 关于卡片默认收起，更新入口的文案由 update 单元测试覆盖，这里不重复断言
 
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(

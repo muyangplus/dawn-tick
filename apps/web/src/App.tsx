@@ -35,6 +35,8 @@ import { applyTheme } from './theme.ts';
 import { attachLogStorage, loadLogs, logDebug, logError, logInfo } from './log.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
+import { checkForUpdate, resolveReceiveBeta } from './update.ts';
+import { CHANNEL, CHANNEL_LABEL, appVersion } from './channel.ts';
 import { writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
 
@@ -177,6 +179,25 @@ export function App() {
   const refresh = useCallback(() => {
     void reload(storage, settings, viewWeek);
   }, [reload, storage, settings, viewWeek]);
+
+  // 启动时检查一次更新，只提示不下载
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const status = await checkForUpdate({
+        channel: CHANNEL,
+        receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
+        currentVersion: appVersion(),
+      });
+      if (cancelled || !status.available) return;
+      toast.success(`发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在设置 → 关于里查看`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // 只在启动时检查一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 过了截止时间的日程默认标记为完成（只在确有需要时写一次，避免循环）
   useEffect(() => {
