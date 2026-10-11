@@ -5,13 +5,24 @@
 //   node tools/backup/export-anywhere.mjs --list
 //   node tools/backup/export-anywhere.mjs --db "<数据库路径>" [--out "<输出文件>"] [--modules all|semesters,courses,events,reminders,settings]
 //   node tools/backup/export-anywhere.mjs --scan "<目录>" [--out "<输出文件>"]
+//   node tools/backup/export-anywhere.mjs --from-backup "<备份.json>" ["<另一个.json>" ...] [--out "<输出文件>"]
+//
+// 网页版（浏览器 IndexedDB）的数据：在网页版里打开 设置 → 数据 → 导出备份 得到 json，再用 --from-backup 处理或直接导入。
 
-import { existsSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { BACKUP_MODULES, exportBackup, summarizeBackup } from '../../packages/core/src/backup.ts';
+import {
+  BACKUP_FORMAT,
+  BACKUP_MODULES,
+  BACKUP_VERSION,
+  moduleStores,
+  exportBackup,
+  summarizeBackup,
+} from '../../packages/core/src/backup.ts';
 import { sqliteStorage } from '../../packages/core/src/sqlite-storage.ts';
 import { openNodeSqlite } from '../../packages/core/src/drivers/node-sqlite.ts';
+import { STORE_KEYS } from '../../packages/core/src/storage.ts';
 
 const args = process.argv.slice(2);
 
@@ -49,9 +60,23 @@ function scan(directory) {
 
 async function run() {
   if (args.includes('--help') || args.length === 0) {
-    console.log('用法：--list 查看已知位置；--db <路径> 导出；--scan <目录> 搜索后导出');
+    console.log('用法：');
+    console.log('  --list                              查看已知数据位置');
+    console.log('  --db <路径> [--out <文件>]          从 SQLite 库导出');
+    console.log('  --scan <目录> [--out <文件>]        在目录（含一层子目录）里找库并导出');
+    console.log('  --from-backup <a.json> [b.json ...] 合并/过滤已有备份');
+    console.log(`  --modules ${BACKUP_MODULES.join(',')}|all`);
     return;
   }
+
+  const modulesArg = argValue('--modules');
+  const pickModules = (available) => {
+    if (modulesArg === undefined || modulesArg === 'all') return [...available];
+    return modulesArg
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => available.includes(item));
+  };
 
   if (args.includes('--list')) {
     console.log('已知数据位置：');
@@ -63,6 +88,64 @@ async function run() {
       if (found.length === 0) console.log('  （未找到 dawn-tick.db）');
       for (const file of found) console.log(`  ${describe(file)}`);
     }
+    return;
+  }
+
+  const backupIndex = args.indexOf('--from-backup');
+  if (backupIndex >= 0) {
+    const files = [];
+    const valueFlags = new Set(['--db', '--out', '--scan', '--modules', '--from-backup']);
+    for (let index = backupIndex + 1; index < args.length; index += 1) {
+      const item = args[index];
+      if (item.startsWith('--')) {
+        if (valueFlags.has(item)) index += 1;
+        continue;
+      }
+      files.push(item);
+    }
+    if (files.length === 0) {
+      console.error('--from-backup 后面要给至少一个备份 json');
+      process.exitCode = 1;
+      return;
+    }
+    const modules = pickModules([...BACKUP_MODULES]);
+    if (modules.length === 0) {
+      console.error(`--modules 只接受：${BACKUP_MODULES.join(',')} 或 all`);
+      process.exitCode = 1;
+      return;
+    }
+    const merged = { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: Date.now(), stores: {}, meta: {}, modules };
+    const counts = new Map();
+    for (const file of files) {
+      if (!existsSync(file)) {
+        console.error(`备份不存在：${file}`);
+        process.exitCode = 1;
+        return;
+      }
+      const payload = JSON.parse(readFileSync(file, 'utf8'));
+      if (payload.format !== BACKUP_FORMAT) {
+        console.error(`不是晓刻备份：${file}`);
+        process.exitCode = 1;
+        return;
+      }
+      for (const store of moduleStores(modules)) {
+        const rows = payload.stores?.[store];
+        if (!Array.isArray(rows)) continue;
+        const key = STORE_KEYS[store];
+        const bucket = new Map((merged.stores[store] ?? []).map((row) => [String(row[key]), row]));
+        for (const row of rows) bucket.set(String(row[key]), row);
+        merged.stores[store] = [...bucket.values()];
+        counts.set(store, (counts.get(store) ?? 0) + rows.length);
+      }
+      for (const [key, value] of Object.entries(payload.meta ?? {})) {
+        if (typeof value === 'string') merged.meta[key] = value;
+      }
+    }
+    const target = argValue('--out') ?? `dawn-tick-backup-merged-${new Date().toISOString().slice(0, 10)}.json`;
+    await writeFile(target, JSON.stringify(merged, null, 2), 'utf8');
+    console.log(`来源：${files.join('、')}`);
+    console.log(`已导出：${target}`);
+    console.log(summarizeBackup(merged));
     return;
   }
 
@@ -92,14 +175,7 @@ async function run() {
     return;
   }
 
-  const modulesArg = argValue('--modules');
-  const modules =
-    modulesArg === undefined || modulesArg === 'all'
-      ? [...BACKUP_MODULES]
-      : modulesArg
-          .split(',')
-          .map((item) => item.trim())
-          .filter((item) => BACKUP_MODULES.includes(item));
+  const modules = pickModules([...BACKUP_MODULES]);
   if (modules.length === 0) {
     console.error(`--modules 只接受：${BACKUP_MODULES.join(',')} 或 all`);
     process.exitCode = 1;
