@@ -33,6 +33,7 @@ import {
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
+import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
@@ -548,6 +549,24 @@ export function SettingsView({
         </label>
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
+            <span>悬浮窗</span>
+            <span className="truncate text-xs text-muted">无边框置顶小条，显示下一节课与倒计时</span>
+          </span>
+          {canUseWidget() ? (
+            <span className="flex shrink-0 gap-2">
+              <Button size="sm" variant="secondary" aria-label="显示悬浮窗" onClick={() => void showWidget()}>
+                显示
+              </Button>
+              <Button size="sm" variant="ghost" aria-label="隐藏悬浮窗" onClick={() => void hideWidget()}>
+                隐藏
+              </Button>
+            </span>
+          ) : (
+            <span className="text-xs text-muted">仅桌面版</span>
+          )}
+        </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
             <span>空日程提示明日预告</span>
             <span className="truncate text-xs text-muted">某天没有安排时，提示明天有多少项</span>
           </span>
@@ -556,8 +575,7 @@ export function SettingsView({
             aria-label="空日程提示明日预告"
             onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
           />
-        </label>
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+        </label>        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>开学倒计时</span>
             <span className="truncate text-xs text-muted">学期开始前显示距离开学还有几天</span>

@@ -405,7 +405,7 @@ fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
         return Some(window);
     }
     let built = WebviewWindowBuilder::new(app, "mini", WebviewUrl::App("mini.html".into()))
-        .title("晓刻 DawnTick · 下一节课")
+        .title("晓刻 DawnTick · 悬浮窗")
         .inner_size(240.0, 104.0)
         .resizable(false)
         .decorations(false)
@@ -415,12 +415,45 @@ fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
         .visible(false)
         .build();
     match built {
-        Ok(window) => Some(window),
+        Ok(window) => {
+            // 首次出现放在主屏右下角，避免出现在奇怪的位置
+            if let Ok(Some(monitor)) = window.primary_monitor() {
+                let size = monitor.size();
+                let scale = monitor.scale_factor();
+                let width = (260.0 * scale) as i32;
+                let height = (140.0 * scale) as i32;
+                let x = size.width as i32 - width;
+                let y = size.height as i32 - height;
+                let _ = window.set_position(tauri::PhysicalPosition::new(x.max(0), y.max(0)));
+            }
+            Some(window)
+        }
         Err(error) => {
-            append_log(&format!("创建紧凑条失败: {error}"));
+            append_log(&format!("创建悬浮窗失败: {error}"));
             None
         }
     }
+}
+
+/// 显示悬浮窗（应用内入口用）。
+#[tauri::command]
+async fn show_widget(app: tauri::AppHandle) -> Result<(), String> {
+    let window = ensure_mini(&app).ok_or_else(|| "悬浮窗不可用".to_string())?;
+    window.show().map_err(|error| format!("显示悬浮窗失败: {error}"))?;
+    let _ = window.set_focus();
+    append_log("已显示悬浮窗");
+    Ok(())
+}
+
+/// 隐藏悬浮窗。
+#[tauri::command]
+async fn hide_widget(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("mini") {
+        window.hide().map_err(|error| format!("隐藏悬浮窗失败: {error}"))?;
+        append_log("已隐藏悬浮窗");
+    }
+    Ok(())
 }
 
 /// 再次启动时的处置方式。
@@ -590,8 +623,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::Manager;
 
     let show_main = MenuItem::with_id(app, "show_main", "显示主窗口", true, None::<&str>)?;
-    let show_mini = MenuItem::with_id(app, "show_mini", "显示紧凑条", true, None::<&str>)?;
-    let hide_mini = MenuItem::with_id(app, "hide_mini", "隐藏紧凑条", true, None::<&str>)?;
+    let show_mini = MenuItem::with_id(app, "show_mini", "显示悬浮窗", true, None::<&str>)?;
+    let hide_mini = MenuItem::with_id(app, "hide_mini", "隐藏悬浮窗", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_main, &show_mini, &hide_mini, &quit])?;
 
@@ -933,7 +966,9 @@ pub fn run() {
             relaunch_elevated_autostart,
             open_import_window,
             close_import_window,
-            submit_page_import
+            submit_page_import,
+            show_widget,
+            hide_widget
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
