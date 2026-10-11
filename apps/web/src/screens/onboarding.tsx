@@ -1,5 +1,15 @@
-import { useState } from 'react';
-import { addDays, createSemester, formatDate, weekStart, type Storage } from '@dawn-tick/core';
+import { useRef, useState } from 'react';
+import {
+  BACKUP_MODULE_LABEL,
+  addDays,
+  createSemester,
+  formatDate,
+  importBackup,
+  summarizeBackup,
+  weekStart,
+  type BackupPayload,
+  type Storage,
+} from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
@@ -19,6 +29,37 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   const [totalWeeks, setTotalWeeks] = useState(20);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<BackupPayload | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function pickFile(file: File): Promise<void> {
+    setError(null);
+    try {
+      const parsed = JSON.parse(await file.text()) as BackupPayload;
+      if (parsed.format !== 'dawn-tick-backup') {
+        setError('这个文件不是晓刻的备份');
+        return;
+      }
+      setPending(parsed);
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function applyImport(): Promise<void> {
+    if (pending === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await importBackup(storage, pending, { mode: 'overwrite' });
+      toast.success(`已导入 ${result.imported} 条数据`);
+      onDone();
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(): Promise<void> {
     setBusy(true);
@@ -78,6 +119,47 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             >
               下周一开学
             </Button>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-line pt-4">
+            <span className="text-xs font-semibold text-ink">已有数据？直接导入</span>
+            <span className="text-xs text-muted">选择晓刻导出的备份文件，或先用 tools/backup/export-anywhere.mjs 从旧位置导出</span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              aria-label="选择备份文件"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file !== undefined) void pickFile(file);
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" aria-label="选择备份文件" disabled={busy} onClick={() => fileRef.current?.click()}>
+                选择备份文件
+              </Button>
+              {pending !== null && (
+                <>
+                  <span className="text-xs text-muted">
+                    {summarizeBackup(pending)
+                      .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
+                      .join('、')}
+                  </span>
+                  <Button variant="primary" aria-label="确认导入" disabled={busy} onClick={() => void applyImport()}>
+                    确认导入
+                  </Button>
+                  <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>
+                    取消
+                  </Button>
+                </>
+              )}
+            </div>
+            {pending !== null && (
+              <span className="text-xs text-muted">
+                导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
+              </span>
+            )}
           </div>
         </Card>
       </div>
