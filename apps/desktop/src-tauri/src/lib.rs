@@ -192,10 +192,37 @@ fn start_hidden() -> bool {
 fn install_panic_logger() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        let text = info.to_string();
         append_log(&format!("panic: {info}"));
-        show_error_box("晓刻 DawnTick 启动失败", &info.to_string());
+        let mut message = text.clone();
+        // 已实测：把便携版放在受限制的目录里运行时，WebView2 的 App Container
+        // 无法使用其中的数据目录，表现为 setup 阶段「拒绝访问」。
+        if text.contains("Failed to setup app") && (text.contains("拒绝访问") || text.contains("os error 5")) {
+            message.push_str(
+                "\n\n可能原因：程序所在目录的权限不允许 WebView2 在其中创建数据目录。\n\
+                 请把 DawnTick.exe 移到你有完全控制权的普通目录（例如桌面或文档下新建的文件夹）再运行。\n\
+                 确认方式：把整个文件夹复制到桌面后双击运行，若能启动即为该原因。",
+            );
+        }
+        message.push_str(&format!("\n\n数据目录与日志：{}", data_root_hint()));
+        append_log(&message);
+        show_error_box("晓刻 DawnTick 启动失败", &message);
         default_hook(info);
     }));
+}
+
+/// 便于用户排查的目录提示。
+fn data_root_hint() -> String {
+    let mut parts = Vec::new();
+    if let Ok(base) = std::env::var("LOCALAPPDATA") {
+        parts.push(format!("用户目录 {base}\\com.dawntick.app"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            parts.push(format!("程序目录 {}", dir.display()));
+        }
+    }
+    parts.join("；")
 }
 
 /// 启动失败时给出可见提示，避免进程静默退出。
@@ -218,76 +245,82 @@ fn show_error_box(_title: &str, _message: &str) {}
 /// 不可用先改名让 WebView2 重建，改名也失败就改用可写目录。
 #[cfg(windows)]
 fn ensure_webview_folder_writable() {
-    // 已由使用者指定数据目录时不再插手
-    if std::env::var("WEBVIEW2_USER_DATA_FOLDER").is_ok() {
-        return;
-    }
-    let Some(base) = std::env::var("LOCALAPPDATA").ok() else {
-        return;
-    };
-    let app_dir = PathBuf::from(&base).join("com.dawntick.app");
-    let dir = app_dir.join("EBWebView");
-    if !dir.exists() || is_writable(&dir) {
-        return;
-    }
+    let mut failures: Vec<String> = Vec::new();
+    let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
 
-    append_log("WebView2 数据目录不可写，可能被其他进程占用");
-    let holders = describe_holders();
-    for line in holders.lines() {
-        append_log(line);
-    }
-
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_secs())
-        .unwrap_or(0);
-    let backup = dir.with_file_name(format!("EBWebView.bak-{stamp}"));
-    if std::fs::rename(&dir, &backup).is_ok() {
-        append_log(&format!("已改名重建: {}", backup.display()));
-        return;
-    }
-    append_log("改名失败，目录被占用");
-
-    let mut candidates = Vec::new();
-    // 首选程序所在目录：便携版放在任意可写位置（含 U 盘）都能自包含运行。
-    // WebView2 会在给定目录下自行创建 EBWebView 子目录，这里给的是它的上级目录。
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(program_dir) = exe.parent() {
-            candidates.push(program_dir.join("DawnTick-data"));
-        }
-    }
-    // 其次与数据库同根的用户目录
-    if let Ok(roaming) = std::env::var("APPDATA") {
-        candidates.push(PathBuf::from(roaming).join("com.dawntick.app"));
-    }
-
-    let mut failures = Vec::new();
-    for folder in candidates {
-        match create_dir_all(&folder) {
-            Ok(()) => {}
+    // 使用者显式指定的目录也要探测：盲信环境变量会让 WebView2 直接失败并 panic。
+    if let Ok(custom) = std::env::var("WEBVIEW2_USER_DATA_FOLDER") {
+        let path = PathBuf::from(&custom);
+        match probe_folder(&path) {
+            Ok(()) => {
+                append_log(&format!("WebView2 数据目录可用: {}（环境变量指定）", path.display()));
+                return;
+            }
             Err(error) => {
-                failures.push(format!("{} 创建失败({error})", folder.display()));
-                continue;
+                failures.push(format!("{}: 环境变量指定但不可用({error})", path.display()));
+                std::env::remove_var("WEBVIEW2_USER_DATA_FOLDER");
             }
         }
-        if !is_writable(&folder) {
-            failures.push(format!("{} 不可写", folder.display()));
-            continue;
+    }
+
+    let base = std::env::var("LOCALAPPDATA").ok();
+    if let Some(ref base) = base {
+        candidates.push((PathBuf::from(base).join("com.dawntick.app"), true));
+        // 与数据库同根的用户目录：默认位置若被提权进程改坏 ACL，这里通常仍可写
+        candidates.push((PathBuf::from(base).join("DawnTick-data"), false));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(program_dir) = exe.parent() {
+            candidates.push((program_dir.join("DawnTick-data"), false));
         }
-        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
-        append_log(&format!(
-            "WebView2 数据目录改用可写位置: {}（其下生成 EBWebView）",
-            folder.display()
-        ));
-        return;
+    }
+    if let Ok(roaming) = std::env::var("APPDATA") {
+        candidates.push((PathBuf::from(roaming).join("com.dawntick.app"), false));
+    }
+
+    let holders = describe_holders();
+
+    for (folder, is_default) in candidates {
+        match probe_folder(&folder) {
+            Ok(()) => {
+                if !is_default {
+                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
+                }
+                append_log(&format!(
+                    "WebView2 数据目录可用: {}{}",
+                    folder.display(),
+                    if is_default { "（默认位置）" } else { "（已切换）" }
+                ));
+                return;
+            }
+            Err(error) => {
+                failures.push(format!("{}: {error}", folder.display()));
+                // 默认位置被占用时尝试改名重建一次，再重新探测
+                if is_default {
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|value| value.as_secs())
+                        .unwrap_or(0);
+                    let dir = folder.join("EBWebView");
+                    let backup = dir.with_file_name(format!("EBWebView.bak-{stamp}"));
+                    if dir.exists() && std::fs::rename(&dir, &backup).is_ok() {
+                        append_log(&format!("已改名重建: {}", backup.display()));
+                        if probe_folder(&folder).is_ok() {
+                            append_log(&format!("WebView2 数据目录可用: {}（改名后）", folder.display()));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     for line in &failures {
-        append_log(&format!("兜底目录不可用: {line}"));
+        append_log(&format!("数据目录不可用: {line}"));
     }
-    let restricted = failures.iter().all(|line| line.contains("os error 5"));
+    let restricted = failures.iter().all(|line| line.contains("拒绝访问") || line.contains("os error 5"));
     let hint = if restricted {
-        "兜底目录都因「拒绝访问」失败，说明当前进程对程序目录与用户目录都没有写权限（可能以受限权限或沙箱方式启动）。请用普通双击方式运行本程序。"
+        "所有候选目录都因「拒绝访问」失败：当前进程对用户目录与程序目录都没有写权限（可能以受限权限或沙箱方式启动）。请用普通双击方式运行本程序。"
     } else {
         "请结束上述进程（或在任务管理器里结束残留的 msedgewebview2.exe）后重试。"
     };
@@ -297,8 +330,20 @@ fn ensure_webview_folder_writable() {
         failures.join("\n"),
         hint
     );
-    append_log("没有可写兜底目录，启动将失败");
+    append_log("没有可写的数据目录，退出启动流程");
     show_error_box("晓刻 DawnTick 启动失败", &message);
+    std::process::exit(1);
+}
+
+/// 真实验证一个目录能否作为 WebView2 数据目录：建目录、建 EBWebView 子目录、写并删除探针文件。
+fn probe_folder(folder: &std::path::Path) -> Result<(), String> {
+    create_dir_all(folder).map_err(|error| format!("创建失败({error})"))?;
+    let inner = folder.join("EBWebView");
+    create_dir_all(&inner).map_err(|error| format!("创建 EBWebView 失败({error})"))?;
+    let probe = inner.join("dawntick-probe.tmp");
+    std::fs::write(&probe, b"probe").map_err(|error| format!("写入失败({error})"))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
 }
 
 /// 列出正在使用或残留占用 WebView2 目录的进程。
