@@ -6,12 +6,12 @@ export function canUseWidget(): boolean {
 }
 
 /** 显示 Windows 悬浮窗（无边框、置顶、不占任务栏）。 */
-export async function showWidget(): Promise<boolean> {
+export async function showWidget(variant?: string): Promise<boolean> {
   if (!canUseWidget()) return false;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('show_widget');
-    logInfo('widget', '显示悬浮窗');
+    await invoke('show_widget', { variant: variant ?? null });
+    logInfo('widget', '显示悬浮窗', { variant: variant ?? 'bar' });
     return true;
   } catch (cause: unknown) {
     logWarn('widget', '显示悬浮窗失败', { message: cause instanceof Error ? cause.message : String(cause) });

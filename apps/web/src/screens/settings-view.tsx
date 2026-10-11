@@ -6,6 +6,7 @@ import {
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
+  WIDGET_VARIANTS,
   createCourse,
   createEvent,
   createSemester,
@@ -29,6 +30,7 @@ import {
   type ThemePreset,
   type TimeSlotRow,
   type WidgetBackground,
+  type WidgetVariant,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
@@ -63,6 +65,13 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   light: '浅色',
   dark: '深色',
   transparent: '透明',
+};
+
+const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
+  bar: '紧凑条：下一节课 + 倒计时',
+  today: '今日课表：今天的课，当前课高亮',
+  minimal: '极简数字：只显示大号倒计时',
+  combo: '组合卡：下一节课 + 待办作业',
 };
 
 export interface SettingsViewProps {
@@ -567,7 +576,12 @@ export function SettingsView({
           </span>
           {canUseWidget() ? (
             <span className="flex shrink-0 gap-2">
-              <Button size="sm" variant="secondary" aria-label="显示悬浮窗" onClick={() => void showWidget()}>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label="显示悬浮窗"
+                onClick={() => void showWidget(settings.widgetVariant)}
+              >
                 显示
               </Button>
               <Button size="sm" variant="ghost" aria-label="隐藏悬浮窗" onClick={() => void hideWidget()}>
@@ -578,6 +592,27 @@ export function SettingsView({
             <span className="text-xs text-muted">仅桌面版</span>
           )}
         </label>
+        <Field label="悬浮窗样式">
+          <Select
+            value={settings.widgetVariant}
+            onValueChange={(value) => {
+              void onPatch({ widgetVariant: value as WidgetVariant }).then(() => {
+                if (canUseWidget()) void showWidget(value);
+              });
+            }}
+          >
+            <SelectTrigger aria-label="悬浮窗样式">
+              <span>{WIDGET_VARIANT_LABEL[settings.widgetVariant]}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {WIDGET_VARIANTS.map((variant) => (
+                <SelectItem key={variant} value={variant}>
+                  {WIDGET_VARIANT_LABEL[variant]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
         {canUseWidget() && (
           <span className="text-xs text-muted">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</span>
         )}

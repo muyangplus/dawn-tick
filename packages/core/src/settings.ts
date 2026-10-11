@@ -4,6 +4,9 @@ import type { Storage } from './storage.ts';
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ThemePreset = 'vivid' | 'fresh' | 'mono' | 'muted';
 export type WidgetBackground = 'light' | 'dark' | 'transparent';
+/** Windows 悬浮窗样式 */
+export type WidgetVariant = 'bar' | 'today' | 'minimal' | 'combo';
+export const WIDGET_VARIANTS: readonly WidgetVariant[] = ['bar', 'today', 'minimal', 'combo'];
 
 export const THEME_PRESETS: readonly ThemePreset[] = ['vivid', 'fresh', 'mono', 'muted'];
 export const VIEW_DAY_OPTIONS: readonly number[] = [5, 6, 7];
@@ -32,6 +35,8 @@ export interface AppSettings {
   semesterCountdown: boolean;
   /** 显示下一个假期倒计时 */
   holidayCountdown: boolean;
+  /** Windows 悬浮窗样式 */
+  widgetVariant: WidgetVariant;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -49,6 +54,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   tomorrowPreview: true,
   semesterCountdown: true,
   holidayCountdown: true,
+  widgetVariant: 'bar',
 };
 
 const KEYS = {
@@ -66,6 +72,7 @@ const KEYS = {
   tomorrowPreview: 'tomorrow_preview',
   semesterCountdown: 'semester_countdown',
   holidayCountdown: 'holiday_countdown',
+  widgetVariant: 'widget_variant',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -90,6 +97,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.tomorrowPreview),
     storage.readMeta(KEYS.semesterCountdown),
     storage.readMeta(KEYS.holidayCountdown),
+    storage.readMeta(KEYS.widgetVariant),
   ]);
   const [
     timeZone,
@@ -106,6 +114,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     tomorrowPreview,
     semesterCountdown,
     holidayCountdown,
+    widgetVariant,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -135,6 +144,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     tomorrowPreview: parseBoolean(tomorrowPreview, DEFAULT_SETTINGS.tomorrowPreview),
     semesterCountdown: parseBoolean(semesterCountdown, DEFAULT_SETTINGS.semesterCountdown),
     holidayCountdown: parseBoolean(holidayCountdown, DEFAULT_SETTINGS.holidayCountdown),
+    widgetVariant:
+      widgetVariant !== undefined && (WIDGET_VARIANTS as readonly string[]).includes(widgetVariant)
+        ? (widgetVariant as WidgetVariant)
+        : DEFAULT_SETTINGS.widgetVariant,
   };
 }
 
@@ -186,6 +199,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.holidayCountdown !== undefined) {
     await storage.writeMeta(KEYS.holidayCountdown, patch.holidayCountdown ? '1' : '0');
+  }
+  if (patch.widgetVariant !== undefined) {
+    await storage.writeMeta(KEYS.widgetVariant, patch.widgetVariant);
   }
 
   return readSettings(storage);

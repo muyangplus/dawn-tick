@@ -405,6 +405,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="假期倒计时"]') !== null,
     '',
   );
+  check('悬浮窗样式可选四种', view.container.querySelector('[aria-label="悬浮窗样式"]') !== null, '');
 
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(

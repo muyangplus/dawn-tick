@@ -186,4 +186,110 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* 极简数字：只留大号倒计时 */
+  .mini-minimal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mini-count-big {
+    color: var(--dt-primary-strong);
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+
+  .mini-minimal-name {
+    color: var(--dt-muted);
+    font-size: var(--text-xs);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 今日课表：可滚动的课次列表 */
+  .mini-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+    gap: 4px;
+  }
+
+  .mini-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .mini-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 6px;
+    border-left: 3px solid var(--dt-border);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--dt-surface-muted) 70%, transparent);
+    font-size: var(--text-xs);
+  }
+
+  .mini-item-now {
+    background: color-mix(in srgb, var(--dt-primary) 18%, transparent);
+    font-weight: 600;
+  }
+
+  .mini-item-done {
+    opacity: 0.45;
+  }
+
+  .mini-item-time {
+    color: var(--dt-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mini-item-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mini-item-room {
+    color: var(--dt-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40%;
+  }
+
+  .mini-item-task {
+    justify-content: space-between;
+  }
+
+  /* 组合卡：上半下一节课，下半待办 */
+  .mini-combo-top,
+  .mini-combo-bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+  }
+
+  .mini-combo-bottom {
+    flex: 1;
+    border-top: 1px solid var(--dt-border);
+    padding-top: 4px;
+  }
 }

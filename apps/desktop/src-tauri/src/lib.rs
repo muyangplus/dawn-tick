@@ -437,13 +437,27 @@ fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     }
 }
 
-/// 显示悬浮窗（应用内入口用）。
+/// 悬浮窗各样式对应的窗口尺寸（逻辑像素）。
+fn widget_size(variant: &str) -> (f64, f64) {
+    match variant {
+        "today" => (268.0, 236.0),
+        "minimal" => (196.0, 68.0),
+        "combo" => (288.0, 268.0),
+        _ => (240.0, 104.0),
+    }
+}
+
+/// 按当前样式调整悬浮窗大小并显示。
 #[tauri::command]
-async fn show_widget(app: tauri::AppHandle) -> Result<(), String> {
+async fn show_widget(app: tauri::AppHandle, variant: Option<String>) -> Result<(), String> {
+    use tauri::Manager;
+    let key = variant.unwrap_or_else(|| "bar".to_string());
     let window = ensure_mini(&app).ok_or_else(|| "悬浮窗不可用".to_string())?;
+    let (width, height) = widget_size(&key);
+    let _ = window.set_size(tauri::LogicalSize::new(width, height));
     window.show().map_err(|error| format!("显示悬浮窗失败: {error}"))?;
     let _ = window.set_focus();
-    append_log("已显示悬浮窗");
+    append_log(&format!("已显示悬浮窗（{key}）"));
     Ok(())
 }
 
