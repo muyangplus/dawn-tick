@@ -341,6 +341,7 @@ export function App() {
           tomorrowPreview={settings.tomorrowPreview}
           semesterCountdown={settings.semesterCountdown}
           holidayCountdown={settings.holidayCountdown}
+          sections={settings.uiScheduleSections}
         />
       )}
       {view === 'import' && (

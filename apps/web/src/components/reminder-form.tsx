@@ -17,6 +17,8 @@ export interface ReminderFormProps {
 
 export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderFormProps) {
   const [reminderId, setReminderId] = useState<string | null>(null);
+  /** 默认使用全局配置；只有关掉才显示并保存本课程单独设置 */
+  const [useGlobal, setUseGlobal] = useState(true);
   const [advance, setAdvance] = useState(20);
   const [custom, setCustom] = useState(false);
   const [skipHolidays, setSkipHolidays] = useState(true);
@@ -31,14 +33,16 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
       const reminder = rows[0];
       if (reminder === undefined) {
         setReminderId(null);
+        setUseGlobal(true);
         setAdvance(20);
         setCustom(false);
         setSkipHolidays(true);
         setSnooze(false);
         return;
       }
-      const minutes = Number(reminder['advance_minutes'] ?? 10);
+      const minutes = Number(reminder['advance_minutes'] ?? 20);
       setReminderId(String(reminder['id']));
+      setUseGlobal(false);
       setAdvance(minutes);
       setCustom(!PRESETS.includes(minutes));
       setSkipHolidays(reminder['skip_holidays'] === 1);
@@ -84,11 +88,27 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
 
   return (
     <section className="flex flex-col gap-3" aria-label="课前提醒">
-      <div className="flex items-center gap-2 text-sm font-medium text-ink">
-        <BellRing className="size-4" aria-hidden />
-        课前提醒
-      </div>
-
+      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+        <span className="flex items-center gap-2">
+          <BellRing className="size-4" aria-hidden />
+          使用全局配置
+        </span>
+        <input
+          type="checkbox"
+          className="size-4"
+          aria-label="使用全局配置"
+          checked={useGlobal}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setUseGlobal(next);
+            if (next && reminderId !== null) void remove();
+          }}
+        />
+      </label>
+      {useGlobal ? (
+        <span className="text-xs text-muted">按设置里的课前提醒时间生效，本课程未单独设置。</span>
+      ) : (
+        <>
       <div className="flex flex-wrap items-center gap-2">
         {PRESETS.map((minutes) => (
           <Button
@@ -154,6 +174,8 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
           </Button>
         )}
       </div>
+        </>
+      )}
     </section>
   );
 }

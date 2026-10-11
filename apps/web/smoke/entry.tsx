@@ -406,6 +406,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   check('悬浮窗样式可选四种', view.container.querySelector('[aria-label="悬浮窗样式"]') !== null, '');
+  check(
+    '日程页区块可显隐排序',
+    view.container.querySelector('[aria-label="显示区块：日程时间线"]') !== null &&
+      view.container.querySelector('[aria-label="上移区块：考试倒计时"]') !== null,
+    '',
+  );
 
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(

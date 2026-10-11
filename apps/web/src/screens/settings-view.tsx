@@ -7,6 +7,8 @@ import {
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
   WIDGET_VARIANTS,
+  SCHEDULE_SECTIONS,
+  parseSections,
   createCourse,
   createEvent,
   createSemester,
@@ -65,6 +67,13 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   light: '浅色',
   dark: '深色',
   transparent: '透明',
+};
+
+const SECTION_LABEL: Record<string, string> = {
+  actions: '入口按钮',
+  countdowns: '日期与倒计时',
+  exams: '考试倒计时',
+  timeline: '日程时间线',
 };
 
 const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
@@ -612,6 +621,57 @@ export function SettingsView({
               ))}
             </SelectContent>
           </Select>
+        </Field>
+        <Field label="日程页区块">
+          <div className="flex flex-col gap-1">
+            {SCHEDULE_SECTIONS.map((section) => {
+              const list = parseSections(settings.uiScheduleSections);
+              const index = list.indexOf(section);
+              return (
+                <div key={section} className="flex min-h-tap items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    aria-label={`显示区块：${SECTION_LABEL[section] ?? section}`}
+                    checked={index >= 0}
+                    onChange={(event) => {
+                      const next = event.target.checked
+                        ? [...list, section]
+                        : list.filter((item) => item !== section);
+                      void onPatch({ uiScheduleSections: next.join(',') });
+                    }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{SECTION_LABEL[section] ?? section}</span>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`上移区块：${SECTION_LABEL[section] ?? section}`}
+                    disabled={index <= 0}
+                    onClick={() => {
+                      const next = [...list];
+                      [next[index - 1], next[index]] = [next[index] as string, next[index - 1] as string];
+                      void onPatch({ uiScheduleSections: next.join(',') });
+                    }}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label={`下移区块：${SECTION_LABEL[section] ?? section}`}
+                    disabled={index < 0 || index >= list.length - 1}
+                    onClick={() => {
+                      const next = [...list];
+                      [next[index + 1], next[index]] = [next[index] as string, next[index + 1] as string];
+                      void onPatch({ uiScheduleSections: next.join(',') });
+                    }}
+                  >
+                    ↓
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
         </Field>
         {canUseWidget() && (
           <span className="text-xs text-muted">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</span>

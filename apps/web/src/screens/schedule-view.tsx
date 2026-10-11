@@ -3,8 +3,11 @@ import { useState } from 'react';
 import {
   addDays,
   createEvent,
+  createReschedule,
+  dateRange,
   formatDate,
   formatTime,
+  parseSections,
   updateEvent,
   type EventRow,
   type Storage,
@@ -34,6 +37,8 @@ export interface ScheduleViewProps {
   semesterCountdown: boolean;
   /** 显示下一个假期倒计时 */
   holidayCountdown: boolean;
+  /** 日程页区块顺序（逗号分隔，缺省即隐藏） */
+  sections: string;
 }
 
 interface TimelineItem {
@@ -161,12 +166,21 @@ export function ScheduleView({
   tomorrowPreview,
   semesterCountdown,
   holidayCountdown,
+  sections,
 }: ScheduleViewProps) {
   const now = Date.now();
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const [viewDate, setViewDate] = useState(data.today);
+  const [rangeFrom, setRangeFrom] = useState(data.today);
+  const [rangeTo, setRangeTo] = useState(data.today);
   const timeline = buildTimeline(data, viewDate);
+  const order = parseSections(sections);
+  const shows = (id: string): boolean => order.includes(id);
+  const orderOf = (id: string): number => {
+    const index = order.indexOf(id);
+    return index < 0 ? 99 : index;
+  };
 
   const daysUntil = (date: string): number =>
     Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
@@ -207,6 +221,77 @@ export function ScheduleView({
     onChanged();
   }
 
+  /** 一次性把一段日期设为假日（最多 60 天）。 */
+  async function setHolidayRange(): Promise<void> {
+    if (data.semester === null) return;
+    const from = rangeFrom <= rangeTo ? rangeFrom : rangeTo;
+    const to = rangeFrom <= rangeTo ? rangeTo : rangeFrom;
+    const dates = dateRange(from, to);
+    if (dates.length === 0 || dates.length > 60) {
+      toast.error('请选择不超过 60 天的连续日期');
+      return;
+    }
+    for (const date of dates) {
+      await createEvent(storage, {
+        userId: 'u1',
+        semesterId: data.semester.id,
+        type: 'holiday',
+        title: '连续假期',
+        onDate: date,
+      });
+    }
+    toast.success(`已把 ${dates.length} 天设为假日`);
+    onChanged();
+  }
+
+  /** 把所选日期的课全部停掉。 */
+  async function cancelDayLessons(): Promise<void> {
+    if (data.semester === null) return;
+    const lessons = data.lessonsByDate.get(viewDate) ?? [];
+    if (lessons.length === 0) {
+      toast.error('这一天没有课');
+      return;
+    }
+    for (const lesson of lessons) {
+      await createReschedule(storage, {
+        userId: 'u1',
+        semesterId: data.semester.id,
+        refScheduleId: lesson.scheduleId,
+        onDate: viewDate,
+        action: 'cancel',
+        title: `停课：${lesson.courseName}`,
+      });
+    }
+    toast.success(`已停掉当天 ${lessons.length} 节课`);
+    onChanged();
+  }
+
+  /** 把所选日期的课顺延到次日同节次。 */
+  async function moveDayLessons(): Promise<void> {
+    if (data.semester === null) return;
+    const lessons = data.lessonsByDate.get(viewDate) ?? [];
+    if (lessons.length === 0) {
+      toast.error('这一天没有课');
+      return;
+    }
+    const target = addDays(viewDate, 1);
+    for (const lesson of lessons) {
+      await createReschedule(storage, {
+        userId: 'u1',
+        semesterId: data.semester.id,
+        refScheduleId: lesson.scheduleId,
+        onDate: viewDate,
+        action: 'move',
+        title: `调课：${lesson.courseName}`,
+        newDate: target,
+        newPeriodStart: lesson.periodStart,
+        newPeriodEnd: lesson.periodEnd,
+      });
+    }
+    toast.success(`已把当天 ${lessons.length} 节课顺延到 ${target}`);
+    onChanged();
+  }
+
   const groups: Array<{ date: string | null; items: TimelineItem[] }> = [];
   for (const item of timeline) {
     const last = groups[groups.length - 1];
@@ -221,7 +306,7 @@ export function ScheduleView({
 
   return (
     <section className="flex flex-col gap-4" aria-label="日程视图">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" style={{ order: orderOf('actions') }}>
         {semesterCountdown && semesterDays !== null && semesterDays > 0 && (
           <span className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink">
             距开学还有 {semesterDays} 天
@@ -250,7 +335,8 @@ export function ScheduleView({
         </Button>
       </div>
 
-      <div className="flex flex-col gap-2">
+      {shows('exams') && (
+      <div className="flex flex-col gap-2" style={{ order: orderOf('exams') }}>
         <span className="flex items-center gap-2 text-sm font-semibold text-ink">
           <GraduationCap className="size-4" aria-hidden />
           考试倒计时
@@ -279,8 +365,10 @@ export function ScheduleView({
           </div>
         )}
       </div>
+      )}
 
-      <div className="flex flex-col gap-3">
+      {shows('timeline') && (
+      <div className="flex flex-col gap-3" style={{ order: orderOf('timeline') }}>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="icon" variant="ghost" aria-label="前一天" onClick={() => setViewDate(addDays(viewDate, -1))}>
             <ChevronLeft className="size-4" aria-hidden />
@@ -314,6 +402,33 @@ export function ScheduleView({
               设为假日
             </Button>
           )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted">连续假期</span>
+          <Input
+            type="date"
+            className="w-36"
+            aria-label="假期开始"
+            value={rangeFrom}
+            onChange={(event) => setRangeFrom(event.target.value)}
+          />
+          <span className="text-xs text-muted">至</span>
+          <Input
+            type="date"
+            className="w-36"
+            aria-label="假期结束"
+            value={rangeTo}
+            onChange={(event) => setRangeTo(event.target.value)}
+          />
+          <Button size="sm" variant="secondary" aria-label="设为连续假日" onClick={() => void setHolidayRange()}>
+            设为连续假日
+          </Button>
+          <Button size="sm" variant="ghost" aria-label="当天全部停课" onClick={() => void cancelDayLessons()}>
+            当天全部停课
+          </Button>
+          <Button size="sm" variant="ghost" aria-label="当天顺延到次日" onClick={() => void moveDayLessons()}>
+            当天顺延到次日
+          </Button>
         </div>
         {groups.length === 0 ? (
           <div className="flex flex-col gap-2">
@@ -417,8 +532,9 @@ export function ScheduleView({
           ))
         )}
       </div>
+      )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2" style={{ order: 98 }}>
         <MapPin className="size-3 text-muted" aria-hidden />
         <span className="text-xs text-muted">
           今天第 {data.week} 周 · 共 {data.todayLessons.length} 节课 · {data.todos.length} 条待办
