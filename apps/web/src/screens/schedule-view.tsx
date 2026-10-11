@@ -18,6 +18,7 @@ export interface ScheduleViewProps {
   onChanged: () => void;
   onAddTodo: () => void;
   onAddExam: () => void;
+  onAddAssignment: () => void;
 }
 
 interface TimelineItem {
@@ -126,7 +127,14 @@ function buildTimeline(data: AppData): TimelineItem[] {
 }
 
 /** 日程页：考试倒计时 + 按时间顺序合并的课程、调课与日程。 */
-export function ScheduleView({ data, storage, onChanged, onAddTodo, onAddExam }: ScheduleViewProps) {
+export function ScheduleView({
+  data,
+  storage,
+  onChanged,
+  onAddTodo,
+  onAddExam,
+  onAddAssignment,
+}: ScheduleViewProps) {
   const now = Date.now();
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
@@ -152,6 +160,9 @@ export function ScheduleView({ data, storage, onChanged, onAddTodo, onAddExam }:
         </Button>
         <Button variant="secondary" size="sm" onClick={onAddExam}>
           加考试
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onAddAssignment}>
+          加作业/汇报
         </Button>
         <Button
           variant="secondary"

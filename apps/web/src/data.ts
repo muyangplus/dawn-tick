@@ -221,7 +221,10 @@ export async function loadAppData(
     .filter((row) => row.type === 'exam' && row.start_at !== null)
     .sort((left, right) => (left.start_at ?? 0) - (right.start_at ?? 0));
   const todos = semesterEvents
-    .filter((row) => row.type === 'temp' || (row.type === 'exam' && row.start_at === null))
+    .filter(
+      (row) =>
+        row.type === 'temp' || row.type === 'todo' || (row.type === 'exam' && row.start_at === null),
+    )
     .sort((left, right) => scheduleKey(left) - scheduleKey(right));
   const reschedules = semesterEvents.filter(
     (row) => row.type === 'reschedule' || row.type === 'makeup' || row.type === 'holiday',

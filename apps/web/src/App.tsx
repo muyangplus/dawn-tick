@@ -70,7 +70,7 @@ export function App() {
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<ManagedCourse | null>(null);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
-  const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam'>('todo');
+  const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam' | 'assignment'>('todo');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
@@ -306,6 +306,10 @@ export function App() {
             setEventFormKind('exam');
             setTodoFormOpen(true);
           }}
+          onAddAssignment={() => {
+            setEventFormKind('assignment');
+            setTodoFormOpen(true);
+          }}
         />
       )}
       {view === 'import' && (
@@ -518,6 +522,7 @@ export function App() {
         semesterId={data.semester.id}
         timeZone={data.timeZone}
         kind={eventFormKind}
+        courses={data.courses.map((course) => ({ id: course.id, name: course.name }))}
         onCreated={refresh}
       />
 
