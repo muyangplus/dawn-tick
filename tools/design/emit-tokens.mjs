@@ -11,7 +11,7 @@ import {
   TAP_MIN,
 } from '../../apps/web/src/design/tokens.ts';
 
-const target = process.argv[2] ?? 'docs/design-tokens.json';
+const target = process.argv[2] ?? 'local-notes/docs/design-tokens.json';
 
 const payload = {
   spacing: SPACING,
