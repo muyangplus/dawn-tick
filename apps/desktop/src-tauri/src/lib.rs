@@ -1161,6 +1161,114 @@ fn elevate_on_access_denied(reason: &str) -> bool {
     }
 }
 
+#[derive(serde::Serialize)]
+struct DatabaseCandidate {
+    path: String,
+    size: u64,
+}
+
+/// 列出可导入的数据库：常见位置 + 指定目录（含一层子目录）。
+#[tauri::command]
+async fn list_data_locations(extra_dir: Option<String>) -> Vec<DatabaseCandidate> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        paths.push(PathBuf::from(&appdata).join("com.dawntick.app").join("dawn-tick.db"));
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        paths.push(PathBuf::from(&local).join("DawnTick").join("dawn-tick.db"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            paths.push(dir.join("DawnTick-data").join("dawn-tick.db"));
+        }
+    }
+    if let Some(directory) = extra_dir {
+        let base = PathBuf::from(&directory);
+        if !base.as_os_str().is_empty() {
+            paths.push(base.join("dawn-tick.db"));
+            if let Ok(entries) = std::fs::read_dir(&base) {
+                for entry in entries.flatten() {
+                    let nested = entry.path().join("dawn-tick.db");
+                    if nested.is_file() {
+                        paths.push(nested);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for path in paths {
+        if !path.is_file() {
+            continue;
+        }
+        let key = path.to_string_lossy().to_string();
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        out.push(DatabaseCandidate { path: key, size });
+    }
+    out
+}
+
+/// 读取指定数据库，返回与应用备份一致的结构（stores + meta）。
+#[tauri::command]
+async fn read_foreign_database(path: String, stores: Vec<String>) -> Result<serde_json::Value, String> {
+    use sqlx::sqlite::SqliteConnectOptions;
+    use sqlx::{Column, Connection, Row, TypeInfo, ValueRef};
+
+    let options = SqliteConnectOptions::new().filename(&path).read_only(true);
+    let mut conn = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|error| format!("打开数据库失败: {error}"))?;
+
+    let mut store_map = serde_json::Map::new();
+    for table in stores {
+        if !table.chars().all(|item| item.is_ascii_alphanumeric() || item == '_') {
+            continue;
+        }
+        let Ok(rows) = sqlx::query(&format!("SELECT * FROM {table}")).fetch_all(&mut conn).await else {
+            continue;
+        };
+        let mut list = Vec::new();
+        for row in rows {
+            let mut object = serde_json::Map::new();
+            for (index, column) in row.columns().iter().enumerate() {
+                let value = match row.try_get_raw(index) {
+                    Ok(raw) if !raw.is_null() => {
+                        let name = raw.type_info().name().to_string();
+                        if name.contains("INT") {
+                            row.try_get::<i64, _>(index).map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
+                        } else if name.contains("REAL") || name.contains("FLOA") || name.contains("DOUB") {
+                            row.try_get::<f64, _>(index).map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
+                        } else {
+                            row.try_get::<String, _>(index).map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
+                        }
+                    }
+                    _ => serde_json::Value::Null,
+                };
+                object.insert(column.name().to_string(), value);
+            }
+            list.push(serde_json::Value::Object(object));
+        }
+        store_map.insert(table, serde_json::Value::Array(list));
+    }
+
+    let mut meta = serde_json::Map::new();
+    if let Ok(rows) = sqlx::query("SELECT key, value FROM app_meta").fetch_all(&mut conn).await {
+        for row in rows {
+            if let (Ok(key), Ok(value)) = (row.try_get::<String, _>(0), row.try_get::<String, _>(1)) {
+                meta.insert(key, serde_json::Value::String(value));
+            }
+        }
+    }
+    let _ = conn.close().await;
+
+    Ok(serde_json::json!({ "stores": store_map, "meta": meta }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
@@ -1215,6 +1323,8 @@ pub fn run() {
             set_autostart,
             relaunch_elevated,
             elevation_status,
+            list_data_locations,
+            read_foreign_database,
             open_import_window,
             close_import_window,
             submit_page_import,
