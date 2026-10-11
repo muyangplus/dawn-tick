@@ -240,6 +240,49 @@ fn show_error_box(title: &str, message: &str) {
 #[cfg(not(windows))]
 fn show_error_box(_title: &str, _message: &str) {}
 
+/// 记录数据库路径与可写性，便于定位 readonly 类报错。只读探测，不改动数据。
+#[cfg(windows)]
+fn log_database_status() {
+    let Some(roaming) = std::env::var("APPDATA").ok() else {
+        append_log("数据库路径未解析：缺少 APPDATA");
+        return;
+    };
+    let dir = PathBuf::from(roaming).join("com.dawntick.app");
+    let file = dir.join("dawn-tick.db");
+    append_log(&format!("数据库路径: {}", file.display()));
+    append_log(&format!(
+        "数据库文件: {}",
+        match std::fs::metadata(&file) {
+            Ok(meta) => format!("存在，{} 字节", meta.len()),
+            Err(error) => format!("不可用({error})"),
+        }
+    ));
+
+    let probe = dir.join("dawntick-write-probe.tmp");
+    match create_dir_all(&dir).and_then(|()| std::fs::write(&probe, b"probe")) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            append_log("数据库目录可写");
+        }
+        Err(error) => append_log(&format!("数据库目录不可写: {error}")),
+    }
+
+    match std::fs::OpenOptions::new().write(true).open(&file) {
+        Ok(_) => append_log("数据库文件可写"),
+        Err(error) => append_log(&format!("数据库文件不可写: {error}")),
+    }
+
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let side = dir.join(format!("dawn-tick.db{suffix}"));
+        if let Ok(meta) = std::fs::metadata(&side) {
+            append_log(&format!("附带文件 dawn-tick.db{suffix}: {} 字节", meta.len()));
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn log_database_status() {}
+
 /// WebView2 的用户数据目录同一时刻只能被一个进程使用，且目录若由提权进程创建，
 /// 普通权限将无法写入，表现为「双击没反应」。三层兜底：可用则不动，
 /// 不可用先改名让 WebView2 重建，改名也失败就改用可写目录。
@@ -1042,6 +1085,9 @@ pub fn run() {
 
     #[cfg(windows)]
     ensure_webview_folder_writable();
+
+    #[cfg(windows)]
+    log_database_status();
 
     let mut builder = tauri::Builder::default();
 
