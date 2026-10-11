@@ -67,10 +67,31 @@ async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), St
     if let Some(existing) = app.get_webview_window(IMPORT_WINDOW) {
         let _ = existing.close();
     }
+    let new_window_target = app.clone();
     tauri::WebviewWindowBuilder::new(&app, IMPORT_WINDOW, tauri::WebviewUrl::External(parsed))
         .title("登录教务并打开课表页")
         .inner_size(1100.0, 780.0)
         .initialization_script(IMPORT_INJECTION)
+        // 记录每次页面导航，便于判断「点了没反应」是没触发跳转还是被拦下。
+        .on_navigation(|target| {
+            append_log(&format!("教务窗口导航: {target}"));
+            true
+        })
+        // 教务菜单多用 window.open 打开子页面，默认会被拒绝且没有任何提示。
+        // 改为在本窗口内跳转：登录会话与「导入到晓刻」按钮都保留。
+        .on_new_window(move |target, _features| {
+            append_log(&format!("教务页面请求新窗口，改为本窗口打开: {target}"));
+            let handle = new_window_target.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                if let Some(window) = handle.get_webview_window(IMPORT_WINDOW) {
+                    if let Err(error) = window.navigate(target) {
+                        append_log(&format!("教务窗口内跳转失败: {error}"));
+                    }
+                }
+            });
+            tauri::webview::NewWindowResponse::Deny
+        })
         .build()
         .map_err(|error| format!("打开教务窗口失败: {error}"))?;
     append_log("教务窗口已创建");
