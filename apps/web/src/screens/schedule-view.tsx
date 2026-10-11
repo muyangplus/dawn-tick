@@ -18,7 +18,6 @@ export interface ScheduleViewProps {
   onChanged: () => void;
   onAddTodo: () => void;
   onAddExam: () => void;
-  onAddAssignment: () => void;
 }
 
 interface TimelineItem {
@@ -53,8 +52,7 @@ function minuteOf(epoch: number | null, timeZone: string): number {
   return (hour ?? 0) * 60 + (minute ?? 0);
 }
 
-function buildTimeline(data: AppData): TimelineItem[] {
-  const items: TimelineItem[] = [];
+function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineItem[] = [];
 
   for (const lesson of data.todayLessons) {
     items.push({
@@ -104,6 +102,13 @@ function buildTimeline(data: AppData): TimelineItem[] {
   for (const todo of data.todos) {
     const date =
       todo.on_date ?? (todo.due_at === null || todo.due_at === undefined ? null : formatDate(todo.due_at, data.timeZone));
+    const linkedCourse = data.courses.find((course) => course.id === todo.subject);
+    const parts: string[] = [];
+    if (linkedCourse !== undefined) parts.push(linkedCourse.name);
+    if (todo.due_at !== null && todo.due_at !== undefined && todo.due_at > Date.now()) {
+      parts.push(formatDayCountdown(todo.due_at, Date.now()));
+    }
+    if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
     items.push({
       key: `todo-${todo.id}`,
       date,
@@ -111,7 +116,7 @@ function buildTimeline(data: AppData): TimelineItem[] {
       rank: 2,
       kind: 'todo',
       title: todo.title,
-      detail: todo.note ?? '',
+      detail: parts.join(' · '),
       done: todo.done === 1,
       event: todo,
     });
@@ -127,14 +132,7 @@ function buildTimeline(data: AppData): TimelineItem[] {
 }
 
 /** 日程页：考试倒计时 + 按时间顺序合并的课程、调课与日程。 */
-export function ScheduleView({
-  data,
-  storage,
-  onChanged,
-  onAddTodo,
-  onAddExam,
-  onAddAssignment,
-}: ScheduleViewProps) {
+export function ScheduleView({ data, storage, onChanged, onAddTodo, onAddExam }: ScheduleViewProps) {
   const now = Date.now();
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
@@ -160,9 +158,6 @@ export function ScheduleView({
         </Button>
         <Button variant="secondary" size="sm" onClick={onAddExam}>
           加考试
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onAddAssignment}>
-          加作业/汇报
         </Button>
         <Button
           variant="secondary"

@@ -216,15 +216,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
-  if (clickByText(view.container, '加作业/汇报')) await flush(12);
+  if (clickByText(view.container, '加日程')) await flush(12);
   check(
-    '加作业入口含关联课程与提前提醒',
+    '加日程可关联课程并带提醒',
     document.querySelector('[aria-label="关联课程"]') !== null &&
-      document.querySelector('[aria-label="作业提前提醒"]') !== null &&
-      document.querySelector('[aria-label="截止日期"]') !== null,
+      document.querySelector('[aria-label="日程提前提醒"]') !== null,
     '',
   );
   if (clickByText(document.body, '取消')) await flush(6);
+  check('日程与作业合并为一个入口', !scheduleText.includes('加作业/汇报'), '');
 
   check('日程页提供课程调整入口', scheduleText.includes('课程调整'), '');
   if (clickByText(view.container, '课程调整')) await flush(12);

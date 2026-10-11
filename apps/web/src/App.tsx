@@ -70,7 +70,7 @@ export function App() {
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<ManagedCourse | null>(null);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
-  const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam' | 'assignment'>('todo');
+  const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam'>('todo');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
@@ -304,10 +304,6 @@ export function App() {
           }}
           onAddExam={() => {
             setEventFormKind('exam');
-            setTodoFormOpen(true);
-          }}
-          onAddAssignment={() => {
-            setEventFormKind('assignment');
             setTodoFormOpen(true);
           }}
         />
