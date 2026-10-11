@@ -337,6 +337,7 @@ fn ensure_webview_folder_writable() {
             }
             Err(error) => {
                 failures.push(format!("{}: {error}", folder.display()));
+                note_access_denied(&format!("WebView2 候选目录 {}", folder.display()), &error);
                 // 默认位置被占用时尝试改名重建一次，再重新探测
                 if is_default {
                     let stamp = std::time::SystemTime::now()
@@ -1120,20 +1121,33 @@ fn database_writable() -> bool {
     true
 }
 
-/// 数据库不可写时自动申请管理员权限；用户取消或已提权过则继续以普通权限运行。
+/// 启动期是否出现过「拒绝访问」，用于决定是否自动提权。
 #[cfg(windows)]
-fn elevate_for_database() -> bool {
+static ACCESS_DENIED_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(windows)]
+fn note_access_denied(context: &str, detail: &str) {
+    if detail.contains("拒绝访问") || detail.contains("os error 5") {
+        ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        append_log(&format!("{context}: 拒绝访问（已记录，稍后按需提权）"));
+    }
+}
+
+/// 遇到拒绝访问时自动申请管理员权限并重启；返回 true 表示调用方应立即退出。
+/// 已提权或本次启动已尝试过提权时不再循环。
+#[cfg(windows)]
+fn elevate_on_access_denied(reason: &str) -> bool {
     if is_elevated() {
-        append_log("已具备管理员权限，数据库仍不可写");
+        append_log(&format!("{reason}：已具备管理员权限，仍被拒绝访问"));
         return false;
     }
     if std::env::args().any(|arg| arg == ELEVATE_MARKER) {
-        append_log("提权后数据库仍不可写，继续以普通权限运行");
+        append_log(&format!("{reason}：提权后仍被拒绝访问，继续以普通权限运行"));
         return false;
     }
     match request_elevation_restart() {
         Ok(()) => {
-            append_log("数据库不可写，已申请管理员权限，等待提权实例接管");
+            append_log(&format!("{reason}：已申请管理员权限，等待提权实例接管"));
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(800));
                 std::process::exit(0);
@@ -1141,7 +1155,7 @@ fn elevate_for_database() -> bool {
             true
         }
         Err(error) => {
-            append_log(&format!("申请管理员权限失败，继续以普通权限运行: {error}"));
+            append_log(&format!("{reason}：申请管理员权限失败，继续以普通权限运行: {error}"));
             false
         }
     }
@@ -1171,9 +1185,23 @@ pub fn run() {
 
     // 数据库不可写（拒绝访问）时自动申请管理员权限并重启
     #[cfg(windows)]
-    if !database_writable() {
-        if elevate_for_database() {
-            return;
+    {
+        let db_denied = !database_writable();
+        if db_denied {
+            ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        let webview_denied = ACCESS_DENIED_SEEN.load(std::sync::atomic::Ordering::SeqCst);
+        if webview_denied || db_denied {
+            let reason = if webview_denied && db_denied {
+                "WebView2 数据目录与数据库均被拒绝访问"
+            } else if webview_denied {
+                "WebView2 数据目录被拒绝访问"
+            } else {
+                "数据库不可写"
+            };
+            if elevate_on_access_denied(reason) {
+                return;
+            }
         }
     }
 
