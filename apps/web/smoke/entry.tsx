@@ -201,7 +201,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     const target = options.find((item) => (item.textContent ?? '').includes('苏州科技大学'));
     if (target instanceof window.HTMLElement) target.click();
     await flush(10);
-    check('选中无入口学校后给出提示', (view.container.textContent ?? '').includes('没有内置入口'), '');
+    const entryBox = view.container.querySelector('input[aria-label="入口地址"]');
+    check(
+      '选中学校后填入教务入口',
+      entryBox instanceof window.HTMLInputElement && entryBox.value.includes('jwgl.usts.edu.cn'),
+      entryBox instanceof window.HTMLInputElement ? entryBox.value : '',
+    );
   }
   const pasteBox = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBox instanceof window.HTMLTextAreaElement) {

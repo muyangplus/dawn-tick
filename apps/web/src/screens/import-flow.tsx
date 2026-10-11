@@ -7,6 +7,7 @@ import {
   applyImport,
   buildEntryUrl,
   countPastedFrames,
+  entryUrlFor,
   extractTimetableFromHtml,
   icsToSchedules,
   inspectPage,
@@ -349,7 +350,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                   setSchoolId(item.id ?? '');
                   if (item.hasEntry) {
                     setSchoolSystem(item.system);
-                    setImportUrl(buildEntryUrl(item.system, item.url, true));
+                    setImportUrl(entryUrlFor(item.system, item.url));
                     setWindowNote(`已填入 ${item.name} 的教务入口（${systemEntry(item.system).label}）`);
                   } else {
                     setSchoolSystem(item.system);

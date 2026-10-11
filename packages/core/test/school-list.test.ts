@@ -5,6 +5,7 @@ import {
   DIRECTORY_NAMES,
   SYSTEM_ENTRIES,
   buildEntryUrl,
+  entryUrlFor,
   matchSchools,
   mergeSchools,
   suggestSchools,
@@ -28,6 +29,33 @@ test('由域名或地址拼出入口', () => {
   assert.equal(buildEntryUrl('qzdatasource', 'https://jw.example.edu.cn/other/path'), 'https://jw.example.edu.cn/jsxsd/');
   assert.equal(buildEntryUrl('jwglxt', 'jw.example.edu.cn', false), 'https://jw.example.edu.cn');
   assert.equal(buildEntryUrl('jwglxt', '   '), '');
+});
+
+test('已有具体路径的入口按原样使用', () => {
+  const usts = BUILTIN_SCHOOLS.find((school) => school.id === 'usts');
+  assert.equal(usts?.name, '苏州科技大学');
+  assert.equal(usts?.system, 'jwglxt');
+  assert.equal(usts?.url, 'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html');
+  assert.equal(
+    entryUrlFor('jwglxt', String(usts?.url)),
+    'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html',
+    '带路径的入口不应被系统模板改写',
+  );
+  assert.equal(
+    entryUrlFor('jwglxt', 'jwgl.usts.edu.cn'),
+    'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html',
+    '纯域名才按系统模板补齐',
+  );
+  assert.equal(
+    entryUrlFor('other', 'https://jw.example.edu.cn/portal/index.html#/hall'),
+    'https://jw.example.edu.cn/portal/index.html#/hall',
+  );
+  assert.equal(entryUrlFor('jwglxt', ''), '');
+
+  const suggestions = suggestSchools('苏州科技', { schools: BUILTIN_SCHOOLS, limit: 5 });
+  const target = suggestions.find((item) => item.name === '苏州科技大学');
+  assert.equal(target?.hasEntry, true, '学校应标记为已有入口');
+  assert.equal(entryUrlFor(target?.system ?? 'other', String(target?.url)), 'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html');
 });
 
 test('可按名称与简称检索', () => {
@@ -82,8 +110,8 @@ test('下拉候选先给带入口的学校再补名单校名', () => {
     limit: 10,
   });
   assert.ok(
-    suggestions.some((item) => item.name === '苏州科技大学' && !item.hasEntry),
-    '自维护条目应在候选里并标注需填域名',
+    suggestions.some((item) => item.name === '苏州科技大学' && item.hasEntry),
+    '已给出网址的学校应标注已有入口',
   );
   assert.ok(
     suggestions.some((item) => item.name === '苏州大学' && item.hasEntry),

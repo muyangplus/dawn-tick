@@ -40,7 +40,7 @@ export const MANUAL_SCHOOLS: readonly SchoolEntry[] = [
     id: 'usts',
     name: '苏州科技大学',
     system: 'jwglxt',
-    url: '',
+    url: 'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html',
     aliases: ['苏科大', '苏州科技'],
     source: 'builtin',
   },
@@ -69,6 +69,24 @@ export function buildEntryUrl(system: SchoolSystem, input: string, withPath = tr
   if (!withPath) return origin;
   const entry = systemEntry(system);
   return `${origin}${entry.loginPath}`;
+}
+
+/**
+ * 取某条学校记录的入口地址：已经带具体路径（或查询、片段）的按原样使用，
+ * 只有纯域名时才按系统模板补上入口路径。
+ */
+export function entryUrlFor(system: SchoolSystem, url: string): string {
+  const trimmed = url.trim();
+  if (trimmed.length === 0) return '';
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withScheme);
+    const hasPath =
+      parsed.pathname.replace(/\/+$/, '').length > 0 || parsed.search.length > 0 || parsed.hash.length > 0;
+    return hasPath ? parsed.toString() : `${parsed.origin}${systemEntry(system).loginPath}`;
+  } catch {
+    return trimmed;
+  }
 }
 
 /** 按名称与简称检索，前缀命中优先。 */
