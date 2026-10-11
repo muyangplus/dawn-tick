@@ -1,6 +1,6 @@
-import { DIRECTORY_NAMES, MANUAL_SCHOOLS, WAREHOUSE_SCHOOLS } from './schools.ts';
+import { DIRECTORY_NAMES, MANUAL_SCHOOLS } from './schools.ts';
 
-export { DIRECTORY_NAMES, MANUAL_SCHOOLS, WAREHOUSE_SCHOOLS };
+export { DIRECTORY_NAMES, MANUAL_SCHOOLS };
 
 export type SchoolSystem = 'jwglxt' | 'qzdatasource' | 'urp' | 'other';
 export interface SystemEntry {
@@ -34,7 +34,7 @@ export interface SchoolEntry {
  * 内置学校：上游适配仓库的条目 + 本项目自行维护的条目。
  * 两段数据都在 schools.ts，手工维护段重新生成时不会被覆盖。
  */
-export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...WAREHOUSE_SCHOOLS, ...MANUAL_SCHOOLS];
+export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...MANUAL_SCHOOLS];
 
 export function systemEntry(system: SchoolSystem): SystemEntry {
   return SYSTEM_ENTRIES.find((entry) => entry.id === system) ?? (SYSTEM_ENTRIES[0] as SystemEntry);

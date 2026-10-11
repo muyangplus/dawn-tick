@@ -5,7 +5,6 @@ import {
   DIRECTORY_NAMES,
   MANUAL_SCHOOLS,
   SYSTEM_ENTRIES,
-  WAREHOUSE_SCHOOLS,
   buildEntryUrl,
   entryUrlFor,
   matchSchools,
@@ -70,16 +69,18 @@ test('可按名称与简称检索', () => {
   assert.ok(matchSchools(BUILTIN_SCHOOLS, '苏科').some((school) => school.name === '苏州科技大学'));
   assert.equal(matchSchools(BUILTIN_SCHOOLS, '不存在的学校').length, 0);
   assert.equal(matchSchools(BUILTIN_SCHOOLS, '').length, BUILTIN_SCHOOLS.length);
-  // 上游仓库条目可按校名与代码检索
-  assert.ok(matchSchools(BUILTIN_SCHOOLS, '安徽电气').length >= 1);
-  assert.ok(matchSchools(BUILTIN_SCHOOLS, 'SUSTECH').length >= 1);
+  // 名单里的校名走候选检索，不带入口信息
+  const directoryHit = suggestSchools('安徽电气', {
+    schools: BUILTIN_SCHOOLS,
+    directory: ['安徽电气工程职业技术学院'],
+  });
+  assert.ok(directoryHit.some((item) => item.name === '安徽电气工程职业技术学院'));
 });
 
-test('内置列表来自上游适配仓库且条目可用', () => {
-  assert.ok(BUILTIN_SCHOOLS.length >= 200, `内置学校数量偏少：${BUILTIN_SCHOOLS.length}`);
+test('内置条目可用且系统模板覆盖四种', () => {
+  assert.ok(BUILTIN_SCHOOLS.length >= 1, `内置学校数量偏少：${BUILTIN_SCHOOLS.length}`);
   const systems = new Set(BUILTIN_SCHOOLS.map((school) => school.system));
   assert.ok(systems.has('jwglxt'), '应包含正方教务学校');
-  assert.ok(systems.has('other'));
   for (const school of BUILTIN_SCHOOLS) {
     assert.ok(school.id.length > 0 && school.name.length > 0);
     if (school.url.length > 0) {
@@ -88,7 +89,11 @@ test('内置列表来自上游适配仓库且条目可用', () => {
     assert.equal(school.source, 'builtin');
   }
   const withUrl = BUILTIN_SCHOOLS.filter((school) => school.url.length > 0);
-  assert.ok(withUrl.length >= 200, `带入口地址的条目偏少：${withUrl.length}`);
+  assert.ok(withUrl.length >= 1);
+  assert.deepEqual(
+    SYSTEM_ENTRIES.map((entry) => entry.id).sort(),
+    ['jwglxt', 'other', 'qzdatasource', 'urp'],
+  );
 });
 
 test('自定义学校覆盖同名内置条目', () => {
@@ -106,15 +111,11 @@ test('自定义学校覆盖同名内置条目', () => {
 });
 
 test('学校数据集中在一个文件且手工段在首位', () => {
-  assert.ok(WAREHOUSE_SCHOOLS.length >= 200, `上游适配条目偏少：${WAREHOUSE_SCHOOLS.length}`);
   assert.ok(DIRECTORY_NAMES.length >= 2000, `高校名单偏少：${DIRECTORY_NAMES.length}`);
   assert.ok(MANUAL_SCHOOLS.some((school) => school.id === 'usts'), '手工维护段应含苏州科技大学');
-  assert.equal(BUILTIN_SCHOOLS.length, WAREHOUSE_SCHOOLS.length + MANUAL_SCHOOLS.length);
+  assert.equal(BUILTIN_SCHOOLS.length, MANUAL_SCHOOLS.length);
   const ids = BUILTIN_SCHOOLS.map((school) => school.id);
   assert.equal(new Set(ids).size, ids.length, '学校 id 不应重复');
-  for (const school of WAREHOUSE_SCHOOLS) {
-    assert.ok(school.code.length > 0, `${school.name} 缺少学校代码`);
-  }
 });
 
 test('下拉候选先给带入口的学校再补名单校名', () => {
@@ -128,8 +129,8 @@ test('下拉候选先给带入口的学校再补名单校名', () => {
     '已给出网址的学校应标注已有入口',
   );
   assert.ok(
-    suggestions.some((item) => item.name === '苏州大学' && item.hasEntry),
-    '带入口的学校应标注已有入口',
+    suggestions.some((item) => item.name === '苏州大学' && !item.hasEntry),
+    '仅名单校名不应标注已有入口',
   );
   const directoryOnly = suggestions.find((item) => item.source === 'directory');
   assert.ok(directoryOnly !== undefined, '名单里独有的学校应作为候选补充');
@@ -143,10 +144,14 @@ test('下拉候选先给带入口的学校再补名单校名', () => {
     '名单校名应出现在候选里',
   );
 
-  const many = suggestSchools('大学', { schools: BUILTIN_SCHOOLS, directory: [], limit: 6 });
+  const many = suggestSchools('大学', {
+    schools: BUILTIN_SCHOOLS,
+    directory: ['示例大学', '样例大学', '测试大学', '模板大学', '演示大学', '范例大学', '参考大学'],
+    limit: 6,
+  });
   assert.equal(many.length, 6, '候选数量应受 limit 限制');
   const empty = suggestSchools('', { schools: BUILTIN_SCHOOLS, directory: ['示例职业学院'], limit: 4 });
-  assert.equal(empty.length, 4);
+  assert.equal(empty.length, Math.min(4, BUILTIN_SCHOOLS.length));
   assert.ok(
     empty.every((item) => item.source !== 'directory'),
     '空查询只列带入口的条目',
