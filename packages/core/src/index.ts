@@ -13,6 +13,7 @@ export * from './settings.ts';
 export * from './sync.ts';
 export * from './validation.ts';
 export * from './reminders.ts';
+export * from './holidays.ts';
 export * from './search.ts';
 export * from './backup.ts';
 export * from './import/index.ts';

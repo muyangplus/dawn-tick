@@ -546,6 +546,17 @@ export function SettingsView({
             onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
           />
         </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>空日程提示明日预告</span>
+            <span className="truncate text-xs text-muted">某天没有安排时，提示明天有多少项</span>
+          </span>
+          <Switch
+            checked={settings.tomorrowPreview}
+            aria-label="空日程提示明日预告"
+            onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
+          />
+        </label>
         <Field label="小组件背景">
           <Select
             value={settings.widgetBackground}

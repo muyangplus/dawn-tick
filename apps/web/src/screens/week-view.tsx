@@ -102,7 +102,7 @@ export function WeekView({
               const day = index + 1;
               const isToday = data.viewWeek === data.week && day === data.todayOfWeek;
               const date = weekDayDate(data.weekStartDate, day);
-              const isHoliday = data.holidays.includes(date);
+              const isHoliday = data.holidayLabels.has(date);
               return (
                 <div
                   key={label}

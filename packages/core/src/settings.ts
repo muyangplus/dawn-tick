@@ -26,6 +26,8 @@ export interface AppSettings {
   classReminderEnabled: boolean;
   /** 课前提醒默认提前分钟数 */
   classReminderMinutes: number;
+  /** 某天没有日程时提示明日预告 */
+  tomorrowPreview: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showOtherWeeks: true,
   classReminderEnabled: true,
   classReminderMinutes: 20,
+  tomorrowPreview: true,
 };
 
 const KEYS = {
@@ -54,6 +57,7 @@ const KEYS = {
   showOtherWeeks: 'show_other_weeks',
   classReminderEnabled: 'class_reminder_enabled',
   classReminderMinutes: 'class_reminder_minutes',
+  tomorrowPreview: 'tomorrow_preview',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -75,6 +79,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.showOtherWeeks),
     storage.readMeta(KEYS.classReminderEnabled),
     storage.readMeta(KEYS.classReminderMinutes),
+    storage.readMeta(KEYS.tomorrowPreview),
   ]);
   const [
     timeZone,
@@ -88,6 +93,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     showOtherWeeks,
     classReminderEnabled,
     classReminderMinutes,
+    tomorrowPreview,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -114,6 +120,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       Number.isFinite(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 180
         ? Math.round(parsedMinutes)
         : DEFAULT_SETTINGS.classReminderMinutes,
+    tomorrowPreview: parseBoolean(tomorrowPreview, DEFAULT_SETTINGS.tomorrowPreview),
   };
 }
 
@@ -156,6 +163,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
       throw new RangeError('提醒提前分钟数需要在 1 到 180 之间');
     }
     await storage.writeMeta(KEYS.classReminderMinutes, String(Math.round(patch.classReminderMinutes)));
+  }
+  if (patch.tomorrowPreview !== undefined) {
+    await storage.writeMeta(KEYS.tomorrowPreview, patch.tomorrowPreview ? '1' : '0');
   }
 
   return readSettings(storage);

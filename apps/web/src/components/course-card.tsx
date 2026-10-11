@@ -74,16 +74,20 @@ export function CourseCard({
     borderLeftColor: resolvedTone === 'holiday' ? 'var(--dt-muted)' : color,
     backgroundColor:
       resolvedTone === 'holiday'
-        ? 'color-mix(in srgb, var(--dt-surface) 88%, var(--dt-muted))'
+        ? 'color-mix(in srgb, var(--dt-surface) 94%, var(--dt-muted))'
         : resolvedTone === 'ghost'
-          ? `color-mix(in srgb, var(--dt-surface) 93%, ${color})`
+          ? `color-mix(in srgb, var(--dt-surface) 97%, ${color})`
           : `color-mix(in srgb, var(--dt-surface) 82%, ${color})`,
     ...(resolvedTone === 'ghost' ? { borderWidth: '1px', borderStyle: 'dashed', borderLeftWidth: '4px' } : {}),
   } as const;
 
   const base = 'flex w-full min-w-0 flex-col gap-0.5 overflow-hidden rounded-sm border-l-4 px-2 py-1.5';
   const toneClass =
-    resolvedTone === 'ghost' ? 'border-line-strong opacity-70' : resolvedTone === 'holiday' ? 'opacity-60' : '';
+    resolvedTone === 'ghost'
+      ? 'border-line-strong text-muted opacity-55'
+      : resolvedTone === 'holiday'
+        ? 'opacity-45'
+        : '';
 
   if (onClick === undefined) {
     return (

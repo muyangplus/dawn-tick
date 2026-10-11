@@ -1,14 +1,24 @@
-import { CalendarClock, GraduationCap, ListChecks, MapPin, Trophy } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, GraduationCap, ListChecks, MapPin, Trophy } from 'lucide-react';
 import { useState } from 'react';
-import { formatDate, formatTime, updateEvent, type EventRow, type Storage } from '@dawn-tick/core';
+import {
+  addDays,
+  createEvent,
+  formatDate,
+  formatTime,
+  updateEvent,
+  type EventRow,
+  type Storage,
+} from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx';
 import { Countdown } from '../components/countdown.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { Button } from '../components/ui/button.tsx';
+import { Input } from '../components/ui/input.tsx';
 import { formatDayCountdown } from '../lib/format.ts';
 import { cn } from '../lib/cn.ts';
+import { toast } from '../components/ui/toaster.tsx';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -18,6 +28,8 @@ export interface ScheduleViewProps {
   onChanged: () => void;
   onAddTodo: () => void;
   onAddExam: () => void;
+  /** 某天没有日程时提示明日预告 */
+  tomorrowPreview: boolean;
 }
 
 interface TimelineItem {
@@ -52,9 +64,10 @@ function minuteOf(epoch: number | null, timeZone: string): number {
   return (hour ?? 0) * 60 + (minute ?? 0);
 }
 
-function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineItem[] = [];
+function buildTimeline(data: AppData, date: string): TimelineItem[] {
+  const items: TimelineItem[] = [];
 
-  for (const lesson of data.todayLessons) {
+  for (const lesson of data.lessonsByDate.get(date) ?? []) {
     items.push({
       key: `lesson-${lesson.scheduleId}-${lesson.startAt}`,
       date: lesson.date,
@@ -78,7 +91,8 @@ function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineIt
   }
 
   for (const item of data.reschedules) {
-    const date = item.on_date ?? null;
+    const itemDate = item.on_date ?? null;
+    if (itemDate !== null && itemDate !== date) continue;
     const detail =
       item.type === 'makeup'
         ? '调休'
@@ -89,7 +103,7 @@ function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineIt
             : '调课';
     items.push({
       key: `adjust-${item.id}`,
-      date,
+      date: itemDate,
       minute: 0,
       rank: 1,
       kind: 'adjust',
@@ -100,8 +114,10 @@ function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineIt
   }
 
   for (const todo of data.todos) {
-    const date =
+    const todoDate =
       todo.on_date ?? (todo.due_at === null || todo.due_at === undefined ? null : formatDate(todo.due_at, data.timeZone));
+    // 选中日期的日程：当天条目 + 未排期条目
+    if (todoDate !== null && todoDate !== date) continue;
     const linkedCourse = data.courses.find((course) => course.id === todo.subject);
     const parts: string[] = [];
     if (linkedCourse !== undefined) parts.push(linkedCourse.name);
@@ -111,7 +127,7 @@ function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineIt
     if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
     items.push({
       key: `todo-${todo.id}`,
-      date,
+      date: todoDate,
       minute: minuteOf(todo.due_at ?? null, data.timeZone),
       rank: 2,
       kind: 'todo',
@@ -131,12 +147,50 @@ function buildTimeline(data: AppData): TimelineItem[] {  const items: TimelineIt
   });
 }
 
-/** 日程页：考试倒计时 + 按时间顺序合并的课程、调课与日程。 */
-export function ScheduleView({ data, storage, onChanged, onAddTodo, onAddExam }: ScheduleViewProps) {
+/** 日程页：考试倒计时 + 按日期切换的时间线。 */
+export function ScheduleView({
+  data,
+  storage,
+  onChanged,
+  onAddTodo,
+  onAddExam,
+  tomorrowPreview,
+}: ScheduleViewProps) {
   const now = Date.now();
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
-  const timeline = buildTimeline(data);
+  const [viewDate, setViewDate] = useState(data.today);
+  const timeline = buildTimeline(data, viewDate);
+
+  const tomorrow = addDays(viewDate, 1);
+  const tomorrowItems = buildTimeline(data, tomorrow).length;
+  const holidayName = data.holidayLabels.get(viewDate);
+
+  async function setHoliday(): Promise<void> {
+    if (data.semester === null) return;
+    await createEvent(storage, {
+      userId: 'u1',
+      semesterId: data.semester.id,
+      type: 'holiday',
+      title: holidayName ?? '放假',
+      onDate: viewDate,
+    });
+    toast.success('已设为假日');
+    onChanged();
+  }
+
+  async function clearHoliday(): Promise<void> {
+    if (data.semester === null) return;
+    await createEvent(storage, {
+      userId: 'u1',
+      semesterId: data.semester.id,
+      type: 'workday',
+      title: '非假日',
+      onDate: viewDate,
+    });
+    toast.success('已设为非假日');
+    onChanged();
+  }
 
   const groups: Array<{ date: string | null; items: TimelineItem[] }> = [];
   for (const item of timeline) {
@@ -202,17 +256,52 @@ export function ScheduleView({ data, storage, onChanged, onAddTodo, onAddExam }:
       </div>
 
       <div className="flex flex-col gap-3">
-        <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <CalendarClock className="size-4" aria-hidden />
-          日程
-        </span>
-        {data.holidays.includes(data.today) && <span className="text-xs text-muted">今天放假，课程不排</span>}
-        {groups.length === 0 ? (
-          <EmptyState
-            icon={ListChecks}
-            title="暂无日程"
-            description="用上方按钮加日程，或到课表页添加课程"
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="icon" variant="ghost" aria-label="前一天" onClick={() => setViewDate(addDays(viewDate, -1))}>
+            <ChevronLeft className="size-4" aria-hidden />
+          </Button>
+          <Input
+            type="date"
+            className="w-40"
+            aria-label="查看日期"
+            value={viewDate}
+            onChange={(event) => setViewDate(event.target.value)}
           />
+          <Button size="icon" variant="ghost" aria-label="后一天" onClick={() => setViewDate(addDays(viewDate, 1))}>
+            <ChevronRight className="size-4" aria-hidden />
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setViewDate(data.today)}>
+            回到今天
+          </Button>
+          <span className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <CalendarClock className="size-4" aria-hidden />
+            {dateLabel(viewDate, data.timeZone)}
+          </span>
+          {holidayName !== undefined ? (
+            <>
+              <span className="text-xs text-muted">放假：{holidayName}</span>
+              <Button size="sm" variant="ghost" aria-label="设为非假日" onClick={() => void clearHoliday()}>
+                设为非假日
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="ghost" aria-label="设为假日" onClick={() => void setHoliday()}>
+              设为假日
+            </Button>
+          )}
+        </div>
+        {groups.length === 0 ? (
+          <div className="flex flex-col gap-2">
+            <EmptyState icon={ListChecks} title="这一天没有安排" description="可切换日期看过去或未来" />
+            {tomorrowPreview && tomorrowItems > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted">明日预告：还有 {tomorrowItems} 项安排</span>
+                <Button size="sm" variant="secondary" onClick={() => setViewDate(tomorrow)}>
+                  看明天
+                </Button>
+              </div>
+            )}
+          </div>
         ) : (
           groups.map((group) => (
             <div key={group.date ?? 'undated'} className="flex flex-col gap-1">
@@ -223,10 +312,11 @@ export function ScheduleView({ data, storage, onChanged, onAddTodo, onAddExam }:
                     key={item.key}
                     className={cn(
                       'flex min-h-tap items-center gap-3 rounded-md border border-line bg-surface px-3',
-                      item.done === true && 'opacity-60',
+                      item.done === true && 'border-line-strong/50 bg-surface-muted/40 text-muted opacity-45',
                     )}
                     style={item.color === undefined ? undefined : { borderLeft: `4px solid ${item.color}` }}
                     data-kind={item.kind}
+                    data-done={item.done === true ? 'true' : undefined}
                   >
                     {item.kind === 'todo' && item.event !== undefined ? (
                       <input

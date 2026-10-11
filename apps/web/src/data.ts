@@ -1,6 +1,10 @@
 import {
   activeSemester,
   addDays,
+  builtinHolidayName,
+  builtinHolidays,
+  builtinWorkdayName,
+  builtinWorkdays,
   dayOfWeek,
   expand,
   formatDate,
@@ -55,8 +59,12 @@ export interface AppData {
   hasLessons: boolean;
   /** 当前学期的课程（含各条排课），供调课与临时加课选择 */
   courses: ManagedCourse[];
-  /** 当前查看周内的放假日（YYYY-MM-DD），这些列上的课灰显 */
-  holidays: string[];
+  /** 按日期查课次，供日程页切换日期查看过去与未来 */
+  lessonsByDate: Map<string, Occurrence[]>;
+  /** 放假日及其名称（内置节假日表 + 手工假日，扣除手工非假日） */
+  holidayLabels: Map<string, string>;
+  /** 调休上班日（内置 + 手工） */
+  workdayDates: string[];
   semester: SemesterRow | null;
   semesters: SemesterRow[];
   slots: TimeSlotRow[];
@@ -105,7 +113,9 @@ export async function loadAppData(
       grid: new Map(),
       hasLessons: false,
       courses: [],
-      holidays: [],
+      holidayLabels: new Map(),
+      workdayDates: [],
+      lessonsByDate: new Map(),
       todayLessons: [],
       nextLesson: undefined,
       exams: [],
@@ -127,11 +137,20 @@ export async function loadAppData(
   const activeCourses = courses.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
   const courseById = new Map(activeCourses.map((row) => [row.id, row]));
   const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
-  const holidayDates = new Set(
-    semesterEvents
-      .filter((row) => row.type === 'holiday' && row.on_date !== null && row.on_date !== undefined)
-      .map((row) => String(row.on_date)),
-  );
+  // 放假：内置节假日表 + 手工「设为假日」，再扣掉手工「设为非假日」
+  const holidayLabels = new Map<string, string>();
+  for (const date of builtinHolidays()) holidayLabels.set(date, builtinHolidayName(date) ?? '放假');
+  const workdays = new Set(builtinWorkdays().filter((date) => builtinWorkdayName(date) !== null));
+  for (const row of semesterEvents) {
+    const date = row.on_date;
+    if (typeof date !== 'string') continue;
+    if (row.type === 'holiday') holidayLabels.set(date, row.title);
+    if (row.type === 'workday') {
+      holidayLabels.delete(date);
+      workdays.add(date);
+    }
+  }
+  const holidayDates = new Set(holidayLabels.keys());
   const viewWeekStart = weekDateOf(semester, viewWeek, 1);
   const dateOfDay = (day: number): string => addDays(viewWeekStart, day - 1);
 
@@ -213,9 +232,16 @@ export async function loadAppData(
     grid.set(key, list);
   }
 
-  const input = await loadExpandInput(storage, semester.id, today, addDays(today, LOOKAHEAD_DAYS));
+  const input = await loadExpandInput(storage, semester.id, addDays(today, -45), addDays(today, 60));
   const occurrences = input === undefined ? [] : expand(input);
-  const todayLessons = occurrences.filter((item) => item.date === today && !item.cancelled);
+  const lessonsByDate = new Map<string, Occurrence[]>();
+  for (const item of occurrences) {
+    if (item.cancelled) continue;
+    const list = lessonsByDate.get(item.date) ?? [];
+    list.push(item);
+    lessonsByDate.set(item.date, list);
+  }
+  const todayLessons = lessonsByDate.get(today) ?? [];
 
   const exams = semesterEvents
     .filter((row) => row.type === 'exam' && row.start_at !== null)
@@ -243,7 +269,9 @@ export async function loadAppData(
     grid,
     hasLessons: [...grid.values()].some((list) => list.some((cell) => cell.inWeek)),
     courses: await listManagedCourses(storage, semester.id),
-    holidays: [...holidayDates],
+    holidayLabels,
+    workdayDates: [...workdays].sort(),
+    lessonsByDate,
     todayLessons,
     nextLesson: nextOccurrence(occurrences, Date.now()),
     exams,

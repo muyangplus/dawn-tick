@@ -4,6 +4,7 @@ import {
   createReschedule,
   readSettings,
   updateSchedule,
+  updateEvent,
   updateSemester,
   writeSettings,
   type AppSettings,
@@ -177,6 +178,20 @@ export function App() {
     void reload(storage, settings, viewWeek);
   }, [reload, storage, settings, viewWeek]);
 
+  // 过了截止时间的日程默认标记为完成（只在确有需要时写一次，避免循环）
+  useEffect(() => {
+    if (data === null || storage === null) return;
+    const now = Date.now();
+    const stale = data.todos.filter(
+      (row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined && row.due_at < now,
+    );
+    if (stale.length === 0) return;
+    void (async () => {
+      for (const row of stale) await updateEvent(storage, row.id, { done: 1 });
+      refresh();
+    })();
+  }, [data, storage, refresh]);
+
   async function openLesson(cell: LessonCell): Promise<void> {
     if (storage === null) return;
     const loaded = await loadCourseDetail(storage, cell.courseId);
@@ -306,6 +321,7 @@ export function App() {
             setEventFormKind('exam');
             setTodoFormOpen(true);
           }}
+          tomorrowPreview={settings.tomorrowPreview}
         />
       )}
       {view === 'import' && (

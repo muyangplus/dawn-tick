@@ -227,6 +227,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('日程与作业合并为一个入口', !scheduleText.includes('加作业/汇报'), '');
 
   check('日程页提供课程调整入口', scheduleText.includes('课程调整'), '');
+  check(
+    '日程可切换日期与设置假日',
+    view.container.querySelector('[aria-label="前一天"]') !== null &&
+      view.container.querySelector('[aria-label="查看日期"]') !== null &&
+      view.container.querySelector('[aria-label="后一天"]') !== null &&
+      (view.container.querySelector('[aria-label="设为假日"]') !== null ||
+        view.container.querySelector('[aria-label="设为非假日"]') !== null),
+    '',
+  );
   if (clickByText(view.container, '课程调整')) await flush(12);
   const adjustText = document.body.textContent ?? '';
   check(
