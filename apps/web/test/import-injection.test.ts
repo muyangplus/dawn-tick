@@ -27,42 +27,53 @@ async function runInjection(options: { fail?: boolean } = {}) {
     pretendToBeVisual: true,
   });
   const { window } = dom;
-  let posted: string | null = null;
-
-  (window as unknown as { fetch: unknown }).fetch = async (_url: string, init: { body: string }) => {
-    posted = init.body;
-    if (options.fail === true) throw new Error('blocked by CSP');
-    return { ok: true, status: 200 };
-  };
+  let target: string | null = null;
 
   window.eval(injectionSource);
   if (window.document.getElementById('dt-import-button') === null) {
     window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
   }
+  (window as unknown as { __dtImportSubmit: (url: string) => void }).__dtImportSubmit = (url: string) => {
+    if (options.block === true) throw new Error('blocked');
+    target = url;
+  };
+
   const button = window.document.getElementById('dt-import-button');
   assert.ok(button instanceof window.HTMLButtonElement, '应注入导入按钮');
   button.click();
-  // 固定等待若干轮，让回调链跑完（失败分支里 posted 也会被赋值）
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  const encoded = target === null ? null : new URLSearchParams(String(target).split('#')[1]).get('d');
+  let payload: string | null = null;
+  if (encoded !== null) {
+    payload = new TextDecoder().decode(Buffer.from(encoded, 'base64url'));
+  }
   const panel = window.document.getElementById('dt-import-fallback');
   const box = panel?.querySelector('textarea');
-  return { posted, fallback: box instanceof window.HTMLTextAreaElement ? box.value : null, panel, button, window };
+  return {
+    target,
+    payload,
+    fallback: box instanceof window.HTMLTextAreaElement ? box.value : null,
+    panel,
+    button,
+    window,
+  };
 }
 
-test('注入脚本挂出按钮并回传页面内容', async () => {
-  const { posted, button } = await runInjection();
-  assert.ok(posted !== null, '应通过自定义协议回传');
-  assert.ok(posted?.includes('<<<DAWNTICK>>>'));
-  assert.match(button.textContent ?? '', /已发送到晓刻/);
+test('注入脚本挂出按钮并带回页面内容', async () => {
+  const { target, payload, button } = await runInjection();
+  assert.ok(target !== null, '应跳转到应用自身页面');
+  assert.match(String(target), /^http:\/\/tauri\.localhost\/import-submit\.html#d=/);
+  assert.ok(payload?.includes('<<<DAWNTICK>>>'));
+  assert.match(button.textContent ?? '', /已交给晓刻/);
 
-  const diagnostics = parsePageDiagnostics(posted ?? '');
+  const diagnostics = parsePageDiagnostics(payload ?? '');
   assert.ok(diagnostics !== null, '应带回诊断信息');
   assert.equal(diagnostics?.v, BOOKMARKLET_VERSION);
   assert.equal(diagnostics?.title, '个人课表查询');
 
-  const result = extractTimetableFromHtml(posted ?? '', { totalWeeks: 20 });
+  const result = extractTimetableFromHtml(payload ?? '', { totalWeeks: 20 });
   assert.equal(result.shape, 'grid');
   assert.equal(result.schedules.length, 1);
   assert.equal(result.schedules[0]?.courseName, '固体废物处理与处置');
@@ -72,11 +83,40 @@ test('注入脚本挂出按钮并回传页面内容', async () => {
   assert.equal(result.schedules[0]?.teacher, '何欣,金伟');
 });
 
-test('回传被页面策略拦截时退回手动复制', async () => {
-  const { fallback, panel, button } = await runInjection({ fail: true });
+test('跳转不可用时退回手动复制', async () => {
+  const { fallback, panel, button, target } = await runInjection({ block: true });
+  assert.equal(target, null);
   assert.ok(panel !== null && panel !== undefined, '应显示可复制的面板');
   assert.ok(fallback?.includes('<<<DAWNTICK>>>'), '面板里应给出可复制的内容');
   assert.match(button.textContent ?? '', /请手动复制/);
+});
+
+test('注入脚本不发起任何网络请求', async () => {
+  const dom = new JSDOM(PAGE, { url: 'https://jw.example.edu.cn/', runScripts: 'outside-only' });
+  const { window } = dom;
+  const fetched: string[] = [];
+  const requested: string[] = [];
+  (window as unknown as { fetch: unknown }).fetch = async (url: string) => {
+    fetched.push(String(url));
+    return { ok: true };
+  };
+  (window as unknown as { XMLHttpRequest: unknown }).XMLHttpRequest = class {
+    open(_method: string, url: string): void {
+      requested.push(url);
+    }
+    send(): void {
+      requested.push('send');
+    }
+  };
+  window.eval(injectionSource);
+  if (window.document.getElementById('dt-import-button') === null) {
+    window.document.dispatchEvent(new window.Event('DOMContentLoaded'));
+  }
+  (window as unknown as { __dtImportSubmit: (url: string) => void }).__dtImportSubmit = () => {};
+  window.document.getElementById('dt-import-button')?.click();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.deepEqual(fetched, [], '不应调用 fetch');
+  assert.deepEqual(requested, [], '不应发起 XHR');
 });
 
 test('重复注入不会挂出两个按钮', async () => {

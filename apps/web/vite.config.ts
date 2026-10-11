@@ -28,6 +28,7 @@ export default defineConfig({
       input: {
         main: `${root}index.html`,
         mini: `${root}mini.html`,
+        submit: `${root}import-submit.html`,
       },
     },
   },

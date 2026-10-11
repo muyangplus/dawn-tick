@@ -37,33 +37,24 @@ const HIDDEN_ARG: &str = "--hidden";
 /// 提权实例的标记参数：只写机器级启动项后退出。
 const REGISTER_ARG: &str = "--register-autostart";
 const MAIN_WINDOW: &str = "main";
-/// 内嵌教务窗口的标签与回传协议。
+/// 内嵌教务窗口的标签。
 const IMPORT_WINDOW: &str = "import";
-const IMPORT_SCHEME: &str = "dtimport";
 
-/// 注入到教务页面的脚本：右下角按钮，点击后把页面（含同源 iframe）回传给应用。
+/// 注入到教务页面的脚本：右下角按钮，点击后把页面（含同源 iframe）带回应用页面。
 const IMPORT_INJECTION: &str = include_str!("import-injection.js");
 
-/// 转发回传内容。自定义协议处理器运行在主线程上，必须立刻返回，
-/// 因此事件派发放到后台线程，避免与主窗口的脚本求值互相等待。
-fn forward_import_payload(app: &tauri::AppHandle, payload: String) -> bool {
+/// 教务页面把内容带到应用自身页面后，由该页面交回主窗口。
+/// 全程不经过任何本机端口，避免与其他监听程序相互影响。
+#[tauri::command]
+async fn submit_page_import(app: tauri::AppHandle, payload: String) -> Result<(), String> {
     use tauri::Emitter;
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        append_log(&format!("教务窗口回传 {} 字节", payload.len()));
-        if let Err(error) = handle.emit("import-payload", payload) {
-            append_log(&format!("转发回传内容失败: {error}"));
-        }
-    });
-    true
-}
-
-fn handle_import_submit(app: &tauri::AppHandle, body: &[u8]) -> bool {
-    let payload = String::from_utf8_lossy(body).to_string();
     if !payload.contains("<<<DAWNTICK>>>") {
-        return false;
+        append_log("教务页面交回的内容缺少标记，已忽略");
+        return Err("内容缺少标记".into());
     }
-    forward_import_payload(app, payload)
+    append_log(&format!("教务页面交回 {} 字节", payload.len()));
+    app.emit("import-payload", payload)
+        .map_err(|error| format!("转发回传内容失败: {error}"))
 }
 
 /// 打开内嵌教务窗口，由用户自行登录并打开课表页。
@@ -913,28 +904,6 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
 
     let builder = builder
-        .register_uri_scheme_protocol(IMPORT_SCHEME, |ctx, request| {
-            let method = request.method().as_str().to_string();
-            let cors = |builder: tauri::http::response::Builder| {
-                builder
-                    .header("Access-Control-Allow-Origin", "*")
-                    .header("Access-Control-Allow-Headers", "*")
-                    .header("Access-Control-Allow-Methods", "POST, OPTIONS")
-            };
-            if method == "OPTIONS" {
-                return cors(tauri::http::Response::builder())
-                    .status(204)
-                    .body(Vec::new())
-                    .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()));
-            }
-            let handled = method == "POST" && handle_import_submit(ctx.app_handle(), request.body());
-            let body = if handled { "{\"ok\":true}" } else { "{\"ok\":false}" };
-            cors(tauri::http::Response::builder())
-                .status(200)
-                .header("Content-Type", "application/json")
-                .body(body.as_bytes().to_vec())
-                .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
-        })
         .invoke_handler(tauri::generate_handler![
             log_event,
             save_startup_prefs,
@@ -942,7 +911,8 @@ pub fn run() {
             set_autostart,
             relaunch_elevated_autostart,
             open_import_window,
-            close_import_window
+            close_import_window,
+            submit_page_import
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
