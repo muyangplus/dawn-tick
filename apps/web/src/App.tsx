@@ -35,6 +35,7 @@ import { applyTheme } from './theme.ts';
 import { attachLogStorage, loadLogs, logDebug, logError, logInfo } from './log.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
+import { canUseWidget } from './widget-window.ts';
 import { writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
 
@@ -177,6 +178,17 @@ export function App() {
   const refresh = useCallback(() => {
     void reload(storage, settings, viewWeek);
   }, [reload, storage, settings, viewWeek]);
+
+  // 首次运行时提示托盘位置：Windows 会把新托盘图标收进折叠区
+  useEffect(() => {
+    if (storage === null || !canUseWidget()) return;
+    void (async () => {
+      const seen = await storage.readMeta('tray_hint_shown');
+      if (seen !== null && seen !== undefined) return;
+      await storage.writeMeta('tray_hint_shown', '1');
+      toast.success('晓刻已驻留托盘：图标在任务栏右下角，若没看到请点「∧」展开后把它拖出来固定');
+    })();
+  }, [storage]);
 
   // 过了截止时间的日程默认标记为完成（只在确有需要时写一次，避免循环）
   useEffect(() => {

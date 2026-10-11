@@ -565,6 +565,11 @@ export function SettingsView({
             <span className="text-xs text-muted">仅桌面版</span>
           )}
         </label>
+        {canUseWidget() && (
+          <span className="text-xs text-muted">
+            托盘图标在任务栏右下角；若看不到，请点「∧」展开隐藏图标，把晓刻拖到任务栏上固定。左键点图标可切换悬浮窗。
+          </span>
+        )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>空日程提示明日预告</span>

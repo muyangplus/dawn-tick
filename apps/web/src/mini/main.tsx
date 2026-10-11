@@ -4,7 +4,10 @@ import { THEME_PRESETS, formatTime, readSettings, type AppSettings } from '@dawn
 import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
+import { installWebviewGuards } from '../webview-guard.ts';
 import '../styles.css';
+
+installWebviewGuards();
 
 const REFRESH_MS = 60_000;
 
