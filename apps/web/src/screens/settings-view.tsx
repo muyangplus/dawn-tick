@@ -435,11 +435,55 @@ export function SettingsView({
           </Button>
         </div>
         <span className="text-xs text-muted">网页关闭后无法提醒；Android 采用系统通知排定，Windows 依赖常驻托盘。</span>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>课前提醒</span>
+            <span className="truncate text-xs text-muted">所有课程默认提醒，可在课程详情里单独设置</span>
+          </span>
+          <Switch
+            checked={settings.classReminderEnabled}
+            aria-label="课前提醒"
+            onCheckedChange={(checked) => void onPatch({ classReminderEnabled: checked })}
+          />
+        </label>
+        <Field label="默认提前">
+          <div className="flex flex-wrap items-center gap-2">
+            {[5, 10, 15, 20, 30].map((minutes) => (
+              <Button
+                key={minutes}
+                size="sm"
+                variant={settings.classReminderMinutes === minutes ? 'primary' : 'secondary'}
+                aria-label={`提前 ${minutes} 分钟`}
+                disabled={!settings.classReminderEnabled}
+                onClick={() => void onPatch({ classReminderMinutes: minutes })}
+              >
+                {minutes} 分钟
+              </Button>
+            ))}
+            <Input
+              type="number"
+              min={1}
+              max={180}
+              className="w-24"
+              aria-label="自定义提前分钟"
+              disabled={!settings.classReminderEnabled}
+              value={String(settings.classReminderMinutes)}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isFinite(value) && value >= 1 && value <= 180) {
+                  void onPatch({ classReminderMinutes: Math.round(value) });
+                }
+              }}
+            />
+          </div>
+        </Field>
         <span className="text-xs text-muted">
           接下来 7 天待提醒 {reminders.upcoming.length} 条
           {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
         </span>
-        <span className="text-xs text-muted">在课表里点击课程即可设置课前 5/10/15/30 分钟或自定义提醒。</span>
+        <span className="text-xs text-muted">
+          想单独改某门课，在课程详情里打开「单独设置这门课的提醒」再调。
+        </span>
       </CollapsibleCard>
 
       <CollapsibleCard id="appearance" title="外观" icon={Palette}>

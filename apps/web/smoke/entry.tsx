@@ -342,6 +342,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   check('课程管理提供编辑与删除', hasLabel(view.container, '编辑课程') && hasLabel(view.container, '删除课程'), '');
+  if (clickByLabel(view.container, '编辑课程')) await flush(12);
+  check(
+    '课程表单可点选周次',
+    document.querySelector('[aria-label="第 1 周"]') !== null &&
+      document.querySelector('[aria-label="周次单周"]') !== null &&
+      document.querySelector('[aria-label="周次双周"]') !== null,
+    '',
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
   check(
     '开发版独占入口可见',
     panelText.includes('填充示例数据') && panelText.includes('导出日志') && panelText.includes('开发版'),
@@ -363,6 +372,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '非本周课程开关存在',
     view.container.querySelector('[aria-label="周视图显示非本周课程"]') !== null,
+    '',
+  );
+  check(
+    '课前提醒默认提前 20 分钟',
+    view.container.querySelector('[aria-label="课前提醒"]') !== null &&
+      view.container.querySelector('[aria-label="提前 20 分钟"]') !== null,
     '',
   );
 

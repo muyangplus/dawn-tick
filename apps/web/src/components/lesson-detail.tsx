@@ -1,4 +1,4 @@
-import { MapPin, Trash2, User } from 'lucide-react';
+import { MapPin, PencilLine, Trash2, User } from 'lucide-react';
 import { deleteCourse, deleteSchedule, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
@@ -14,9 +14,19 @@ export interface LessonDetailProps {
   detail: CourseDetail;
   onChanged: () => void;
   onClose: () => void;
+  /** 打开课程编辑（课程信息与排课时段都在同一个表单里） */
+  onEditCourse?: (courseId: string) => void;
 }
 
-export function LessonDetail({ storage, userId, cell, detail, onChanged, onClose }: LessonDetailProps) {
+export function LessonDetail({
+  storage,
+  userId,
+  cell,
+  detail,
+  onChanged,
+  onClose,
+  onEditCourse,
+}: LessonDetailProps) {
   async function removeSchedule(id: string): Promise<void> {
     await deleteSchedule(storage, id);
     toast.success('已删除该排课');
@@ -67,14 +77,29 @@ export function LessonDetail({ storage, userId, cell, detail, onChanged, onClose
               </span>
               <span className="text-xs text-muted">{row.weeks_raw ?? '未标注周次'}</span>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="删除该排课"
-              onClick={() => void removeSchedule(row.id)}
-            >
-              <Trash2 className="size-4" aria-hidden />
-            </Button>
+            <div className="flex items-center gap-1">
+              {onEditCourse !== undefined && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="编辑该排课"
+                  onClick={() => {
+                    onClose();
+                    onEditCourse(detail.course?.id ?? cell.courseId);
+                  }}
+                >
+                  <PencilLine className="size-4" aria-hidden />
+                </Button>
+              )}
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label="删除该排课"
+                onClick={() => void removeSchedule(row.id)}
+              >
+                <Trash2 className="size-4" aria-hidden />
+              </Button>
+            </div>
           </div>
         ))}
       </section>
@@ -91,6 +116,12 @@ export function LessonDetail({ storage, userId, cell, detail, onChanged, onClose
       )}
 
       <div className="mt-2 flex flex-wrap gap-2">
+        {onEditCourse !== undefined && (
+          <Button variant="secondary" onClick={() => onEditCourse(detail.course?.id ?? cell.courseId)}>
+            <PencilLine className="size-4" aria-hidden />
+            编辑课程与时段
+          </Button>
+        )}
         <Button
           variant="ghost"
           onClick={() => void removeCourse(detail.course?.id ?? cell.courseId)}

@@ -5,6 +5,7 @@ import {
   formatDate,
   loadReminderData,
   type ReminderOccurrence,
+  type ReminderRow,
   type Storage,
 } from '@dawn-tick/core';
 import {
@@ -25,6 +26,12 @@ export interface ReminderView {
   request: () => Promise<void>;
 }
 
+/** 全局课前提醒默认值。 */
+export interface ClassReminderDefaults {
+  enabled: boolean;
+  minutes: number;
+}
+
 function hashKey(key: string): number {
   let hash = 0;
   for (let index = 0; index < key.length; index += 1) {
@@ -33,13 +40,52 @@ function hashKey(key: string): number {
   return hash;
 }
 
-async function collect(storage: Storage, semesterId: string, timeZone: string): Promise<ReminderOccurrence[]> {
+/**
+ * 未单独设置提醒的课程按全局默认值提醒。
+ * 只要这门课有任意一条提醒记录（即使被关掉），就不再套用全局默认，用户可以逐课退出。
+ */
+function withGlobalDefaults(rows: readonly ReminderRow[], defaults: ClassReminderDefaults, courseIds: Set<string>): ReminderRow[] {
+  if (!defaults.enabled) return [...rows];
+  const decided = new Set(rows.map((row) => row.target_id));
+  const now = Date.now();
+  const synthetic: ReminderRow[] = [];
+  for (const courseId of courseIds) {
+    if (decided.has(courseId)) continue;
+    synthetic.push({
+      id: `global-${courseId}`,
+      user_id: 'u1',
+      target_type: 'course',
+      target_id: courseId,
+      advance_minutes: defaults.minutes,
+      enabled: 1,
+      skip_holidays: 1,
+      sound: 1,
+      vibrate: 1,
+      dnd: 0,
+      snooze_minutes: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      rev: 0,
+      dirty: 0,
+    });
+  }
+  return [...rows, ...synthetic];
+}
+
+async function collect(
+  storage: Storage,
+  semesterId: string,
+  timeZone: string,
+  defaults: ClassReminderDefaults,
+): Promise<ReminderOccurrence[]> {
   const today = formatDate(Date.now(), timeZone);
   const data = await loadReminderData(storage, semesterId, today, addDays(today, LOOKAHEAD_DAYS));
   if (data === undefined) return [];
+  const courseIds = new Set(data.occurrences.map((item) => item.courseId));
   return computeReminders({
     occurrences: data.occurrences,
-    reminders: data.reminders,
+    reminders: withGlobalDefaults(data.reminders, defaults, courseIds),
     events: data.events,
     dayKinds: data.dayKinds,
     timeZone: data.timeZone,
@@ -57,17 +103,19 @@ export function useReminders(
   storage: Storage | null,
   semesterId: string | null,
   timeZone: string,
+  defaults: ClassReminderDefaults,
 ): ReminderView {
   const [upcoming, setUpcoming] = useState<ReminderOccurrence[]>([]);
   const [permission, setPermission] = useState<NotifyPermission>(currentNotifyPermission);
   const handled = useRef(new Set<string>());
+  const defaultKey = `${defaults.enabled ? 1 : 0}-${defaults.minutes}`;
 
   useEffect(() => {
     if (storage === null || semesterId === null) return;
     let cancelled = false;
 
     async function tick(current: Storage, id: string): Promise<void> {
-      const items = await collect(current, id, timeZone);
+      const items = await collect(current, id, timeZone, defaults);
       if (cancelled) return;
       setUpcoming(items);
 
@@ -95,7 +143,8 @@ export function useReminders(
       cancelled = true;
       clearInterval(timer);
     };
-  }, [storage, semesterId, timeZone]);
+    // defaultKey 覆盖 enabled 与 minutes，改设置后重新调度
+  }, [storage, semesterId, timeZone, defaultKey]);
 
   return {
     upcoming,

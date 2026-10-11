@@ -22,6 +22,10 @@ export interface AppSettings {
   startHidden: boolean;
   /** 周视图里用虚线显示非本周课程 */
   showOtherWeeks: boolean;
+  /** 课前提醒总开关：未单独设置的课程按下面的分钟数提醒 */
+  classReminderEnabled: boolean;
+  /** 课前提醒默认提前分钟数 */
+  classReminderMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -34,6 +38,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoStart: false,
   startHidden: true,
   showOtherWeeks: true,
+  classReminderEnabled: true,
+  classReminderMinutes: 20,
 };
 
 const KEYS = {
@@ -46,6 +52,8 @@ const KEYS = {
   autoStart: 'auto_start',
   startHidden: 'start_hidden',
   showOtherWeeks: 'show_other_weeks',
+  classReminderEnabled: 'class_reminder_enabled',
+  classReminderMinutes: 'class_reminder_minutes',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -65,10 +73,24 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.autoStart),
     storage.readMeta(KEYS.startHidden),
     storage.readMeta(KEYS.showOtherWeeks),
+    storage.readMeta(KEYS.classReminderEnabled),
+    storage.readMeta(KEYS.classReminderMinutes),
   ]);
-  const [timeZone, autoTimeZone, viewDays, theme, themePreset, widgetBackground, autoStart, startHidden, showOtherWeeks] =
-    entries;
+  const [
+    timeZone,
+    autoTimeZone,
+    viewDays,
+    theme,
+    themePreset,
+    widgetBackground,
+    autoStart,
+    startHidden,
+    showOtherWeeks,
+    classReminderEnabled,
+    classReminderMinutes,
+  ] = entries;
   const parsedDays = Number(viewDays);
+  const parsedMinutes = Number(classReminderMinutes);
 
   return {
     timeZone: timeZone ?? DEFAULT_SETTINGS.timeZone,
@@ -87,6 +109,11 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     autoStart: parseBoolean(autoStart, DEFAULT_SETTINGS.autoStart),
     startHidden: parseBoolean(startHidden, DEFAULT_SETTINGS.startHidden),
     showOtherWeeks: parseBoolean(showOtherWeeks, DEFAULT_SETTINGS.showOtherWeeks),
+    classReminderEnabled: parseBoolean(classReminderEnabled, DEFAULT_SETTINGS.classReminderEnabled),
+    classReminderMinutes:
+      Number.isFinite(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 180
+        ? Math.round(parsedMinutes)
+        : DEFAULT_SETTINGS.classReminderMinutes,
   };
 }
 
@@ -120,6 +147,15 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.showOtherWeeks !== undefined) {
     await storage.writeMeta(KEYS.showOtherWeeks, patch.showOtherWeeks ? '1' : '0');
+  }
+  if (patch.classReminderEnabled !== undefined) {
+    await storage.writeMeta(KEYS.classReminderEnabled, patch.classReminderEnabled ? '1' : '0');
+  }
+  if (patch.classReminderMinutes !== undefined) {
+    if (!Number.isFinite(patch.classReminderMinutes) || patch.classReminderMinutes < 1 || patch.classReminderMinutes > 180) {
+      throw new RangeError('提醒提前分钟数需要在 1 到 180 之间');
+    }
+    await storage.writeMeta(KEYS.classReminderMinutes, String(Math.round(patch.classReminderMinutes)));
   }
 
   return readSettings(storage);

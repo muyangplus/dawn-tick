@@ -7,6 +7,7 @@ import {
   updateSemester,
   writeSettings,
   type AppSettings,
+  type ManagedCourse,
   type SearchHit,
   type Storage,
 } from '@dawn-tick/core';
@@ -67,6 +68,7 @@ export function App() {
   const [move, setMove] = useState<MoveState | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [courseFormOpen, setCourseFormOpen] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<ManagedCourse | null>(null);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
   const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam'>('todo');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -75,7 +77,10 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
-  const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone);
+  const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
+    enabled: settings.classReminderEnabled,
+    minutes: settings.classReminderMinutes,
+  });
 
   const reload = useCallback(
     async (target: Storage | null, current: AppSettings, week?: number | null) => {
@@ -376,6 +381,15 @@ export function App() {
             detail={detail.detail}
             onChanged={refresh}
             onClose={() => setDetail(null)}
+            onEditCourse={(id) => {
+              const managed = data.courses.find((item) => item.id === id) ?? null;
+              if (managed === null) {
+                toast.error('找不到这门课');
+                return;
+              }
+              setEditingCourse(managed);
+              setCourseFormOpen(true);
+            }}
           />
         </aside>
       )}
@@ -399,7 +413,7 @@ export function App() {
           if (!open) setDetail(null);
         }}
         side={breakpoint === 'tablet' ? 'right' : 'bottom'}
-        title={detail?.detail.course?.name ?? detail?.cell.name ?? '课程详情'}
+        title="课程详情"
       >
         {detail !== null && (
           <LessonDetail
@@ -409,6 +423,15 @@ export function App() {
             detail={detail.detail}
             onChanged={refresh}
             onClose={() => setDetail(null)}
+            onEditCourse={(id) => {
+              const managed = data.courses.find((item) => item.id === id) ?? null;
+              if (managed === null) {
+                toast.error('找不到这门课');
+                return;
+              }
+              setEditingCourse(managed);
+              setCourseFormOpen(true);
+            }}
           />
         )}
       </Sheet>
@@ -484,6 +507,7 @@ export function App() {
         preset={settings.themePreset}
         slots={data.slots}
         onCreated={refresh}
+        course={editingCourse}
       />
 
       <TodoForm

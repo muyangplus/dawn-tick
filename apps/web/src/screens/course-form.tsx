@@ -18,30 +18,18 @@ import { toast } from '../components/ui/toaster.tsx';
 import { logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
 
-type WeekMode = 'all' | 'odd' | 'even' | 'range';
-
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-function weeksFor(mode: WeekMode, total: number, from: number, to: number): number[] {
-  if (mode === 'all') return Array.from({ length: total }, (_, index) => index + 1);
-  if (mode === 'odd' || mode === 'even') {
-    const out: number[] = [];
-    for (let week = mode === 'odd' ? 1 : 2; week <= total; week += 2) out.push(week);
-    return out;
-  }
-  const out: number[] = [];
-  for (let week = Math.max(1, from); week <= Math.min(total, to); week += 1) out.push(week);
-  return out;
+function allWeeks(total: number): number[] {
+  return Array.from({ length: total }, (_, index) => index + 1);
 }
 
-function modeOf(weeks: readonly number[], total: number): WeekMode {
-  if (weeks.length === 0) return 'range';
-  if (weeks.length === total) return 'all';
-  const allOdd = weeks.every((week) => week % 2 === 1);
-  const allEven = weeks.every((week) => week % 2 === 0);
-  if (allOdd) return 'odd';
-  if (allEven) return 'even';
-  return 'range';
+function oddWeeks(total: number): number[] {
+  return allWeeks(total).filter((week) => week % 2 === 1);
+}
+
+function evenWeeks(total: number): number[] {
+  return allWeeks(total).filter((week) => week % 2 === 0);
 }
 
 interface ScheduleDraft {
@@ -49,9 +37,8 @@ interface ScheduleDraft {
   dayOfWeek: number;
   periodStart: number;
   periodEnd: number;
-  mode: WeekMode;
-  from: number;
-  to: number;
+  /** 直接点选的周次集合 */
+  weeks: number[];
   room: string;
 }
 
@@ -63,9 +50,7 @@ function newDraft(totalWeeks: number, dayOfWeek: number, periodStart: number): S
     dayOfWeek,
     periodStart,
     periodEnd: periodStart,
-    mode: 'all',
-    from: 1,
-    to: totalWeeks,
+    weeks: allWeeks(totalWeeks),
     room: '',
   };
 }
@@ -144,9 +129,7 @@ export function CourseForm({
               dayOfWeek: schedule.dayOfWeek,
               periodStart: schedule.periodStart,
               periodEnd: schedule.periodEnd,
-              mode: modeOf(weeks, totalWeeks),
-              from: weeks[0] ?? 1,
-              to: weeks.at(-1) ?? totalWeeks,
+              weeks: weeks.length > 0 ? weeks : allWeeks(totalWeeks),
               room: schedule.room ?? '',
             };
           }),
@@ -174,7 +157,7 @@ export function CourseForm({
         dayOfWeek: draft.dayOfWeek,
         periodStart: Math.min(draft.periodStart, draft.periodEnd),
         periodEnd: Math.max(draft.periodStart, draft.periodEnd),
-        weeks: weeksFor(draft.mode, totalWeeks, draft.from, draft.to),
+        weeks: [...draft.weeks].sort((left, right) => left - right),
         room: draft.room.trim().length > 0 ? draft.room.trim() : null,
       }));
 
@@ -285,47 +268,62 @@ export function CourseForm({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="flex flex-col gap-2 rounded-md border border-line p-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <Field label="周次">
+                    <div className="flex flex-wrap gap-1">
+                      {(
+                        [
+                          { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
+                          { id: 'odd', label: '单周', weeks: oddWeeks(totalWeeks) },
+                          { id: 'even', label: '双周', weeks: evenWeeks(totalWeeks) },
+                          { id: 'none', label: '清空', weeks: [] },
+                        ] as const
+                      ).map((item) => (
+                        <Button
+                          key={item.id}
+                          size="sm"
+                          variant="secondary"
+                          aria-label={`周次${item.label}`}
+                          onClick={() => patchDraft(draft.key, { weeks: [...item.weeks] })}
+                        >
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </Field>
+                  <span className="text-xs text-muted">
+                    已选 {draft.weeks.length}/{totalWeeks} 周
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1" role="group" aria-label="周次选择">
+                  {allWeeks(totalWeeks).map((week) => {
+                    const selected = draft.weeks.includes(week);
+                    return (
+                      <button
+                        key={week}
+                        type="button"
+                        aria-label={`第 ${week} 周`}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          patchDraft(draft.key, {
+                            weeks: selected
+                              ? draft.weeks.filter((item) => item !== week)
+                              : [...draft.weeks, week].sort((left, right) => left - right),
+                          })
+                        }
+                        className={cn(
+                          'tabular size-tap rounded-sm border text-xs',
+                          selected ? 'border-primary-strong bg-primary text-on-primary' : 'border-line text-muted',
+                        )}
+                      >
+                        {week}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex flex-wrap items-end gap-2">
-                <Field label="周次">
-                  <Select
-                    value={draft.mode}
-                    onValueChange={(value) => patchDraft(draft.key, { mode: value as WeekMode })}
-                  >
-                    <SelectTrigger aria-label="周次模式" className="w-32">
-                      <span>{{ all: '全周', odd: '单周', even: '双周', range: '指定范围' }[draft.mode]}</span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">全周</SelectItem>
-                      <SelectItem value="odd">单周</SelectItem>
-                      <SelectItem value="even">双周</SelectItem>
-                      <SelectItem value="range">指定范围</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                {draft.mode === 'range' && (
-                  <>
-                    <Field label="起始周">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={totalWeeks}
-                        className="w-20"
-                        value={draft.from}
-                        onChange={(event) => patchDraft(draft.key, { from: Number(event.target.value) })}
-                      />
-                    </Field>
-                    <Field label="结束周">
-                      <Input
-                        type="number"
-                        min={1}
-                        max={totalWeeks}
-                        className="w-20"
-                        value={draft.to}
-                        onChange={(event) => patchDraft(draft.key, { to: Number(event.target.value) })}
-                      />
-                    </Field>
-                  </>
-                )}
                 <Field label="教室">
                   <Input
                     className="w-28"

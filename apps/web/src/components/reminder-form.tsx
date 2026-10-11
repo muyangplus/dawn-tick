@@ -6,7 +6,7 @@ import { Input, Label } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
 
-const PRESETS = [5, 10, 15, 30];
+const PRESETS = [5, 10, 15, 20, 30];
 
 export interface ReminderFormProps {
   storage: Storage;
@@ -17,7 +17,7 @@ export interface ReminderFormProps {
 
 export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderFormProps) {
   const [reminderId, setReminderId] = useState<string | null>(null);
-  const [advance, setAdvance] = useState(10);
+  const [advance, setAdvance] = useState(20);
   const [custom, setCustom] = useState(false);
   const [skipHolidays, setSkipHolidays] = useState(true);
   const [snooze, setSnooze] = useState(false);
@@ -31,7 +31,7 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
       const reminder = rows[0];
       if (reminder === undefined) {
         setReminderId(null);
-        setAdvance(10);
+        setAdvance(20);
         setCustom(false);
         setSkipHolidays(true);
         setSnooze(false);
