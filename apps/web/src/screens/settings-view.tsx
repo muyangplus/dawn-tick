@@ -557,6 +557,28 @@ export function SettingsView({
             onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
           />
         </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>开学倒计时</span>
+            <span className="truncate text-xs text-muted">学期开始前显示距离开学还有几天</span>
+          </span>
+          <Switch
+            checked={settings.semesterCountdown}
+            aria-label="开学倒计时"
+            onCheckedChange={(checked) => void onPatch({ semesterCountdown: checked })}
+          />
+        </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>假期倒计时</span>
+            <span className="truncate text-xs text-muted">显示距离下一个法定假日还有几天</span>
+          </span>
+          <Switch
+            checked={settings.holidayCountdown}
+            aria-label="假期倒计时"
+            onCheckedChange={(checked) => void onPatch({ holidayCountdown: checked })}
+          />
+        </label>
         <Field label="小组件背景">
           <Select
             value={settings.widgetBackground}

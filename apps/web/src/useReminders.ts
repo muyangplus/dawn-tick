@@ -15,6 +15,7 @@ import {
   scheduleNotify,
   type NotifyPermission,
 } from './notify.ts';
+import { logDebug } from './log.ts';
 
 const SCAN_INTERVAL_MS = 30_000;
 const LOOKAHEAD_DAYS = 7;
@@ -118,6 +119,12 @@ export function useReminders(
       const items = await collect(current, id, timeZone, defaults);
       if (cancelled) return;
       setUpcoming(items);
+      logDebug('reminder', '提醒扫描', {
+        upcoming: items.length,
+        enabled: defaults.enabled,
+        minutes: defaults.minutes,
+        next: items[0] === undefined ? null : { title: items[0].title, triggerAt: items[0].triggerAt },
+      });
 
       const now = Date.now();
       for (const item of items) {

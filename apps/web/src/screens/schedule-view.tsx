@@ -30,6 +30,10 @@ export interface ScheduleViewProps {
   onAddExam: () => void;
   /** 某天没有日程时提示明日预告 */
   tomorrowPreview: boolean;
+  /** 显示开学倒计时 */
+  semesterCountdown: boolean;
+  /** 显示下一个假期倒计时 */
+  holidayCountdown: boolean;
 }
 
 interface TimelineItem {
@@ -155,12 +159,23 @@ export function ScheduleView({
   onAddTodo,
   onAddExam,
   tomorrowPreview,
+  semesterCountdown,
+  holidayCountdown,
 }: ScheduleViewProps) {
   const now = Date.now();
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const [viewDate, setViewDate] = useState(data.today);
   const timeline = buildTimeline(data, viewDate);
+
+  const daysUntil = (date: string): number =>
+    Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
+  const semesterStart = data.semester?.start_date ?? null;
+  const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
+  const nextHolidayDate =
+    holidayCountdown
+      ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
+      : null;
 
   const tomorrow = addDays(viewDate, 1);
   const tomorrowItems = buildTimeline(data, tomorrow).length;
@@ -207,6 +222,16 @@ export function ScheduleView({
   return (
     <section className="flex flex-col gap-4" aria-label="日程视图">
       <div className="flex flex-wrap gap-2">
+        {semesterCountdown && semesterDays !== null && semesterDays > 0 && (
+          <span className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink">
+            距开学还有 {semesterDays} 天
+          </span>
+        )}
+        {nextHolidayDate !== null && (
+          <span className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink">
+            距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
+          </span>
+        )}
         <Button variant="secondary" size="sm" onClick={onAddTodo}>
           加日程
         </Button>

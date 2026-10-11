@@ -19,6 +19,8 @@ export const BACKUP_META_KEYS: readonly string[] = [
   'class_reminder_enabled',
   'class_reminder_minutes',
   'tomorrow_preview',
+  'semester_countdown',
+  'holiday_countdown',
 ];
 
 /** 备份模块：界面按模块勾选，导出与导入共用同一分组。 */

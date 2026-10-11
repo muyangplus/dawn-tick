@@ -32,7 +32,7 @@ import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
 import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
-import { attachLogStorage, loadLogs, logError, logInfo } from './log.ts';
+import { attachLogStorage, loadLogs, logDebug, logError, logInfo } from './log.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { writeWidgetSnapshot } from './widget-snapshot.ts';
@@ -181,6 +181,23 @@ export function App() {
   // 过了截止时间的日程默认标记为完成（只在确有需要时写一次，避免循环）
   useEffect(() => {
     if (data === null || storage === null) return;
+    logDebug('data', '数据已加载', {
+      storage: storage.kind,
+      semester: data.semester?.name ?? null,
+      week: data.week,
+      viewWeek: data.viewWeek,
+      slots: data.slots.length,
+      courses: data.courses.length,
+      cells: [...data.grid.values()].reduce((total, list) => total + list.length, 0),
+      todayLessons: data.todayLessons.length,
+      todos: data.todos.length,
+      exams: data.exams.length,
+      adjustments: data.reschedules.length,
+      holidays: data.holidayLabels.size,
+    });
+  }, [data, storage]);
+  useEffect(() => {
+    if (data === null || storage === null) return;
     const now = Date.now();
     const stale = data.todos.filter(
       (row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined && row.due_at < now,
@@ -322,6 +339,8 @@ export function App() {
             setTodoFormOpen(true);
           }}
           tomorrowPreview={settings.tomorrowPreview}
+          semesterCountdown={settings.semesterCountdown}
+          holidayCountdown={settings.holidayCountdown}
         />
       )}
       {view === 'import' && (

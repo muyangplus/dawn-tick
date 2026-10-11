@@ -89,6 +89,10 @@
 
 产物：`DawnTick-<version>-<channel>-windows-x64-setup.exe`（NSIS 安装包）、`DawnTick-<version>-<channel>-windows-x64-portable.zip`（免安装）、`DawnTick-<version>-<channel>-android.apk`、`DawnTick-<version>-<channel>-web.zip`，每个产物附同名 `.sha256` 文件。
 
+## 本地打包
+
+`powershell -File tools/build-local.ps1` 默认 **dev 渠道 + debug 构建**（`-Channel release` 才出 release），产物在 `out-local/`。
+
 ## 许可证
 
 Apache-2.0，见 [LICENSE](LICENSE)。第三方来源与许可见 [THIRD-PARTY.md](THIRD-PARTY.md)。

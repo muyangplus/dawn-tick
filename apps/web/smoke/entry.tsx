@@ -399,6 +399,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="提前 20 分钟"]') !== null,
     '',
   );
+  check(
+    '倒计时可开关',
+    view.container.querySelector('[aria-label="开学倒计时"]') !== null &&
+      view.container.querySelector('[aria-label="假期倒计时"]') !== null,
+    '',
+  );
 
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(

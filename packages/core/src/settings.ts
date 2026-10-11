@@ -28,6 +28,10 @@ export interface AppSettings {
   classReminderMinutes: number;
   /** 某天没有日程时提示明日预告 */
   tomorrowPreview: boolean;
+  /** 显示开学倒计时 */
+  semesterCountdown: boolean;
+  /** 显示下一个假期倒计时 */
+  holidayCountdown: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -43,6 +47,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   classReminderEnabled: true,
   classReminderMinutes: 20,
   tomorrowPreview: true,
+  semesterCountdown: true,
+  holidayCountdown: true,
 };
 
 const KEYS = {
@@ -58,6 +64,8 @@ const KEYS = {
   classReminderEnabled: 'class_reminder_enabled',
   classReminderMinutes: 'class_reminder_minutes',
   tomorrowPreview: 'tomorrow_preview',
+  semesterCountdown: 'semester_countdown',
+  holidayCountdown: 'holiday_countdown',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -80,6 +88,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.classReminderEnabled),
     storage.readMeta(KEYS.classReminderMinutes),
     storage.readMeta(KEYS.tomorrowPreview),
+    storage.readMeta(KEYS.semesterCountdown),
+    storage.readMeta(KEYS.holidayCountdown),
   ]);
   const [
     timeZone,
@@ -94,6 +104,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     classReminderEnabled,
     classReminderMinutes,
     tomorrowPreview,
+    semesterCountdown,
+    holidayCountdown,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -121,6 +133,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
         ? Math.round(parsedMinutes)
         : DEFAULT_SETTINGS.classReminderMinutes,
     tomorrowPreview: parseBoolean(tomorrowPreview, DEFAULT_SETTINGS.tomorrowPreview),
+    semesterCountdown: parseBoolean(semesterCountdown, DEFAULT_SETTINGS.semesterCountdown),
+    holidayCountdown: parseBoolean(holidayCountdown, DEFAULT_SETTINGS.holidayCountdown),
   };
 }
 
@@ -166,6 +180,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.tomorrowPreview !== undefined) {
     await storage.writeMeta(KEYS.tomorrowPreview, patch.tomorrowPreview ? '1' : '0');
+  }
+  if (patch.semesterCountdown !== undefined) {
+    await storage.writeMeta(KEYS.semesterCountdown, patch.semesterCountdown ? '1' : '0');
+  }
+  if (patch.holidayCountdown !== undefined) {
+    await storage.writeMeta(KEYS.holidayCountdown, patch.holidayCountdown ? '1' : '0');
   }
 
   return readSettings(storage);
