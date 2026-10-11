@@ -35,7 +35,6 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 开机自启注册的命令行参数：只有带该参数启动才按「启动时隐藏窗口」处理。
 const HIDDEN_ARG: &str = "--hidden";
 /// 提权实例的标记参数：只写机器级启动项后退出。
-const REGISTER_ARG: &str = "--register-autostart";
 const MAIN_WINDOW: &str = "main";
 /// 托盘创建结果：(是否成功, 细节)
 static TRAY_STATE: std::sync::Mutex<Option<(bool, String)>> = std::sync::Mutex::new(None);
@@ -985,15 +984,14 @@ fn autostart_status() -> AutostartStatus {
 fn set_autostart(enabled: bool) -> Result<AutostartStatus, String> {
     #[cfg(windows)]
     {
-        use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+        use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
         if enabled {
             let command = autostart_reg::command_line()?;
             autostart_reg::write(HKEY_CURRENT_USER, &command)?;
             append_log("已写入用户级开机自启");
         } else {
             let user = autostart_reg::remove(HKEY_CURRENT_USER);
-            let machine = autostart_reg::remove(HKEY_LOCAL_MACHINE);
-            append_log(&format!("已移除开机自启（用户级={user} 机器级={machine}）"));
+            append_log(&format!("已移除用户级开机自启（用户级={user}）"));
         }
         Ok(autostart_status_inner())
     }
@@ -1004,60 +1002,75 @@ fn set_autostart(enabled: bool) -> Result<AutostartStatus, String> {
     }
 }
 
-/// 申请管理员权限重启，由提权实例写入机器级启动项。
-#[tauri::command]
-fn relaunch_elevated_autostart() -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::UI::Shell::ShellExecuteW;
-        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        let exe = std::env::current_exe().map_err(|error| format!("获取程序路径失败: {error}"))?;
-        let to_wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
-        let verb = to_wide("runas");
-        let file = to_wide(&exe.to_string_lossy());
-        let params = to_wide(REGISTER_ARG);
-        let result = unsafe {
-            ShellExecuteW(
-                0,
-                verb.as_ptr(),
-                file.as_ptr(),
-                params.as_ptr(),
-                std::ptr::null(),
-                SW_SHOWNORMAL,
-            )
-        };
-        if (result as isize) <= 32 {
-            return Err(format!("申请管理员权限失败，代码 {}", result as isize));
-        }
-        append_log("已请求提权实例写入机器级启动项");
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        Err("当前平台不支持".to_string())
+#[cfg(windows)]
+const ELEVATE_MARKER: &str = "--elevated-attempt";
+#[cfg(windows)]
+const NO_ELEVATE_ARG: &str = "--no-elevate";
+
+/// 是否已具备管理员权限：用机器级 Run 键的写权限做探测。
+#[cfg(windows)]
+fn is_elevated() -> bool {
+    use windows_sys::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY_LOCAL_MACHINE, KEY_SET_VALUE};
+    const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let path: Vec<u16> = RUN_KEY.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut handle: isize = 0;
+    let status = unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, path.as_ptr(), 0, KEY_SET_VALUE, &mut handle) };
+    if status == 0 {
+        unsafe { RegCloseKey(handle) };
+        true
+    } else {
+        false
     }
 }
 
-/// 提权实例启动时的分支：只写机器级启动项，不创建窗口。
+/// 启动时自动申请管理员权限：未提权则用 runas 重新启动自己并让当前实例退出。
+/// 返回 true 表示调用方应立即退出（提权实例会接管后续流程）。
 #[cfg(windows)]
-fn run_elevated_registration() -> bool {
-    if !std::env::args().any(|arg| arg == REGISTER_ARG) {
+fn auto_elevate() -> bool {
+    if std::env::args().any(|arg| arg == NO_ELEVATE_ARG) {
+        append_log("按参数跳过提权，以普通权限运行");
         return false;
     }
-    use windows_sys::Win32::System::Registry::HKEY_LOCAL_MACHINE;
-    append_log("提权实例：写入机器级开机自启");
-    let result = autostart_reg::command_line()
-        .and_then(|command| autostart_reg::write(HKEY_LOCAL_MACHINE, &command));
-    match result {
-        Ok(()) => {
-            append_log("机器级开机自启已写入");
-            show_error_box("晓刻 DawnTick", "已注册开机自启（机器级），可直接关闭本提示。");
-        }
-        Err(error) => {
-            append_log(&format!("机器级开机自启写入失败: {error}"));
-            show_error_box("晓刻 DawnTick 注册失败", &error);
-        }
+    if is_elevated() {
+        append_log("已具备管理员权限");
+        return false;
     }
+    if std::env::args().any(|arg| arg == ELEVATE_MARKER) {
+        append_log("提权后仍未获得管理员权限，以普通权限继续");
+        return false;
+    }
+
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let exe = match std::env::current_exe() {
+        Ok(value) => value,
+        Err(error) => {
+            append_log(&format!("取程序路径失败，跳提权: {error}"));
+            return false;
+        }
+    };
+    let mut params: Vec<String> = std::env::args().skip(1).filter(|arg| arg != ELEVATE_MARKER).collect();
+    params.push(ELEVATE_MARKER.to_string());
+    let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
+    let verb = wide("runas");
+    let file = wide(&exe.to_string_lossy());
+    let args = wide(&params.join(" "));
+    let result = unsafe {
+        ShellExecuteW(
+            0,
+            verb.as_ptr(),
+            file.as_ptr(),
+            args.as_ptr(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        append_log(&format!("申请管理员权限被取消或失败（代码 {}），以普通权限继续", result as isize));
+        return false;
+    }
+    append_log("已申请管理员权限，等待提权实例接管");
     true
 }
 
@@ -1066,9 +1079,8 @@ pub fn run() {
     install_panic_logger();
     append_log(&format!("应用启动 v{APP_VERSION}"));
 
-    // 提权实例只做注册，不进入正常启动流程
     #[cfg(windows)]
-    if run_elevated_registration() {
+    if auto_elevate() {
         return;
     }
 
@@ -1097,7 +1109,6 @@ pub fn run() {
             save_startup_prefs,
             autostart_status,
             set_autostart,
-            relaunch_elevated_autostart,
             open_import_window,
             close_import_window,
             submit_page_import,
