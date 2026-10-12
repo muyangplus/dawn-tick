@@ -3,11 +3,14 @@ import type { ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   addDays,
+  BUILTIN_TIMETABLES,
   builtinHolidays,
   createCourse,
   createEvent,
   createSchedule,
   createSemester,
+  DEFAULT_TIMETABLE_ID,
+  findTimetable,
   validatedStorage,
   writeSettings,
 } from '@dawn-tick/core';
@@ -769,6 +772,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const rangeText = (view.container.querySelector('[data-role="lesson-time"]')?.textContent ?? '').trim();
   check('日程时间线课程显示开始–结束', rangeText === picked.range, `${rangeText} @ ${picked.date}`);
   check('时间线行不再有行内调课按钮', !hasLabel(view.container, '调课：'), '');
+  // 课程条目不再显示「第 X 节」：左侧时间列、性质标签与标题都还在，只是不再有节次文案
+  const timelineLessonRowSample = view.container.querySelector('[data-role="timeline-row"][data-kind="lesson"]');
+  const lessonRowText = (timelineLessonRowSample?.textContent ?? '').trim();
+  check(
+    '日程课程条目不显示第 X 节',
+    timelineLessonRowSample !== null &&
+      rangeText === picked.range &&
+      !/第\s*\d+(\s*[-–]\s*\d+)?\s*节/.test(lessonRowText) &&
+      lessonRowText.includes(picked.course) &&
+      (timelineLessonRowSample.querySelector('[data-role="timeline-nature"]')?.textContent ?? '').trim() ===
+        '课程',
+    `${rangeText} | ${lessonRowText}`,
+  );
 
   const timelineLessonRow = view.container.querySelector('[data-role="timeline-lesson"]');
   let rowClicked = false;
@@ -1094,20 +1110,75 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('input[aria-label="第 1 节结束时间"]') !== null,
     '',
   );
-  // 课间参数已从界面移除：时间表卡片里不应再有任何「课间」输入或文案
+  // 每节时长 / 课间 恢复为可见设置：它们是「从这一节起顺延重排」用的时长与课间
   const timetableHeader = view.container.querySelector('button[aria-label^="时间表"]');
   const timetableCard: Element = timetableHeader?.parentElement ?? view.container;
-  const gapLabels = [...timetableCard.querySelectorAll('input[aria-label]')]
-    .map((item) => item.getAttribute('aria-label') ?? '')
-    .filter((label) => label.includes('课间'));
+  const durationInput = view.container.querySelector<HTMLInputElement>('input[aria-label="每节时长（分钟）"]');
+  const breakInput = view.container.querySelector<HTMLInputElement>('input[aria-label="课间（分钟）"]');
   check(
-    '课间输入已移除',
-    gapLabels.length === 0 && !(timetableCard.textContent ?? '').includes('课间'),
-    gapLabels.length > 0
-      ? gapLabels.join(',')
-      : (timetableCard.textContent ?? '').includes('课间')
-        ? '卡片内仍有「课间」文案'
-        : '时间表卡片内没有课间输入与文案',
+    '时间表恢复每节时长与课间输入',
+    durationInput !== null &&
+      breakInput !== null &&
+      durationInput.value === '45' &&
+      breakInput.value === '10' &&
+      durationInput.min === '10' &&
+      durationInput.max === '240' &&
+      breakInput.min === '0' &&
+      breakInput.max === '120' &&
+      timetableCard.contains(durationInput) &&
+      timetableCard.contains(breakInput) &&
+      (timetableCard.textContent ?? '').includes('课间'),
+    `时长=${durationInput?.value}（${durationInput?.min}-${durationInput?.max}）课间=${breakInput?.value}（${breakInput?.min}-${breakInput?.max}）`,
+  );
+
+  // 作息预设：默认选中内置默认作息，下拉里列的是 BUILTIN_TIMETABLES
+  const defaultPreset = findTimetable(DEFAULT_TIMETABLE_ID);
+  check(
+    '作息预设默认选中内置默认作息',
+    defaultPreset !== undefined &&
+      defaultPreset.periods.length > 0 &&
+      triggerText('作息预设') === defaultPreset.name &&
+      BUILTIN_TIMETABLES.length >= 1 &&
+      BUILTIN_TIMETABLES.some((preset) => preset.periods.length >= 10),
+    `选中=${triggerText('作息预设')} / 内置 ${BUILTIN_TIMETABLES.length} 套`,
+  );
+
+  // 套用苏科大作息：时间表照抄预设课次，时长/课间同步成预设里最常见的 45 / 10
+  const periodClock = (period: number, field: '开始' | '结束'): string =>
+    view.container.querySelector<HTMLInputElement>(`input[aria-label="第 ${period} 节${field}时间"]`)?.value ?? '';
+  // 先把两个输入改成别的值，才能证明套用预设时确实把它们同步了回来
+  if (durationInput !== null) setInputValue(durationInput, '50');
+  if (breakInput !== null) setInputValue(breakInput, '5');
+  await flush(8);
+  const presetTrigger = view.container.querySelector('[aria-label="作息预设"]');
+  let presetPicked = false;
+  if (presetTrigger instanceof window.HTMLElement) {
+    presetTrigger.click();
+    await flush(8);
+    const option = [...document.querySelectorAll('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('苏州科技大学'),
+    );
+    if (option instanceof window.HTMLElement) {
+      option.click();
+      presetPicked = true;
+    }
+    await flush(8);
+  }
+  const presetApplied = clickByText(view.container, '套用此作息');
+  await flush(24);
+  const presetSummary = (view.container.querySelector('[data-role="preset-summary"]')?.textContent ?? '').trim();
+  check(
+    '作息预设可套用为苏州科技大学 14 节',
+    presetPicked &&
+      presetApplied &&
+      startInputs(view.container).length === 14 &&
+      periodClock(3, '开始') === '09:55' &&
+      periodClock(3, '结束') === '10:40' &&
+      durationInput?.value === '45' &&
+      breakInput?.value === '10' &&
+      presetSummary.includes('预设：') &&
+      presetSummary.includes('（14 节）'),
+    `第 3 节 ${periodClock(3, '开始')}–${periodClock(3, '结束')}，共 ${startInputs(view.container).length} 节，${presetSummary}`,
   );
 
   const hadAppearance = (view.container.textContent ?? '').includes('主题风格');
@@ -1197,8 +1268,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `对话框 ${scopeDialogCount()} 个：${scopeText().slice(0, 30)}`,
   );
   check(
-    '调整范围对话框保留三个范围与取消',
-    ['只改这一节', '本时段重排（上午）', '全部时段重排', '取消'].every((label) => scopeText().includes(label)),
+    '调整范围对话框给出顺延重排与取消',
+    ['只改这一节', '从这一节起顺延重排', '取消'].every((label) => scopeText().includes(label)),
     scopeText().slice(-60),
   );
 
@@ -1233,7 +1304,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，值=${secondStart?.value ?? '?'}（原 ${secondStartBefore}）`,
   );
 
-  // 场景三：改第 1 节的结束时间 → 输入过程中不弹，按回车才弹，且对话框只讲每节时长
+  // 场景三：改第 1 节的结束时间 → 输入过程中不弹，按回车才弹，且对话框讲明时长与课间
   const firstEnd = clockInput(1, '结束');
   const firstEndBefore = firstEnd?.value ?? '';
   if (firstEnd !== null) setInputValue(firstEnd, '09:05');
@@ -1247,17 +1318,134 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (firstEnd !== null) pressEnter(firstEnd);
   await flush(10);
   check(
-    '回车只弹一个调整范围对话框并给出重排时长',
+    '回车只弹一个调整范围对话框并给出顺延时长与课间',
     scopeDialogCount() === 1 &&
-      scopeText().includes('重排会用每节 55 分钟') &&
-      scopeText().includes('（来自你刚才的修改）') &&
-      !scopeText().includes('课间'),
+      scopeText().includes('的改动已生效；将按每节 55 分钟、课间 10 分钟从这一节起顺延重排'),
     scopeText().slice(-60),
   );
   if (clickByText(document.body, '取消')) await flush(8);
   check('取消关掉对话框', scopeDialogCount() === 0, `对话框 ${scopeDialogCount()} 个`);
 
-  check('学期设置显示编辑与删除入口', clickByLabel(view.container, '编辑学期'), '');
+  // 场景四：对话框底部的会话级勾选框。这里只确认它存在且默认未勾选（不点击），
+  // 所以不会影响后面「锚点顺延」等既有断言；勾选后的行为放在所有调整范围断言之后验证。
+  const optOutBox = (): HTMLInputElement | null => {
+    const found = scopeDialog()?.querySelector('input[aria-label="本次启动期间不再询问"]');
+    return found instanceof window.HTMLInputElement ? found : null;
+  };
+  {
+    // 再改一次第 1 节开始时间，只为把对话框重新打开
+    const optInDialogStart = clockInput(1, '开始');
+    if (optInDialogStart !== null) setInputValue(optInDialogStart, '08:20');
+    await flush(10);
+    if (optInDialogStart !== null) blurInput(optInDialogStart);
+    await flush(10);
+    const box = optOutBox();
+    check(
+      '调整范围对话框有本次启动不再询问勾选框',
+      box !== null && box.type === 'checkbox' && box.checked === false,
+      box === null
+        ? '未找到 input[aria-label="本次启动期间不再询问"]'
+        : `type=${box.type}，勾选=${String(box.checked)}`,
+    );
+    if (clickByText(document.body, '只改这一节')) await flush(8);
+  }
+
+  // —— 锚点顺延：把第 3 节开始时间改成 09:55 → 从这一节起按每节 45 分钟、课间 10 分钟顺延 ——
+  if (durationInput !== null) setInputValue(durationInput, '45');
+  if (breakInput !== null) setInputValue(breakInput, '10');
+  await flush(8);
+  const anchorStart = clockInput(3, '开始');
+  const anchorBefore = anchorStart?.value ?? '';
+  if (anchorStart !== null) setInputValue(anchorStart, '09:55');
+  await flush(8);
+  if (anchorStart !== null) blurInput(anchorStart);
+  await flush(10);
+  const anchorDialogText = scopeText();
+  const anchorReordered = clickByText(document.body, '从这一节起顺延重排');
+  await flush(24);
+  const thirdStart = clockInput(3, '开始')?.value ?? '';
+  const thirdEnd = clockInput(3, '结束')?.value ?? '';
+  const fourthStart = clockInput(4, '开始')?.value ?? '';
+  const fourthEnd = clockInput(4, '结束')?.value ?? '';
+  check(
+    '锚点顺延重排后第 4 节顺延到 10:50–11:35',
+    anchorReordered &&
+      anchorDialogText.includes('将按每节 45 分钟、课间 10 分钟从这一节起顺延重排') &&
+      thirdStart === '09:55' &&
+      thirdEnd === '10:40' &&
+      fourthStart === '10:50' &&
+      fourthEnd === '11:35',
+    `锚点第 3 节 ${anchorBefore} → ${thirdStart}–${thirdEnd}，第 4 节 ${fourthStart}–${fourthEnd}`,
+  );
+
+  // —— 场景五：勾选「本次启动期间不再询问」之后，本次会话内不再弹「调整范围」 ——
+  // 放在所有既有「调整范围」断言之后：勾选是会话级（模块级变量）的，会影响后续改动，
+  // 所以先把既有断言全部跑完再验证；此刻仍在设置页，用的就是前面那张时间表卡片。
+  // 顺序上放在「删除学期」之前——学期被删掉后设置页就卸载了，时间表输入框也不在了。
+  const optInEnd = clockInput(2, '结束');
+  if (optInEnd !== null) setInputValue(optInEnd, '10:45');
+  await flush(10);
+  if (optInEnd !== null) blurInput(optInEnd);
+  await flush(10);
+  const optInBox = optOutBox();
+  let optInClicked = false;
+  if (optInBox !== null) {
+    optInBox.click();
+    optInClicked = optInBox.checked;
+  }
+  await flush(8);
+  check(
+    '勾选本次启动不再询问后给出提示并保持单节改动',
+    optInBox !== null &&
+      optInClicked &&
+      (document.body.textContent ?? '').includes('本次启动期间不再询问调整范围') &&
+      clockInput(2, '结束')?.value === '10:45',
+    `勾选=${String(optInBox?.checked)}，结束时间=${clockInput(2, '结束')?.value ?? '?'}（原 10:40）`,
+  );
+
+  if (clickByText(document.body, '只改这一节')) await flush(8);
+  const quietEnd = clockInput(2, '结束');
+  if (quietEnd !== null) setInputValue(quietEnd, '10:50');
+  await flush(10);
+  if (quietEnd !== null) blurInput(quietEnd);
+  await flush(10);
+  check(
+    '勾选后本次会话不再弹出调整范围对话框',
+    scopeDialogCount() === 0 && clockInput(2, '结束')?.value === '10:50',
+    `对话框 ${scopeDialogCount()} 个，结束时间=${clockInput(2, '结束')?.value ?? '?'}（原 10:45）`,
+  );
+  check(
+    '勾选状态不写入本地存储',
+    (globalThis.localStorage?.length ?? 0) > 0 &&
+      [...Array(globalThis.localStorage?.length ?? 0).keys()].every((index) => {
+        const key = globalThis.localStorage?.key(index) ?? '';
+        return !key.includes('scope') && !key.includes('不再询问');
+      }),
+    [...Array(globalThis.localStorage?.length ?? 0).keys()]
+      .map((index) => globalThis.localStorage?.key(index) ?? '')
+      .join(' / '),
+  );
+
+  // 会话级：重新挂载（相当于切页面再回来）后仍然是「不再询问」。
+  // 注意：从这里起 view 已卸载，后续一律以 remounted 为锚点。
+  view.root.unmount();
+  const remounted = mount(<App />);
+  await flush(20);
+  if (clickByText(remounted.container, '设置')) await flush(14);
+  const remountEnd = document.querySelector<HTMLInputElement>('input[aria-label="第 2 节结束时间"]');
+  if (remountEnd !== null) setInputValue(remountEnd, '10:55');
+  await flush(10);
+  if (remountEnd !== null) blurInput(remountEnd);
+  await flush(10);
+  check(
+    '重新挂载后本次会话仍不弹出调整范围对话框',
+    startInputs(remounted.container).length > 0 &&
+      scopeDialogCount() === 0 &&
+      remountEnd?.value === '10:55',
+    `对话框 ${scopeDialogCount()} 个，结束时间=${remountEnd?.value ?? '?'}（原 10:50）`,
+  );
+
+  check('学期设置显示编辑与删除入口', clickByLabel(remounted.container, '编辑学期'), '');
   await flush(6);
   const editDialogText = document.body.textContent ?? '';
   check('打开学期编辑弹窗', editDialogText.includes('开学日期') && editDialogText.includes('总周数'), '');
@@ -1270,17 +1458,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '保存')) {
     await flush(20);
   }
-  check('保存后学期名更新', (view.container.textContent ?? '').includes('改名后的学期'), '');
+  check('保存后学期名更新', (remounted.container.textContent ?? '').includes('改名后的学期'), '');
 
-  clickByLabel(view.container, '删除学期');
+  clickByLabel(remounted.container, '删除学期');
   await flush(8);
   const deleteDialogText = document.body.textContent ?? '';
   check('删除确认说明后果', deleteDialogText.includes('不可撤销'), deleteDialogText.slice(-40));
   if (clickByText(document.body, '确认删除')) {
     await flush(24);
   }
-  check('删除后回到引导页', (view.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
+  check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
-  view.root.unmount();
+  remounted.root.unmount();
   return results;
 }

@@ -27,7 +27,7 @@ export interface TimelineItem {
   /** 类型标签文案（课程 / 调整 / 其他 / 考试） */
   nature: TimelineNature;
   title: string;
-  /** 次要说明（节次、关联课程、倒计时、备注） */
+  /** 次要说明（关联课程、倒计时、备注）；课程条目为空，不再显示节次 */
   detail: string;
   /** 地点：课程取教室，事件取 location；null 表示不渲染地点行 */
   location: string | null;
@@ -89,7 +89,8 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       kind: 'lesson',
       nature: '课程',
       title: lesson.courseName,
-      detail: `第 ${lesson.periodStart}${lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节`,
+      // 课程条目不再显示「第 X 节」：左侧时间列已经给出开始–结束时间
+      detail: '',
       location: lesson.room,
       startText: formatTime(lesson.startAt, data.timeZone),
       endText: formatTime(lesson.endAt, data.timeZone),

@@ -2,20 +2,23 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import { CalendarRange, Plus, Trash2, Wand2 } from 'lucide-react';
 import {
   appendTimeSlot,
+  BUILTIN_TIMETABLES,
+  DEFAULT_TIMETABLE_ID,
   deleteTimeSlot,
+  findTimetable,
   generatePeriods,
   listTimeSlots,
-  regenerateSections,
+  reflowPeriods,
   replaceTimeSlots,
   sectionOf,
   updateTimeSlot,
-  type GeneratedPeriod,
   type PeriodSection,
   type Storage,
   type TimeSlotRow,
 } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
 import { CollapsibleCard } from './ui/collapsible-card.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { Field, Input } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
@@ -23,15 +26,23 @@ import { logInfo } from '../log.ts';
 
 const SECTION_LABEL = { am: '上午', pm: '下午', night: '晚上' } as const;
 const CLOCK_PATTERN = /^(\d{1,2}):(\d{2})$/;
+/** 每节时长的可输入范围（与 core 一致） */
 const MIN_DURATION = 10;
 const MAX_DURATION = 240;
+const DEFAULT_DURATION = 45;
+/** 课间的可输入范围（与 core 一致） */
+const MIN_BREAK = 0;
+const MAX_BREAK = 120;
+const DEFAULT_BREAK = 10;
+/** 「本次启动期间不再询问」的勾选框文案 */
+const SCOPE_OPT_OUT_LABEL = '本次启动期间不再询问';
+
 /**
- * 内部默认间隔（分钟）：不再对用户暴露。
- * 「自动生成课次」固定用它；按现有课次推算间隔时（重排、追加）算不出来才回退到它。
+ * 本进程内是否已经勾选「本次启动期间不再询问」。
+ * 只放在模块级变量里：不写 localStorage、不落盘、不进数据库，
+ * 所以组件重新挂载（切页面再回来）仍然有效，重启应用后恢复询问。
  */
-const DEFAULT_INTERVAL_MINUTES = 10;
-/** 推算出的间隔可用的上限（与 core 接受的范围一致）；超出的值不可用，同样回退到默认间隔。 */
-const MAX_INTERVAL_MINUTES = 120;
+let scopeOptOut = false;
 
 export interface PeriodSettingsProps {
   storage: Storage;
@@ -41,11 +52,11 @@ export interface PeriodSettingsProps {
 
 /** 刚完成的单节改动，以及这次重排要用的时长。 */
 interface RerollDraft {
-  /** 被改动的那一节，用于文案定位 */
+  /** 被改动的那一节，用于文案定位，也是重排的锚点 */
   periodNo: number;
   /** 被改动的那一节所属时段 */
   section: PeriodSection;
-  /** 重排使用的每节时长（分钟） */
+  /** 改结束时间时推算出的每节时长；没改结束时间时沿用设置里的值 */
   durationMinutes: number;
   /** 时长是否由刚才手改的结束时间推算而来 */
   durationFromEdit: boolean;
@@ -62,6 +73,13 @@ interface PendingEdit {
   draft: RerollDraft;
   /** 落库是否成功；失败时不打扰用户 */
   commit: Promise<boolean>;
+}
+
+/** 套用过的作息预设，用于在界面上说明当前时间表来自哪套作息。 */
+interface AppliedPreset {
+  name: string;
+  source: string | null;
+  count: number;
 }
 
 /** 把 HH:MM 解析成当天的分钟数；不是完整时刻时返回 null。 */
@@ -88,45 +106,78 @@ function durationBetween(startTime: string, endTime: string): number | null {
   return minutes > 0 ? minutes : null;
 }
 
+/** 出现次数最多的值；并列时取较小的那个，保证结果稳定。 */
+function mostFrequent(counts: ReadonlyMap<number, number>): number | null {
+  let best: number | null = null;
+  let bestCount = 0;
+  for (const [value, count] of counts) {
+    if (count > bestCount || (count === bestCount && best !== null && value < best)) {
+      best = value;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
 /**
- * 从某个时段的现有课次推算节与节之间的间隔（间隔不再由用户设置）：
- * 取该时段第一节与第二节开始时间之差，减去这次要用的每节时长，
- * 这样重排后各节的开始时间与原来保持一致。
- * 不足两节、时刻不完整或算出的值无法使用时，回退到内部默认间隔。
+ * 从预设的课次推算要同步到输入框的每节时长与课间：都取出现次数最多的那个值
+ * （苏科大作息 14 节里，45 分钟的课与 10 分钟的课间最常见，于是得到 45 / 10）。
+ * 某一项推算不出可用值时返回 null，调用方就保持该输入框不动。
  */
-function sectionInterval(
-  periods: readonly { startTime: string; section: PeriodSection }[],
-  section: PeriodSection,
-  durationMinutes: number,
-): number {
-  const starts = periods
-    .filter((period) => period.section === section)
-    .map((period) => clockMinutes(period.startTime))
-    .filter((minutes): minutes is number => minutes !== null)
-    .sort((left, right) => left - right);
-  const first = starts[0];
-  const second = starts[1];
-  if (first === undefined || second === undefined) return DEFAULT_INTERVAL_MINUTES;
-  const interval = second - first - Math.round(durationMinutes);
-  if (!Number.isFinite(interval)) return DEFAULT_INTERVAL_MINUTES;
-  if (interval < 0 || interval > MAX_INTERVAL_MINUTES) return DEFAULT_INTERVAL_MINUTES;
-  return interval;
+function presetSpacing(periods: readonly { start: string; end: string }[]): {
+  durationMinutes: number | null;
+  breakMinutes: number | null;
+} {
+  const durations = new Map<number, number>();
+  const breaks = new Map<number, number>();
+  let previousEnd: number | null = null;
+  for (const period of periods) {
+    const start = clockMinutes(period.start);
+    const end = clockMinutes(period.end);
+    if (start === null || end === null) continue;
+    if (end > start) durations.set(end - start, (durations.get(end - start) ?? 0) + 1);
+    if (previousEnd !== null && start > previousEnd) {
+      const gap = start - previousEnd;
+      breaks.set(gap, (breaks.get(gap) ?? 0) + 1);
+    }
+    previousEnd = end;
+  }
+  const durationMinutes = mostFrequent(durations);
+  const breakMinutes = mostFrequent(breaks);
+  return {
+    durationMinutes:
+      durationMinutes !== null && durationMinutes >= MIN_DURATION && durationMinutes <= MAX_DURATION
+        ? durationMinutes
+        : null,
+    breakMinutes:
+      breakMinutes !== null && breakMinutes >= MIN_BREAK && breakMinutes <= MAX_BREAK ? breakMinutes : null,
+  };
 }
 
 function within(value: number, min: number, max: number): boolean {
   return Number.isFinite(value) && value >= min && value <= max;
 }
 
-/** 重排参数越界时的说明，null 表示可以重排。 */
-function paramError(draft: RerollDraft): string | null {
-  if (!within(draft.durationMinutes, MIN_DURATION, MAX_DURATION)) {
-    return `每节时长需在 ${MIN_DURATION}–${MAX_DURATION} 分钟之间，当前是 ${draft.durationMinutes} 分钟`;
+/** 重排参数越界时的说明，null 表示可以顺延重排。 */
+function paramError(durationMinutes: number, breakMinutes: number): string | null {
+  if (!within(durationMinutes, MIN_DURATION, MAX_DURATION)) {
+    return `每节时长需在 ${MIN_DURATION}–${MAX_DURATION} 分钟之间，当前是 ${durationMinutes} 分钟`;
+  }
+  if (!within(breakMinutes, MIN_BREAK, MAX_BREAK)) {
+    return `课间需在 ${MIN_BREAK}–${MAX_BREAK} 分钟之间，当前是 ${breakMinutes} 分钟`;
   }
   return null;
 }
 
 export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSettingsProps) {
-  const [duration, setDuration] = useState(45);
+  /** 顺延重排时使用的每节时长（分钟） */
+  const [duration, setDuration] = useState(DEFAULT_DURATION);
+  /** 顺延重排时使用的课间（分钟） */
+  const [breakMinutes, setBreakMinutes] = useState(DEFAULT_BREAK);
+  /** 选中的内置作息 */
+  const [presetId, setPresetId] = useState(DEFAULT_TIMETABLE_ID);
+  /** 已经套用过的作息，用于在界面上说明时间表来自哪里 */
+  const [appliedPreset, setAppliedPreset] = useState<AppliedPreset | null>(null);
   const [amStart, setAmStart] = useState('08:00');
   const [amCount, setAmCount] = useState(4);
   const [pmStart, setPmStart] = useState('14:00');
@@ -142,6 +193,18 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const pendingEdit = useRef<PendingEdit | null>(null);
   /** 已经问过范围的签名：同一次编辑（回车后又失焦）只弹一个对话框 */
   const askedEdit = useRef<string | null>(null);
+  /** 勾选框的显示状态，真实来源是模块级的 scopeOptOut（重新挂载后仍然是勾上的） */
+  const [optOutScope, setOptOutScope] = useState(scopeOptOut);
+
+  const selectedPreset = findTimetable(presetId);
+  const presetHint =
+    selectedPreset === undefined
+      ? '内置作息：套用后整张时间表按它重排'
+      : `${selectedPreset.periods.length} 节${
+          selectedPreset.source !== undefined && selectedPreset.source.length > 0
+            ? ` · ${selectedPreset.source}`
+            : ''
+        }`;
 
   const reload = useCallback(async () => {
     setSlots(await listTimeSlots(storage, semesterId));
@@ -153,7 +216,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
 
   /**
    * 单节改动已经写库生效，接着询问这次改动的范围。
-   * 重排参数以「刚刚手改的那个值」为准，并把界面上的时长同步成同一个值。
+   * 手改了结束时间时，把推算出的时长同步到界面上，顺延重排就按它来。
    */
   function askScope(next: RerollDraft): void {
     if (next.durationFromEdit && within(next.durationMinutes, MIN_DURATION, MAX_DURATION)) {
@@ -174,16 +237,29 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
    * 失焦或回车时才真正询问范围。
    * 同一个签名只问一次，所以「回车之后紧接着失焦」也只会弹一个对话框；
    * 落库失败（commit 为 false）时保持沉默，与改动前的行为一致。
+   * 本次启动已经勾选「不再询问」时直接跳过：这次编辑保持已生效的「只改这一节」。
    */
   function flushPending(): void {
     const pending = pendingEdit.current;
     if (pending === null || askedEdit.current === pending.signature) return;
+    // 这次编辑已经消费掉：无论问不问范围，之后都不会拿同一个签名再弹一次
     pendingEdit.current = null;
     askedEdit.current = pending.signature;
+    if (scopeOptOut) {
+      // 已经勾选「本次启动期间不再询问」：改动在输入时就已经落库，保持「只改这一节」
+      return;
+    }
     const { draft: next, commit } = pending;
     void commit.then((saved) => {
       if (saved) askScope(next);
     });
+  }
+
+  /** 勾选「本次启动期间不再询问」：只记在模块级变量里，并给一次性提示。 */
+  function optOutScopeAsk(): void {
+    scopeOptOut = true;
+    setOptOutScope(true);
+    toast.info('本次启动期间不再询问调整范围');
   }
 
   /** 关掉「调整范围」对话框（只改这一节 / 取消 / Esc / ✕），之后新的编辑可以重新询问。 */
@@ -214,8 +290,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     try {
       const periods = generatePeriods({
         durationMinutes: duration,
-        // 内部默认间隔：不再对用户暴露
-        breakMinutes: DEFAULT_INTERVAL_MINUTES,
+        breakMinutes,
         blocks: [
           { section: 'am', startTime: amStart, count: amCount },
           { section: 'pm', startTime: pmStart, count: pmCount },
@@ -223,8 +298,50 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         ],
       });
       await replaceTimeSlots(storage, semesterId, periods);
-      logInfo('timetable', '生成课次', { periods: periods.length, duration });
+      logInfo('timetable', '生成课次', { periods: periods.length, duration, breakMinutes });
       toast.success(`已生成 ${periods.length} 节课次`);
+      await reload();
+      onChanged();
+    } catch (cause: unknown) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 套用选中的内置作息：照抄预设的节次时间，并把时长与课间同步成预设里最常见的节距。 */
+  async function applyPreset(): Promise<void> {
+    if (selectedPreset === undefined) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await replaceTimeSlots(
+        storage,
+        semesterId,
+        selectedPreset.periods.map((period) => ({
+          periodNo: period.periodNo,
+          startTime: period.start,
+          endTime: period.end,
+          // 时段按开始时间推断：<12:00 上午、<18:00 下午、其余晚上
+          section: sectionOf(period.start),
+          label: null,
+        })),
+      );
+      const spacing = presetSpacing(selectedPreset.periods);
+      if (spacing.durationMinutes !== null) setDuration(spacing.durationMinutes);
+      if (spacing.breakMinutes !== null) setBreakMinutes(spacing.breakMinutes);
+      setAppliedPreset({
+        name: selectedPreset.name,
+        source: selectedPreset.source ?? null,
+        count: selectedPreset.periods.length,
+      });
+      logInfo('timetable', '套用作息预设', {
+        id: selectedPreset.id,
+        periods: selectedPreset.periods.length,
+        duration: spacing.durationMinutes,
+        breakMinutes: spacing.breakMinutes,
+      });
+      toast.success(`已套用「${selectedPreset.name}」作息（${selectedPreset.periods.length} 节）`);
       await reload();
       onChanged();
     } catch (cause: unknown) {
@@ -238,18 +355,12 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setBusy(true);
     setMessage(null);
     try {
-      // 追加时同样按最后一节所在时段的真实间隔接上（推算不出时用内部默认间隔）
-      const rows = slots.map((row) => ({
-        startTime: row.start_time,
-        section: row.section ?? sectionOf(row.start_time),
-      }));
-      const section = rows.at(-1)?.section ?? 'am';
-      const interval = sectionInterval(rows, section, duration);
-      const created = await appendTimeSlot(storage, semesterId, duration, interval);
+      // 追加的一节接在最后一节之后：间隔用界面上的课间
+      const created = await appendTimeSlot(storage, semesterId, duration, breakMinutes);
       logInfo('timetable', '追加课次', {
         periodNo: created['period_no'],
         startTime: created['start_time'],
-        interval,
+        breakMinutes,
       });
       toast.success(`已添加第 ${created['period_no']} 节`);
       await reload();
@@ -300,11 +411,10 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   }
 
   /**
-   * 按选定的范围重排：时段起点与节数取现有课次（各时段第一节的开始时间与节数），
-   * 时长取这次改动带来的新值；节与节之间的间隔由该时段现有课次的开始时间推算，
-   * 范围外的时段原样保留。
+   * 从被改动的那一节起顺延重排：以它为锚点，按界面上的每节时长与课间把后面的课次整体顺延。
+   * 锚点之前的课次、每一节原有的时段与备注（label）都原样保留。
    */
-  async function reroll(scope: 'section' | 'all'): Promise<void> {
+  async function reflowFromAnchor(): Promise<void> {
     const current = draft;
     if (current === null) return;
     closeScope();
@@ -312,50 +422,42 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     try {
       const rows = await listTimeSlots(storage, semesterId);
-      const existing: GeneratedPeriod[] = rows.map((row) => ({
-        periodNo: row.period_no,
-        startTime: row.start_time,
-        endTime: row.end_time,
-        section: row.section ?? sectionOf(row.start_time),
-      }));
-      const targets: PeriodSection[] = [
-        ...new Set(scope === 'all' ? existing.map((period) => period.section) : [current.section]),
-      ];
-      if (!existing.some((period) => targets.includes(period.section))) {
+      if (rows.length === 0) {
         setMessage('还没有可重排的课次，请先点「自动生成课次」');
         return;
       }
-      // 每个时段各用自己的真实间隔重排一次，互不影响
-      let planned = existing;
-      const intervals = new Map<PeriodSection, number>();
-      for (const target of targets) {
-        const minutes = sectionInterval(existing, target, current.durationMinutes);
-        intervals.set(target, minutes);
-        planned = regenerateSections(planned, [target], {
-          durationMinutes: current.durationMinutes,
-          breakMinutes: minutes,
-        });
+      const anchor = current.periodNo;
+      if (!rows.some((row) => row.period_no === anchor)) {
+        setMessage(`第 ${anchor} 节不存在，无法顺延重排`);
+        return;
       }
-      const labels = new Map(rows.map((row) => [row.period_no, row.label] as const));
+      const planned = reflowPeriods(
+        rows.map((row) => ({ periodNo: row.period_no, start: row.start_time, end: row.end_time })),
+        { anchorPeriodNo: anchor, durationMinutes: duration, breakMinutes },
+      );
+      const times = new Map(planned.map((period) => [period.periodNo, period] as const));
       await replaceTimeSlots(
         storage,
         semesterId,
-        planned.map((period) => ({
-          periodNo: period.periodNo,
-          startTime: period.startTime,
-          endTime: period.endTime,
-          section: period.section,
-          label: labels.get(period.periodNo) ?? null,
-        })),
+        rows.map((row) => {
+          const next = times.get(row.period_no);
+          const startTime = next?.start ?? row.start_time;
+          return {
+            periodNo: row.period_no,
+            startTime,
+            endTime: next?.end ?? row.end_time,
+            section: row.section ?? sectionOf(startTime),
+            label: row.label,
+          };
+        }),
       );
-      logInfo('timetable', '按范围重排课次', {
-        scope,
+      logInfo('timetable', '按锚点顺延重排', {
+        anchor,
         section: current.section,
-        duration: current.durationMinutes,
-        intervals: [...intervals.entries()].map(([key, value]) => `${key}:${value}`).join(','),
+        duration,
+        breakMinutes,
       });
-      const where = scope === 'all' ? '全部时段' : `本时段（${SECTION_LABEL[current.section]}）`;
-      toast.success(`已按新的每节时长重排${where}`);
+      toast.success(`已按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟从第 ${anchor} 节起顺延重排`);
       await reload();
       onChanged();
     } catch (cause: unknown) {
@@ -365,7 +467,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     }
   }
 
-  async function remove(periodNo: number): Promise<void> {    setBusy(true);
+  async function remove(periodNo: number): Promise<void> {
+    setBusy(true);
     setMessage(null);
     try {
       const result = await deleteTimeSlot(storage, semesterId, periodNo);
@@ -385,20 +488,62 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     }
   }
 
-  const draftError = draft === null ? null : paramError(draft);
+  const draftError = draft === null ? null : paramError(duration, breakMinutes);
 
   return (
     <CollapsibleCard id="timetable" title="时间表" icon={CalendarRange}>
-      <div className="grid gap-2">
-        <Field label="固定上课时长（分钟）">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="每节时长（分钟）">
           <Input
             type="number"
-            min={10}
-            max={240}
+            min={MIN_DURATION}
+            max={MAX_DURATION}
+            aria-label="每节时长（分钟）"
             value={duration}
             onChange={(event) => setDuration(Number(event.target.value))}
           />
         </Field>
+        <Field label="课间（分钟）">
+          <Input
+            type="number"
+            min={MIN_BREAK}
+            max={MAX_BREAK}
+            aria-label="课间（分钟）"
+            value={breakMinutes}
+            onChange={(event) => setBreakMinutes(Number(event.target.value))}
+          />
+        </Field>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <Field label="作息预设" hint={presetHint}>
+          <Select value={presetId} onValueChange={setPresetId}>
+            <SelectTrigger aria-label="作息预设">{selectedPreset?.name ?? '选择作息'}</SelectTrigger>
+            <SelectContent>
+              {BUILTIN_TIMETABLES.map((preset) => (
+                <SelectItem key={preset.id} value={preset.id}>
+                  {preset.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy || selectedPreset === undefined}
+            onClick={() => void applyPreset()}
+          >
+            套用此作息
+          </Button>
+          {appliedPreset !== null && (
+            <span className="text-xs text-muted" data-role="preset-summary">
+              预设：{appliedPreset.name}（{appliedPreset.count} 节）
+              {appliedPreset.source !== null ? ` · ${appliedPreset.source}` : ''}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -487,7 +632,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         {slots.length === 0 && <li className="text-xs text-muted">还没有课次，先点「自动生成课次」</li>}
       </ul>
       <span className="text-xs text-muted">
-        每节起止时间可单独修改。改完会问一次作用范围，可只保留这一节，也可按新的每节时长重排本时段或全部时段。
+        每节起止时间可单独修改。改完会问一次作用范围：可以只保留这一节，也可以按每节时长与课间从这一节起顺延重排后面的课次。
       </span>
 
       {draft !== null && (
@@ -504,33 +649,32 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           >
             <div className="flex flex-col gap-1 text-xs text-muted">
               <span>
-                第 {draft.periodNo} 节（{SECTION_LABEL[draft.section]}）的改动已生效；重排会用每节{' '}
-                {draft.durationMinutes} 分钟
-                {draft.durationFromEdit ? '（来自你刚才的修改）' : '（来自上方设置）'}。
+                {`第 ${draft.periodNo} 节（${SECTION_LABEL[draft.section]}）的改动已生效；将按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟从这一节起顺延重排。`}
               </span>
               {draftError !== null && <span className="text-danger-strong">{draftError}</span>}
             </div>
+            <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                className="size-4"
+                aria-label={SCOPE_OPT_OUT_LABEL}
+                checked={optOutScope}
+                onChange={() => optOutScopeAsk()}
+              />
+              {SCOPE_OPT_OUT_LABEL}
+            </label>
             <DialogFooter>
               <Button variant="ghost" size="sm" aria-label="只改这一节" onClick={() => closeScope()}>
                 只改这一节
               </Button>
               <Button
-                variant="secondary"
-                size="sm"
-                aria-label={`本时段重排（${SECTION_LABEL[draft.section]}）`}
-                disabled={busy || draftError !== null}
-                onClick={() => void reroll('section')}
-              >
-                本时段重排（{SECTION_LABEL[draft.section]}）
-              </Button>
-              <Button
                 variant="primary"
                 size="sm"
-                aria-label="全部时段重排"
+                aria-label="从这一节起顺延重排"
                 disabled={busy || draftError !== null}
-                onClick={() => void reroll('all')}
+                onClick={() => void reflowFromAnchor()}
               >
-                全部时段重排
+                从这一节起顺延重排
               </Button>
               <Button variant="ghost" size="sm" aria-label="取消" onClick={() => closeScope()}>
                 取消
