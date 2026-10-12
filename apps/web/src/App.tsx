@@ -6,7 +6,6 @@ import {
   dayOfWeek as nextDayOfWeek,
   readSettings,
   updateSchedule,
-  updateEvent,
   updateSemester,
   weekOfDate,
   weekStart,
@@ -319,18 +318,9 @@ export function App() {
       holidays: data.holidayLabels.size,
     });
   }, [data, storage]);
-  useEffect(() => {
-    if (data === null || storage === null) return;
-    const now = Date.now();
-    const stale = data.todos.filter(
-      (row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined && row.due_at < now,
-    );
-    if (stale.length === 0) return;
-    void (async () => {
-      for (const row of stale) await updateEvent(storage, row.id, { done: 1 });
-      refresh();
-    })();
-  }, [data, storage, refresh]);
+
+  // 过了截止/结束时间的条目由日程时间线在展示层判定为「已完成」（会自动进「已完成」分组），
+  // 这里不再回写 events.done，避免打开应用就改数据。
 
   /** 课次所在日期：周视图卡片按查看周与该课星期几算出来。 */
   function lessonDateOf(cell: LessonCell): string {

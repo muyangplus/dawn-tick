@@ -28,8 +28,15 @@ export interface SmokeResult {
   detail: string;
 }
 
+export interface SmokeSeed {
+  /** 当前周的周一 */
+  monday: string;
+  /** 造好的过期待办 id：用来验证自动完成不回写数据库 */
+  overdueTodoId: string;
+}
+
 /** 造一份固定数据；返回当前周的周一日期，供后续断言推算有课的日期。 */
-async function seed(): Promise<string> {
+async function seed(): Promise<SmokeSeed> {
   const storage = validatedStorage(await openIndexedDbStorage());
   const semester = await createSemester(storage, {
     userId: USER_ID,
@@ -130,7 +137,47 @@ async function seed(): Promise<string> {
     title: '国庆节',
     onDate: addDays(mondayText, 1),
   });
-  return mondayText;
+  // 每个星期几都上的晚课（第 9-10 节，20:40 结束）：日程时间线里「过期的课自动完成」用它，
+  // 白天所有空格的交互断言都不受影响（那些都落在第 1-3 节）
+  const pastCourse = await createCourse(storage, {
+    semesterId: String(semester['id']),
+    name: '往期课',
+    shortName: '往期',
+    location: '实验楼-501',
+  });
+  for (let day = 1; day <= 7; day += 1) {
+    await createSchedule(storage, {
+      courseId: String(pastCourse['id']),
+      dayOfWeek: day,
+      periodStart: 9,
+      periodEnd: 10,
+      weeks: Array.from({ length: 20 }, (_, index) => index + 1),
+    });
+  }
+  // 时间线用的三条日程：带截止时间且已过期的待办、没有时间的待办、没有开考时间的考试
+  const overdue = await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'todo',
+    title: '过期待办',
+    onDate: mondayText,
+    dueAt: Date.now() - 3_600_000,
+  });
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'todo',
+    title: '无时间待办',
+    onDate: addDays(mondayText, -1),
+  });
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'exam',
+    title: '期末模拟考',
+    onDate: mondayText,
+  });
+  return { monday: mondayText, overdueTodoId: String(overdue['id']) };
 }
 
 // 冒烟固定把所有设置卡片视为展开，避免折叠记忆影响断言
@@ -397,7 +444,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   empty.root.unmount();
 
-  const seededMonday = await seed();
+  const seeded = await seed();
+  const seededMonday = seeded.monday;
+  const overdueTodoId = seeded.overdueTodoId;
   const view = mount(<App />);
   await flush(20);
   const text = view.container.textContent ?? '';
@@ -748,6 +797,127 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(8);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(8);
+
+  // —— 日程时间线（重做后）：按结束时间自动完成、已完成分组、性质标签、地点与颜色条 ——
+  const setViewDate = async (date: string): Promise<void> => {
+    const box = view.container.querySelector('input[aria-label="查看日期"]');
+    if (box instanceof window.HTMLInputElement) setInputValue(box, date);
+    await flush(10);
+  };
+  const rowsIn = (role: string): Element[] => [
+    ...view.container.querySelectorAll(`[data-role="${role}"] [data-role="timeline-row"]`),
+  ];
+  const rowIn = (role: string, text: string): Element | undefined =>
+    rowsIn(role).find((row) => (row.textContent ?? '').includes(text));
+  const rowsText = (role: string): string =>
+    rowsIn(role)
+      .map((row) => (row.textContent ?? '').trim())
+      .join(' | ');
+  const natureOf = (row: Element | null | undefined): string =>
+    row?.querySelector('[data-role="timeline-nature"]')?.textContent?.trim() ?? '(无)';
+  const doneGroup = (): Element | null => view.container.querySelector('[data-role="timeline-completed"]');
+  const doneToggle = (): Element | null => view.container.querySelector('[data-role="timeline-completed-toggle"]');
+  const doneList = (): Element | null => view.container.querySelector('[data-role="timeline-completed-list"]');
+  const mainList = (): Element | null => view.container.querySelector('[data-role="timeline-main"]');
+
+  // ① 上一天（周日的第 9-10 节晚课已经结束）：没人勾选也自动完成；
+  //    同一天「没有时间」的待办不受影响，仍然留在主列表里。
+  const pastDate = addDays(seededMonday, -1);
+  await setViewDate(pastDate);
+  const pastCourseRow = rowIn('timeline-completed', '往期课');
+  const noTimeRow = rowIn('timeline-main', '无时间待办');
+  const courseNature = natureOf(pastCourseRow);
+  const otherNature = natureOf(noTimeRow);
+  check(
+    '日程时间线：过期的课自动归入已完成',
+    pastCourseRow !== undefined &&
+      pastCourseRow.getAttribute('data-auto') === 'true' &&
+      !rowsText('timeline-main').includes('往期课'),
+    `已完成=${rowsText('timeline-completed').slice(0, 40)} / 主=${rowsText('timeline-main').slice(0, 40)}`,
+  );
+  check(
+    '日程时间线：没有时间的条目永不自动完成',
+    noTimeRow !== undefined &&
+      noTimeRow.getAttribute('data-auto') === null &&
+      !rowsText('timeline-completed').includes('无时间待办'),
+    `主=${rowsText('timeline-main').slice(0, 40)}`,
+  );
+  const colorBar = pastCourseRow?.querySelector('[data-role="timeline-color"]');
+  const locationLine = pastCourseRow?.querySelector('[data-role="timeline-location"]');
+  const plainColor = noTimeRow?.querySelector('[data-role="timeline-color"]')?.getAttribute('data-color') ?? '';
+  check(
+    '日程时间线：条目有定位图标的地点行与颜色条',
+    (locationLine?.textContent ?? '').includes('实验楼-501') &&
+      locationLine?.querySelector('[aria-hidden="true"]') !== null &&
+      (colorBar?.getAttribute('data-color') ?? '') !== '' &&
+      plainColor === 'var(--dt-primary)',
+    `地点=${locationLine?.textContent?.trim() ?? '(无)'} 色=${colorBar?.getAttribute('data-color') ?? '(无)'} 无颜色=${plainColor}`,
+  );
+  const groupNode = doneGroup();
+  const mainNode = mainList();
+  check(
+    '日程时间线：已完成分组置顶且标题带条数',
+    groupNode !== null &&
+      mainNode !== null &&
+      (groupNode.compareDocumentPosition(mainNode) & window.Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+      (doneToggle()?.textContent ?? '').includes(`已完成 ${rowsIn('timeline-completed').length}`) &&
+      groupNode.getAttribute('data-count') === String(rowsIn('timeline-completed').length) &&
+      rowsIn('timeline-completed').length === 1,
+    `count=${groupNode?.getAttribute('data-count')} 行=${rowsIn('timeline-completed').length}`,
+  );
+  check(
+    '日程时间线：还有未完成条目时已完成分组默认收起',
+    (mainList()?.textContent ?? '').includes('无时间待办') &&
+      doneToggle()?.getAttribute('aria-expanded') === 'false' &&
+      doneList()?.hasAttribute('hidden') === true,
+    `aria=${doneToggle()?.getAttribute('aria-expanded') ?? '(无)'}`,
+  );
+  const collapsedToggle = doneToggle();
+  if (collapsedToggle instanceof window.HTMLElement) collapsedToggle.click();
+  await flush(6);
+  check(
+    '日程时间线：点标题可手动展开已完成分组',
+    doneToggle()?.getAttribute('aria-expanded') === 'true' && doneList()?.hasAttribute('hidden') === false,
+    `aria=${doneToggle()?.getAttribute('aria-expanded') ?? '(无)'}`,
+  );
+
+  // ② 再往前挑一个非假日的过去日期：那天只剩已经结束的课 → 已完成分组自动展开
+  let allDoneDate = addDays(seededMonday, -2);
+  for (let step = 3; step <= 14 && seededHolidays.has(allDoneDate); step += 1) {
+    allDoneDate = addDays(seededMonday, -step);
+  }
+  await setViewDate(allDoneDate);
+  const allDoneToggle = doneToggle();
+  const allDoneList = doneList();
+  check(
+    '日程时间线：全部完成时已完成分组自动展开',
+    doneGroup() !== null &&
+      rowsIn('timeline-main').length === 0 &&
+      rowsIn('timeline-completed').length > 0 &&
+      allDoneToggle?.getAttribute('aria-expanded') === 'true' &&
+      allDoneList?.hasAttribute('hidden') === false,
+    `${allDoneDate}：主 ${rowsIn('timeline-main').length} / 已完成 ${rowsIn('timeline-completed').length} / aria=${allDoneToggle?.getAttribute('aria-expanded') ?? '(无)'}`,
+  );
+
+  // ③ 回到本周一：过期的待办自动完成，但没有回写数据库；顺带核对四种性质标签
+  await setViewDate(seededMonday);
+  const probe = validatedStorage(await openIndexedDbStorage());
+  const overdueRow = await probe.collection<Record<string, unknown>>('events').get(overdueTodoId);
+  check(
+    '日程时间线：过期待办自动完成且不回写数据库',
+    rowIn('timeline-completed', '过期待办') !== undefined &&
+      rowIn('timeline-main', '过期待办') === undefined &&
+      overdueRow !== undefined &&
+      overdueRow['done'] === 0,
+    `done=${overdueRow === undefined ? '(未找到)' : String(overdueRow['done'])}`,
+  );
+  const adjustNature = natureOf(view.container.querySelector('[data-kind="adjust"]'));
+  const examNature = natureOf(rowIn('timeline-main', '期末模拟考'));
+  check(
+    '日程时间线：显示条目性质标签（课程/调整/其他/考试）',
+    courseNature === '课程' && adjustNature === '调整' && otherNature === '其他' && examNature === '考试',
+    `课程=${courseNature} 调整=${adjustNature} 其他=${otherNature} 考试=${examNature}`,
+  );
 
   if (clickMenu(view.container, '添加', '加考试')) await flush(12);
   check(

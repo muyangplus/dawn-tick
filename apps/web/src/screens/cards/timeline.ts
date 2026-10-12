@@ -5,6 +5,15 @@ import { formatDayCountdown } from '../../lib/format.ts';
 
 export const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
+/**
+ * 条目性质标签，映射规则（都以现有数据字段为准）：
+ * - `data.lessonsByDate` 里的课次（来自 schedule）→ 课程
+ * - `data.reschedules` 里的调课 / 调休 / 停课 → 调整
+ * - `data.todos` 里 `type === 'exam'` 的考试（没有开考时间，进不了考试倒计时卡）→ 考试
+ * - `data.todos` 里 `type === 'todo' | 'temp'` 的待办 → 其他
+ */
+export type TimelineNature = '课程' | '调整' | '其他' | '考试';
+
 export interface TimelineItem {
   key: string;
   /** 所属日期；null 表示未排期 */
@@ -13,13 +22,31 @@ export interface TimelineItem {
   minute: number;
   /** 同一天内的先后：课程 → 调课/调休 → 待办 */
   rank: number;
-  kind: 'lesson' | 'adjust' | 'todo';
+  /** 渲染用的粗分类；考试单独一种，便于用 data-kind 定位 */
+  kind: 'lesson' | 'adjust' | 'todo' | 'exam';
+  /** 类型标签文案（课程 / 调整 / 其他 / 考试） */
+  nature: TimelineNature;
   title: string;
+  /** 次要说明（节次、关联课程、倒计时、备注） */
   detail: string;
-  /** 课程的上课时间区间（开始–结束），如 08:00–08:45 */
-  timeRange?: string;
-  color?: string;
-  done?: boolean;
+  /** 地点：课程取教室，事件取 location；null 表示不渲染地点行 */
+  location: string | null;
+  /** 左侧竖排时间列上半：开始时间；null 表示该条目没有开始时间 */
+  startText: string | null;
+  /** 左侧竖排时间列下半：结束时间（课程）或截止时间（待办/考试） */
+  endText: string | null;
+  /** 结束/截止时间戳；null 表示没有时间，永不自动完成 */
+  endEpoch: number | null;
+  /** 手动勾选（只有带事件行的待办/考试会有） */
+  done: boolean;
+  /** 到点自动完成：有结束/截止时间且已经过去；纯展示层判定，不写数据库 */
+  autoDone: boolean;
+  /** 已完成 = 手动勾选 或 到点自动完成 */
+  completed: boolean;
+  /** 是否还允许手动勾选：自动完成的条目不再提供勾选框，避免与自动判定互相打架 */
+  checkable: boolean;
+  /** 该课程/条目的颜色；null 表示用主题主色 */
+  color: string | null;
   event?: EventRow;
   lessonTarget?: AdjustTarget;
 }
@@ -39,22 +66,38 @@ function minuteOf(epoch: number | null, timeZone: string): number {
   return (hour ?? 0) * 60 + (minute ?? 0);
 }
 
+/**
+ * 自动完成的阈值：有结束/截止时间、且这个时间已经过去（含正好等于当前时刻）。
+ * 没有时间的条目永远不会自动完成；这里只做展示层判定，不回写数据库。
+ */
+function isOverdue(endEpoch: number | null, now: number): boolean {
+  return endEpoch !== null && endEpoch <= now;
+}
+
 /** 把某一天的课程、调课与待办合成一条时间线 */
-export function buildTimeline(data: AppData, date: string): TimelineItem[] {
+export function buildTimeline(data: AppData, date: string, now: number = Date.now()): TimelineItem[] {
   const items: TimelineItem[] = [];
 
   for (const lesson of data.lessonsByDate.get(date) ?? []) {
+    const endEpoch = lesson.endAt;
+    const autoDone = isOverdue(endEpoch, now);
     items.push({
       key: `lesson-${lesson.scheduleId}-${lesson.startAt}`,
       date: lesson.date,
       minute: minuteOf(lesson.startAt, data.timeZone),
       rank: 0,
       kind: 'lesson',
+      nature: '课程',
       title: lesson.courseName,
-      detail: `第 ${lesson.periodStart}${lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节${
-        lesson.room === null ? '' : ` · ${lesson.room}`
-      }`,
-      timeRange: `${formatTime(lesson.startAt, data.timeZone)}–${formatTime(lesson.endAt, data.timeZone)}`,
+      detail: `第 ${lesson.periodStart}${lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节`,
+      location: lesson.room,
+      startText: formatTime(lesson.startAt, data.timeZone),
+      endText: formatTime(lesson.endAt, data.timeZone),
+      endEpoch,
+      done: false,
+      autoDone,
+      completed: autoDone,
+      checkable: false,
       color: lesson.color,
       lessonTarget: {
         scheduleId: lesson.scheduleId,
@@ -78,39 +121,65 @@ export function buildTimeline(data: AppData, date: string): TimelineItem[] {
           : item.new_date !== null
             ? `改至 ${item.new_date} 第 ${item.new_period_start ?? ''}-${item.new_period_end ?? ''} 节`
             : '调课';
+    const startAt = item.start_at ?? null;
+    const endEpoch = item.end_at ?? null;
+    const done = item.done === 1;
+    const autoDone = isOverdue(endEpoch, now);
     items.push({
       key: `adjust-${item.id}`,
       date: itemDate,
-      minute: 0,
+      minute: minuteOf(startAt, data.timeZone),
       rank: 1,
       kind: 'adjust',
+      nature: '调整',
       title: item.title,
       detail,
+      location: item.location ?? item.new_room ?? null,
+      startText: startAt === null ? null : formatTime(startAt, data.timeZone),
+      endText: endEpoch === null ? null : formatTime(endEpoch, data.timeZone),
+      endEpoch,
+      done,
+      autoDone,
+      completed: done || autoDone,
+      checkable: false,
+      color: null,
       event: item,
     });
   }
 
   for (const todo of data.todos) {
-    const todoDate =
-      todo.on_date ?? (todo.due_at === null || todo.due_at === undefined ? null : formatDate(todo.due_at, data.timeZone));
+    const endEpoch = todo.due_at ?? todo.end_at ?? null;
+    const todoDate = todo.on_date ?? (endEpoch === null ? null : formatDate(endEpoch, data.timeZone));
     // 选中日期的日程：当天条目 + 未排期条目
     if (todoDate !== null && todoDate !== date) continue;
     const linkedCourse = data.courses.find((course) => course.id === todo.subject);
+    const isExam = todo.type === 'exam';
+    const done = todo.done === 1;
+    const autoDone = isOverdue(endEpoch, now);
     const parts: string[] = [];
     if (linkedCourse !== undefined) parts.push(linkedCourse.name);
-    if (todo.due_at !== null && todo.due_at !== undefined && todo.due_at > Date.now()) {
-      parts.push(formatDayCountdown(todo.due_at, Date.now()));
+    if (endEpoch !== null && endEpoch > now) {
+      parts.push(formatDayCountdown(endEpoch, now));
     }
     if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
     items.push({
       key: `todo-${todo.id}`,
       date: todoDate,
-      minute: minuteOf(todo.due_at ?? null, data.timeZone),
+      minute: minuteOf(endEpoch, data.timeZone),
       rank: 2,
-      kind: 'todo',
+      kind: isExam ? 'exam' : 'todo',
+      nature: isExam ? '考试' : '其他',
       title: todo.title,
       detail: parts.join(' · '),
-      done: todo.done === 1,
+      location: todo.location,
+      startText: null,
+      endText: endEpoch === null ? null : formatTime(endEpoch, data.timeZone),
+      endEpoch,
+      done,
+      autoDone,
+      completed: done || autoDone,
+      checkable: !autoDone,
+      color: linkedCourse?.color ?? null,
       event: todo,
     });
   }
@@ -133,4 +202,25 @@ export function groupTimeline(items: readonly TimelineItem[]): Array<{ date: str
     else groups.push({ date: item.date, items: [item] });
   }
   return groups;
+}
+
+export interface TimelineSections {
+  /** 未完成的条目，按原顺序留在主时间线 */
+  main: TimelineItem[];
+  /** 已完成的条目（手动勾选 或 到点自动完成），单独成组并置顶 */
+  completed: TimelineItem[];
+}
+
+/**
+ * 已完成（手动勾选 或 到点自动完成）的条目从主时间线移出，单独成组。
+ * 全部条目都已完成时 main 为空，调用方据此自动展开已完成分组。
+ */
+export function splitTimeline(items: readonly TimelineItem[]): TimelineSections {
+  const main: TimelineItem[] = [];
+  const completed: TimelineItem[] = [];
+  for (const item of items) {
+    if (item.completed) completed.push(item);
+    else main.push(item);
+  }
+  return { main, completed };
 }

@@ -2,13 +2,15 @@ import { createContext, useContext, useState, type ReactNode } from 'react';
 import {
   CalendarClock,
   CalendarDays,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleCheck,
   GraduationCap,
   ListChecks,
+  MapPin,
   MoreHorizontal,
   Plus,
-  Trophy,
 } from 'lucide-react';
 import {
   addDays,
@@ -30,7 +32,7 @@ import { cn } from '../../lib/cn.ts';
 import { formatDayCountdown } from '../../lib/format.ts';
 import { ActionMenu } from './card-actions.tsx';
 import { defineCard, type ScheduleCardContext } from './registry.ts';
-import { buildTimeline, dateLabel, groupTimeline } from './timeline.ts';
+import { buildTimeline, dateLabel, groupTimeline, splitTimeline, type TimelineItem, type TimelineNature } from './timeline.ts';
 
 /**
  * 打开课程详情的桥：日程卡片的渲染上下文（registry.ts）里没有这一项，
@@ -260,118 +262,96 @@ function ScheduleTimeline({
   onChanged,
   tomorrowPreview,
 }: ScheduleCardContext) {
-  const timeline = buildTimeline(data, viewDate);
-  const groups = groupTimeline(timeline);
+  const now = Date.now();
+  const timeline = buildTimeline(data, viewDate, now);
+  // 已完成（手动勾选 或 到点自动完成）的条目从主时间线移出，单独成组置顶
+  const { main, completed } = splitTimeline(timeline);
+  const groups = groupTimeline(main);
   const openLessonDetail = useContext(LessonDetailOpener);
   const tomorrow = addDays(viewDate, 1);
-  const tomorrowItems = buildTimeline(data, tomorrow).length;
+  const tomorrowItems = buildTimeline(data, tomorrow, now).length;
+  /**
+   * 已完成分组的展开状态：
+   * 默认「主列表还有未完成条目 → 收起；全部条目都已完成 → 展开」；
+   * 手动点过标题之后以手动为准（按日期记住，切到别的日期再回到默认），
+   * 这样自动判定与手动操作不会互相打架。
+   */
+  const [manualCompleted, setManualCompleted] = useState<{ date: string; open: boolean } | null>(null);
+  const completedOpen =
+    manualCompleted !== null && manualCompleted.date === viewDate ? manualCompleted.open : main.length === 0;
 
   async function toggleDone(event: EventRow): Promise<void> {
     await updateEvent(storage, event.id, { done: event.done === 1 ? 0 : 1 });
     onChanged();
   }
 
+  /** 删除一条调课/调休（沿用原来的软删除方式）。 */
+  async function deleteAdjust(event: EventRow): Promise<void> {
+    await updateEvent(storage, event.id, { deleted_at: Date.now() });
+    onChanged();
+  }
+
   return (
-    <div className="flex flex-col gap-2">
-      {groups.length === 0 ? (
+    <div className="flex flex-col gap-3">
+      {timeline.length === 0 ? (
         <EmptyState icon={ListChecks} title="这一天没有安排" description="可切换日期看过去或未来" />
       ) : (
-        groups.map((group) => (
-          <div key={group.date ?? 'undated'} className="flex flex-col gap-1">
-            <span className="text-xs text-muted">{dateLabel(group.date, data.timeZone)}</span>
-            <ul className="flex flex-col gap-1">
-              {group.items.map((item) => {
-                const lessonTarget = item.lessonTarget ?? null;
-                const marker =
-                  item.kind === 'todo' && item.event !== undefined ? (
-                    <input
-                      type="checkbox"
-                      className="size-4 shrink-0"
-                      checked={item.done === true}
-                      aria-label={`标记完成：${item.title}`}
-                      onChange={() => void toggleDone(item.event as EventRow)}
-                    />
-                  ) : (
-                    <span className="shrink-0 text-muted" aria-hidden>
-                      {item.kind === 'lesson' ? (
-                        <CalendarClock className="size-4" />
-                      ) : item.kind === 'adjust' ? (
-                        <Trophy className="size-4" />
-                      ) : (
-                        <ListChecks className="size-4" />
-                      )}
-                    </span>
-                  );
-                const body = (
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className={cn('truncate text-sm text-ink', item.done === true && 'line-through')}>
-                      {item.title}
-                    </span>
-                    {item.detail.length > 0 && (
-                      <span className="flex min-w-0 items-center gap-1 truncate text-xs text-muted">
-                        {item.detail}
-                      </span>
-                    )}
-                  </span>
-                );
-                return (
-                  <li
+        <>
+          {completed.length > 0 && (
+            <section
+              className="flex flex-col gap-1 rounded-lg border border-line/70 bg-surface-muted/50 p-2"
+              data-role="timeline-completed"
+              data-count={completed.length}
+              aria-label={`已完成 ${completed.length} 项`}
+            >
+              <button
+                type="button"
+                className="flex min-h-tap items-center gap-2 rounded-md px-2 text-left hover:bg-surface-muted"
+                data-role="timeline-completed-toggle"
+                aria-expanded={completedOpen}
+                aria-label={`已完成 ${completed.length}：${completedOpen ? '收起' : '展开'}`}
+                onClick={() => setManualCompleted({ date: viewDate, open: !completedOpen })}
+              >
+                <ChevronDown
+                  className={cn('size-4 shrink-0 text-muted transition-transform', completedOpen && 'rotate-180')}
+                  aria-hidden
+                />
+                <span className="text-sm font-semibold text-muted">已完成 {completed.length}</span>
+              </button>
+              <ul className="flex flex-col gap-2 px-1 pb-1" data-role="timeline-completed-list" hidden={!completedOpen}>
+                {completed.map((item) => (
+                  <TimelineRow
                     key={item.key}
-                    className={cn(
-                      'flex min-h-tap items-center gap-3 rounded-md border border-line bg-surface px-3',
-                      item.done === true && 'border-line-strong/50 bg-surface-muted/40 text-muted opacity-45',
-                    )}
-                    style={item.color === undefined ? undefined : { borderLeft: `4px solid ${item.color}` }}
-                    data-kind={item.kind}
-                    data-done={item.done === true ? 'true' : undefined}
-                  >
-                    {lessonTarget === null ? (
-                      <>
-                        {marker}
-                        {body}
-                      </>
-                    ) : (
-                      // 课程行整体可点：进课程详情，调课在详情里操作
-                      <button
-                        type="button"
-                        data-role="timeline-lesson"
-                        aria-label={`查看课程详情：${item.title}`}
-                        className="flex min-w-0 flex-1 items-center gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
-                        onClick={() => openLessonDetail?.(lessonTarget)}
-                      >
-                        {marker}
-                        {body}
-                      </button>
-                    )}
-                    {item.kind === 'lesson' && item.timeRange !== undefined && (
-                      <span className="tabular shrink-0 text-xs text-muted" data-role="lesson-time">
-                        {item.timeRange}
-                      </span>
-                    )}
-                    {item.kind === 'adjust' && item.event !== undefined && (
-                      <span className="flex shrink-0 items-center gap-1">
-                        <span className="tabular text-xs text-muted">{item.event.on_date}</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`删除调整：${item.title}`}
-                          onClick={() => {
-                            void (async () => {
-                              await updateEvent(storage, String(item.event?.id ?? ''), { deleted_at: Date.now() });
-                              onChanged();
-                            })();
-                          }}
-                        >
-                          删除
-                        </Button>
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                    item={item}
+                    onToggleDone={toggleDone}
+                    onDeleteAdjust={deleteAdjust}
+                    onOpenLesson={openLessonDetail}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <div className="flex flex-col gap-2" data-role="timeline-main">
+            {groups.map((group) => (
+              <div key={group.date ?? 'undated'} className="flex flex-col gap-1">
+                <span className="text-xs text-muted">{dateLabel(group.date, data.timeZone)}</span>
+                <ul className="flex flex-col gap-2">
+                  {group.items.map((item) => (
+                    <TimelineRow
+                      key={item.key}
+                      item={item}
+                      onToggleDone={toggleDone}
+                      onDeleteAdjust={deleteAdjust}
+                      onOpenLesson={openLessonDetail}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))}
+            {main.length === 0 && <span className="text-xs text-muted">这一天的安排都已完成</span>}
           </div>
-        ))
+        </>
       )}
       {tomorrowPreview && tomorrowItems > 0 && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -382,6 +362,138 @@ function ScheduleTimeline({
         </div>
       )}
     </div>
+  );
+}
+
+/** 条目性质角标配色：课程用主题主色、调整用强调色、考试用危险色、其他用中性色。 */
+const NATURE_CLASS: Record<TimelineNature, string> = {
+  课程: 'border-primary/40 bg-primary/10 text-primary-strong',
+  调整: 'border-accent/40 bg-accent/10 text-accent-strong',
+  考试: 'border-danger/40 bg-danger/10 text-danger-strong',
+  其他: 'border-line bg-surface-muted text-muted',
+};
+
+interface TimelineRowProps {
+  item: TimelineItem;
+  /** 手动勾选：可选功能，只有带事件行且还没自动完成的待办/考试才有勾选框 */
+  onToggleDone: (event: EventRow) => void;
+  /** 删除一条调课/调休 */
+  onDeleteAdjust: (event: EventRow) => void;
+  /** 打开课程详情；没有 Provider 时课程行不可点 */
+  onOpenLesson: ((target: AdjustTarget) => void) | null;
+}
+
+/**
+ * 一条时间线，格式固定为：
+ * 左侧竖排时间列（开始 / – / 结束）+ 颜色竖条 + 右侧两行（标题、地点）。
+ * 已完成的条目整行更灰（opacity-40），并去掉勾选框改成「到点自动完成」标记。
+ */
+function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: TimelineRowProps) {
+  const lessonTarget = item.lessonTarget ?? null;
+  const marker =
+    item.autoDone ? (
+      <span className="flex shrink-0 items-center" data-role="timeline-auto-check">
+        <CircleCheck className="size-4 text-muted" role="img" aria-label={`已到时间自动完成：${item.title}`} />
+      </span>
+    ) : item.checkable && item.event !== undefined ? (
+      <input
+        type="checkbox"
+        className="size-4 shrink-0"
+        checked={item.done}
+        aria-label={`标记完成：${item.title}`}
+        onChange={() => onToggleDone(item.event as EventRow)}
+      />
+    ) : null;
+
+  const body = (
+    <>
+      <span
+        className="tabular flex w-12 shrink-0 flex-col items-center justify-center gap-0.5 text-xs font-medium leading-tight text-ink"
+        data-role={item.kind === 'lesson' ? 'lesson-time' : 'timeline-time'}
+      >
+        {item.startText === null && item.endText !== null && (
+          <span className="text-[10px] font-normal text-muted">截止</span>
+        )}
+        {item.startText !== null && <span>{item.startText}</span>}
+        {item.startText !== null && item.endText !== null && <span aria-hidden>–</span>}
+        {item.endText !== null && <span>{item.endText}</span>}
+      </span>
+      {/* 颜色竖条：把左侧时间与右侧内容隔开；课程用课程色，其余用主题主色 */}
+      <span
+        aria-hidden
+        className="w-1.5 shrink-0 self-stretch rounded-full"
+        data-role="timeline-color"
+        data-color={item.color ?? 'var(--dt-primary)'}
+        style={{ backgroundColor: item.color ?? 'var(--dt-primary)' }}
+      />
+      <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              'shrink-0 rounded-full border px-1.5 py-0.5 text-[11px] leading-none',
+              NATURE_CLASS[item.nature],
+            )}
+            data-role="timeline-nature"
+          >
+            {item.nature}
+          </span>
+          <span className={cn('truncate text-base font-medium text-ink', item.completed && 'line-through')}>
+            {item.title}
+          </span>
+          {item.date === null && <span className="shrink-0 text-[11px] text-muted">未排期</span>}
+        </span>
+        {item.location !== null && item.location.length > 0 && (
+          <span className="flex min-w-0 items-center gap-1 text-sm text-muted" data-role="timeline-location">
+            <MapPin className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate">{item.location}</span>
+          </span>
+        )}
+        {item.detail.length > 0 && <span className="truncate text-xs text-muted">{item.detail}</span>}
+      </span>
+    </>
+  );
+
+  return (
+    <li
+      className={cn(
+        'flex min-h-tap items-stretch gap-3 rounded-lg border border-line bg-surface px-3 py-3',
+        item.completed && 'border-line/60 bg-surface-muted/40 text-muted opacity-40',
+      )}
+      data-role="timeline-row"
+      data-kind={item.kind}
+      data-nature={item.nature}
+      data-completed={item.completed ? 'true' : undefined}
+      data-auto={item.autoDone ? 'true' : undefined}
+      data-done={item.done ? 'true' : undefined}
+    >
+      {lessonTarget === null ? (
+        body
+      ) : (
+        // 课程行整体可点：进课程详情，调课在详情里操作
+        <button
+          type="button"
+          data-role="timeline-lesson"
+          aria-label={`查看课程详情：${item.title}`}
+          className="flex min-w-0 flex-1 items-stretch gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+          onClick={() => onOpenLesson?.(lessonTarget)}
+        >
+          {body}
+        </button>
+      )}
+      {marker}
+      {item.kind === 'adjust' && item.event !== undefined && (
+        <span className="flex shrink-0 items-center">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`删除调整：${item.title}`}
+            onClick={() => onDeleteAdjust(item.event as EventRow)}
+          >
+            删除
+          </Button>
+        </span>
+      )}
+    </li>
   );
 }
 
