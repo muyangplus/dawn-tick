@@ -148,6 +148,9 @@ interface EmptyDragState {
   moved: boolean;
 }
 
+/** 拖动过程中需要的最小指针信息：React 合成事件与原生 PointerEvent 都满足。 */
+type DragPointer = Pick<PointerEvent, 'pointerId' | 'clientY' | 'preventDefault'>;
+
 export interface QuickCreatePreset {
   dayOfWeek: number;
   periodStart: number;
@@ -265,6 +268,24 @@ export function WeekView({
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [empty !== null]);
 
+  // 拖动占位块期间把 move/up 也挂到 window：按住「＋」开始拖动时被按下的按钮会被
+  // 实时标签盖住，指针一离开块体（或指针捕获没生效）块节点就收不到 pointermove。
+  useEffect(() => {
+    const onMove = (event: PointerEvent): void => moveEmptyDrag(event);
+    const onUp = (event: PointerEvent): void => endEmptyDrag(event);
+    const onCancel = (event: PointerEvent): void => cancelEmptyDrag(event);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+    };
+    // 处理函数只依赖 data/periodCount 与 ref，二者变化时重建监听
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, periodCount]);
+
   function setEmptyTarget(next: EmptyTarget | null): void {
     const previous = emptyRef.current;
     emptyRef.current = next;
@@ -335,10 +356,11 @@ export function WeekView({
       moved: false,
     };
     if (mode === 'body') setEmptyDragMode('body');
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // 这里刻意不 setPointerCapture：捕获会把后面的兼容鼠标事件也改派到块节点上，
+    // 单击「＋」的 click 就落不到按钮上了；移动/抬手改由拖动期间的 window 监听兜住。
   }
 
-  function moveEmptyDrag(event: React.PointerEvent<HTMLElement>): void {
+  function moveEmptyDrag(event: DragPointer): void {
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     const current = emptyRef.current;
@@ -375,7 +397,7 @@ export function WeekView({
     };
   }
 
-  function endEmptyDrag(event: React.PointerEvent<HTMLElement>): void {
+  function endEmptyDrag(event: DragPointer): void {
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     emptyDrag.current = null;
@@ -399,7 +421,7 @@ export function WeekView({
     openQuickCreate(current);
   }
 
-  function cancelEmptyDrag(event: React.PointerEvent<HTMLElement>): void {
+  function cancelEmptyDrag(event: DragPointer): void {
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     emptyDrag.current = null;
@@ -694,29 +716,13 @@ export function WeekView({
                       onPointerCancel={cancelEmptyDrag}
                       onClick={(event) => event.stopPropagation()}
                     >
-                      {emptyDragMode === 'body' ? (
-                        // 拖动中的实时反馈：直接把「＋」的位置换成节次范围标签
-                        <div
-                          data-role="empty-drag-label"
-                          className="flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-hidden"
-                        >
-                          <span className="tabular rounded-sm bg-primary px-1.5 py-0.5 text-[11px] text-on-primary shadow-sm">
-                            {formatPeriods(placeholder.start, placeholder.end)}
-                          </span>
-                          {placeholderClash !== null && (
-                            <span
-                              data-role="empty-clash"
-                              className="max-w-full truncate text-[10px] text-danger-strong"
-                            >
-                              与「{placeholderClash.name}」重叠
-                            </span>
-                          )}
-                        </div>
-                      ) : (
+                      {/* 本体拖动区：除了中间的「＋」小按钮，整块区域都能按住拖动改节次 */}
+                      <div className="relative flex min-h-0 flex-1 items-center justify-center">
                         <button
                           type="button"
                           aria-label="在此新建课程"
-                          className="flex min-h-0 flex-1 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted"
+                          className="flex size-5 shrink-0 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted"
+                          style={{ touchAction: 'none' }}
                           onClick={(event) => {
                             event.stopPropagation();
                             // 用当前范围（含滚轮/箭头/拖动调好的节次），不要重置成单节
@@ -725,9 +731,28 @@ export function WeekView({
                             openQuickCreate(current);
                           }}
                         >
-                          <Plus className="size-5" aria-hidden />
+                          <Plus className="size-4" aria-hidden />
                         </button>
-                      )}
+                        {emptyDragMode === 'body' && (
+                          // 拖动中的实时反馈：盖在「＋」上的一层；pointer-events-none 让单击仍落在按钮上
+                          <div
+                            data-role="empty-drag-label"
+                            className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm bg-surface"
+                          >
+                            <span className="tabular rounded-sm bg-primary px-1.5 py-0.5 text-[11px] text-on-primary shadow-sm">
+                              {formatPeriods(placeholder.start, placeholder.end)}
+                            </span>
+                            {placeholderClash !== null && (
+                              <span
+                                data-role="empty-clash"
+                                className="max-w-full truncate text-[10px] text-danger-strong"
+                              >
+                                与「{placeholderClash.name}」重叠
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       <div className="flex items-center justify-center gap-1 text-[11px]">
                         <button
                           type="button"
