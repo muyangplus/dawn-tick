@@ -1109,16 +1109,63 @@ fn elevate_on_access_denied(reason: &str) -> bool {
     }
 }
 
-/// 主窗口几何（物理像素），字段与 `window.json` 一一对应。
+/// 主窗口几何，字段与 `window.json` 一一对应。
+/// `width/height/x/y` 是**物理像素**（且宽高是内尺寸），与旧版文件完全一致；
+/// `monitor` 是后加的显示器指纹，旧文件没有该字段、反序列化为 `None`，
+/// 此时一律按旧的物理像素逻辑恢复（向后兼容，不 panic）。
 /// 注意：宽高是窗口**内尺寸**（客户区），与 `set_size` 的语义一致；
 /// 若存外尺寸（`outer_size`），恢复时会被再加一圈边框，窗口每次重启都变大。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct WindowGeometry {
     width: u32,
     height: u32,
     x: i32,
     y: i32,
     maximized: bool,
+    /// 窗口所在显示器的指纹；缺失（旧文件）或非法时为 None → 走物理像素回退路径。
+    /// 为 None 时不写该字段，落盘形态与旧版完全一致。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    monitor: Option<MonitorRef>,
+}
+
+/// 窗口所在显示器的指纹：名称、保存时的缩放因子，以及窗口逻辑坐标相对
+/// 该显示器逻辑原点的偏移（逻辑像素）。
+/// 跨不同缩放的显示器搬窗口时，物理坐标会随缩放整体放大/缩小而失真，
+/// 只有「同一块显示器 + 逻辑偏移 + 逻辑尺寸」才是可移植的。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct MonitorRef {
+    /// `monitor.name()` 的结果；Windows 上可能拿不到名称，此时为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// 保存时该显示器的缩放因子（1.0 / 1.25 / 1.5 / 2.0 …）。
+    /// 字段缺失（手改过的旧文件）时为 0.0，重映射会因非法而退回物理逻辑。
+    #[serde(default)]
+    scale_factor: f64,
+    /// 窗口逻辑坐标相对显示器逻辑原点的偏移（逻辑像素）= (窗口物理坐标 - 显示器物理原点) / scale。
+    #[serde(default)]
+    offset_x: f64,
+    #[serde(default)]
+    offset_y: f64,
+}
+
+/// 当前显示器快照：物理原点按**当前** scale 换算成逻辑原点，
+/// 这样「显示器逻辑原点 + 保存的逻辑偏移」就直接是窗口的目标逻辑坐标。
+#[derive(Debug, Clone, PartialEq)]
+struct MonitorSnapshot {
+    name: Option<String>,
+    logical_x: f64,
+    logical_y: f64,
+    scale_factor: f64,
+}
+
+/// 重映射结果：窗口在目标显示器上的逻辑坐标与逻辑尺寸（逻辑像素）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LogicalTarget {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    scale_factor: f64,
 }
 
 /// 显示器可见矩形（物理像素）。抽成纯数据类型，便于对可见性判定做单元测试。
@@ -1140,6 +1187,13 @@ const MAX_WINDOW_COORD: u32 = 20000;
 const VISIBLE_MARGIN: i32 = 40;
 /// 移动/缩放落盘防抖窗口：500ms 内只写一次。
 const GEOMETRY_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+/// 缩放因子上限：Windows 单屏缩放最高 500%，留一倍余量，用于挡住脏数据。
+const MAX_SCALE_FACTOR: f64 = 10.0;
+/// 重映射后逻辑尺寸的合法区间：换算结果超出该区间说明 scale/物理尺寸已损坏，退回物理逻辑。
+const MIN_LOGICAL_SIZE: f64 = 100.0;
+const MAX_LOGICAL_SIZE: f64 = MAX_WINDOW_SIZE as f64;
+/// 逻辑坐标绝对值上限（与物理坐标同口径）。
+const MAX_LOGICAL_COORD: f64 = MAX_WINDOW_COORD as f64;
 
 /// 几何是否合理：宽高在 [400, 10000]，坐标绝对值不超过 20000。
 fn geometry_is_sane(geometry: &WindowGeometry) -> bool {
@@ -1168,6 +1222,78 @@ fn position_visible(x: i32, y: i32, width: u32, height: u32, screens: &[ScreenRe
         let overlap_width = right.min(screen_right) - left.max(screen.x);
         let overlap_height = bottom.min(screen_bottom) - top.max(screen.y);
         overlap_width >= margin && overlap_height >= margin
+    })
+}
+
+/// 纯函数：按保存的显示器指纹，把窗口几何换算成目标显示器上的逻辑坐标/尺寸。
+/// 返回 `None` 表示**不做**重映射（没有指纹、找不到同名显示器、或数值非法），
+/// 调用方应退回物理像素逻辑。任何输入都不 panic。
+///
+/// 换算口径：逻辑尺寸 = 保存的物理尺寸 / 保存时的 scale（即「当时看起来」的大小），
+/// 逻辑位置 = 当前显示器逻辑原点 + 保存的逻辑偏移（同一块屏幕上相对位置不变）。
+fn remap_to_monitor(geometry: &WindowGeometry, monitors: &[MonitorSnapshot]) -> Option<LogicalTarget> {
+    let saved = geometry.monitor.as_ref()?;
+    // scale 缺失（旧文件默认 0.0）或非法：无法把物理尺寸换算成逻辑尺寸，退回旧逻辑
+    let saved_scale = saved.scale_factor;
+    if !saved_scale.is_finite() || saved_scale <= 0.0 || saved_scale > MAX_SCALE_FACTOR {
+        return None;
+    }
+    if !saved.offset_x.is_finite() || !saved.offset_y.is_finite() {
+        return None;
+    }
+    if saved.offset_x.abs() > MAX_LOGICAL_COORD || saved.offset_y.abs() > MAX_LOGICAL_COORD {
+        return None;
+    }
+    // 只有同名显示器才敢套用偏移：换了显示器/单屏切换时偏移量没有可移植性。
+    // 名称为空或缺失时也无法匹配（None 绝不与 None 相等）。
+    let name = saved.name.as_deref().filter(|name| !name.is_empty())?;
+    let target = monitors
+        .iter()
+        .find(|monitor| monitor.name.as_deref() == Some(name))?;
+    if !target.scale_factor.is_finite() || target.scale_factor <= 0.0 {
+        return None;
+    }
+
+    let width = geometry.width as f64 / saved_scale;
+    let height = geometry.height as f64 / saved_scale;
+    let x = target.logical_x + saved.offset_x;
+    let y = target.logical_y + saved.offset_y;
+    // NaN/无穷一律拒绝（NaN 的比较结果恒为 false，必须先判 is_finite）
+    if !x.is_finite() || !y.is_finite() || !width.is_finite() || !height.is_finite() {
+        return None;
+    }
+    if x.abs() > MAX_LOGICAL_COORD || y.abs() > MAX_LOGICAL_COORD {
+        return None;
+    }
+    if !(MIN_LOGICAL_SIZE..=MAX_LOGICAL_SIZE).contains(&width)
+        || !(MIN_LOGICAL_SIZE..=MAX_LOGICAL_SIZE).contains(&height)
+    {
+        return None;
+    }
+
+    Some(LogicalTarget {
+        x,
+        y,
+        width,
+        height,
+        scale_factor: target.scale_factor,
+    })
+}
+
+/// 由 tauri 的显示器对象构造快照。scale 非法（0/负/NaN/超界）时返回 None，
+/// 该显示器不参与重映射，调用方自然退回物理像素逻辑。
+#[cfg(desktop)]
+fn snapshot_of(monitor: &tauri::Monitor) -> Option<MonitorSnapshot> {
+    let scale = monitor.scale_factor();
+    if !scale.is_finite() || scale <= 0.0 || scale > MAX_SCALE_FACTOR {
+        return None;
+    }
+    let origin = monitor.position();
+    Some(MonitorSnapshot {
+        name: monitor.name().map(|name| name.to_string()),
+        logical_x: origin.x as f64 / scale,
+        logical_y: origin.y as f64 / scale,
+        scale_factor: scale,
     })
 }
 
@@ -1224,6 +1350,48 @@ static GEOMETRY_TIMER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic
 #[cfg(desktop)]
 static GEOMETRY_LAST_NORMAL: std::sync::Mutex<Option<WindowGeometry>> = std::sync::Mutex::new(None);
 
+/// 记录窗口所在显示器的指纹：名称、当前 scale，以及窗口相对该显示器逻辑原点的偏移。
+/// 拿不到显示器信息时返回 None —— 几何照旧保存，只是不含指纹（恢复时走物理像素逻辑）。
+#[cfg(desktop)]
+fn capture_monitor_ref(
+    window: &tauri::WebviewWindow,
+    position: tauri::PhysicalPosition<i32>,
+) -> Option<MonitorRef> {
+    let monitor = match window.current_monitor() {
+        Ok(Some(monitor)) => Some(monitor),
+        Ok(None) => None,
+        Err(error) => {
+            append_log(&format!("获取窗口所在显示器失败: {error}"));
+            None
+        }
+    };
+    // 跨屏或窗口刚建立时 current_monitor 可能为空：退回主显示器，总比没有指纹强
+    let monitor = match monitor.or_else(|| window.primary_monitor().ok().flatten()) {
+        Some(monitor) => monitor,
+        None => {
+            append_log("拿不到显示器信息，本次窗口几何不含显示器指纹");
+            return None;
+        }
+    };
+    let scale = monitor.scale_factor();
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let origin = monitor.position();
+    // 逻辑偏移 = 物理偏移 / 当前 scale；用 saturating_sub 防止极端坐标溢出
+    let offset_x = position.x.saturating_sub(origin.x) as f64 / scale;
+    let offset_y = position.y.saturating_sub(origin.y) as f64 / scale;
+    if !offset_x.is_finite() || !offset_y.is_finite() {
+        return None;
+    }
+    Some(MonitorRef {
+        name: monitor.name().map(|name| name.to_string()),
+        scale_factor: scale,
+        offset_x,
+        offset_y,
+    })
+}
+
 /// 取当前窗口几何。最小化期间尺寸没有意义，返回 None 跳过本次保存。
 #[cfg(desktop)]
 fn capture_window_geometry(window: &tauri::WebviewWindow) -> Option<WindowGeometry> {
@@ -1240,16 +1408,17 @@ fn capture_window_geometry(window: &tauri::WebviewWindow) -> Option<WindowGeomet
         x: position.x,
         y: position.y,
         maximized,
+        monitor: capture_monitor_ref(window, position),
     };
     if !maximized {
         if let Ok(mut slot) = GEOMETRY_LAST_NORMAL.lock() {
-            *slot = Some(current);
+            *slot = Some(current.clone());
         }
         return Some(current);
     }
     // 最大化时的尺寸/坐标是铺满屏幕的值：改用最大化前的普通几何，
     // 这样用户之后点「还原」仍能得到原来的大小与位置。
-    match GEOMETRY_LAST_NORMAL.lock().ok().and_then(|slot| *slot) {
+    match GEOMETRY_LAST_NORMAL.lock().ok().and_then(|slot| slot.clone()) {
         Some(mut normal) => {
             normal.maximized = true;
             Some(normal)
@@ -1291,57 +1460,101 @@ fn save_geometry_now(window: &tauri::WebviewWindow) {
     }
 }
 
-/// 恢复主窗口几何：先尺寸、再位置（不可见则居中）、最后最大化。
-/// 只作用于主窗口；任何失败都只记日志，不影响启动。
+/// 恢复主窗口几何。决策顺序：
+/// 1. 读 `window.json`；缺失/损坏/数值不合理 → 直接用默认几何，什么都不做；
+/// 2. 采集当前显示器：物理矩形用于可见性判断，逻辑原点 + 当前 scale 用于 DPI 重映射；
+/// 3. 若保存的显示器**名称能在当前 `available_monitors()` 里找到**且数值合法 →
+///    **DPI 重映射**：逻辑尺寸 = 保存的物理尺寸 / 保存时的 scale，
+///    逻辑位置 = 当前显示器逻辑原点 + 保存的逻辑偏移，用 `LogicalSize`/`LogicalPosition` 落位，
+///    由系统按新缩放换算成物理像素；
+/// 4. 找不到同名显示器（换显示器/单屏切换）或指纹缺失/非法 → **退回旧的物理像素逻辑**：
+///    先 `set_size(PhysicalSize)`，位置按 40px（`VISIBLE_MARGIN`）重叠容错判断，
+///    不可见则居中；
+/// 5. 最后按保存的 `maximized` 决定是否最大化。
+/// 任何一步失败都只写 `append_log`，不 panic、不弹窗。
 #[cfg(desktop)]
 fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
     let Some(geometry) = read_window_geometry() else {
         return;
     };
 
-    if let Err(error) = window.set_size(tauri::PhysicalSize::new(geometry.width, geometry.height)) {
-        append_log(&format!("恢复窗口尺寸失败: {error}"));
-    }
-
-    let screens: Vec<ScreenRect> = match window.available_monitors() {
-        Ok(monitors) => monitors
-            .iter()
-            .map(|monitor| ScreenRect {
-                x: monitor.position().x,
-                y: monitor.position().y,
-                width: monitor.size().width,
-                height: monitor.size().height,
-            })
-            .collect(),
+    // 显示器信息只取一次：物理矩形给可见性判断，逻辑快照给重映射
+    let (screens, snapshots) = match window.available_monitors() {
+        Ok(monitors) => (
+            monitors
+                .iter()
+                .map(|monitor| ScreenRect {
+                    x: monitor.position().x,
+                    y: monitor.position().y,
+                    width: monitor.size().width,
+                    height: monitor.size().height,
+                })
+                .collect::<Vec<ScreenRect>>(),
+            monitors.iter().filter_map(snapshot_of).collect::<Vec<MonitorSnapshot>>(),
+        ),
         Err(error) => {
             append_log(&format!("获取显示器信息失败: {error}"));
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
     };
 
-    let position_note = if position_visible(
-        geometry.x,
-        geometry.y,
-        geometry.width,
-        geometry.height,
-        &screens,
-        VISIBLE_MARGIN,
-    ) {
-        if let Err(error) = window.set_position(tauri::PhysicalPosition::new(geometry.x, geometry.y)) {
-            append_log(&format!("恢复窗口位置失败: {error}"));
+    // 先算重映射目标：命中同名显示器才走逻辑坐标，否则一律退回物理像素
+    let target = remap_to_monitor(&geometry, &snapshots);
+
+    let position_note = match target {
+        Some(target) => {
+            // 重映射路径：逻辑尺寸 + 逻辑坐标，交给系统按当前缩放渲染
+            if let Err(error) = window.set_size(tauri::LogicalSize::new(target.width, target.height)) {
+                append_log(&format!("恢复窗口尺寸失败: {error}"));
+            }
+            if let Err(error) = window.set_position(tauri::LogicalPosition::new(target.x, target.y)) {
+                append_log(&format!("恢复窗口位置失败: {error}"));
+            }
+            let monitor_name = geometry
+                .monitor
+                .as_ref()
+                .and_then(|monitor| monitor.name.as_deref())
+                .unwrap_or("未知显示器");
+            append_log(&format!(
+                "窗口几何已按显示器 {monitor_name}（scale {}）重映射: {}x{} @ ({:.0},{:.0})",
+                target.scale_factor, target.width, target.height, target.x, target.y
+            ));
+            format!("({:.0},{:.0})（逻辑重映射）", target.x, target.y)
         }
-        format!("({},{})", geometry.x, geometry.y)
-    } else {
-        // 保存的位置已不在任何显示器可见区域内：只应用大小，位置改为居中。
-        if let Err(error) = window.center() {
-            append_log(&format!("窗口居中失败: {error}"));
+        None => {
+            // 回退路径：沿用旧的物理像素逻辑
+            if let Err(error) = window.set_size(tauri::PhysicalSize::new(geometry.width, geometry.height)) {
+                append_log(&format!("恢复窗口尺寸失败: {error}"));
+            }
+            append_log(&format!(
+                "窗口几何未重映射（{}），按物理像素恢复",
+                remap_skip_reason(&geometry, &snapshots)
+            ));
+            if position_visible(
+                geometry.x,
+                geometry.y,
+                geometry.width,
+                geometry.height,
+                &screens,
+                VISIBLE_MARGIN,
+            ) {
+                if let Err(error) = window.set_position(tauri::PhysicalPosition::new(geometry.x, geometry.y)) {
+                    append_log(&format!("恢复窗口位置失败: {error}"));
+                }
+                format!("({},{})", geometry.x, geometry.y)
+            } else {
+                // 保存的位置已不在任何显示器可见区域内：只应用大小，位置改为居中。
+                if let Err(error) = window.center() {
+                    append_log(&format!("窗口居中失败: {error}"));
+                }
+                format!("居中（原位置 ({},{}) 不在可见区域）", geometry.x, geometry.y)
+            }
         }
-        format!("居中（原位置 ({},{}) 不在可见区域）", geometry.x, geometry.y)
     };
 
     // 记录普通状态几何，供之后最大化时保存使用
     if let Ok(mut slot) = GEOMETRY_LAST_NORMAL.lock() {
-        *slot = Some(WindowGeometry { maximized: false, ..geometry });
+        *slot = Some(WindowGeometry { maximized: false, ..geometry.clone() });
     }
 
     if geometry.maximized {
@@ -1354,6 +1567,24 @@ fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
         "窗口几何已恢复: {}x{} @ {} 最大化={}",
         geometry.width, geometry.height, position_note, geometry.maximized
     ));
+}
+
+/// 没走重映射的原因，仅用于日志（判断口径与 `remap_to_monitor` 的提前返回一一对应）。
+fn remap_skip_reason(geometry: &WindowGeometry, monitors: &[MonitorSnapshot]) -> String {
+    let Some(saved) = geometry.monitor.as_ref() else {
+        return "旧文件无显示器信息".to_string();
+    };
+    match saved.name.as_deref().filter(|name| !name.is_empty()) {
+        None => "文件未记录显示器名称".to_string(),
+        Some(name) => {
+            if monitors.iter().any(|monitor| monitor.name.as_deref() == Some(name)) {
+                // 名称能对上却仍被拒：只可能是 scale/偏移/换算结果非法
+                "显示器指纹数值非法".to_string()
+            } else {
+                format!("当前没有名为 {name} 的显示器")
+            }
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1584,7 +1815,42 @@ mod tests {
     }
 
     fn geometry(width: u32, height: u32, x: i32, y: i32, maximized: bool) -> WindowGeometry {
-        WindowGeometry { width, height, x, y, maximized }
+        WindowGeometry { width, height, x, y, maximized, monitor: None }
+    }
+
+    /// 带显示器指纹的几何：物理尺寸 + 保存时的显示器（名称/scale/逻辑偏移）。
+    fn geometry_on_monitor(
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        name: Option<&str>,
+        scale: f64,
+        offset: (f64, f64),
+    ) -> WindowGeometry {
+        WindowGeometry {
+            width,
+            height,
+            x,
+            y,
+            maximized: false,
+            monitor: Some(MonitorRef {
+                name: name.map(|name| name.to_string()),
+                scale_factor: scale,
+                offset_x: offset.0,
+                offset_y: offset.1,
+            }),
+        }
+    }
+
+    /// 当前显示器快照：物理原点 (origin_x, origin_y) 按当前 scale 换算成逻辑原点。
+    fn snapshot(name: Option<&str>, origin_x: i32, origin_y: i32, scale: f64) -> MonitorSnapshot {
+        MonitorSnapshot {
+            name: name.map(|name| name.to_string()),
+            logical_x: origin_x as f64 / scale,
+            logical_y: origin_y as f64 / scale,
+            scale_factor: scale,
+        }
     }
 
     #[test]
@@ -1622,6 +1888,145 @@ mod tests {
         // 字段缺失 / 损坏一律按默认值处理
         assert!(serde_json::from_str::<WindowGeometry>(r#"{"width":1200}"#).is_err());
         assert!(serde_json::from_str::<WindowGeometry>("not json").is_err());
+    }
+
+    /// 旧文件没有 monitor 字段：照旧解析、照旧写回，一个字节都不变。
+    #[test]
+    fn geometry_old_file_without_monitor_still_parses() {
+        let text = r#"{"width":1532,"height":978,"x":175,"y":138,"maximized":false}"#;
+        let parsed: WindowGeometry = serde_json::from_str(text).expect("旧文件应能解析");
+        assert_eq!(parsed, geometry(1532, 978, 175, 138, false));
+        assert!(parsed.monitor.is_none(), "旧文件不应凭空得到显示器指纹");
+        assert_eq!(serde_json::to_string(&parsed).expect("应能序列化"), text);
+    }
+
+    /// monitor 子字段缺失（手改过的文件）不能解析失败：scale 兜底为 0.0，重映射因此退回物理逻辑。
+    #[test]
+    fn monitor_field_with_missing_scale_falls_back() {
+        let parsed: WindowGeometry = serde_json::from_str(
+            r#"{"width":1200,"height":800,"x":0,"y":0,"maximized":false,"monitor":{"name":"屏A","offset_x":10.0,"offset_y":20.0}}"#,
+        )
+        .expect("monitor 子字段缺失也应能解析");
+        let saved = parsed.monitor.clone().expect("应带显示器指纹");
+        assert_eq!(saved.scale_factor, 0.0, "缺失的 scale 兜底为 0.0");
+        assert!(remap_to_monitor(&parsed, &[snapshot(Some("屏A"), 0, 0, 1.0)]).is_none());
+        assert_eq!(remap_skip_reason(&parsed, &[snapshot(Some("屏A"), 0, 0, 1.0)]), "显示器指纹数值非法");
+    }
+
+    /// 带显示器指纹的 JSON 往返：字段名与形态固定。
+    #[test]
+    fn geometry_json_roundtrip_with_monitor() {
+        let saved = geometry_on_monitor(1600, 1000, 1920, 0, Some("DELL U2720Q"), 1.5, (100.0, 50.0));
+        let text = serde_json::to_string(&saved).expect("应能序列化");
+        assert_eq!(
+            text,
+            r#"{"width":1600,"height":1000,"x":1920,"y":0,"maximized":false,"monitor":{"name":"DELL U2720Q","scale_factor":1.5,"offset_x":100.0,"offset_y":50.0}}"#
+        );
+        assert_eq!(serde_json::from_str::<WindowGeometry>(&text).expect("应能解析"), saved);
+        // 拿不到显示器名称时省略 name 字段，仍然可解析
+        let nameless = geometry_on_monitor(1200, 800, 0, 0, None, 1.0, (0.0, 0.0));
+        let text = serde_json::to_string(&nameless).expect("应能序列化");
+        assert!(!text.contains("name"), "名称为 None 时不写 name: {text}");
+        assert_eq!(serde_json::from_str::<WindowGeometry>(&text).expect("应能解析"), nameless);
+    }
+
+    /// 同名显示器 + scale 变化：位置按逻辑偏移重算，尺寸按保存时的逻辑尺寸。
+    #[test]
+    fn remap_uses_same_monitor_and_new_scale() {
+        // 保存时：scale 1.0，窗口物理 1600x1000，逻辑偏移 (300,200)
+        let saved = geometry_on_monitor(1600, 1000, 1920 + 300, 200, Some("DELL U2720Q"), 1.0, (300.0, 200.0));
+        // 现在的布局：外接屏物理原点 x=1600，当前缩放 1.25 → 逻辑原点 (1280,0)
+        let monitors = [
+            snapshot(Some("内置屏"), 0, 0, 1.25),
+            snapshot(Some("DELL U2720Q"), 1600, 0, 1.25),
+        ];
+        let target = remap_to_monitor(&saved, &monitors).expect("同名显示器应能重映射");
+        assert_eq!((target.width, target.height), (1600.0, 1000.0), "逻辑尺寸 = 物理尺寸 / 保存时 scale");
+        assert_eq!((target.x, target.y), (1580.0, 200.0), "逻辑位置 = 显示器当前逻辑原点 + 保存的逻辑偏移");
+        assert_eq!(target.scale_factor, 1.25);
+
+        // 反向：高 DPI 下保存（scale 2.0），在 100% 显示器上恢复 → 逻辑尺寸只有一半的物理值
+        let saved_hi = geometry_on_monitor(2400, 1600, 100, 50, Some("高 DPI 屏"), 2.0, (50.0, 25.0));
+        let target = remap_to_monitor(&saved_hi, &[snapshot(Some("高 DPI 屏"), 0, 0, 1.0)])
+            .expect("应能重映射");
+        assert_eq!(
+            (target.x, target.y, target.width, target.height),
+            (50.0, 25.0, 1200.0, 800.0)
+        );
+
+        // 同一块屏但周围布局变了（左侧多了副屏）：逻辑原点变负，仍按偏移落位
+        let moved = remap_to_monitor(&saved, &[snapshot(Some("DELL U2720Q"), -2560, 0, 1.25)])
+            .expect("应能重映射");
+        assert_eq!((moved.x, moved.y), (-1748.0, 200.0));
+    }
+
+    /// 找不到同名显示器（换屏/单屏切换/枚举失败）：一律退回物理像素逻辑。
+    #[test]
+    fn remap_falls_back_when_monitor_not_found() {
+        let monitors = [snapshot(Some("内置屏"), 0, 0, 1.5)];
+        let unplugged = geometry_on_monitor(1200, 800, 100, 80, Some("已拔掉的外接屏"), 1.0, (100.0, 80.0));
+        assert!(remap_to_monitor(&unplugged, &monitors).is_none());
+        assert!(remap_skip_reason(&unplugged, &monitors).contains("已拔掉的外接屏"));
+
+        // 旧文件没有指纹
+        let legacy = geometry(1200, 800, 100, 80, false);
+        assert!(remap_to_monitor(&legacy, &monitors).is_none());
+        assert_eq!(remap_skip_reason(&legacy, &monitors), "旧文件无显示器信息");
+
+        // 保存与当前都没有名称 / 名称为空串：都不算同名
+        let nameless = geometry_on_monitor(1200, 800, 100, 80, None, 1.0, (100.0, 80.0));
+        assert!(remap_to_monitor(&nameless, &[snapshot(None, 0, 0, 1.0)]).is_none());
+        let empty = geometry_on_monitor(1200, 800, 100, 80, Some(""), 1.0, (100.0, 80.0));
+        assert!(remap_to_monitor(&empty, &[snapshot(Some(""), 0, 0, 1.0)]).is_none());
+        assert_eq!(remap_skip_reason(&nameless, &monitors), "文件未记录显示器名称");
+
+        // 枚举显示器失败（空列表）
+        assert!(remap_to_monitor(&unplugged, &[]).is_none());
+    }
+
+    /// 极端 / 非法输入：不 panic，一律退回 None。
+    #[test]
+    fn remap_rejects_invalid_input_without_panic() {
+        let good = [snapshot(Some("屏A"), 0, 0, 2.0)];
+        let ok = geometry_on_monitor(1200, 800, 0, 0, Some("屏A"), 1.0, (0.0, 0.0));
+        assert!(remap_to_monitor(&ok, &good).is_some(), "正常输入应能重映射");
+
+        // scale 非法：0（字段缺失的兜底值）/ 负数 / 无穷 / NaN / 超界
+        for scale in [0.0, -1.5, f64::INFINITY, f64::NAN, MAX_SCALE_FACTOR * 2.0] {
+            let saved = geometry_on_monitor(1200, 800, 0, 0, Some("屏A"), scale, (10.0, 10.0));
+            assert!(remap_to_monitor(&saved, &good).is_none(), "scale={scale} 应被拒绝");
+        }
+        // 偏移非法：NaN / 无穷 / 超界
+        for offset in [f64::NAN, f64::INFINITY, -f64::INFINITY, MAX_LOGICAL_COORD * 2.0] {
+            let saved = geometry_on_monitor(1200, 800, 0, 0, Some("屏A"), 1.0, (offset, offset));
+            assert!(remap_to_monitor(&saved, &good).is_none(), "offset={offset} 应被拒绝");
+        }
+        // 显示器逻辑原点为 NaN → 拒绝
+        let nan_monitor = MonitorSnapshot {
+            name: Some("屏A".to_string()),
+            logical_x: f64::NAN,
+            logical_y: 0.0,
+            scale_factor: 1.0,
+        };
+        let saved = geometry_on_monitor(1200, 800, 0, 0, Some("屏A"), 1.0, (0.0, 0.0));
+        assert!(remap_to_monitor(&saved, &[nan_monitor]).is_none());
+        // 当前显示器 scale 非法 → 拒绝
+        let bad_scale_monitor = MonitorSnapshot {
+            name: Some("屏A".to_string()),
+            logical_x: 0.0,
+            logical_y: 0.0,
+            scale_factor: 0.0,
+        };
+        assert!(remap_to_monitor(&saved, &[bad_scale_monitor]).is_none());
+
+        // 换算出的逻辑尺寸超出 [MIN_LOGICAL_SIZE, MAX_LOGICAL_SIZE] → 拒绝
+        let tiny = geometry_on_monitor(MIN_WINDOW_SIZE, MIN_WINDOW_SIZE, 0, 0, Some("屏A"), 9.0, (0.0, 0.0));
+        assert!(remap_to_monitor(&tiny, &good).is_none(), "逻辑尺寸过小应被拒绝");
+        let huge = geometry_on_monitor(u32::MAX, u32::MAX, 0, 0, Some("屏A"), 1.0, (0.0, 0.0));
+        assert!(remap_to_monitor(&huge, &good).is_none(), "逻辑尺寸过大应被拒绝");
+        // 极端物理坐标 + 极端偏移不能让自己溢出成 NaN/无穷
+        let extreme = geometry_on_monitor(1200, 800, i32::MIN, i32::MAX, Some("屏A"), 1.0, (MAX_LOGICAL_COORD, -MAX_LOGICAL_COORD));
+        let _ = remap_to_monitor(&extreme, &good);
     }
 
     /// 找一个可写的临时目录：优先系统临时目录，受限环境（只允许写工作区）退回 target 下。
