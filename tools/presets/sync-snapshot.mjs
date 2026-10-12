@@ -21,16 +21,23 @@
  * `--check` 则改为拿该目录里的两份文件做比对，语义仍是「只校验不写盘、一个文件都不写」。
  *
  * 规矩（重要）：**预设仓库是内容的唯一来源**。改了预设仓库里的 schools / systems / adapters，
- * 必须先在预设仓库跑 `node scripts/snapshot.mjs` 生成新快照（同时会重写 `presets/index.json`），
- * 再回来跑本脚本同步；本脚本只做「校验 + 复制」，绝不重新生成时间戳、也绝不改写 hash。
+ * 必须先在预设仓库跑 `node scripts/snapshot.mjs` 生成新快照（唯一产物；索引已并入快照，
+ * 不再产出 `presets/index.json`），再回来跑本脚本同步；
+ * 本脚本只做「校验 + 复制」，绝不重新生成时间戳、也绝不改写 hash。
  *
- * 关于快照里的 `path`（2026 结构重构后两类语义不同，本脚本**不受影响**）：
- *   - `sources.timetables[].path` 是**真实文件** `presets/schools/<校目录>/timetable.json`；
- *   - `sources.systems[].path` 是**符号路径** `presets/systems/<id>/system.json`，新结构下没有这个文件，
- *     它代表 `<id>/meta.json` + `<id>/login.json` 编译出的旧扁平结构。
+ * 关于快照里的 `index`（2026 配置合并后新增的顶层字段）：它就是原 `presets/index.json` 的全部信息
+ * （学校索引 + 系统引用），**参与内容哈希**。本脚本要求它存在且 `_generated === true`——
+ * 新结构的快照必然带它，缺了说明来源不对，宁可不落盘。
+ *
+ * 关于快照里的 `path`（2026 配置合并后两类语义不同，本脚本**不受影响**）：
+ *   - `sources.timetables[].path` 是**历史契约符号路径** `presets/schools/<校目录>/timetable.json`，
+ *     合并后**没有这个文件**：作息内容内嵌在 `schools/<校目录>/school.json` 的 `timetable` 值里；
+ *   - `sources.systems[].path` 是 `presets/systems/<id>/system.json`，合并后这个文件存在，
+ *     但条目 sha256 覆盖的是它编译成旧扁平结构后的文本。
  *   本脚本从头到尾只按 **id** 比对清单（见 compareSourceIds），**从不按 path 读文件**，
- *   所以符号路径不会被误当成真实文件；path 的形状校验由 core 的 verifyBuiltinPresetSnapshot() 负责。
- *   需要真实路径的调用方请读 `presets/index.json`（timetablePath / configPath / metaPath / loginPath）。
+ *   所以两类路径都不会被误用；path 与内嵌路径的形状校验由 core 的 verifyBuiltinPresetSnapshot() 负责。
+ *   需要真实路径的调用方请读快照内嵌的 `index`（学校 `configPath` / `timetablePath` →
+ *   `schools/<校目录>/school.json`，系统 `metaPath` / `loginPath` → `systems/<id>/system.json`）。
  *
  * 失败即不落盘：目录不存在、快照缺失、hash 不符、文件清单对不上内置配置，
  * 都会打印中文错误并以非 0 退出，且**一个文件都不写**。
@@ -140,12 +147,24 @@ function verifySnapshot(snapshot, snapshotPath) {
   if (!Array.isArray(sources.timetables)) fail('快照的 sources.timetables 应为数组');
   if (!Array.isArray(sources.systems)) fail('快照的 sources.systems 应为数组');
 
+  // 内嵌索引：2026 配置合并后它就是原 presets/index.json 的全部信息，必须存在且是生成物。
+  // 字段级校验由 core / Web 端负责，这里只守「新结构的快照一定带它」这一条。
+  const index = snapshot.index;
+  if (typeof index !== 'object' || index === null || Array.isArray(index)) {
+    fail('快照缺少 index（配置合并后原 presets/index.json 的信息并入快照的 index 字段，新结构必须带它）');
+  }
+  if (index._generated !== true) {
+    fail(`快照的 index 不是生成物（_generated 应为 true）：${String(index._generated)}`);
+  }
+  if (!Array.isArray(index.schools)) fail('快照的 index.schools 应为数组');
+  if (!Array.isArray(index.systems)) fail('快照的 index.systems 应为数组');
+
   const declared = snapshot.hash.trim().toLowerCase();
   const recomputed = computeSnapshotHash(snapshot);
   if (recomputed !== declared) {
     fail(`快照哈希校验未通过：声明 ${declared}，复算 ${recomputed}（${snapshotPath}）`);
   }
-  return { version, schemaVersion: snapshot.schemaVersion, declared, recomputed };
+  return { version, schemaVersion: snapshot.schemaVersion, declared, recomputed, index };
 }
 
 /**
@@ -271,6 +290,10 @@ export function syncSnapshot(options) {
       `（${snapshot.sources.timetables.map((item) => item.id).join('、')}）` +
       `，教务系统 ${snapshot.sources.systems.length} 个` +
       `（${snapshot.sources.systems.map((item) => item.id).join('、')}）`,
+  );
+  note(
+    `内嵌索引：学校 ${info.index.schools.length} 个、系统 ${info.index.systems.length} 个` +
+      '（原 presets/index.json 的信息，已并入快照的 index 字段并参与哈希）',
   );
 
   if (options.check === true) {

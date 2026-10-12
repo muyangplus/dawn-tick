@@ -47,17 +47,6 @@ export const PRESET_VERSION_URL =
 export const PRESET_SNAPSHOT_URL = (version: string): string =>
   `https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/snapshot/presets-${version}.json`;
 
-/**
- * 预设索引地址（`presets/index.json`，生成物）。
- *
- * 与快照的分工：快照回答「有哪些来源文件、哈希是多少」，索引回答
- * 「有哪些学校、各自的作息表/覆盖配置在哪、绑哪个教务系统」。
- * 索引里的路径是**当前目录结构下的真实路径**，需要读文件时按它读；
- * 而快照里 `sources.systems[].path` 是符号路径（那个文件并不存在），不能按它读。
- */
-export const PRESET_INDEX_URL =
-  'https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/presets/index.json';
-
 /** 内置预设的版本号：来自 core 的 `preset-version.json`（当前 = 预设仓库 0.1.0）。 */
 export const BUILTIN_PRESET_VERSION: string = CORE_BUILTIN_PRESET_VERSION;
 
@@ -77,7 +66,13 @@ export interface PresetSnapshot {
    * 第三方 JS 适配器的沙箱是另一个议题。
    */
   sources: { timetables: unknown[]; systems: unknown[]; adapters?: Record<string, string> };
-  /** `sha256:<hex>`，对去掉本字段后的规范化 JSON 计算 */
+  /**
+   * 内嵌索引（原 `presets/index.json` 的全部信息：学校索引 + 系统引用）。
+   * 旧快照没有这个字段，此时取索引会得到一条可读错误；新快照一定有。
+   * 它与其他字段一起参与 `hash` 校验，所以索引内容与清单内容**同源同版本**。
+   */
+  index?: PresetIndex;
+  /** `sha256:<hex>`，对去掉本字段后的规范化 JSON 计算（含 `index`） */
   hash: string;
 }
 
@@ -258,11 +253,16 @@ export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): 
   return snapshot;
 }
 
-// —— 预设索引（`presets/index.json`）——
+// —— 预设索引（快照内嵌的 `index` 字段，原 `presets/index.json`）——
 //
-// 快照与索引的分工：快照是**分发清单**（`{ id, path, sha256 }`），索引是**可读目录**
-// （学校 → 作息表/覆盖配置的真实路径、系统 → 识别特征与入口）。
-// 索引也是生成物（`_generated: true`，预设仓库 `scripts/snapshot.mjs` 写出），本模块只读。
+// 快照与索引的分工：快照的 `sources` 是**分发清单**（`{ id, path, sha256 }`），
+// 内嵌的 `index` 是**可读目录**（学校 → 作息表/覆盖配置的真实路径、系统 → 识别特征与入口）。
+//
+// 预设仓库 2026 结构合并后不再单独产出 `presets/index.json`：它的全部信息搬进了
+// `snapshot/presets-<version>.json` 的顶层 `index`，并**参与快照内容哈希**。
+// 所以本模块**不再有独立的索引请求**（旧的 `PRESET_INDEX_URL` 已删除，那个地址会 404）：
+// 索引从已经下载并**通过哈希校验**的快照里取（`presetIndexFromSnapshot`），
+// 少一次请求，也少一处「索引与快照不同版本」的窗口。
 //
 // 为什么要单独校验：索引会把路径喂给「按路径读文件」的调用方（学校搜索、覆盖配置读取）。
 // 索引是外部数据，一条 `../` 或一个绝对路径就能把读取带出仓库根，所以除了字段齐全，
@@ -274,10 +274,18 @@ export interface PresetIndexSchool {
   name: string;
   /** 绑定的教务系统 id；通用作息为 null */
   system: string | null;
-  /** 作息表**真实文件**的相对路径，例如 `presets/schools/usts/timetable.json` */
+  /**
+   * 作息来源**真实文件**的相对路径。合并后学校只有一个 `school.json`，
+   * 所以它恒为 `presets/schools/<校目录>/school.json`（`timetable.json` 已不存在）。
+   */
   timetablePath: string;
-  /** 学校覆盖配置的相对路径；没有则为 null */
+  /**
+   * 学校覆盖配置的相对路径。合并后覆盖配置与作息合并在同一个 `school.json` 里，
+   * 所以有配置时它同样是 `presets/schools/<校目录>/school.json`；没有配置则为 null。
+   */
   configPath: string | null;
+  /** 索引条目还会带 `region` / `aliases` / `generic` / `default` / `type` 等字段，本模块原样保留 */
+  [key: string]: unknown;
 }
 
 /** 索引里的一条教务系统引用。 */
@@ -285,8 +293,8 @@ export interface PresetIndexSystem {
   id: string;
   /**
    * 页面识别特征；四项都可能为空数组。
-   * 与快照 `sources.systems[].path`（符号路径、文件不存在）不同，
-   * 索引还给 `metaPath` / `loginPath` / `parserPath` 这些**真实存在**的路径，需要读文件时按它们读。
+   * 快照 `sources.systems[].path` 记录的是 **legacy 编译产物文本**的哈希（不能按它读文件算哈希），
+   * 索引才给 `metaPath` / `loginPath` / `parserPath` 这些**文件本身**的路径，需要读文件时按它们读。
    */
   detect: {
     markers: string[];
@@ -297,9 +305,11 @@ export interface PresetIndexSystem {
   /** 登录入口路径（相对站点根，以 `/` 开头） */
   entryPath: string;
   hint: string;
+  /** 索引条目还会带 `aliases` / `version` / `hasParser` / `parserPath` / `metaPath` / `loginPath` 等字段 */
+  [key: string]: unknown;
 }
 
-/** 预设仓库 `presets/index.json` 的结构；本模块只取需要的字段（其余字段原样保留）。 */
+/** 快照内嵌索引的结构（原 `presets/index.json` 的顶层结构）；本模块只取需要的字段。 */
 export interface PresetIndex {
   _generated: true;
   version: string;
@@ -365,13 +375,13 @@ function describeOptionalProblem(entry: Record<string, unknown>, key: string, wh
 }
 
 /**
- * 结构校验 `presets/index.json`；返回可读的问题描述，合法时返回 null。
+ * 结构校验快照内嵌的索引（原 `presets/index.json`）；返回可读的问题描述，合法时返回 null。
  *
  * 判定要点：
- *   - `_generated` 必须**恒为 true**：索引是生成物，手写或被人改过的文件一律拒收；
+ *   - `_generated` 必须**恒为 true**：索引是生成物，手写或被人改过的一律拒收；
  *   - `version` / `schemaVersion` 必须有，且 `schemaVersion` 不得高于本版能消费的版本；
  *   - 学校条目必须有 `id` / `name` / `system` / `timetablePath` / `configPath`
- *     （没有绑定系统或没有 config.json 时**显式写 null**，缺键算结构变了）；
+ *     （没有绑定系统或没有学校覆盖配置时**显式写 null**，缺键算结构变了）；
  *   - 系统引用必须有 `id` / `name` / `detect`（四个固定子键）/ `entryPath` / `hint`；
  *   - 同一份索引里 id 不得重复；
  *   - 所有路径必须是安全的相对路径。
@@ -411,7 +421,7 @@ export function describePresetIndexProblem(value: unknown): string | null {
       return `预设索引的学校「${id}」的 system 应为非空字符串或 null`;
     }
     if (!('configPath' in raw)) {
-      return `预设索引的学校「${id}」缺少 configPath（没有 config.json 时应显式写 null）`;
+      return `预设索引的学校「${id}」缺少 configPath（没有学校覆盖配置时应显式写 null）`;
     }
     if (raw['configPath'] !== null) {
       const problem = describePresetPathProblem(raw['configPath'], `预设索引的学校「${id}」的 configPath`);
@@ -459,7 +469,7 @@ export function describePresetIndexProblem(value: unknown): string | null {
   return null;
 }
 
-/** 解析并校验 `presets/index.json` 的内容；不合法时抛出可读错误。 */
+/** 解析并校验索引内容（快照内嵌的 `index`）；不合法时抛出可读错误。 */
 export function parsePresetIndex(value: unknown): PresetIndex {
   const problem = describePresetIndexProblem(value);
   if (problem !== null) throw new Error(`预设索引不可用：${problem}`);
@@ -467,22 +477,23 @@ export function parsePresetIndex(value: unknown): PresetIndex {
 }
 
 /**
- * 拉取并校验 `presets/index.json`。
- * 无网络环境、HTTP 失败、JSON 非法、结构不对都抛出可读错误——调用方负责回退。
+ * 从**已下载的快照**里取出并校验索引（原 `presets/index.json`）。
+ *
+ * 为什么是「取」而不是「下载」：2026 结构合并后索引就是快照的顶层 `index` 字段，
+ * 它随快照一起过哈希校验，因此**不需要**、也不该再有独立的索引请求
+ * （旧的 `PRESET_INDEX_URL` 指向的 `presets/index.json` 已被预设仓库删除，请求只会 404）。
+ *
+ * 快照缺少 `index`（旧结构快照）或索引结构不合法时抛出可读错误——调用方负责回退。
+ * 本函数不看网络，纯函数，便于在启动路径上直接使用。
  */
-export async function fetchPresetIndex(fetchImpl?: typeof fetch): Promise<PresetIndex> {
-  const doFetch = fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') throw new Error('当前环境无法联网读取预设索引');
-
-  let parsed: unknown;
-  try {
-    const response = await doFetch(PRESET_INDEX_URL, { headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
-    parsed = await response.json();
-  } catch (cause: unknown) {
-    throw new Error(`预设索引下载失败：${describeFetchError(cause)}`);
+export function presetIndexFromSnapshot(snapshot: PresetSnapshot): PresetIndex {
+  const index = (snapshot as { index?: unknown }).index;
+  if (index === undefined || index === null) {
+    throw new Error(
+      '预设快照不可用：缺少内嵌索引 index（旧结构快照；索引已并入快照，不再有独立的 presets/index.json）',
+    );
   }
-  return parsePresetIndex(parsed);
+  return parsePresetIndex(index);
 }
 
 /**

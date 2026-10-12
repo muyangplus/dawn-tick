@@ -66,7 +66,7 @@ const CACHED_CONTENT: CachedPresetContent = {
   ],
 };
 
-/** 造一份哈希自洽、结构合法的快照（清单条目只带 id/path/sha256）。 */
+/** 造一份哈希自洽、结构合法的快照（清单条目只带 id/path/sha256，另带内嵌索引）。 */
 function signedSnapshot(version: string): PresetSnapshot {
   const unsigned = {
     version,
@@ -74,13 +74,41 @@ function signedSnapshot(version: string): PresetSnapshot {
     generatedAt: '2026-02-01T00:00:00.000Z',
     sources: {
       timetables: [
-        // 照新结构：作息表是真实文件路径，教务系统是符号路径（预设仓库里没有那个文件）
+        // 照合并后的结构：作息表的 path 是历史契约符号路径（timetable.json 已并入 school.json）
         { id: 'default', path: 'presets/schools/_default/timetable.json', sha256: `sha256:${'0'.repeat(64)}` },
       ],
       systems: [
         { id: 'jwglxt', path: 'presets/systems/jwglxt/system.json', sha256: `sha256:${'1'.repeat(64)}` },
       ],
       adapters: {},
+    },
+    // 新结构的快照一定内嵌 index（原 presets/index.json）：假快照同样带上，
+    // 这样哈希口径与真实产物一致，也能覆盖「缓存快照带着索引」的形状。
+    index: {
+      _generated: true,
+      version,
+      schemaVersion: 1,
+      generatedAt: '2026-02-01T00:00:00.000Z',
+      schools: [
+        {
+          id: 'default',
+          name: '通用作息',
+          system: null,
+          configPath: 'presets/schools/_default/school.json',
+          timetablePath: 'presets/schools/_default/school.json',
+        },
+      ],
+      systems: [
+        {
+          id: 'jwglxt',
+          name: '正方教务',
+          metaPath: 'presets/systems/jwglxt/system.json',
+          loginPath: 'presets/systems/jwglxt/system.json',
+          detect: { markers: ['jwglxt'], timetableTableIds: [], timetableTableClasses: [], gridCellIdPatterns: [] },
+          entryPath: '/jwglxt/xtgl/login_slogin.html',
+          hint: '缓存正文',
+        },
+      ],
     },
   };
   return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` };

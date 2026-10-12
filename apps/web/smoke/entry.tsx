@@ -25,6 +25,7 @@ import {
   PRESET_SNAPSHOT_URL,
   PRESET_VERSION_URL,
   canonicalPresetJson,
+  presetIndexFromSnapshot,
   sha256HexSync,
   writeCachedPresetContent,
   type CachedPresetContent,
@@ -494,7 +495,11 @@ function fakePresetContent(version: string): CachedPresetContent {
  * 造一份哈希自洽的快照（hash 用模块自身的规范化口径算，等价于预设仓库的生成器）。
  * `sources` 里的每一条同时带正文：`id`/`path`/`sha256` 进清单哈希，多出来的正文字段
  * **不参与**哈希（清单描述的是预设仓库里的文件），因此这里加正文不会改变签名口径。
- * 路径照新目录结构写：作息表是真实文件路径，教务系统是符号路径（那个文件并不存在）。
+ * 路径照合并后的结构写：作息表是历史契约符号路径（`timetable.json` 已并入 school.json），
+ * 教务系统是 `systems/<id>/system.json`。
+ *
+ * 顶层还带 **内嵌索引 `index`**（原 `presets/index.json` 的信息已并入快照）：它**参与**哈希，
+ * 所以这里的 hash 是「含索引」的新版哈希，与真实产物同口径。
  */
 function fakePresetSnapshot(version: string): PresetSnapshot {
   const content = fakePresetContent(version);
@@ -516,6 +521,35 @@ function fakePresetSnapshot(version: string): PresetSnapshot {
         ...system,
       })),
       adapters: {},
+    },
+    index: {
+      _generated: true,
+      version,
+      schemaVersion: 1,
+      generatedAt: '2026-02-01T00:00:00.000Z',
+      // 合并后学校只有一个 school.json：configPath 与 timetablePath 都指它
+      schools: content.timetables.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        system: null,
+        configPath: `presets/schools/${preset.id}/school.json`,
+        timetablePath: `presets/schools/${preset.id}/school.json`,
+      })),
+      systems: content.systems.map((system) => ({
+        id: system.id,
+        name: system.name,
+        metaPath: `presets/systems/${system.id}/system.json`,
+        loginPath: `presets/systems/${system.id}/system.json`,
+        // 索引里的 detect 四个子键必须齐全（空数组是合法值）
+        detect: {
+          markers: system.detect.markers ?? [],
+          timetableTableIds: system.detect.timetableTableIds ?? [],
+          timetableTableClasses: system.detect.timetableTableClasses ?? [],
+          gridCellIdPatterns: system.detect.gridCellIdPatterns ?? [],
+        },
+        entryPath: system.entryPath,
+        hint: system.hint,
+      })),
     },
   };
   return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` } as unknown as PresetSnapshot;
@@ -1142,12 +1176,33 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         presetVersionLine().includes(`${nextVersion}（已更新）`),
       `${presetResultLine()} / ${presetVersionLine()}`,
     );
+
+    // ③ 索引来自快照：预设仓库已取消 presets/index.json，索引就是快照的 index 字段，
+    //    所以「拿到一份通过校验的快照」就该能直接取出学校/系统目录，且路径指向 school.json。
+    const downloaded = fakePresetSnapshot(nextVersion);
+    let indexSchools = -1;
+    let indexPathShapeOk = false;
+    let indexProblem = '';
+    try {
+      const index = presetIndexFromSnapshot(downloaded);
+      indexSchools = index.schools.length;
+      indexPathShapeOk =
+        index.schools.every((school) => school.timetablePath.endsWith('/school.json')) &&
+        index.systems.every((system) => system.id.length > 0);
+    } catch (cause) {
+      indexProblem = cause instanceof Error ? cause.message : String(cause);
+    }
+    check(
+      '预设索引取自快照内嵌的 index（不再单独请求 presets/index.json）',
+      indexSchools > 0 && indexPathShapeOk,
+      indexProblem === '' ? `学校 ${indexSchools} 个` : indexProblem,
+    );
   } finally {
     Object.defineProperty(globalThis, 'fetch', { value: realFetch, configurable: true, writable: true });
   }
 
   /*
-    ③ 下载后的快照带正文：下载这一步就该把正文一并校验并缓存（`presets_content_v1`），
+    ④ 下载后的快照带正文：下载这一步就该把正文一并校验并缓存（`presets_content_v1`），
     否则「下次启动生效」永远没有正文可用。这里直接读缓存确认它确实落了盘。
   */
   const seedStorage = validatedStorage(await openIndexedDbStorage());
@@ -1158,7 +1213,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (cachedBody ?? '(空)').slice(0, 60),
   );
 
-  // ④ 启动套用：把缓存正文直接塞进 app_meta 再挂载，验证「启动时套用缓存」这条链路真的通了
+  // ⑤ 启动套用：把缓存正文直接塞进 app_meta 再挂载，验证「启动时套用缓存」这条链路真的通了
   //    先清掉覆盖层（前一步的下载按约定不在运行时生效），保证下面看到的差异来自启动套用
   setPresetOverride(null);
   await seedStorage.writeMeta(PRESET_CONTENT_META_KEY, JSON.stringify(fakePresetContent(nextVersion)));

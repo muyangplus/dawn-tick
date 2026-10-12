@@ -310,17 +310,21 @@ const SYSTEMS_CONFIG: readonly SystemConfig[] = validateSystems(SYSTEMS_DATA);
 export interface PresetSnapshotSourceFile {
   id: string;
   /**
-   * 相对预设仓库根目录的路径。**两类源的语义不同，取决于字段结构（见 `tools/presets/README.md`）**：
-   * - `sources.timetables[].path`：**真实文件**，形如 `presets/schools/<校目录>/timetable.json`；
-   *   校目录与作息 id 可以不同（`_default` 目录 → `default` 作息），因此不能由 id 推导。
-   * - `sources.systems[].path`：**符号路径**，恒为 `presets/systems/<id>/system.json`；
-   *   新目录结构下没有这个文件，它代表 `meta.json` + `login.json` 的编译产物。
+   * 相对预设仓库根目录的**历史契约路径**（见 `tools/presets/README.md`）。
+   * 学校目录合并成 `schools/<校目录>/school.json` 之后，两类源的 `path` 语义不同：
+   * - `sources.timetables[].path`：恒为 `presets/schools/<校目录>/timetable.json`，
+   *   该文件**已不存在**；它代表合并进 school.json 的那个 `timetable` 值——
+   *   `sha256` 是这个值**逐字节还原**成独立文件文本后的哈希。
+   * - `sources.systems[].path`：恒为 `presets/systems/<id>/system.json`，合并后这个文件
+   *   **确实存在**；但 `sha256` 覆盖的是 `scripts/lib/legacy.mjs` 把它编译成旧扁平结构后
+   *   那段**文本**，与文件自身的哈希不同，所以也不能「读文件 → 复算哈希」。
    *
-   * 本仓库只把 `path` 当描述性字段（记录来源），**任何代码都不该按它去读文件**：
-   * 符号路径根本不存在，真实路径也只对预设仓库有意义。需要定位内容请按 `id` 或读 `presets/index.json`。
+   * 结论：本仓库只把 `path` 当描述性字段（记录来源），**任何代码都不该按它读文件做校验**。
+   * 真实路径与字段来源在快照新增的 `index` 字段里
+   * （学校是 `configPath` / `timetablePath` → `school.json`，系统是 `metaPath` / `loginPath`）。
    */
   path: string;
-  /** `sha256:<hex>`；作息表是文件原文（UTF-8），教务系统是编译产物文本的哈希 */
+  /** `sha256:<hex>`；作息表是内嵌 timetable 值还原出的原文，教务系统是 legacy 编译产物文本的哈希 */
   sha256: string;
 }
 
@@ -332,6 +336,55 @@ export interface PresetSnapshotSources {
 }
 
 /**
+ * 快照内嵌索引里的一条学校（原 `presets/index.json` 的 `schools[]` 条目）。
+ *
+ * `configPath` 与 `timetablePath` 现在**都指向合并后的真实文件**
+ * `presets/schools/<校目录>/school.json`（`configPath` 只在确实有覆盖配置时才不为 null，
+ * 但路径形状一样）——`timetable.json` / `config.json` 都不再存在。
+ * 这里只声明本仓库自检要用的字段，其余字段（`region` / `aliases` / `generic` …）原样保留。
+ */
+export interface PresetSnapshotIndexSchool {
+  id: string;
+  name: string;
+  /** 学校配置文件（真实文件）的相对路径；没有配置时为 null */
+  configPath?: string | null;
+  /** 学校作息来源（真实文件）的相对路径，恒为 `presets/schools/<校目录>/school.json` */
+  timetablePath?: string;
+  /** 索引条目还会带 `region` / `aliases` / `generic` / `default` 等字段，本仓库原样保留不消费 */
+  [key: string]: unknown;
+}
+
+/** 快照内嵌索引里的一条教务系统引用（原 `presets/index.json` 的 `systems[]` 条目）。 */
+export interface PresetSnapshotIndexSystem {
+  id: string;
+  name: string;
+  /** 系统元数据（真实文件）的相对路径，恒为 `presets/systems/<id>/system.json` */
+  metaPath?: string;
+  /** 登录配置（真实文件）的相对路径，同样指向 `system.json`（合并后只有一个文件） */
+  loginPath?: string;
+  /** 索引条目还会带 `aliases` / `hasParser` / `parserPath` / `detect` / `entryPath` 等字段 */
+  [key: string]: unknown;
+}
+
+/**
+ * 快照新增的顶层字段 `index`：原 `presets/index.json` 的**全部信息**
+ * （学校索引 + 系统引用）。预设仓库不再单独产出 `presets/index.json`。
+ *
+ * 它**参与内容哈希**，所以任何一处改动都会让 `hash` 对不上；本仓库对字段级结构
+ * （`_generated` / 必填字段 / id 不重复 / 路径安全）的校验在 Web 端
+ * `parsePresetIndex()` 一处完成，这里只做「路径形状指向真实新文件」的自检。
+ */
+export interface PresetSnapshotIndex {
+  _generated: true;
+  version: string;
+  schemaVersion: number;
+  /** 索引自身的生成时间（与快照顶层的 `generatedAt` 同源） */
+  generatedAt?: string;
+  schools: PresetSnapshotIndexSchool[];
+  systems: PresetSnapshotIndexSystem[];
+}
+
+/**
  * 预设仓库 `dawn-tick-presets` 产出的快照结构。
  * `generatedAt` 在结构里是可选的，但真实快照一定带（见 `tools/presets/README.md`）。
  */
@@ -340,7 +393,12 @@ export interface PresetSnapshot {
   schemaVersion: number;
   generatedAt?: string;
   sources: PresetSnapshotSources;
-  /** `sha256:<hex>`，对去掉本字段后的快照对象做规范化序列化再取 sha256 */
+  /**
+   * 内嵌索引（2026 结构合并后的新增字段）。旧快照没有它，此时本仓库不额外要求；
+   * 但内置快照由 `tools/presets/sync-snapshot.mjs` 从预设仓库同步而来，必然带 `index`。
+   */
+  index?: PresetSnapshotIndex;
+  /** `sha256:<hex>`，对去掉本字段后的快照对象（含 `index`）做规范化序列化再取 sha256 */
   hash: string;
 }
 
@@ -358,11 +416,20 @@ export const BUILTIN_PRESET_SNAPSHOT: PresetSnapshot =
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
 /**
- * 作息表条目 `path` 的形状：`presets/schools/<校目录>/timetable.json`。
- * 只校验形状，因为校目录名与作息 id 可以不同（`_default` → `default`），
- * 想拿到 id → 路径的对应关系要读预设仓库的 `presets/index.json`。
+ * 作息表条目的 `path` 形状：`presets/schools/<校目录>/timetable.json`。
+ *
+ * 这是**符号路径**（合并后没有这个文件）：它代表 `schools/<校目录>/school.json` 里内嵌的
+ * `timetable` 值。只校验形状，因为校目录名与作息 id 可以不同（`_default` → `default`），
+ * id → 真实路径的对应关系在快照的 `index.schools[].timetablePath` 里。
  */
 const TIMETABLE_SOURCE_PATH_PATTERN = /^presets\/schools\/[^/]+\/timetable\.json$/;
+
+/**
+ * 学校真实文件的形状：`presets/schools/<校目录>/school.json`。
+ * `index.schools[].configPath` 与 `timetablePath` 都必须是这个形状
+ * （合并后 `timetable.json` / `config.json` 都不存在了）。
+ */
+const SCHOOL_FILE_PATH_PATTERN = /^presets\/schools\/[^/]+\/school\.json$/;
 
 /** 按 id 排序后规范化序列化再取 sha256：给内置正文算一个「指纹」，用于审计与呈现。 */
 function semanticDigest(value: unknown): string {
@@ -388,11 +455,15 @@ export function builtinPresetSourcesDigest(): { timetables: string; systems: str
 /**
  * 校验内置快照：复算内容哈希，并确认「内置快照 ⇔ 内置配置」没有漂移。
  *
- * 做三件事：
+ * 做四件事：
  *   1. **复算哈希**：去掉 `hash` 字段后规范化序列化，sha256 必须等于 `hash`
- *      （口径与预设仓库 `scripts/snapshot.mjs` 一致，实现见 `./preset-hash.ts`）；
+ *      （口径与预设仓库 `scripts/snapshot.mjs` 一致，实现见 `./preset-hash.ts`；
+ *      2026 结构合并后 `index` 也在这个哈希范围里）；
  *   2. **比对作息表**：快照 `sources.timetables` 的 id 集合与 `BUILTIN_TIMETABLES` 完全相同；
- *   3. **比对教务系统**：快照 `sources.systems` 的 id 集合与内置 `systems.json`（`SYSTEMS_CONFIG`）完全相同。
+ *   3. **比对教务系统**：快照 `sources.systems` 的 id 集合与内置 `systems.json`（`SYSTEMS_CONFIG`）完全相同；
+ *   4. **内嵌索引的路径形状**：`index.schools[].configPath` / `timetablePath` 必须指向合并后的
+ *      真实文件 `presets/schools/<校目录>/school.json`，`index.systems[].metaPath` / `loginPath`
+ *      必须指向 `presets/systems/<id>/system.json`（合并后系统仍只有一个文件）。
  *
  * 注意本函数判的是**内置**（`timetables.json` / `systems.json`）与内置快照是否对得上，
  * 与运行时的预设覆盖层（`setPresetOverride`）无关：覆盖层换的是「当前生效值」，
@@ -404,8 +475,10 @@ export function builtinPresetSourcesDigest(): { timetables: string; systems: str
  * 与合并数组复算的哈希**本来就不同**，所以清单里的 `sha256` 无法拿来对内置正文做内容级比对
  * （它的价值在预设仓库侧：证明那些来源没被改）。因此这里判「不漂移」用的是 id 集合：
  * **数量一致 + 双向无缺失**——内置多一个、少一个、被改名都会立刻失败。
- * `path` 只校验**形状**（不读文件）：作息表是真实文件 `presets/schools/<校目录>/timetable.json`，
- * 教务系统是符号路径 `presets/systems/<id>/system.json`（该文件并不存在）。
+ * `path` 只校验**形状**（不读文件）：作息表是历史契约符号路径
+ * `presets/schools/<校目录>/timetable.json`（该文件已并入 school.json、不再存在），
+ * 教务系统是 `presets/systems/<id>/system.json`（文件存在，但记录的是 legacy 编译产物哈希）。
+ * 真实路径看 `index` 里的同名字段。
  *
  * 已知边界（见 `tools/presets/README.md`）：改内置 `systems.json` 里某个字段的**值**
  * （id 不动）不会让本函数失败，因为快照里没有那份内容可比。这类漂移靠两件事兜住：
@@ -471,26 +544,27 @@ export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } 
       listed: snapshot.sources?.timetables ?? [],
       builtin: BUILTIN_TIMETABLES,
       builtinFile: 'timetables.json',
-      // 真实文件：presets/schools/<校目录>/timetable.json。
+      // 符号路径：合并后该文件不存在，它代表 school.json 里内嵌的 timetable 值。
       // 校目录名与作息 id 可以不同（`_default` 目录 → `default` 作息），所以只校验形状。
       describePathProblem: (item) =>
         TIMETABLE_SOURCE_PATH_PATTERN.test(item.path)
           ? null
-          : `的路径应为 presets/schools/<校目录>/timetable.json，实际 ${String(item.path)}`,
+          : `的路径应为符号路径 presets/schools/<校目录>/timetable.json，实际 ${String(item.path)}`,
     },
     {
       label: '教务系统',
       listed: snapshot.sources?.systems ?? [],
       builtin: SYSTEMS_CONFIG,
       builtinFile: 'systems.json',
-      // 符号路径：新结构下该文件并不存在，它代表 meta.json + login.json 的编译产物。
-      // 因为由 id 唯一决定，这里可以逐字比对。
+      // 历史契约路径：合并后这个文件存在（就是 system.json 本身），
+      // 但条目 sha256 覆盖的是它编译成旧扁平结构后的文本，所以也不能按文件复算。
+      // 路径由 id 唯一决定，这里可以逐字比对。
       describePathProblem: (item) => {
         const expected = `presets/systems/${item.id}/system.json`;
         return item.path === expected
           ? null
-          : `的路径应为符号路径 ${expected}，实际 ${String(item.path)}` +
-              '（新结构下该文件不存在，它代表 meta.json + login.json 的编译产物）';
+          : `的路径应为 ${expected}，实际 ${String(item.path)}` +
+              '（它记录的是 system.json 编译成旧扁平结构后的文本哈希，不能按文件复算）';
       },
     },
   ];
@@ -533,6 +607,73 @@ export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } 
         return {
           ok: false,
           reason: `内置快照的${check.label}「${item.id}」缺少合法的 sha256：${String(item.sha256)}`,
+        };
+      }
+    }
+  }
+
+  // ④ 内嵌索引（原 presets/index.json）：结构 + 路径形状必须指向合并后的**真实文件**
+  const index = snapshot.index;
+  if (index === undefined || index === null || typeof index !== 'object') {
+    return { ok: false, reason: '内置快照缺少 index（新结构必须内嵌索引：学校索引 + 系统引用）' };
+  }
+  if ((index as { _generated?: unknown })._generated !== true) {
+    return { ok: false, reason: '内置快照的 index 不是生成物（_generated 应为 true）' };
+  }
+  if (!Array.isArray(index.schools) || !Array.isArray(index.systems)) {
+    return { ok: false, reason: '内置快照的 index 缺少 schools / systems 数组' };
+  }
+
+  const schoolIds = new Set<string>();
+  for (const school of index.schools) {
+    const id = school?.id;
+    if (typeof id !== 'string' || id.trim() === '') {
+      return { ok: false, reason: '内置快照的 index.schools 存在缺少 id 的条目' };
+    }
+    if (schoolIds.has(id)) {
+      return { ok: false, reason: `内置快照的 index.schools 存在重复 id：${id}` };
+    }
+    schoolIds.add(id);
+    if (typeof school.timetablePath !== 'string' || !SCHOOL_FILE_PATH_PATTERN.test(school.timetablePath)) {
+      return {
+        ok: false,
+        reason:
+          `内置快照的 index 学校「${id}」的 timetablePath 应为真实文件 ` +
+          `presets/schools/<校目录>/school.json，实际 ${String(school.timetablePath)}`,
+      };
+    }
+    const configPath = school.configPath;
+    if (configPath !== null && configPath !== undefined) {
+      if (typeof configPath !== 'string' || !SCHOOL_FILE_PATH_PATTERN.test(configPath)) {
+        return {
+          ok: false,
+          reason:
+            `内置快照的 index 学校「${id}」的 configPath 应为真实文件 ` +
+            `presets/schools/<校目录>/school.json 或 null，实际 ${String(configPath)}`,
+        };
+      }
+    }
+  }
+
+  const indexSystemIds = new Set<string>();
+  for (const system of index.systems) {
+    const id = system?.id;
+    if (typeof id !== 'string' || id.trim() === '') {
+      return { ok: false, reason: '内置快照的 index.systems 存在缺少 id 的条目' };
+    }
+    if (indexSystemIds.has(id)) {
+      return { ok: false, reason: `内置快照的 index.systems 存在重复 id：${id}` };
+    }
+    indexSystemIds.add(id);
+    // 合并后一个系统只有 system.json 一个文件：metaPath / loginPath 都指它
+    for (const key of ['metaPath', 'loginPath'] as const) {
+      const value = system[key];
+      if (value === undefined || value === null) continue;
+      const expected = `presets/systems/${id}/system.json`;
+      if (typeof value !== 'string' || value !== expected) {
+        return {
+          ok: false,
+          reason: `内置快照的 index 系统「${id}」的 ${key} 应为真实文件 ${expected}，实际 ${String(value)}`,
         };
       }
     }

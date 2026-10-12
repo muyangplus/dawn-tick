@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { MemoryStorage, type Storage } from '@dawn-tick/core';
 import {
   BUILTIN_PRESET_VERSION,
-  PRESET_INDEX_URL,
   PRESET_SCHEMA_VERSION,
   PRESET_SNAPSHOT_META_KEY,
   PRESET_SNAPSHOT_URL,
@@ -14,9 +13,9 @@ import {
   checkPresetUpdate,
   comparePresetVersions,
   describePresetIndexProblem,
-  fetchPresetIndex,
   fetchSnapshot,
   parsePresetIndex,
+  presetIndexFromSnapshot,
   readCachedSnapshot,
   resolvePresetSource,
   sha256Hex,
@@ -40,13 +39,15 @@ function signed(snapshot: Omit<PresetSnapshot, 'hash'>): PresetSnapshot {
 }
 
 /**
- * 预设仓库 `dawn-tick-presets` 在 0.1.0（结构重构后）真实产出的快照，内容与 hash 都是生成器写的
+ * 预设仓库 `dawn-tick-presets` 在 0.1.0（2026 结构合并后）真实产出的快照，内容与 hash 都是生成器写的
  * （可从 `<预设仓库>/snapshot/presets-0.1.0.json` 逐字核对）。
  * 它是本模块哈希口径的**外部基准**：用自己的实现去签自己的数据是循环论证，
  * 只有这份「别人算出来的 hash」能证明规范化序列化与 sha256 都对齐了生成器。
  *
- * 注意 `path` 的语义：作息表是**真实文件路径**，教务系统是**符号路径**
- * （`presets/systems/<id>/system.json` 在新结构下并不存在，它代表编译产物）。
+ * 注意合并后的语义：
+ * - 顶层多了 `index`（原 `presets/index.json` 的信息），它也参与内容哈希；
+ * - `sources.timetables[].path` 是历史契约符号路径（`timetable.json` 已并入 school.json、不存在）；
+ * - `sources.systems[].path` 指向真实存在的 `system.json`，但记录的 sha256 是 legacy 编译产物文本的哈希。
  */
 const REAL_PRESET_SNAPSHOT_0_1_0: PresetSnapshot = {
   version: '0.1.0',
@@ -91,7 +92,104 @@ const REAL_PRESET_SNAPSHOT_0_1_0: PresetSnapshot = {
       'jwglxt.js': 'sha256:070522737bf3d60b4f2fff8dd246c2664acef7ce9189e862a8934c40068fa4b0',
     },
   },
-  hash: 'sha256:9e561d57adbfef0d4fe74a71f8958207e10d0ea0ff399e2011c033472d39fb63',
+  index: {
+    _generated: true,
+    version: '0.1.0',
+    schemaVersion: 1,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    schools: [
+      {
+        id: 'default',
+        name: '通用作息',
+        type: 'generic',
+        system: null,
+        aliases: ['默认作息'],
+        generic: true,
+        default: true,
+        configPath: 'presets/schools/_default/school.json',
+        timetablePath: 'presets/schools/_default/school.json',
+      },
+      {
+        id: 'usts',
+        name: '苏州科技大学',
+        region: '江苏',
+        type: 'university',
+        system: 'jwglxt',
+        aliases: ['苏州科技大学', '苏科大', 'USTS'],
+        generic: false,
+        default: false,
+        configPath: 'presets/schools/usts/school.json',
+        timetablePath: 'presets/schools/usts/school.json',
+      },
+    ],
+    systems: [
+      {
+        id: 'jwglxt',
+        name: '正方教务',
+        version: '1.0.0',
+        aliases: ['jwglxt', '正方教务'],
+        hasParser: true,
+        parserPath: 'presets/systems/jwglxt/parse.js',
+        metaPath: 'presets/systems/jwglxt/system.json',
+        loginPath: 'presets/systems/jwglxt/system.json',
+        detect: {
+          markers: ['jwglxt', 'xskb_list', 'timetable_con', 'kbgrid_table'],
+          timetableTableIds: ['kbtable'],
+          timetableTableClasses: ['kb', 'timetable', 'schedule', 'skb'],
+          gridCellIdPatterns: ['\\d{1,2}[-_]\\d{1,2}'],
+        },
+        entryPath: '/jwglxt/xtgl/login_slogin.html',
+        hint: '个人课表查询在「信息查询 → 学生课表查询」',
+      },
+      {
+        id: 'other',
+        name: '其他教务',
+        version: '1.0.0',
+        aliases: ['other', '其他教务'],
+        hasParser: false,
+        metaPath: 'presets/systems/other/system.json',
+        loginPath: 'presets/systems/other/system.json',
+        detect: { markers: [], timetableTableIds: [], timetableTableClasses: [], gridCellIdPatterns: [] },
+        entryPath: '/',
+        hint: '自行登录后打开课表页',
+      },
+      {
+        id: 'qzdatasource',
+        name: '强智教务',
+        version: '1.0.0',
+        aliases: ['qzdatasource', '强智教务'],
+        hasParser: false,
+        metaPath: 'presets/systems/qzdatasource/system.json',
+        loginPath: 'presets/systems/qzdatasource/system.json',
+        detect: {
+          markers: ['qzdatasource', '强智', 'qzjw'],
+          timetableTableIds: [],
+          timetableTableClasses: [],
+          gridCellIdPatterns: [],
+        },
+        entryPath: '/jsxsd/',
+        hint: '课表在「培养管理 → 我的课表」',
+      },
+      {
+        id: 'urp',
+        name: 'URP 教务',
+        version: '1.0.0',
+        aliases: ['urp', 'URP 教务'],
+        hasParser: false,
+        metaPath: 'presets/systems/urp/system.json',
+        loginPath: 'presets/systems/urp/system.json',
+        detect: {
+          markers: ['urp', '教学信息服务平台', 'jwgl\\.urp'],
+          timetableTableIds: [],
+          timetableTableClasses: [],
+          gridCellIdPatterns: [],
+        },
+        entryPath: '/',
+        hint: '综合教务系统，课表在「课表查询」',
+      },
+    ],
+  },
+  hash: 'sha256:b035466f88fa0b8f3ccbffe3f20cd0bff9fe0977291d3cfb08728db758bc5bbd',
 };
 
 const DEMO_SNAPSHOT: PresetSnapshot = signed({
@@ -114,10 +212,7 @@ test('预设源地址与内置版本号是常量，且与预设仓库 0.1.0 对�
     PRESET_SNAPSHOT_URL('0.1.0'),
     'https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/snapshot/presets-0.1.0.json',
   );
-  assert.equal(
-    PRESET_INDEX_URL,
-    'https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/presets/index.json',
-  );
+  // 索引没有独立地址了：它就在快照里（旧的 presets/index.json 已被预设仓库删除）
   assert.equal(PRESET_SNAPSHOT_META_KEY, 'presets_snapshot_v1');
   assert.equal(PRESET_SCHEMA_VERSION, 1);
   assert.equal(BUILTIN_PRESET_VERSION, '0.1.0', '内置预设版本应等于预设仓库当前版本');
@@ -161,9 +256,30 @@ test('verifySnapshot：真实生成器产出的 0.1.0 快照通过，内容被�
   );
   assert.equal(verifySnapshot({ ...REAL_PRESET_SNAPSHOT_0_1_0, hash: 'sha256:0000' }), false, 'hash 格式非法视为不通过');
   assert.equal(verifySnapshot({ ...REAL_PRESET_SNAPSHOT_0_1_0, hash: '' }), false);
+  // 内嵌索引也参与哈希：改一处索引（学校真实路径）同样必须被发现
+  assert.equal(
+    verifySnapshot({
+      ...REAL_PRESET_SNAPSHOT_0_1_0,
+      index: {
+        ...REAL_PRESET_INDEX,
+        schools: [
+          { ...REAL_PRESET_INDEX.schools[0], timetablePath: 'presets/schools/_default/timetable.json' },
+          REAL_PRESET_INDEX.schools[1],
+        ],
+      },
+    } as PresetSnapshot),
+    false,
+    '改索引里的路径必须被发现（index 在哈希范围内）',
+  );
+  assert.equal(
+    verifySnapshot({ ...REAL_PRESET_SNAPSHOT_0_1_0, index: undefined } as unknown as PresetSnapshot),
+    false,
+    '删掉内嵌索引必须被发现',
+  );
   // 键序不同不应影响结果：规范化会排序
   const shuffled = {
     hash: REAL_PRESET_SNAPSHOT_0_1_0.hash,
+    index: REAL_PRESET_SNAPSHOT_0_1_0.index,
     sources: REAL_PRESET_SNAPSHOT_0_1_0.sources,
     generatedAt: REAL_PRESET_SNAPSHOT_0_1_0.generatedAt,
     schemaVersion: REAL_PRESET_SNAPSHOT_0_1_0.schemaVersion,
@@ -342,118 +458,20 @@ test('resolvePresetSource：缓存更新且可信时用缓存，否则回退内�
   assert.equal(resolvedStale.version, BUILTIN_PRESET_VERSION);
 });
 
-// —— presets/index.json：只读接入（解析 + 校验），本步不做 UI ——
+// —— 快照内嵌索引（原 presets/index.json）：只读接入（解析 + 校验），本步不做 UI ——
 
 /** 只读参考：预设仓库（与 core 的快照测试同一套约定，可用环境变量覆盖）。 */
 const PRESETS_DIR = process.env['DAWN_TICK_PRESETS_DIR'] ?? 'E:/work/dsh/dawn-tick-presets';
 
 /**
- * 预设仓库 0.1.0 真实产出的 `presets/index.json`（可从 `<预设仓库>/presets/index.json` 逐字核对）。
- * 这里照**线上原文**的形状手抄，包含本模块暂时不消费的 `region` / `aliases` / `metaPath` 等字段，
+ * 外部基准：预设仓库 0.1.0 **真实产出**的索引——也就是上面那份手抄快照的 `index` 字段
+ * （`<预设仓库>/snapshot/presets-0.1.0.json` 的 `index`；原 `presets/index.json` 的信息已并入其中，
+ * 那个文件已从预设仓库删除）。同一个外部基准只手抄一次，避免两处抄写互相出入。
+ *
+ * 它照**线上原文**的形状，包含本模块暂时不消费的 `region` / `aliases` / `metaPath` 等字段，
  * 这样「多出来的字段不该被拒」这条也一并覆盖。
  */
-const REAL_PRESET_INDEX: Record<string, unknown> = {
-  _generated: true,
-  version: '0.1.0',
-  schemaVersion: 1,
-  generatedAt: '2026-01-01T00:00:00.000Z',
-  schools: [
-    {
-      id: 'default',
-      name: '通用作息',
-      type: 'generic',
-      system: null,
-      aliases: ['默认作息'],
-      generic: true,
-      default: true,
-      configPath: null,
-      timetablePath: 'presets/schools/_default/timetable.json',
-    },
-    {
-      id: 'usts',
-      name: '苏州科技大学',
-      region: '江苏',
-      type: 'university',
-      system: 'jwglxt',
-      aliases: ['苏州科技大学', '苏科大', 'USTS'],
-      generic: false,
-      default: false,
-      configPath: 'presets/schools/usts/config.json',
-      timetablePath: 'presets/schools/usts/timetable.json',
-    },
-  ],
-  systems: [
-    {
-      id: 'jwglxt',
-      name: '正方教务',
-      version: '1.0.0',
-      aliases: ['jwglxt', '正方教务'],
-      hasParser: true,
-      parserPath: 'presets/systems/jwglxt/parse.js',
-      metaPath: 'presets/systems/jwglxt/meta.json',
-      loginPath: 'presets/systems/jwglxt/login.json',
-      detect: {
-        markers: ['jwglxt', 'xskb_list', 'timetable_con', 'kbgrid_table'],
-        timetableTableIds: ['kbtable'],
-        timetableTableClasses: ['kb', 'timetable', 'schedule', 'skb'],
-        gridCellIdPatterns: ['\\d{1,2}[-_]\\d{1,2}'],
-      },
-      entryPath: '/jwglxt/xtgl/login_slogin.html',
-      hint: '个人课表查询在「信息查询 → 学生课表查询」',
-    },
-    {
-      id: 'other',
-      name: '其他教务',
-      version: '1.0.0',
-      aliases: ['other', '其他教务'],
-      hasParser: false,
-      metaPath: 'presets/systems/other/meta.json',
-      loginPath: 'presets/systems/other/login.json',
-      detect: {
-        markers: [],
-        timetableTableIds: [],
-        timetableTableClasses: [],
-        gridCellIdPatterns: [],
-      },
-      entryPath: '/',
-      hint: '自行登录后打开课表页',
-    },
-    {
-      id: 'qzdatasource',
-      name: '强智教务',
-      version: '1.0.0',
-      aliases: ['qzdatasource', '强智教务'],
-      hasParser: false,
-      metaPath: 'presets/systems/qzdatasource/meta.json',
-      loginPath: 'presets/systems/qzdatasource/login.json',
-      detect: {
-        markers: ['qzdatasource', '强智', 'qzjw'],
-        timetableTableIds: [],
-        timetableTableClasses: [],
-        gridCellIdPatterns: [],
-      },
-      entryPath: '/jsxsd/',
-      hint: '课表在「培养管理 → 我的课表」',
-    },
-    {
-      id: 'urp',
-      name: 'URP 教务',
-      version: '1.0.0',
-      aliases: ['urp', 'URP 教务'],
-      hasParser: false,
-      metaPath: 'presets/systems/urp/meta.json',
-      loginPath: 'presets/systems/urp/login.json',
-      detect: {
-        markers: ['urp', '教学信息服务平台', 'jwgl\\.urp'],
-        timetableTableIds: [],
-        timetableTableClasses: [],
-        gridCellIdPatterns: [],
-      },
-      entryPath: '/',
-      hint: '综合教务系统，课表在「课表查询」',
-    },
-  ],
-};
+const REAL_PRESET_INDEX: PresetIndex = REAL_PRESET_SNAPSHOT_0_1_0.index as PresetIndex;
 
 /** 索引的可变形态（用例里会删/改字段）。 */
 type MutableIndex = Record<string, unknown> & {
@@ -466,7 +484,7 @@ function cloneIndex(): MutableIndex {
   return JSON.parse(JSON.stringify(REAL_PRESET_INDEX)) as MutableIndex;
 }
 
-test('index.json：真实生成物通过校验，学校与系统字段逐个可用', () => {
+test('索引：真实生成物通过校验，学校与系统字段逐个可用', () => {
   assert.equal(describePresetIndexProblem(REAL_PRESET_INDEX), null, '真实索引应通过校验');
 
   const index = parsePresetIndex(REAL_PRESET_INDEX);
@@ -481,12 +499,20 @@ test('index.json：真实生成物通过校验，学校与系统字段逐个可�
   const generic = index.schools[0];
   assert.equal(generic?.name, '通用作息');
   assert.equal(generic?.system, null, '通用作息不绑定教务系统');
-  assert.equal(generic?.configPath, null, '通用作息没有 config.json');
-  assert.equal(generic?.timetablePath, 'presets/schools/_default/timetable.json', '校目录名可以与作息 id 不同');
+  assert.equal(
+    generic?.configPath,
+    'presets/schools/_default/school.json',
+    '合并后学校覆盖配置与作息同在 school.json（config.json 已不存在）',
+  );
+  assert.equal(
+    generic?.timetablePath,
+    'presets/schools/_default/school.json',
+    '作息来源同样是 school.json；校目录名（_default）与作息 id（default）可以不同',
+  );
   const usts = index.schools[1];
   assert.equal(usts?.system, 'jwglxt');
-  assert.equal(usts?.timetablePath, 'presets/schools/usts/timetable.json');
-  assert.equal(usts?.configPath, 'presets/schools/usts/config.json');
+  assert.equal(usts?.timetablePath, 'presets/schools/usts/school.json');
+  assert.equal(usts?.configPath, 'presets/schools/usts/school.json');
 
   assert.deepEqual(
     index.systems.map((system) => system.id),
@@ -499,18 +525,80 @@ test('index.json：真实生成物通过校验，学校与系统字段逐个可�
   assert.deepEqual(index.systems[1]?.detect.markers, [], '空标记是合法值，不是缺字段');
 });
 
-test('index.json：预设仓库只读参考在场时，外部基准与真实文件逐字段一致', (t) => {
-  const indexPath = join(PRESETS_DIR, 'presets', 'index.json');
-  if (!existsSync(indexPath)) {
+test('索引：预设仓库只读参考在场时，外部基准取自真实快照的 index 字段', (t) => {
+  if (!existsSync(PRESETS_DIR)) {
     t.skip(`预设仓库不在 ${PRESETS_DIR}，跳过真实索引比对`);
     return;
   }
-  const fromRepo = JSON.parse(readFileSync(indexPath, 'utf8')) as Record<string, unknown>;
-  assert.deepEqual(fromRepo, REAL_PRESET_INDEX, '外部基准应与预设仓库当前的 presets/index.json 逐字段一致');
-  assert.deepEqual(parsePresetIndex(fromRepo), REAL_PRESET_INDEX);
+
+  // ① 预设仓库**不再产出** presets/index.json：旧的独立索引文件必须已不存在
+  const retiredIndexPath = join(PRESETS_DIR, 'presets', 'index.json');
+  assert.equal(
+    existsSync(retiredIndexPath),
+    false,
+    `预设仓库已删除 presets/index.json（信息并入快照的 index），但 ${retiredIndexPath} 还在`,
+  );
+
+  // ② 外部基准来自预设仓库**真实产出的快照**，不是我们自己算的
+  const snapshotPath = join(PRESETS_DIR, 'snapshot', 'presets-0.1.0.json');
+  if (!existsSync(snapshotPath)) {
+    t.skip(`预设仓库缺少快照 ${snapshotPath}，跳过真实索引比对`);
+    return;
+  }
+  const fromRepo = JSON.parse(readFileSync(snapshotPath, 'utf8')) as Record<string, unknown>;
+
+  // 逐字段核对整份快照（含 sources / index / hash）：手抄的外部基准必须与真身一致
+  assert.deepEqual(fromRepo, REAL_PRESET_SNAPSHOT_0_1_0, '外部基准应与预设仓库 0.1.0 的快照逐字段一致');
+  // 哈希在这个**外部生成器算出来的**快照上也必须成立（本模块的口径与它一致）
+  assert.equal(verifySnapshot(fromRepo as unknown as PresetSnapshot), true, '真实快照应通过本模块的哈希校验');
+
+  // ③ 索引字段与外部基准逐字段一致，且能从快照里取出来
+  assert.deepEqual(fromRepo['index'], REAL_PRESET_INDEX, '快照的 index 应与外部基准逐字段一致');
+  assert.deepEqual(presetIndexFromSnapshot(fromRepo as unknown as PresetSnapshot), REAL_PRESET_INDEX);
 });
 
-test('index.json：_generated 缺失或不为 true 一律拒绝', () => {
+test('索引：presetIndexFromSnapshot 从快照取索引，缺 index / 结构不对都抛可读错误', () => {
+  // 正常路径：真实快照内嵌的索引取出来就是外部基准
+  assert.deepEqual(presetIndexFromSnapshot(REAL_PRESET_SNAPSHOT_0_1_0), REAL_PRESET_INDEX);
+  assert.equal(
+    presetIndexFromSnapshot(REAL_PRESET_SNAPSHOT_0_1_0).schools[1]?.timetablePath,
+    'presets/schools/usts/school.json',
+  );
+
+  // 旧结构快照（没有 index）：给一条点明「索引已并入快照」的可读错误
+  const { index: _dropped, ...withoutIndex } = REAL_PRESET_SNAPSHOT_0_1_0;
+  assert.throws(
+    () => presetIndexFromSnapshot(withoutIndex as PresetSnapshot),
+    /缺少内嵌索引 index/,
+  );
+  assert.throws(() => presetIndexFromSnapshot({ ...withoutIndex, index: null } as unknown as PresetSnapshot), /缺少内嵌索引/);
+
+  // index 在但结构不对（不是生成物）：沿用同一套索引校验
+  assert.throws(
+    () =>
+      presetIndexFromSnapshot({
+        ...REAL_PRESET_SNAPSHOT_0_1_0,
+        index: { ...REAL_PRESET_INDEX, _generated: false },
+      } as unknown as PresetSnapshot),
+    /预设索引不可用.*_generated/,
+  );
+
+  // 取索引不看网络：整个过程没有任何 fetch
+  const originalFetch = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = (async () => {
+    fetched += 1;
+    throw new Error('不该发请求');
+  }) as unknown as typeof fetch;
+  try {
+    presetIndexFromSnapshot(REAL_PRESET_SNAPSHOT_0_1_0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(fetched, 0, '索引来自快照，不应再发独立请求');
+});
+
+test('索引：_generated 缺失或不为 true 一律拒绝', () => {
   const missing = cloneIndex();
   delete missing['_generated'];
   assert.match(String(describePresetIndexProblem(missing)), /_generated/);
@@ -527,7 +615,7 @@ test('index.json：_generated 缺失或不为 true 一律拒绝', () => {
   }
 });
 
-test('index.json：学校条目缺任一必填字段都拒绝', () => {
+test('索引：学校条目缺任一必填字段都拒绝', () => {
   for (const key of ['id', 'name', 'system', 'timetablePath', 'configPath']) {
     const index = cloneIndex();
     const school = index.schools[1];
@@ -546,7 +634,7 @@ test('index.json：学校条目缺任一必填字段都拒绝', () => {
   assert.match(String(describePresetIndexProblem(wrongTypes)), /name/);
 });
 
-test('index.json：系统引用缺任一必填字段都拒绝', () => {
+test('索引：系统引用缺任一必填字段都拒绝', () => {
   for (const key of ['id', 'name', 'detect', 'entryPath', 'hint']) {
     const index = cloneIndex();
     const system = index.systems[0];
@@ -560,7 +648,7 @@ test('index.json：系统引用缺任一必填字段都拒绝', () => {
   }
 });
 
-test('index.json：detect 的四个子键缺一不可，且必须是字符串数组', () => {
+test('索引：detect 的四个子键缺一不可，且必须是字符串数组', () => {
   for (const key of ['markers', 'timetableTableIds', 'timetableTableClasses', 'gridCellIdPatterns']) {
     const index = cloneIndex();
     const detect = index.systems[0]?.['detect'] as Record<string, unknown>;
@@ -579,13 +667,13 @@ test('index.json：detect 的四个子键缺一不可，且必须是字符串数
   assert.match(String(describePresetIndexProblem(badElement)), /detect\.markers\[1\]/);
 });
 
-test('index.json：entryPath 必须以 / 开头', () => {
+test('索引：entryPath 必须以 / 开头', () => {
   const index = cloneIndex();
   index.systems[0]!['entryPath'] = 'jwglxt/xtgl/login_slogin.html';
   assert.match(String(describePresetIndexProblem(index)), /entryPath 应以 \/ 开头/);
 });
 
-test('index.json：同一份索引里 id 不得重复', () => {
+test('索引：同一份索引里 id 不得重复', () => {
   const duplicatedSchools = cloneIndex();
   duplicatedSchools.schools[1]!['id'] = duplicatedSchools.schools[0]!['id'];
   assert.match(String(describePresetIndexProblem(duplicatedSchools)), /id 重复/);
@@ -595,7 +683,7 @@ test('index.json：同一份索引里 id 不得重复', () => {
   assert.match(String(describePresetIndexProblem(duplicatedSystems)), /id 重复/);
 });
 
-test('index.json：路径必须是安全的相对路径（不许越出仓库根）', () => {
+test('索引：路径必须是安全的相对路径（不许越出仓库根）', () => {
   const cases: Array<[string, string]> = [
     ['timetablePath', '../outside.json'],
     ['timetablePath', 'presets/../../outside.json'],
@@ -620,7 +708,7 @@ test('index.json：路径必须是安全的相对路径（不许越出仓库根�
   assert.match(String(describePresetIndexProblem(systemIndex)), /metaPath/);
 });
 
-test('index.json：结构或类型异常都只被拒绝，绝不抛非预期异常', () => {
+test('索引：结构或类型异常都只被拒绝，绝不抛非预期异常', () => {
   const broken: unknown[] = [
     null,
     undefined,
@@ -654,54 +742,8 @@ test('index.json：结构或类型异常都只被拒绝，绝不抛非预期异�
   }
 });
 
-test('index.json：schemaVersion 高于本版能消费的版本时提示升级', () => {
+test('索引：schemaVersion 高于本版能消费的版本时提示升级', () => {
   const index = cloneIndex();
   index['schemaVersion'] = PRESET_SCHEMA_VERSION + 1;
   assert.match(String(describePresetIndexProblem(index)), /schemaVersion 2.*请升级应用/);
-});
-
-test('fetchPresetIndex：正常下载并通过校验，请求的就是索引地址', async () => {
-  const seen: string[] = [];
-  const index = await fetchPresetIndex(async (input) => {
-    seen.push(String(input));
-    return jsonResponse(REAL_PRESET_INDEX);
-  });
-  assert.deepEqual(seen, [PRESET_INDEX_URL]);
-  assert.equal(index.version, '0.1.0');
-  assert.deepEqual(
-    index.schools.map((school) => school.id),
-    ['default', 'usts'],
-  );
-});
-
-test('fetchPresetIndex：HTTP 失败、JSON 非法、结构不对、断网都抛可读错误', async () => {
-  await assert.rejects(
-    () => fetchPresetIndex(async () => jsonResponse({}, false, 404)),
-    /预设索引下载失败：预设源返回 404/,
-  );
-  await assert.rejects(
-    () =>
-      fetchPresetIndex(
-        async () =>
-          ({
-            ok: true,
-            status: 200,
-            json: async () => {
-              throw new Error('Unexpected token <');
-            },
-          }) as unknown as Response,
-      ),
-    /Unexpected token/,
-  );
-  await assert.rejects(
-    () => fetchPresetIndex(async () => jsonResponse({ _generated: false })),
-    /预设索引不可用.*_generated/,
-  );
-  await assert.rejects(
-    () =>
-      fetchPresetIndex(async () => {
-        throw new Error('fetch failed');
-      }),
-    /无法连接预设源/,
-  );
 });

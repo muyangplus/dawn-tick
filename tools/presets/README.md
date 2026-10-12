@@ -9,18 +9,23 @@
 
 | 仓库 | 管什么 | 谁改 |
 | --- | --- | --- |
-| `dawn-tick-presets`（独立仓库） | 内容的**唯一来源**：作息表、教务系统、JS 适配器，以及它们的内容快照、`presets/index.json` 与 `version.json` | 维护预设的人 |
+| `dawn-tick-presets`（独立仓库） | 内容的**唯一来源**：作息表、教务系统、JS 适配器，以及它们的内容快照与 `version.json` | 维护预设的人 |
 | 本仓库 `dawn-tick`（主仓库） | 内置的**离线兜底副本**：`packages/core/src/config/` 下的几个 JSON，打包期内联进三端 | 同步脚本自动写，**不要手改** |
 
-预设仓库当前的作者结构（2026 重构后）：
+预设仓库当前的作者结构（2026 配置合并后）：
 
 ```
-presets/schools/<校>/{meta,timetable,config}.json   学校：作息表 + 元数据 + 可选覆盖配置
-presets/systems/<系统>/{meta.json,login.json,parse.js,fixtures/}
-presets/index.json                                  生成物：学校索引 + 系统引用（_generated: true）
-snapshot/presets-<version>.json                     分发快照（字段结构与重构前完全一致）
-version.json                                        { version, schemaVersion, generatedAt, channel }
+presets/schools/<校>/{school.json, parse.js?, fixtures/?, NOTES.json?}   学校：作息 + 元数据 + 可选覆盖配置 + 可选解析器
+presets/systems/<系统>/{system.json, parse.js?, fixtures/}              系统：元数据 + 登录 + 识别特征（合并成一个文件）
+schema/{school,system,snapshot}.schema.json                            作者结构的 JSON Schema
+snapshot/presets-<version>.json                                        唯一分发产物（含内嵌 index）
+version.json                                                           { version, schemaVersion, generatedAt, channel }
 ```
+
+**`presets/index.json` 已取消**：它原来的全部信息（学校索引 + 系统引用）现在是快照的**顶层新增字段
+`index`**（`{_generated: true, version, schemaVersion, generatedAt, schools[], systems[]}`），
+并且**参与快照内容哈希**。所以索引与清单天然同源同版本，客户端也不再需要单独请求那个地址
+（`apps/web/src/preset-update.ts` 里旧的 `PRESET_INDEX_URL` 已删除——它指向的文件会 404）。
 
 主仓库里与预设有关的一共四个文件：
 
@@ -28,22 +33,23 @@ version.json                                        { version, schemaVersion, ge
 | --- | --- | --- |
 | `packages/core/src/config/timetables.json` | 合并后的作息表数组（`BUILTIN_TIMETABLES` 的来源） | 人工（跟随预设仓库内容） |
 | `packages/core/src/config/systems.json` | 合并后的教务系统数组（`readSystemsConfig()` 的来源） | 人工（跟随预设仓库内容） |
-| `packages/core/src/config/builtin-preset-snapshot.json` | 预设仓库快照的**原文副本**（含 `hash`、`generatedAt`） | 同步脚本 |
+| `packages/core/src/config/builtin-preset-snapshot.json` | 预设仓库快照的**原文副本**（含 `index`、`hash`、`generatedAt`） | 同步脚本 |
 | `packages/core/src/config/preset-version.json` | `{ version, schemaVersion }` | 同步脚本 |
 
 ## 1.1 快照里两类 `path` 的语义（重要）
 
-快照的字段结构没有变，但 `path` 的含义随作者结构分成了两类：
+快照的 `sources` 字段结构没变，但合并之后两类 `path` 都不再是「照着读就有内容」的路径：
 
 | 条目 | `path` | 能不能按它读文件 |
 | --- | --- | --- |
-| `sources.timetables[]` | **真实文件** `presets/schools/<校目录>/timetable.json`（校目录名与作息 id **可以不同**，如 `_default` 目录 → `default` 作息） | 能（相对于预设仓库根） |
-| `sources.systems[]` | **符号路径** `presets/systems/<id>/system.json`；新结构下**没有这个文件**，它代表 `meta.json` + `login.json` 编译出的旧扁平结构（编译规则见预设仓库 `scripts/lib/legacy.mjs`） | **不能** |
-| `sources.adapters` | `{ 文件名: sha256 }`，取自 `systems/<id>/parse.js` | —— |
+| `sources.timetables[]` | **历史契约符号路径** `presets/schools/<校目录>/timetable.json`。合并后**没有这个文件**：作息内容内嵌在 `schools/<校目录>/school.json` 的 `timetable` 值里（`sha256` 是它**逐字节还原**成独立文件文本后的哈希）。校目录名与作息 id **可以不同**（`_default` 目录 → `default` 作息） | **不能**（文件不存在） |
+| `sources.systems[]` | `presets/systems/<id>/system.json`。合并后这个文件**存在**，但条目 `sha256` 覆盖的是 `scripts/lib/legacy.mjs` 把它编译成**旧扁平结构**后那段文本，与文件自身的哈希不同 | 能读，但**不能按它复算哈希** |
+| `sources.adapters` | `{ 文件名: sha256 }`，取自 `systems/<id>/parse.js` 与学校级 `schools/<id>/parse.js` | —— |
 
-因此：**主仓库任何代码都不该按 `path` 读文件**。要定位内容请按 `id`，或读预设仓库的
-`presets/index.json`（里面有 `timetablePath` / `configPath` / `metaPath` / `loginPath` 这些真实路径）。
-`verifyBuiltinPresetSnapshot()` 只校验 `path` 的**形状**（作息表是真实文件路径、教务系统是符号路径），
+因此：**主仓库任何代码都不该按 `path` 读文件做校验**。真实路径一律看快照内嵌的 `index`
+（学校的 `configPath` / `timetablePath` 都指向 `presets/schools/<校目录>/school.json`，
+系统的 `metaPath` / `loginPath` 都指向 `presets/systems/<id>/system.json`）。
+`verifyBuiltinPresetSnapshot()` 只校验 `path` 与这些真实路径的**形状**（不读文件），
 并且同步脚本 `sync-snapshot.mjs` 自始至终只按 **id** 比对清单，所以两类语义它都能正确处理。
 
 ## 2. 用法
@@ -119,8 +125,8 @@ hash = "sha256:" + sha256( canonicalJson( 去掉 hash 字段后的快照对象 )
 完整流程：
 
 ```bash
-# ① 在预设仓库里改内容（presets/schools/<校>/、presets/systems/<系统>/）
-# ② 在预设仓库里重新生成产物：snapshot/presets-<version>.json 与 presets/index.json
+# ① 在预设仓库里改内容（presets/schools/<校>/school.json、presets/systems/<系统>/system.json）
+# ② 在预设仓库里重新生成产物（唯一产物：快照；索引已并入其中，不再产出 presets/index.json）
 cd E:/work/dsh/dawn-tick-presets
 node scripts/snapshot.mjs            # CI 下用 SOURCE_DATE_EPOCH 或 --at 固定 generatedAt
 # ③ 把新内容落到主仓库的 timetables.json / systems.json（合并数组，顺序是业务语义）
@@ -135,18 +141,22 @@ node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets"
 
 ## 6. 自检与测试
 
-- 运行时自检：`verifyBuiltinPresetSnapshot()` 返回 `{ ok, reason? }`，复算快照哈希，
+- 运行时自检：`verifyBuiltinPresetSnapshot()` 返回 `{ ok, reason? }`，复算快照哈希（含内嵌 `index`），
   并核对快照 `sources.timetables` / `sources.systems` 与内置 `timetables.json` / `systems.json`
   的 id 集合完全一致（只比集合，不比顺序——快照按 id 排序，内置顺序是识别优先级），
-  同时校验每条 `path` 的形状（作息表 = 真实文件路径，教务系统 = 符号路径）。
+  同时校验每条 `path` 的形状（作息表 = 历史契约符号路径，教务系统 = `systems/<id>/system.json`）
+  与内嵌 `index` 的路径形状（学校都指向 `schools/<校目录>/school.json`，系统都指向 `systems/<id>/system.json`）。
 - 单元测试：
   - `packages/core/test/preset-snapshot.test.ts`（已挂进 `pnpm -C packages/core test`）：哈希复算、
     篡改检测、内置一致性、同步脚本成功写入 / `--check` 只读 / 哈希不符非 0 退出 /
     `--from` 目录不存在非 0 退出 / `--out` 非法非 0 退出。其中「逐字段与预设仓库一致」用的是
-    **手抄的外部基准**（预设仓库生成器真实产出的快照原文），不是自己算出来再自证；
-    预设仓库在场时还会按真实文件核对（作息表读 `path`、教务系统读 `presets/index.json`）。
-  - `apps/web/test/preset-update.test.ts`：快照哈希校验、缓存、以及 `presets/index.json` 的
-    只读接入（`describePresetIndexProblem` / `parsePresetIndex` / `fetchPresetIndex`）正反用例。
+    **手抄的外部基准**（预设仓库生成器真实产出的快照原文，含 `index`），不是自己算出来再自证；
+    预设仓库在场时还会按**真实新文件**核对：作息读 `schools/<校目录>/school.json` 并把内嵌
+    `timetable` 逐字节还原后复算哈希，同时断言旧的 `timetable.json` 与 `presets/index.json` 都不存在；
+    教务系统读**快照的 `index` 字段**（那个 `system.json` 文件虽然存在，但记录的是 legacy 编译产物哈希）。
+  - `apps/web/test/preset-update.test.ts`：快照哈希校验、缓存、以及索引（快照内嵌 `index`）的
+    只读接入（`describePresetIndexProblem` / `parsePresetIndex` / `presetIndexFromSnapshot`）正反用例，
+    另有「外部基准 ⇔ 预设仓库真实快照逐字段一致」的跨仓核对。
 - **测试绝不写真实内置配置**：所有会写盘的用例都走 `--out <mkdtemp 临时目录>`，
   并断言真实两个文件的 sha256 与 mtime 一字未变；测试收尾时还会再比一次 sha256。
   （旧版实现是临时改写真实文件再在 `finally` 还原，进程被强杀会留下假快照，已废弃。）
