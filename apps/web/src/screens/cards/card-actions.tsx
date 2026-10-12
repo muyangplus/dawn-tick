@@ -1,6 +1,9 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/cn.ts';
+
+/** 同一时刻只允许一个菜单展开：打开自己时收起其它菜单（不含设置页卡片收纳）。 */
+const MENU_SELECTOR = 'details[data-action-menu][open]';
 
 export interface MenuItem {
   /** 菜单项文案（中文） */
@@ -27,8 +30,40 @@ export interface ActionMenuProps {
 export function ActionMenu({ label, icon: Icon, iconOnly = true, items, className }: ActionMenuProps) {
   const root = useRef<HTMLDetailsElement>(null);
 
+  // 同时只开一个菜单；点到别处也收起（仅作用于本组件渲染的菜单）
+  useEffect(() => {
+    const closeOthers = (): void => {
+      const self = root.current;
+      if (self === null || !self.open) return;
+      for (const other of document.querySelectorAll<HTMLDetailsElement>(MENU_SELECTOR)) {
+        if (other !== self) other.open = false;
+      }
+    };
+    const onDocumentPointerDown = (event: PointerEvent): void => {
+      const self = root.current;
+      if (self === null || !self.open) return;
+      if (event.target instanceof Node && self.contains(event.target)) return;
+      self.open = false;
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const self = root.current;
+      if (self === null || !self.open) return;
+      if (event.key === 'Escape') self.open = false;
+    };
+    const self = root.current;
+    self?.addEventListener('toggle', closeOthers);
+    document.addEventListener('pointerdown', onDocumentPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      const self = root.current;
+      if (self !== null) self.removeEventListener('toggle', closeOthers);
+      document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
   return (
-    <details ref={root} className={cn('relative', className)}>
+    <details ref={root} data-action-menu className={cn('relative', className)}>
       <summary
         aria-label={label}
         className={cn(
