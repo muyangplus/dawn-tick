@@ -1,4 +1,4 @@
-import { readSystemsConfig, type SchoolSystemId } from '../config/index.ts';
+import { readSystemsConfig, type SchoolSystemId, type SystemConfig } from '../config/index.ts';
 import { DIRECTORY_NAMES, MANUAL_SCHOOLS } from './schools.ts';
 
 export { DIRECTORY_NAMES, MANUAL_SCHOOLS };
@@ -15,16 +15,57 @@ export interface SystemEntry {
 }
 
 /**
- * 教务系统入口模板：数据全部来自 src/config/systems.json（经 src/config 校验）。
- * 这里只是把配置字段改成既有调用方习惯的名字（name → label、entryPath → loginPath），
- * 保证 SYSTEM_ENTRIES 的形态与顺序不变，避免别处的引用一起改。
+ * 把一份教务系统配置映射成既有调用方习惯的字段名（name → label、entryPath → loginPath）。
+ * 保证 SystemEntry 的形态与顺序不变，避免别处的引用一起改。
  */
-export const SYSTEM_ENTRIES: readonly SystemEntry[] = readSystemsConfig().map((system) => ({
-  id: system.id,
-  label: system.name,
-  loginPath: system.entryPath,
-  hint: system.hint,
-}));
+function toSystemEntries(systems: readonly SystemConfig[]): readonly SystemEntry[] {
+  return systems.map((system) => ({
+    id: system.id,
+    label: system.name,
+    loginPath: system.entryPath,
+    hint: system.hint,
+  }));
+}
+
+/** 按有效配置数组的引用缓存映射结果（`readSystemsConfig()` 每次返回同一个引用）。 */
+let cachedEntries:
+  | { systems: readonly SystemConfig[]; entries: readonly SystemEntry[] }
+  | undefined;
+
+/**
+ * **有效配置**的入口模板列表：没有覆盖时逐条等于内置 `systems.json`，
+ * 被 `setPresetOverride()` 换过配置时立刻跟着换。
+ */
+export function effectiveSystemEntries(): readonly SystemEntry[] {
+  const systems = readSystemsConfig();
+  if (cachedEntries === undefined || cachedEntries.systems !== systems) {
+    cachedEntries = { systems, entries: toSystemEntries(systems) };
+  }
+  return cachedEntries.entries;
+}
+
+/**
+ * 教务系统入口模板（有效配置的只读视图）。
+ *
+ * 它是一个**惰性转发**到 `effectiveSystemEntries()` 的视图，而不是模块加载时算好的数组：
+ * 启动时通过 `setPresetOverride()` 注入的缓存教务配置必须能影响这里，
+ * 否则界面上的入口路径与 `systemEntry()` 返回的会是两套值。
+ * 无覆盖时下标、长度、遍历结果与内置 `systems.json` 逐一相同——调用方感觉不到区别。
+ */
+export const SYSTEM_ENTRIES: readonly SystemEntry[] = new Proxy([] as SystemEntry[], {
+  get(_target, property) {
+    return Reflect.get(effectiveSystemEntries(), property);
+  },
+  has(_target, property) {
+    return Reflect.has(effectiveSystemEntries(), property);
+  },
+  ownKeys() {
+    return Reflect.ownKeys(effectiveSystemEntries());
+  },
+  getOwnPropertyDescriptor(_target, property) {
+    return Reflect.getOwnPropertyDescriptor(effectiveSystemEntries(), property);
+  },
+});
 
 export interface SchoolEntry {
   id: string;
@@ -43,8 +84,13 @@ export interface SchoolEntry {
  */
 export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...MANUAL_SCHOOLS];
 
+/**
+ * 按 id 取某个教务系统的入口模板（**有效配置**；覆盖层换过配置就用覆盖的那份）。
+ * 找不到时回落到第一条，与既有行为一致。
+ */
 export function systemEntry(system: SchoolSystem): SystemEntry {
-  return SYSTEM_ENTRIES.find((entry) => entry.id === system) ?? (SYSTEM_ENTRIES[0] as SystemEntry);
+  const entries = effectiveSystemEntries();
+  return entries.find((entry) => entry.id === system) ?? (entries[0] as SystemEntry);
 }
 
 /**

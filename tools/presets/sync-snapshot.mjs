@@ -6,13 +6,19 @@
  *   node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets"
  *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --version 1.0.1
  *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --check   # 只校验不写盘
+ *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --out <目录>   # 写到别的目录（文件名不变）
  *
  * 读什么：
  *   <预设仓库>/version.json                     → 版本与 schemaVersion（--version 缺省时取这里的 version）
  *   <预设仓库>/snapshot/presets-<version>.json  → 快照原文（含 hash 与 generatedAt）
- * 写什么：
- *   packages/core/src/config/builtin-preset-snapshot.json   ← 快照**原文逐字节复制**
- *   packages/core/src/config/preset-version.json            ← { version, schemaVersion }
+ * 写什么（默认目录见下；给了 --out 就写到那个目录，两个文件名不变）：
+ *   <输出目录>/builtin-preset-snapshot.json   ← 快照**原文逐字节复制**
+ *   <输出目录>/preset-version.json            ← { version, schemaVersion }
+ *   默认输出目录 = packages/core/src/config（主仓库内置配置，即现状行为）。
+ *
+ * 为什么要 --out：测试与试跑要能真的落盘、又**绝不能碰真实内置配置**。
+ * 给了 --out 就只在那一个目录里写（目录不存在时按需创建），
+ * `--check` 则改为拿该目录里的两份文件做比对，语义仍是「只校验不写盘、一个文件都不写」。
  *
  * 规矩（重要）：**预设仓库是内容的唯一来源**。改了预设仓库里的 timetables / systems / adapters，
  * 必须先在预设仓库跑 `node scripts/snapshot.mjs` 生成新快照，再回来跑本脚本同步；
@@ -28,15 +34,17 @@
  * 所以「脚本复算」「Web 端校验」「内置自检」三处永远是同一份代码。
  */
 
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canonicalPresetJson, sha256HexSync } from '../../packages/core/src/config/preset-hash.ts';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..');
-const SNAPSHOT_PATH = join(REPO_ROOT, 'packages', 'core', 'src', 'config', 'builtin-preset-snapshot.json');
-const PRESET_VERSION_PATH = join(REPO_ROOT, 'packages', 'core', 'src', 'config', 'preset-version.json');
+/** 默认输出目录：主仓库的内置配置目录。两个目标文件名固定不变。 */
+const DEFAULT_OUT_DIR = join(REPO_ROOT, 'packages', 'core', 'src', 'config');
+const SNAPSHOT_FILE_NAME = 'builtin-preset-snapshot.json';
+const PRESET_VERSION_FILE_NAME = 'preset-version.json';
 
 /** 对字符串做 sha256，返回 "sha256:<hex>"（与预设仓库 snapshot.mjs 的 sha256 同口径）。 */
 export function sha256(text) {
@@ -77,7 +85,7 @@ function readJsonFile(path, label) {
   }
 }
 
-/** 解析 `--from <目录>` / `--version <版本>` / `--check`。 */
+/** 解析 `--from <目录>` / `--version <版本>` / `--out <目录>` / `--check`。 */
 export function parseArgs(argv) {
   const options = { check: false };
   for (let index = 0; index < argv.length; index += 1) {
@@ -87,6 +95,11 @@ export function parseArgs(argv) {
       index += 1;
     } else if (arg === '--version') {
       options.version = argv[index + 1];
+      index += 1;
+    } else if (arg === '--out') {
+      // 缺值时记成空串（而不是 undefined），这样「--out 后面没跟目录」会被当成错误，
+      // 而不是悄悄退回默认输出目录去写真实内置配置。
+      options.out = argv[index + 1] ?? '';
       index += 1;
     } else if (arg === '--check') {
       options.check = true;
@@ -185,6 +198,16 @@ export function syncSnapshot(options) {
   if (!existsSync(from)) fail(`预设仓库目录不存在：${from}`);
   if (!statSync(from).isDirectory()) fail(`--from 指向的不是目录：${from}`);
 
+  // 输出目录：默认是主仓库的内置配置目录；给了 --out 就只写那一个目录（文件名不变）。
+  // 这里先把目录本身校验完，后面所有落盘都只碰这两个算好的路径。
+  const outDir =
+    options.out === undefined
+      ? DEFAULT_OUT_DIR
+      : resolve(requireText(options.out, '--out 参数（输出目录）'));
+  if (existsSync(outDir) && !statSync(outDir).isDirectory()) fail(`--out 指向的不是目录：${outDir}`);
+  const snapshotOutPath = join(outDir, SNAPSHOT_FILE_NAME);
+  const versionOutPath = join(outDir, PRESET_VERSION_FILE_NAME);
+
   const presetVersionPath = join(from, 'version.json');
   if (!existsSync(presetVersionPath)) fail(`预设仓库缺少 version.json：${presetVersionPath}`);
   const presetVersion = readJsonFile(presetVersionPath, '预设仓库 version.json');
@@ -228,6 +251,10 @@ export function syncSnapshot(options) {
   const nextVersionText = `${JSON.stringify({ version, schemaVersion: info.schemaVersion }, null, 2)}\n`;
 
   note(`来源：${from}`);
+  note(
+    `输出目录：${rel(outDir)}${outDir === DEFAULT_OUT_DIR ? '（主仓库内置配置，默认）' : '（--out 指定）'}`,
+  );
+  note(`目标文件：${rel(snapshotOutPath)}、${rel(versionOutPath)}`);
   note(`版本：${version}（schemaVersion ${info.schemaVersion}）`);
   note(`生成时间：${typeof snapshot.generatedAt === 'string' ? snapshot.generatedAt : '（快照未记录）'}`);
   note(`内容哈希：${info.declared}（已复算一致）`);
@@ -239,18 +266,23 @@ export function syncSnapshot(options) {
   );
 
   if (options.check === true) {
-    const currentSnapshotText = existsSync(SNAPSHOT_PATH) ? readFileSync(SNAPSHOT_PATH, 'utf8') : null;
-    const currentVersionText = existsSync(PRESET_VERSION_PATH) ? readFileSync(PRESET_VERSION_PATH, 'utf8') : null;
+    // --check 只读：比对的是「本次会写出的目标」，给了 --out 就比对那个目录，
+    // 不创建目录、不写任何文件。
+    const currentSnapshotText = existsSync(snapshotOutPath) ? readFileSync(snapshotOutPath, 'utf8') : null;
+    const currentVersionText = existsSync(versionOutPath) ? readFileSync(versionOutPath, 'utf8') : null;
     const inSync = currentSnapshotText === nextSnapshotText && currentVersionText === nextVersionText;
-    note(`--check：主仓库内置快照${inSync ? '已是最新，无需同步' : '与预设仓库不一致，需要同步'}`);
+    note(`--check：${rel(outDir)} 里的内置快照${inSync ? '已是最新，无需同步' : '与预设仓库不一致，需要同步'}`);
     return { version, hash: info.declared, wrote: [], inSync };
   }
 
+  // 目录不存在时按需创建——只发生在「校验全部通过、马上要写」这一刻
+  mkdirSync(outDir, { recursive: true });
+
   const wrote = [];
-  if (writeIfChanged(SNAPSHOT_PATH, nextSnapshotText)) wrote.push(SNAPSHOT_PATH);
-  else note(`未变化：${rel(SNAPSHOT_PATH)}（内容一致，未触碰文件）`);
-  if (writeIfChanged(PRESET_VERSION_PATH, nextVersionText)) wrote.push(PRESET_VERSION_PATH);
-  else note(`未变化：${rel(PRESET_VERSION_PATH)}（内容一致，未触碰文件）`);
+  if (writeIfChanged(snapshotOutPath, nextSnapshotText)) wrote.push(snapshotOutPath);
+  else note(`未变化：${rel(snapshotOutPath)}（内容一致，未触碰文件）`);
+  if (writeIfChanged(versionOutPath, nextVersionText)) wrote.push(versionOutPath);
+  else note(`未变化：${rel(versionOutPath)}（内容一致，未触碰文件）`);
 
   for (const path of wrote) note(`已写入：${rel(path)}`);
   return { version, hash: info.declared, wrote, inSync: wrote.length === 0 };
@@ -279,7 +311,8 @@ export function main(argv = process.argv.slice(2)) {
   process.stdout.write('=== 预设快照同步 ===\n');
   process.stdout.write(`${summary.join('\n')}\n`);
   if (result.wrote.length === 0) {
-    process.stdout.write('  结果：主仓库已是最新，未改动任何文件（幂等）\n');
+    // 措辞与「写到哪个目录」无关：默认目录与 --out 目录都用这一句
+    process.stdout.write('  结果：输出目录已是最新，未改动任何文件（幂等）\n');
   } else {
     process.stdout.write(`  结果：已更新 ${result.wrote.length} 个文件\n`);
   }

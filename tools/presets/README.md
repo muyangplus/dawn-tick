@@ -32,14 +32,21 @@ node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets" --ve
 
 # 只校验、不写盘（CI 里可以用来发现「预设仓库有新快照但主仓库没同步」）
 node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets" --check
+
+# 写到别的目录（两个文件名不变；目录不存在时按需创建）——试跑与自动化测试用
+node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets" --out "$env:TEMP/预设试跑"
 ```
 
 脚本读 `<预设仓库>/version.json` 与 `<预设仓库>/snapshot/presets-<version>.json`，
-**复算快照的内容哈希**（口径见下），校验通过后才把两个文件写进主仓库，并打印中文摘要
-（来源、版本、生成时间、内容清单、内容哈希、写入路径）。
+**复算快照的内容哈希**（口径见下），校验通过后才把两个文件写进输出目录，并打印中文摘要
+（来源、**输出目录**、目标文件、版本、生成时间、内容清单、内容哈希、写入路径）。
 
 行为约定：
 
+- **输出目录**：缺省是 `packages/core/src/config`（主仓库内置配置，即原有行为）；
+  给了 `--out <目录>` 就只写那一个目录里的 `builtin-preset-snapshot.json` 与
+  `preset-version.json`，目录不存在时**按需创建**。`--check` 则改为拿该目录里的两份文件做比对，
+  语义不变：只校验、不写盘、不创建目录。
 - **幂等**：内容一致时报告「未变化」，**不触碰文件**（连 mtime 都不改），所以连跑两次
   `git status --short packages/core/src/config` 是干净的。
 - **失败不落盘**：目录不存在、快照缺失、JSON 非法、`hash` 格式不对、哈希不符、清单与内置
@@ -103,7 +110,11 @@ node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets"
   并核对快照 `sources.timetables` / `sources.systems` 与内置 `timetables.json` / `systems.json`
   的 id 集合完全一致（只比集合，不比顺序——快照按文件名排序，内置顺序是识别优先级）。
 - 单元测试：`packages/core/test/preset-snapshot.test.ts`（已挂进 `pnpm -C packages/core test`），
-  覆盖哈希复算、篡改检测、内置一致性、同步脚本成功写入 / 哈希不符非 0 退出 / 目录不存在非 0 退出。
+  覆盖哈希复算、篡改检测、内置一致性、同步脚本成功写入 / `--check` 只读 / 哈希不符非 0 退出 /
+  `--from` 目录不存在非 0 退出 / `--out` 非法非 0 退出。
+- **测试绝不写真实内置配置**：所有会写盘的用例都走 `--out <mkdtemp 临时目录>`，
+  并断言真实两个文件的 sha256 与 mtime 一字未变；测试收尾时还会再比一次 sha256。
+  （旧版实现是临时改写真实文件再在 `finally` 还原，进程被强杀会留下假快照，已废弃。）
 - 一致性边界：快照清单里每条的 `sha256` 是预设仓库**单文件**的原文哈希，与内置合并数组复算出的
   哈希本来就不同，所以校验不拿它去比内置正文；内置正文的漂移靠上面那条流程规矩、
   `config.test.ts` 的逐条断言，以及 `builtinPresetSourcesDigest()` 导出的正文指纹人工审计。

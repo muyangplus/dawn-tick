@@ -1,17 +1,33 @@
 /**
  * 内置预设快照的一致性测试。
  *
- * 守四件事：
+ * 守五件事：
  *   1. **快照自洽**：`verifyBuiltinPresetSnapshot()` 复算规范化 sha256 必须与快照里的 `hash` 一致；
  *   2. **篡改可见**：改动快照内容后复算哈希必须对不上（只改内存里的浅拷贝，不碰仓库文件）；
  *   3. **不漂移**：`BUILTIN_TIMETABLES` / `readSystemsConfig()` 与快照 `sources` 清单对齐；
- *   4. **同步脚本可用**：`tools/presets/sync-snapshot.mjs` 能正确写入，快照被篡改或缺目录时
- *      非 0 退出、一个文件都不写。
+ *   4. **同步脚本可用**：`tools/presets/sync-snapshot.mjs` 能正确写入、`--check` 只读、
+ *      快照被篡改或缺目录时非 0 退出、一个文件都不写；
+ *   5. **真实内置配置零改动**：所有会写盘的用例一律走 `--out <临时目录>`，
+ *      本测试**从不写** `packages/core/src/config/` 下的那两个真实文件；
+ *      测试结束时还会比对它们的 sha256 与测试开始前是否**完全一致**。
+ *
+ * 为什么这么严：写入类用例曾经临时改写真实的内置配置再在 finally 还原，
+ * 进程被强杀就会把 9.9.9 的假快照留在工作区。现在写盘只发生在 `mkdtempSync` 出来的临时目录里，
+ * 真实目录连 mtime 都不该变——这本身就是一条被断言的验收项。
  */
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +47,10 @@ import {
 /** 仓库根目录（本文件在 packages/core/test/ 下）。 */
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const SYNC_SCRIPT = join(REPO_ROOT, 'tools', 'presets', 'sync-snapshot.mjs');
+
+/**
+ * 真实内置配置的两个目标文件：本测试**只读**它们，任何写入都必须发生在 `--out` 临时目录里。
+ */
 const SNAPSHOT_TARGET = join(REPO_ROOT, 'packages', 'core', 'src', 'config', 'builtin-preset-snapshot.json');
 const VERSION_TARGET = join(REPO_ROOT, 'packages', 'core', 'src', 'config', 'preset-version.json');
 
@@ -56,30 +76,44 @@ function readText(path: string): string {
   return readFileSync(path, 'utf8');
 }
 
+/** 真实文件的 sha256（hex，无前缀）——本文件所有「没被写过」的断言都用它。 */
+function sha256OfFile(path: string): string {
+  return sha256HexSync(readText(path));
+}
+
 /**
- * 本文件刚加载时（= 测试运行前）两个文件的原文。
- * 既是下面只读断言的基准，也是「万一上次跑崩在中途留下假数据」时的自我修复依据。
+ * 本文件刚加载时（= 测试运行前）两个真实文件的原文与 sha256。
+ * 既是下面只读断言的基准，也是「测试结束后真实文件必须一字未动」的比对依据。
  */
 const ORIGINAL_SNAPSHOT_TEXT = readText(SNAPSHOT_TARGET);
 const ORIGINAL_VERSION_TEXT = readText(VERSION_TARGET);
+const ORIGINAL_SNAPSHOT_SHA256 = sha256OfFile(SNAPSHOT_TARGET);
+const ORIGINAL_VERSION_SHA256 = sha256OfFile(VERSION_TARGET);
 const ORIGINAL_DIGEST = builtinPresetSourcesDigest();
 /** 内置快照是否还是预设仓库 1.0.0 的原文（为假说明工作区被假数据污染了，见 before 钩子）。 */
 const SNAPSHOT_IS_REAL = /"version": "1\.0\.0"/.test(ORIGINAL_SNAPSHOT_TEXT);
 
 before(() => {
-  // 上次若跑崩在中途，这里先把两个文件恢复成加载时读到的原文，保证本次顺序与断言都可预期
-  if (readText(SNAPSHOT_TARGET) !== ORIGINAL_SNAPSHOT_TEXT) {
-    writeFileSync(SNAPSHOT_TARGET, ORIGINAL_SNAPSHOT_TEXT, 'utf8');
-  }
-  if (readText(VERSION_TARGET) !== ORIGINAL_VERSION_TEXT) {
-    writeFileSync(VERSION_TARGET, ORIGINAL_VERSION_TEXT, 'utf8');
-  }
+  // 本测试不再改写真实文件，所以这里只做「进来时工作区必须是干净的」这一条体检；
+  // 上次若被旧版测试跑崩在中途留下假数据，这里会明确指出怎么恢复。
+  assert.equal(
+    readText(SNAPSHOT_TARGET),
+    ORIGINAL_SNAPSHOT_TEXT,
+    '测试开始时真实内置快照与本文件加载时读到的原文不一致（工作区被污染了）',
+  );
+  assert.equal(
+    readText(VERSION_TARGET),
+    ORIGINAL_VERSION_TEXT,
+    '测试开始时真实 preset-version.json 与本文件加载时读到的原文不一致（工作区被污染了）',
+  );
 });
 
 after(() => {
-  // 收尾兜底：写入类用例即使断言失败也已经各自还原过，这里再确认一次
-  assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '测试结束时内置快照应回到原文');
-  assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT, '测试结束时 preset-version.json 应回到原文');
+  // 收尾兜底：两个真实文件的 sha256 必须与测试开始前完全一致
+  assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256, '真实内置快照的 sha256 在测试前后必须一致');
+  assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256, '真实 preset-version.json 的 sha256 在测试前后必须一致');
+  assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '测试结束时内置快照应仍是原文');
+  assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT, '测试结束时 preset-version.json 应仍是原文');
 });
 
 test('前置：内置快照是真实快照（工作区没被假数据污染）', () => {
@@ -237,7 +271,7 @@ test('一致性：预设仓库只读参考在场时，逐条内容与内置配�
         );
         assert.equal(`sha256:${sha256HexSync(sourceText)}`, item.sha256, `${item.path} 的 sha256 应与快照一致`);
       } else {
-        // 上面那条会写真文件的用例把内置快照改成了假数据，这里退一步只比 id 集合
+        // 内置快照被外部污染时退一步只比 id 集合（本测试自己不会再造成这种污染）
         assert.equal(typeof builtin.id, 'string');
       }
     }
@@ -253,147 +287,254 @@ test('内置正文指纹：builtinPresetSourcesDigest() 稳定', () => {
   assert.deepEqual(builtinPresetSourcesDigest(), ORIGINAL_DIGEST, '内置正文在测试前后必须没变');
 });
 
-// —— 会写文件的两个用例放最后 ——
+// —— 下面全部是会「真的落盘」的用例，一律只写 --out 给的临时目录 ——
 //
-// 它们（及其 finally 还原）必须晚于上面所有只读断言执行：node:test 的同文件用例按注册顺序串行跑。
-// 为避免「上一次跑崩在中途、留下 9.9.9 的假快照」污染本次运行，before 钩子先把这两个文件
-// 恢复成本文件加载时读到的原文，再让写入类用例各自保存/还原。
+// node:test 的同文件用例按注册顺序串行跑，所以最后的「真实文件 sha256 未变」用例
+// 排在所有写盘用例之后，能把它们的副作用一并兜住。
 
-test('同步脚本：伪造预设仓库 → 正确写入主仓库文件', () => {
+/**
+ * 造一份假的预设仓库：内容清单与内置一致，但版本 / 时间戳 / 格式都不同。
+ * 这样既能验证「写入的是快照原文」，也不会和真实内置配置撞车。
+ * 调用方负责 `rmSync(root, { recursive: true, force: true })`。
+ */
+function makeFakePresetRepo(version = '9.9.9'): { root: string; snapshotText: string } {
   const root = mkdtempSync(join(tmpdir(), 'dawn-tick-presets-'));
-  const before = readText(SNAPSHOT_TARGET);
-  const beforeVersion = readText(VERSION_TARGET);
-  try {
-    // 伪造一份「内容与内置相同、但格式/版本/时间戳都不同」的仓库，
-    // 这样能同时验证「写入的是快照原文」而不是脚本自己重排的 JSON。
-    const fake: Omit<PresetSnapshot, 'hash'> = {
-      version: '9.9.9',
-      schemaVersion: 1,
-      generatedAt: '2030-05-06T07:08:09.000Z',
-      sources: {
-        timetables: BUILTIN_TIMETABLES.map((preset) => ({
-          id: preset.id,
-          path: `presets/timetables/${preset.id}.json`,
-          sha256: `sha256:${'1'.repeat(64)}`,
-        })),
-        systems: readSystemsConfig().map((system) => ({
-          id: system.id,
-          path: `presets/systems/${system.id}.json`,
-          sha256: `sha256:${'2'.repeat(64)}`,
-        })),
-        adapters: { 'demo.js': `sha256:${'f'.repeat(64)}` },
-      },
-    };
-    const snapshot = sign(fake);
-    // 故意写成紧凑的单行：写入必须是逐字节复制，不能是重排后的 JSON
-    const snapshotText = JSON.stringify(snapshot);
-    mkdirSync(join(root, 'snapshot'), { recursive: true });
-    writeFileSync(join(root, 'snapshot', `presets-${fake.version}.json`), snapshotText, 'utf8');
-    writeFileSync(
-      join(root, 'version.json'),
-      `${JSON.stringify({ version: fake.version, schemaVersion: fake.schemaVersion, channel: 'stable' }, null, 2)}\n`,
-      'utf8',
-    );
+  const fake: Omit<PresetSnapshot, 'hash'> = {
+    version,
+    schemaVersion: 1,
+    generatedAt: '2030-05-06T07:08:09.000Z',
+    sources: {
+      timetables: BUILTIN_TIMETABLES.map((preset) => ({
+        id: preset.id,
+        path: `presets/timetables/${preset.id}.json`,
+        sha256: `sha256:${'1'.repeat(64)}`,
+      })),
+      systems: readSystemsConfig().map((system) => ({
+        id: system.id,
+        path: `presets/systems/${system.id}.json`,
+        sha256: `sha256:${'2'.repeat(64)}`,
+      })),
+      adapters: { 'demo.js': `sha256:${'f'.repeat(64)}` },
+    },
+  };
+  const snapshot = sign(fake);
+  // 故意写成紧凑的单行：写入必须是逐字节复制，不能是重排后的 JSON
+  const snapshotText = JSON.stringify(snapshot);
+  mkdirSync(join(root, 'snapshot'), { recursive: true });
+  writeFileSync(join(root, 'snapshot', `presets-${version}.json`), snapshotText, 'utf8');
+  writeFileSync(
+    join(root, 'version.json'),
+    `${JSON.stringify({ version, schemaVersion: 1, channel: 'stable' }, null, 2)}\n`,
+    'utf8',
+  );
+  return { root, snapshotText };
+}
 
-    const stdout = execFileSync(process.execPath, [SYNC_SCRIPT, '--from', root], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      env: { ...process.env, SOURCE_DATE_EPOCH: '0' },
-    });
+/** 一个只用来接 `--out` 的空临时目录（调用方负责删除）。 */
+function makeTempOutDir(prefix = 'dawn-tick-snapshot-out-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/** 跑同步脚本（预期成功），返回 stdout。 */
+function runSync(args: string[]): string {
+  return execFileSync(process.execPath, [SYNC_SCRIPT, ...args], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, SOURCE_DATE_EPOCH: '0' },
+  });
+}
+
+test('同步脚本：--out 临时目录 → 写入两份文件，真实内置配置一字未动', () => {
+  const repo = makeFakePresetRepo();
+  const outDir = makeTempOutDir();
+  const beforeSnapshotText = readText(SNAPSHOT_TARGET);
+  const beforeVersionText = readText(VERSION_TARGET);
+  const beforeSnapshotMtime = statSync(SNAPSHOT_TARGET).mtimeMs;
+  const beforeVersionMtime = statSync(VERSION_TARGET).mtimeMs;
+  try {
+    const stdout = runSync(['--from', repo.root, '--out', outDir]);
     assert.match(stdout, /=== 预设快照同步 ===/);
     assert.match(stdout, /版本：9\.9\.9（schemaVersion 1）/);
     assert.match(stdout, /内容哈希：sha256:[0-9a-f]{64}（已复算一致）/);
-    assert.match(stdout, /已写入：packages\/core\/src\/config\/builtin-preset-snapshot\.json/);
-    assert.match(stdout, /已写入：packages\/core\/src\/config\/preset-version\.json/);
+    assert.match(stdout, /输出目录：.*（--out 指定）/, '摘要必须写明写入目录');
+    assert.match(stdout, /已写入：.*builtin-preset-snapshot\.json/);
+    assert.match(stdout, /已写入：.*preset-version\.json/);
 
-    const writtenSnapshot = readText(SNAPSHOT_TARGET);
-    assert.equal(writtenSnapshot, snapshotText, '内置快照必须是预设仓库快照的原文（逐字节）');
-    assert.deepEqual(JSON.parse(writtenSnapshot), snapshot);
-    assert.deepEqual(JSON.parse(readText(VERSION_TARGET)), { version: '9.9.9', schemaVersion: 1 });
-    assert.notEqual(writtenSnapshot, before, '写入应当真的改变了文件内容');
+    // ① --out 目录里出现了两份内容正确的文件
+    const outSnapshotPath = join(outDir, 'builtin-preset-snapshot.json');
+    const outVersionPath = join(outDir, 'preset-version.json');
+    const writtenSnapshot = readText(outSnapshotPath);
+    assert.equal(writtenSnapshot, repo.snapshotText, '写入的必须是预设仓库快照的原文（逐字节）');
+    assert.deepEqual(JSON.parse(writtenSnapshot), JSON.parse(repo.snapshotText));
+    assert.deepEqual(JSON.parse(readText(outVersionPath)), { version: '9.9.9', schemaVersion: 1 });
 
-    // 幂等：再跑一次不再写文件，并明确报告「未改动」
-    const secondRun = execFileSync(process.execPath, [SYNC_SCRIPT, '--from', root], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      env: { ...process.env, SOURCE_DATE_EPOCH: '0' },
-    });
+    // ② 真实内置配置：内容、sha256 与 mtime 都不许变
+    assert.equal(readText(SNAPSHOT_TARGET), beforeSnapshotText, '真实内置快照不得被写入');
+    assert.equal(readText(VERSION_TARGET), beforeVersionText, '真实 preset-version.json 不得被写入');
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+    assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256);
+    assert.equal(statSync(SNAPSHOT_TARGET).mtimeMs, beforeSnapshotMtime, '真实内置快照的 mtime 不应变化');
+    assert.equal(statSync(VERSION_TARGET).mtimeMs, beforeVersionMtime, '真实 preset-version.json 的 mtime 不应变化');
+
+    // ③ 幂等：再跑一次不再写文件，并明确报告「未改动」
+    const secondRun = runSync(['--from', repo.root, '--out', outDir]);
     assert.match(secondRun, /未改动任何文件（幂等）/);
-    assert.equal(readText(SNAPSHOT_TARGET), snapshotText);
-    assert.equal(readText(VERSION_TARGET), `${JSON.stringify({ version: '9.9.9', schemaVersion: 1 }, null, 2)}\n`);
+    assert.equal(readText(outSnapshotPath), repo.snapshotText);
+    assert.equal(readText(outVersionPath), `${JSON.stringify({ version: '9.9.9', schemaVersion: 1 }, null, 2)}\n`);
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
   } finally {
-    // 还原：脚本写过的两个文件都回到测试前的样子
-    rmSync(root, { recursive: true, force: true });
-    writeFileSync(SNAPSHOT_TARGET, before, 'utf8');
-    writeFileSync(VERSION_TARGET, beforeVersion, 'utf8');
-    assert.equal(readText(SNAPSHOT_TARGET), before);
-    assert.equal(readText(VERSION_TARGET), beforeVersion);
-    assert.equal(verifyBuiltinPresetSnapshot().ok, true, '还原后内置快照应重新自洽');
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
   }
 });
 
-test('同步脚本：哈希不符的假快照 → 非 0 退出且不写任何文件', () => {
-  const root = mkdtempSync(join(tmpdir(), 'dawn-tick-presets-bad-'));
-  const before = readText(SNAPSHOT_TARGET);
-  const beforeVersion = readText(VERSION_TARGET);
+test('同步脚本：--out 目录不存在时按需创建（默认目录不受影响）', () => {
+  const repo = makeFakePresetRepo();
+  const parent = makeTempOutDir('dawn-tick-snapshot-nested-');
+  const outDir = join(parent, '子目录', 'config');
+  assert.equal(existsSync(outDir), false);
   try {
-    const good = sign({
-      version: '9.9.9',
-      schemaVersion: 1,
-      generatedAt: '2030-05-06T07:08:09.000Z',
-      sources: {
-        timetables: BUILTIN_TIMETABLES.map((preset) => ({
-          id: preset.id,
-          path: `presets/timetables/${preset.id}.json`,
-          sha256: `sha256:${'1'.repeat(64)}`,
-        })),
-        systems: readSystemsConfig().map((system) => ({
-          id: system.id,
-          path: `presets/systems/${system.id}.json`,
-          sha256: `sha256:${'2'.repeat(64)}`,
-        })),
-      },
-    });
+    const stdout = runSync(['--from', repo.root, '--out', outDir]);
+    assert.match(stdout, /已写入：.*builtin-preset-snapshot\.json/);
+    assert.equal(readText(join(outDir, 'builtin-preset-snapshot.json')), repo.snapshotText);
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256, '真实内置快照不受影响');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：--check 只校验不写盘（--out 目录为空 → 需要同步；写入后 → 已是最新）', () => {
+  const repo = makeFakePresetRepo();
+  const outDir = makeTempOutDir('dawn-tick-snapshot-check-');
+  try {
+    const first = runSync(['--from', repo.root, '--out', outDir, '--check']);
+    assert.match(first, /--check：.*需要同步/);
+    assert.match(first, /未改动任何文件（幂等）/);
+    assert.deepEqual(readdirSync(outDir), [], '--check 不得写出任何文件');
+
+    runSync(['--from', repo.root, '--out', outDir]);
+    const second = runSync(['--from', repo.root, '--out', outDir, '--check']);
+    assert.match(second, /--check：.*已是最新，无需同步/);
+    assert.deepEqual(
+      readdirSync(outDir).sort(),
+      ['builtin-preset-snapshot.json', 'preset-version.json'],
+      '写入后目录里应正好是两份目标文件',
+    );
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：不给 --out 时默认输出目录仍是主仓库内置配置（--check 只读，不写真实文件）', () => {
+  const repo = makeFakePresetRepo();
+  const beforeSnapshotMtime = statSync(SNAPSHOT_TARGET).mtimeMs;
+  try {
+    const stdout = runSync(['--from', repo.root, '--check']);
+    assert.match(stdout, /输出目录：packages\/core\/src\/config（主仓库内置配置，默认）/);
+    assert.match(
+      stdout,
+      /目标文件：packages\/core\/src\/config\/builtin-preset-snapshot\.json、packages\/core\/src\/config\/preset-version\.json/,
+    );
+    assert.match(stdout, /--check：packages\/core\/src\/config 里的内置快照与预设仓库不一致，需要同步/);
+    assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '默认路径的 --check 也不得写盘');
+    assert.equal(statSync(SNAPSHOT_TARGET).mtimeMs, beforeSnapshotMtime);
+    assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：哈希不符的假快照 → 非 0 退出、不写任何文件（含 --out 目录）', () => {
+  const repo = makeFakePresetRepo();
+  const outDir = makeTempOutDir('dawn-tick-snapshot-bad-');
+  try {
+    const good = JSON.parse(repo.snapshotText) as PresetSnapshot;
     // 只改 hash 的最后一位：结构完全合法，只有内容哈希对不上
     const broken = { ...good, hash: `${good.hash.slice(0, -1)}${good.hash.endsWith('0') ? '1' : '0'}` };
     assert.notEqual(broken.hash, good.hash);
-    mkdirSync(join(root, 'snapshot'), { recursive: true });
-    writeFileSync(join(root, 'snapshot', 'presets-9.9.9.json'), `${JSON.stringify(broken, null, 2)}\n`, 'utf8');
-    writeFileSync(
-      join(root, 'version.json'),
-      `${JSON.stringify({ version: '9.9.9', schemaVersion: 1 }, null, 2)}\n`,
-      'utf8',
-    );
+    writeFileSync(join(repo.root, 'snapshot', 'presets-9.9.9.json'), `${JSON.stringify(broken, null, 2)}\n`, 'utf8');
 
-    const failure = runExpectingFailure([SYNC_SCRIPT, '--from', root]);
+    const failure = runExpectingFailure(['--from', repo.root, '--out', outDir]);
     assert.notEqual(failure.status, 0, '哈希不符必须非 0 退出');
     assert.match(failure.stderr, /快照哈希校验未通过/);
     assert.match(failure.stderr, /未写入任何文件/);
 
-    assert.equal(readText(SNAPSHOT_TARGET), before, '失败时不得改动内置快照');
-    assert.equal(readText(VERSION_TARGET), beforeVersion, '失败时不得改动 preset-version.json');
+    assert.deepEqual(readdirSync(outDir), [], '失败时 --out 目录里不该有任何文件');
+    assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '失败时不得改动内置快照');
+    assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT, '失败时不得改动 preset-version.json');
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
   }
 });
 
-test('同步脚本：预设仓库目录不存在 → 非 0 退出且不写任何文件', () => {
-  const before = readText(SNAPSHOT_TARGET);
-  const beforeVersion = readText(VERSION_TARGET);
+test('同步脚本：预设仓库目录不存在 → 非 0 退出、不写任何文件（含 --out 目录）', () => {
+  const outDir = makeTempOutDir('dawn-tick-snapshot-missing-');
   const missing = join(tmpdir(), 'dawn-tick-presets-不存在-9f3c1a');
   assert.equal(existsSync(missing), false);
-  const failure = runExpectingFailure([SYNC_SCRIPT, '--from', missing]);
-  assert.notEqual(failure.status, 0);
-  assert.match(failure.stderr, /预设仓库目录不存在/);
-  assert.match(failure.stderr, /未写入任何文件/);
-  assert.equal(readText(SNAPSHOT_TARGET), before);
-  assert.equal(readText(VERSION_TARGET), beforeVersion);
+  try {
+    const failure = runExpectingFailure(['--from', missing, '--out', outDir]);
+    assert.notEqual(failure.status, 0);
+    assert.match(failure.stderr, /预设仓库目录不存在/);
+    assert.match(failure.stderr, /未写入任何文件/);
+    assert.deepEqual(readdirSync(outDir), []);
+    assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT);
+    assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：--out 指向文件或缺值 → 非 0 退出、不写任何文件', () => {
+  const repo = makeFakePresetRepo();
+  const parent = makeTempOutDir('dawn-tick-snapshot-badout-');
+  const notADir = join(parent, '其实是文件.txt');
+  writeFileSync(notADir, 'not a directory\n', 'utf8');
+  try {
+    const asFile = runExpectingFailure(['--from', repo.root, '--out', notADir]);
+    assert.notEqual(asFile.status, 0);
+    assert.match(asFile.stderr, /--out 指向的不是目录/);
+    assert.match(asFile.stderr, /未写入任何文件/);
+
+    // --out 后没跟目录：必须报错，绝不能悄悄退回默认目录去写真实内置配置
+    const noValue = runExpectingFailure(['--from', repo.root, '--out']);
+    assert.notEqual(noValue.status, 0);
+    assert.match(noValue.stderr, /--out 参数（输出目录）应为非空字符串/);
+    assert.match(noValue.stderr, /未写入任何文件/);
+
+    assert.equal(readText(notADir), 'not a directory\n', '被当成 --out 的文件不应被改写');
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+    assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('真实内置配置零改动：两个文件的 sha256 与测试开始前完全一致', () => {
+  // 这条排在所有写盘用例之后：若上面任何一条偷偷写了真实文件，这里会当场对不上。
+  assert.equal(
+    sha256OfFile(SNAPSHOT_TARGET),
+    ORIGINAL_SNAPSHOT_SHA256,
+    'builtin-preset-snapshot.json 的 sha256 与本文件加载时不一致（有用例写了真实文件）',
+  );
+  assert.equal(
+    sha256OfFile(VERSION_TARGET),
+    ORIGINAL_VERSION_SHA256,
+    'preset-version.json 的 sha256 与本文件加载时不一致（有用例写了真实文件）',
+  );
+  assert.match(ORIGINAL_SNAPSHOT_SHA256, /^[0-9a-f]{64}$/);
+  assert.match(ORIGINAL_VERSION_SHA256, /^[0-9a-f]{64}$/);
 });
 
 /** 跑一个预期失败的同步脚本，返回状态码与 stderr（不抛异常）。 */
 function runExpectingFailure(args: string[]): { status: number; stderr: string } {
   try {
-    const stdout = execFileSync(process.execPath, args, {
+    const stdout = execFileSync(process.execPath, [SYNC_SCRIPT, ...args], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       env: { ...process.env, SOURCE_DATE_EPOCH: '0' },

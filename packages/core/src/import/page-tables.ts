@@ -1,4 +1,4 @@
-import { readSystemsConfig, type SchoolSystemId } from '../config/index.ts';
+import { readSystemsConfig, type SchoolSystemId, type SystemConfig } from '../config/index.ts';
 import type { ImportedSchedule } from './apply.ts';
 import { looksLikeRoom, matchWeekday, parsePeriodLabel } from './csv.ts';
 import { parseTimetable, parseTimetableCells } from './jwglxt.ts';
@@ -45,8 +45,12 @@ export interface SystemInfo {
 }
 
 /**
- * 页面识别特征：全部来自 src/config/systems.json 的 `detect` 段，模块加载时编译成正则。
+ * 页面识别特征：全部来自 `src/config/systems.json` 的 `detect` 段，**使用时**才编译成正则。
  * 想支持新教务或修正识别规则，改配置即可，不必动这里的代码。
+ *
+ * 为什么是「使用时」而不是模块加载时：`setPresetOverride()` 是在应用启动时才把缓存教务配置
+ * 注进 config 层的，模块加载那一刻读到的还是内置值。若在这里冻结成常量，
+ * 覆盖层就永远影响不到页面识别——识别用的必须是**有效配置**（`readSystemsConfig()`）。
  */
 interface PageHints {
   id: SchoolSystemId;
@@ -59,35 +63,59 @@ interface PageHints {
   tableClassPattern: RegExp | null;
 }
 
-const CONFIGURED_SYSTEMS = readSystemsConfig();
+/** 由一份有效配置编译出的全部识别特征。 */
+interface PageHintsState {
+  /** 编译时的有效配置数组（`readSystemsConfig()` 每次返回同一个引用，用它判断是否要重编） */
+  systems: readonly SystemConfig[];
+  hints: readonly PageHints[];
+  /** 「日-节」网格单元格 id、以及课表表格 id：命中即说明页面本身就是课表页 */
+  gridPagePatterns: readonly RegExp[];
+}
 
 function alternation(parts: readonly string[]): RegExp | null {
   return parts.length === 0 ? null : new RegExp(parts.join('|'), 'i');
 }
 
-const PAGE_HINTS: readonly PageHints[] = CONFIGURED_SYSTEMS.map((system) => ({
-  id: system.id,
-  label: system.name,
-  markerPattern: alternation(system.detect.markers),
-  tableIdPattern:
-    system.detect.timetableTableIds.length === 0
-      ? null
-      : new RegExp(`id\\s*=\\s*["']?(?:${system.detect.timetableTableIds.join('|')})`, 'i'),
-  tableClassPattern:
-    system.detect.timetableTableClasses.length === 0
-      ? null
-      : new RegExp(`class\\s*=\\s*["'][^"']*(?:${system.detect.timetableTableClasses.join('|')})`, 'i'),
-}));
+function compilePageHints(systems: readonly SystemConfig[]): PageHintsState {
+  const hints: readonly PageHints[] = systems.map((system) => ({
+    id: system.id,
+    label: system.name,
+    markerPattern: alternation(system.detect.markers),
+    tableIdPattern:
+      system.detect.timetableTableIds.length === 0
+        ? null
+        : new RegExp(`id\\s*=\\s*["']?(?:${system.detect.timetableTableIds.join('|')})`, 'i'),
+    tableClassPattern:
+      system.detect.timetableTableClasses.length === 0
+        ? null
+        : new RegExp(`class\\s*=\\s*["'][^"']*(?:${system.detect.timetableTableClasses.join('|')})`, 'i'),
+  }));
 
-/** 「日-节」网格单元格 id、以及课表表格 id：命中即说明页面本身就是课表页。 */
-const GRID_PAGE_PATTERNS: readonly RegExp[] = [
-  ...PAGE_HINTS.map((hint) => hint.tableIdPattern),
-  ...CONFIGURED_SYSTEMS.flatMap((system) =>
-    system.detect.gridCellIdPatterns.map(
-      (pattern) => new RegExp(`id\\s*=\\s*["']?(?:${pattern})["']?`, 'i'),
+  const gridPagePatterns: readonly RegExp[] = [
+    ...hints.map((hint) => hint.tableIdPattern),
+    ...systems.flatMap((system) =>
+      system.detect.gridCellIdPatterns.map(
+        (pattern) => new RegExp(`id\\s*=\\s*["']?(?:${pattern})["']?`, 'i'),
+      ),
     ),
-  ),
-].filter((pattern): pattern is RegExp => pattern !== null);
+  ].filter((pattern): pattern is RegExp => pattern !== null);
+
+  return { systems, hints, gridPagePatterns };
+}
+
+let cachedHintsState: PageHintsState | undefined;
+
+/**
+ * 当前**有效配置**的识别特征。没有覆盖时就是内置 `systems.json` 编译出来的那一份，
+ * 与「模块加载时编译」的结果逐字节等价；一旦覆盖换了一套配置就立刻重编。
+ */
+function activePageHints(): PageHintsState {
+  const systems = readSystemsConfig();
+  if (cachedHintsState === undefined || cachedHintsState.systems !== systems) {
+    cachedHintsState = compilePageHints(systems);
+  }
+  return cachedHintsState;
+}
 
 /**
  * 这一条是跨系统的通用启发式（权重、中文表头用词），不是某所学校的数据，
@@ -215,10 +243,11 @@ function buildSchedule(
 
 /**
  * 已知教务系统标记。命中只用于提高命中率与提示，通用启发式仍然生效。
- * 标记来自 src/config/systems.json，按配置顺序取第一个命中的系统。
+ * 标记来自**有效配置**（默认是 src/config/systems.json，被预设覆盖层换过就用覆盖的那套），
+ * 按配置顺序取第一个命中的系统。
  */
 export function detectSystem(html: string): SystemInfo {
-  for (const hint of PAGE_HINTS) {
+  for (const hint of activePageHints().hints) {
     if (hint.markerPattern !== null && hint.markerPattern.test(html)) {
       return { id: hint.id, label: hint.label };
     }
@@ -228,13 +257,13 @@ export function detectSystem(html: string): SystemInfo {
 
 /** 页面里是否出现课表骨架（「日-节」网格单元格或课表表格 id）。 */
 function looksLikeGridPage(html: string): boolean {
-  return GRID_PAGE_PATTERNS.some((pattern) => pattern.test(html));
+  return activePageHints().gridPagePatterns.some((pattern) => pattern.test(html));
 }
 
 function tableScore(tableHtml: string): number {
   let score = 0;
-  // 各教务系统自己声明的课表表格特征（systems.json 的 detect 段）
-  for (const hint of PAGE_HINTS) {
+  // 各教务系统自己声明的课表表格特征（有效配置的 detect 段）
+  for (const hint of activePageHints().hints) {
     if (hint.tableIdPattern !== null && hint.tableIdPattern.test(tableHtml)) score += 5;
     if (hint.tableClassPattern !== null && hint.tableClassPattern.test(tableHtml)) score += 3;
   }
