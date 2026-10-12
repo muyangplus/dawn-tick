@@ -24,6 +24,29 @@ export interface PeriodSettingsProps {
   onChanged: () => void;
 }
 
+/** 把 HH:MM 往后推 minutes 分钟，返回 HH:MM。 */
+function addMinutesText(time: string, minutes: number): string {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
+  if (match === null) return time;
+  const total = Number(match[1]) * 60 + Number(match[2]) + Math.max(0, Math.round(minutes));
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  const hours = Math.floor(wrapped / 60);
+  const mins = wrapped % 60;
+  return `${hours < 10 ? '0' : ''}${hours}:${mins < 10 ? '0' : ''}${mins}`;
+}
+
+/** 两节课之间的课间分钟数（前节结束到后节开始）。 */
+function gapMinutes(endTime: string, nextStart: string): number {
+  const parse = (value: string): number | null => {
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+    return match === null ? null : Number(match[1]) * 60 + Number(match[2]);
+  };
+  const end = parse(endTime);
+  const start = parse(nextStart);
+  if (end === null || start === null) return 0;
+  return Math.max(0, start - end);
+}
+
 export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSettingsProps) {
   const [duration, setDuration] = useState(45);
   const [gap, setGap] = useState(10);
@@ -205,6 +228,29 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               value={slot.end_time}
               onChange={(event) => void saveTime(slot, { endTime: event.target.value })}
             />
+            {(() => {
+              const nextSlot = slots.find((item) => item.period_no === slot.period_no + 1);
+              if (nextSlot === undefined) return null;
+              return (
+                <span className="flex items-center gap-1">
+                  <span className="text-xs text-muted">课间</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={120}
+                    className="w-16"
+                    aria-label={`第 ${slot.period_no} 节后课间分钟`}
+                    value={gapMinutes(slot.end_time, nextSlot.start_time)}
+                    onChange={(event) => {
+                      const minutes = Number(event.target.value);
+                      if (Number.isNaN(minutes)) return;
+                      void saveTime(nextSlot, { startTime: addMinutesText(slot.end_time, minutes) });
+                    }}
+                  />
+                  <span className="text-xs text-muted">分</span>
+                </span>
+              );
+            })()}
             <span className="ml-auto text-xs text-muted">{SECTION_LABEL[slot.section ?? 'am']}</span>
             <Button
               size="icon"
@@ -219,7 +265,9 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         ))}
         {slots.length === 0 && <li className="text-xs text-muted">还没有课次，先点「自动生成课次」</li>}
       </ul>
-      <span className="text-xs text-muted">每节的起止时间可单独修改，用于安排大课间或个别调整。</span>
+      <span className="text-xs text-muted">
+        每节起止时间可单独修改；「课间」只影响后一节的开始时间，可让某一个课间与其他不同（如其他 10 分钟、某一个 15 分钟）。
+      </span>
     </CollapsibleCard>
   );
 }
