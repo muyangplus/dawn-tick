@@ -2,7 +2,7 @@ import type { SqlDriver, SqlValue } from '@dawn-tick/core';
 
 /** Tauri 端驱动：底层是 tauri-plugin-sql（sqlx）。表结构由 Rust 侧迁移建立。 */
 export async function openTauriDriver(databaseUrl?: string): Promise<SqlDriver> {
-  // 数据库位置由原生侧给出（数据目录锁死在程序目录下的 com.dawntick.app）
+  // 数据库位置由原生侧给出（数据目录固定为 %APPDATA%\com.dawntick.app）
   const { invoke } = await import('@tauri-apps/api/core');
   const url = databaseUrl ?? (await invoke<string>('database_url'));
   const plugin = await import('@tauri-apps/plugin-sql');

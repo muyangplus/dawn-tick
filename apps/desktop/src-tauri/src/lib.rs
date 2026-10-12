@@ -7,12 +7,11 @@ pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
-/// 数据目录锁定为程序所在目录下的 com.dawntick.app（不做候选与回退）。
+/// 数据目录固定为 %APPDATA%\com.dawntick.app（不做候选与回退）。
 fn data_dir() -> std::path::PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("com.dawntick.app")))
-        .unwrap_or_else(|| std::path::PathBuf::from("com.dawntick.app"))
+    std::env::var("APPDATA")
+        .map(|base| std::path::PathBuf::from(base).join("com.dawntick.app"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("com.dawntick.app"))
 }
 
 /// 数据库地址：绝对路径，位于数据目录内。
