@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  BUILTIN_PRESET_VERSION,
   BUILTIN_TIMETABLES,
   DEFAULT_TIMETABLE_ID,
   SCHOOL_SYSTEM_IDS,
@@ -15,12 +16,18 @@ import {
 import { SYSTEM_ENTRIES } from '../src/import/school-list.ts';
 import { formatClock, parseClock, reflowPeriods } from '../src/timetable.ts';
 
-/** 直接读 JSON 原文：它是事实来源，用来和 TS 常量对拍，防止两处漂移。 */
+/**
+ * 直接读 JSON 原文：它现在是**唯一**的事实来源（TS 侧只做 import 内联，不再手抄），
+ * 这里用它验证「内置常量确实来自 JSON」以及「JSON 本身合法」。
+ */
 const timetablesJson: unknown = JSON.parse(
   readFileSync(new URL('../src/config/timetables.json', import.meta.url), 'utf8'),
 ) as unknown;
 const systemsJson: unknown = JSON.parse(
   readFileSync(new URL('../src/config/systems.json', import.meta.url), 'utf8'),
+) as unknown;
+const presetVersionJson: unknown = JSON.parse(
+  readFileSync(new URL('../src/config/preset-version.json', import.meta.url), 'utf8'),
 ) as unknown;
 
 /** 苏州科技大学 14 节作息（教务处公告）：45 分钟一节，第 2→3 节课间 15 分钟，其余 10 分钟。 */
@@ -101,12 +108,19 @@ test('findTimetable：按 id 查找，未知 id 返回 undefined', () => {
   assert.equal(findTimetable('不存在的学校'), undefined);
 });
 
-test('JSON 事实来源与 TS 常量逐字段一致（防止两处漂移）', () => {
-  assert.deepEqual(timetablesJson, BUILTIN_TIMETABLES, 'timetables.json 与 BUILTIN_TIMETABLES 不一致');
-  assert.deepEqual(systemsJson, readSystemsConfig(), 'systems.json 与 readSystemsConfig() 不一致');
-  // 两个文件都要能通过启动期校验
-  assert.doesNotThrow(() => validateTimetables(timetablesJson));
-  assert.doesNotThrow(() => validateSystems(systemsJson));
+test('内置 JSON 通过 schema 校验，且 BUILTIN_TIMETABLES 与其内容一致', () => {
+  // ① 内置 JSON 本身必须合法（校验器就是运行时的同一套）
+  assert.doesNotThrow(() => validateTimetables(timetablesJson), 'timetables.json 应通过 validateTimetables');
+  assert.doesNotThrow(() => validateSystems(systemsJson), 'systems.json 应通过 validateSystems');
+
+  // ② 导出的常量与 JSON 同源：内容必须逐字段一致（现在是同一个 import，等价）
+  assert.deepEqual(BUILTIN_TIMETABLES, timetablesJson, 'BUILTIN_TIMETABLES 应与 timetables.json 内容一致');
+  assert.deepEqual(readSystemsConfig(), systemsJson, 'readSystemsConfig() 应与 systems.json 内容一致');
+
+  // ③ 内置预设版本号来自 preset-version.json，并与预设仓库 1.0.0 对齐
+  assert.deepEqual(presetVersionJson, { version: BUILTIN_PRESET_VERSION });
+  assert.equal(BUILTIN_PRESET_VERSION, '1.0.0');
+  assert.match(BUILTIN_PRESET_VERSION, /^\d+\.\d+\.\d+$/, '内置预设版本应为 SemVer');
 });
 
 test('readSystemsConfig：id 唯一、顺序稳定且包含 jwglxt', () => {

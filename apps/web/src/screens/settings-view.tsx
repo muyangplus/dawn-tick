@@ -35,6 +35,14 @@ import {
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
 import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
+import {
+  BUILTIN_PRESET_VERSION,
+  checkPresetUpdate,
+  fetchSnapshot,
+  resolvePresetSource,
+  writeCachedSnapshot,
+  type PresetSource,
+} from '../preset-update.ts';
 import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
@@ -120,7 +128,22 @@ export function SettingsView({
   const [trayStatus, setTrayStatus] = useState<string | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateResult, setUpdateResult] = useState<string | null>(null);
+  const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
+  const [presetBusy, setPresetBusy] = useState(false);
+  const [presetResult, setPresetResult] = useState<string | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      // 启动时决定用哪份预设：缓存比内置新且哈希可信才用缓存，否则回退内置
+      const source = await resolvePresetSource(storage);
+      if (!cancelled) setPresetSource(source);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
 
   useEffect(() => {
     if (!canUseWidget()) return;
@@ -191,6 +214,42 @@ export function SettingsView({
       }
     })();
   }, []);
+
+  /**
+   * 检查预设更新：只提示与下载，**不会**在运行时静默替换正在使用的预设。
+   * 下载成功的快照写进缓存，下次启动由 resolvePresetSource 读取生效；
+   * 离线、404、哈希不符等任何失败都只给一句可读提示，界面照旧用内置预设。
+   */
+  async function runPresetCheck(): Promise<void> {
+    setPresetBusy(true);
+    try {
+      const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
+      const status = await checkPresetUpdate({ cachedVersion: currentVersion });
+      if (status.error !== null) {
+        setPresetResult(`检查失败：${status.error}`);
+        logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion });
+        return;
+      }
+      if (!status.available || status.version === null) {
+        setPresetResult(`预设已是最新（${currentVersion}）`);
+        logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version });
+        return;
+      }
+      const snapshot = await fetchSnapshot(status.version);
+      await writeCachedSnapshot(storage, snapshot);
+      setPresetSource(await resolvePresetSource(storage));
+      setPresetResult(
+        `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统），下次启动生效`,
+      );
+      logInfo('preset', '已下载预设快照', { version: snapshot.version, hash: snapshot.hash });
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setPresetResult(`检查失败：${message}`);
+      logWarn('preset', '下载预设快照失败', { message });
+    } finally {
+      setPresetBusy(false);
+    }
+  }
   const [busy, setBusy] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
@@ -778,6 +837,31 @@ export function SettingsView({
           浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
         </span>
         <span className="text-xs text-muted">本期无服务端，同步协议已就绪但未启用；跨设备迁移请用 JSON 备份。</span>
+        <span className="text-xs text-muted" data-role="preset-version">
+          预设版本：
+          {presetSource === null
+            ? '读取中…'
+            : `${presetSource.version}（${presetSource.kind === 'cached' ? '已更新' : '内置'}）`}
+        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="检查预设更新"
+            disabled={presetBusy}
+            onClick={() => void runPresetCheck()}
+          >
+            检查预设更新
+          </Button>
+          {presetResult !== null && (
+            <span className="text-xs text-muted" data-role="preset-result">
+              {presetResult}
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-muted">
+          预设来自独立仓库 dawn-tick-presets，会校验哈希后缓存；下载成功不会立刻替换当前预设，下次启动才生效。
+        </span>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
             导出备份

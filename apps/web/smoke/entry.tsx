@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   addDays,
+  BUILTIN_PRESET_VERSION,
   BUILTIN_TIMETABLES,
   builtinHolidays,
   createCourse,
@@ -16,6 +17,12 @@ import {
 } from '@dawn-tick/core';
 import { App } from '../src/App.tsx';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
+import {
+  PRESET_SNAPSHOT_URL,
+  PRESET_VERSION_URL,
+  canonicalPresetJson,
+  sha256HexSync,
+} from '../src/preset-update.ts';
 
 // jsdom 不带 IndexedDB，这里把 fake-indexeddb 的全部实现挂到全局（显式引用，避免被 tree-shake）
 for (const [key, value] of Object.entries(fakeIndexedDb)) {
@@ -431,6 +438,26 @@ const PAGE_WEEKDAY_SAMPLE = `<table><tr><td>节次</td><td>星期一</td><td>星
   <tr><td>第1节</td><td>手动映射课程<br>1-16周</td><td></td><td></td></tr>
   <tr><td>第2节</td><td></td><td>手动映射课程二<br>2-16周</td><td></td></tr>
 </table>`;
+
+/** 预设更新冒烟用的假 Response：全程不联网。 */
+function presetJsonResponse(body: unknown, ok = true, status = 200): Response {
+  return { ok, status, json: async () => body } as unknown as Response;
+}
+
+/** 造一份哈希自洽的快照（hash 用模块自身的规范化口径算，等价于预设仓库的生成器）。 */
+function fakePresetSnapshot(version: string): Record<string, unknown> {
+  const unsigned = {
+    version,
+    schemaVersion: 1,
+    generatedAt: '2026-02-01T00:00:00.000Z',
+    sources: {
+      timetables: [{ id: 'default', path: 'presets/timetables/default.json', sha256: 'sha256:0' }],
+      systems: [{ id: 'jwglxt', path: 'presets/systems/jwglxt.json', sha256: 'sha256:0' }],
+      adapters: {},
+    },
+  };
+  return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` };
+}
 
 export async function runSmoke(): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
@@ -995,6 +1022,65 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       settingsText.includes('导出日志'),
     settingsText.slice(0, 60),
   );
+
+  // —— 预设版本与更新：内置兜底 + 运行时下载缓存 + 失败回退（全程用注入的假 fetch，不联网） ——
+  await flush(8);
+  const presetVersionLine = (): string =>
+    (view.container.querySelector('[data-role="preset-version"]')?.textContent ?? '').trim();
+  const presetResultLine = (): string =>
+    (view.container.querySelector('[data-role="preset-result"]')?.textContent ?? '').trim();
+  const presetButton = view.container.querySelector('button[aria-label="检查预设更新"]');
+  check(
+    '设置页显示当前预设版本（内置）',
+    presetVersionLine().includes('预设版本：') &&
+      presetVersionLine().includes(BUILTIN_PRESET_VERSION) &&
+      presetVersionLine().includes('（内置）'),
+    presetVersionLine(),
+  );
+  check('设置页提供检查预设更新按钮', presetButton instanceof window.HTMLElement, presetVersionLine());
+
+  const realFetch = globalThis.fetch;
+  const stubFetch = (impl: (url: string) => Promise<Response>): void => {
+    Object.defineProperty(globalThis, 'fetch', {
+      value: (input: unknown) => impl(String(input)),
+      configurable: true,
+      writable: true,
+    });
+  };
+  try {
+    // ① 离线/请求失败：只给可读提示，界面与内置预设都不受影响
+    stubFetch(async () => {
+      throw new Error('offline');
+    });
+    if (presetButton instanceof window.HTMLElement) presetButton.click();
+    await flush(14);
+    check(
+      '检查预设更新离线时给出可读提示',
+      presetResultLine().includes('检查失败：无法连接预设源'),
+      presetResultLine(),
+    );
+
+    // ② 有更新：下载 → 校验哈希 → 写入缓存，提示「下次启动生效」，版本行改为已更新
+    const nextVersion = '1.1.0';
+    stubFetch(async (url) => {
+      if (url === PRESET_VERSION_URL) {
+        return presetJsonResponse({ version: nextVersion, schemaVersion: 1, generatedAt: '2026-02-01T00:00:00.000Z' });
+      }
+      if (url === PRESET_SNAPSHOT_URL(nextVersion)) return presetJsonResponse(fakePresetSnapshot(nextVersion));
+      return presetJsonResponse({}, false, 404);
+    });
+    if (presetButton instanceof window.HTMLElement) presetButton.click();
+    await flush(18);
+    check(
+      '检查预设更新可下载并缓存新版本（下次启动生效）',
+      presetResultLine().includes(`已下载预设 ${nextVersion}`) &&
+        presetResultLine().includes('下次启动生效') &&
+        presetVersionLine().includes(`${nextVersion}（已更新）`),
+      `${presetResultLine()} / ${presetVersionLine()}`,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', { value: realFetch, configurable: true, writable: true });
+  }
 
   const switchedToTimeline = clickByText(view.container, '课表');
   await flush(10);

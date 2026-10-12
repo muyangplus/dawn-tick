@@ -2,17 +2,19 @@
  * 作息表与教务系统配置的加载器。
  *
  * 事实来源（唯一需要人工编辑、可以直接分享给别人的文件）是同一目录下的
- * `timetables.json` 与 `systems.json`；本文件里的 `TIMETABLES_DATA` /
- * `SYSTEMS_DATA` 是它们的逐字段等价副本。
+ * `timetables.json`、`systems.json` 与 `preset-version.json`。
+ * 这些 JSON 在打包期直接被 import 进来（tsconfig 打开了 `resolveJsonModule`），
+ * 因此不再需要手写的 TS 等价副本，也就不存在「两份常量漂移」的问题。
  *
- * 为什么要留这份副本：本仓库的 tsconfig 没有开启 `resolveJsonModule`，
- * 而且 Web 端在浏览器里运行、不能读本地文件，因此不能在运行时直接
- * `import ... from './timetables.json'`。两份数据的漂移由
- * `test/config.test.ts` 读取 JSON 原文逐字段对拍来兜住。
+ * 为什么要用 import 而不是运行时读文件：Web 端在浏览器里运行、不能读本地文件，
+ * 打包期内联的 JSON 是三端唯一可用的同一份数据。
  *
  * 加载即校验：模块被引入时就会跑一遍 validateTimetables / validateSystems，
  * 数据不合法会立刻抛出可读错误（而不是等到用户点了导入才炸）。
  */
+import timetablesJson from './timetables.json' with { type: 'json' };
+import systemsJson from './systems.json' with { type: 'json' };
+import presetVersionJson from './preset-version.json' with { type: 'json' };
 import { formatClock, parseClock, sectionOf } from '../timetable.ts';
 import type { PeriodSection } from '../types.ts';
 
@@ -67,103 +69,13 @@ export interface SystemConfig {
 }
 
 /**
- * `timetables.json` 的等价副本（JSON 是事实来源，这里是启动期可用的常量）。
- * 修改作息请两处一起改，`test/config.test.ts` 会对拍。
+ * 打包期内联的作息表数据（`timetables.json`）。
+ * 这里只做类型收敛，字段级校验交给 validateTimetables。
  */
-const TIMETABLES_DATA: unknown = [
-  {
-    id: 'usts',
-    name: '苏州科技大学',
-    source: '学校教务处公告（用户提供截图）',
-    periods: [
-      { periodNo: 1, start: '08:00', end: '08:45' },
-      { periodNo: 2, start: '08:55', end: '09:40' },
-      { periodNo: 3, start: '09:55', end: '10:40' },
-      { periodNo: 4, start: '10:50', end: '11:35' },
-      { periodNo: 5, start: '11:45', end: '12:30' },
-      { periodNo: 6, start: '12:40', end: '13:25' },
-      { periodNo: 7, start: '13:35', end: '14:20' },
-      { periodNo: 8, start: '14:30', end: '15:15' },
-      { periodNo: 9, start: '15:25', end: '16:10' },
-      { periodNo: 10, start: '16:20', end: '17:05' },
-      { periodNo: 11, start: '17:15', end: '18:00' },
-      { periodNo: 12, start: '18:10', end: '18:55' },
-      { periodNo: 13, start: '19:05', end: '19:50' },
-      { periodNo: 14, start: '20:00', end: '20:45' },
-    ],
-  },
-  {
-    id: 'default',
-    name: '通用作息',
-    source: '内置默认：08:00 起 12 节，每节 45 分钟、课间 10 分钟（没有特定学校时使用）',
-    periods: [
-      { periodNo: 1, start: '08:00', end: '08:45' },
-      { periodNo: 2, start: '08:55', end: '09:40' },
-      { periodNo: 3, start: '09:50', end: '10:35' },
-      { periodNo: 4, start: '10:45', end: '11:30' },
-      { periodNo: 5, start: '11:40', end: '12:25' },
-      { periodNo: 6, start: '12:35', end: '13:20' },
-      { periodNo: 7, start: '13:30', end: '14:15' },
-      { periodNo: 8, start: '14:25', end: '15:10' },
-      { periodNo: 9, start: '15:20', end: '16:05' },
-      { periodNo: 10, start: '16:15', end: '17:00' },
-      { periodNo: 11, start: '17:10', end: '17:55' },
-      { periodNo: 12, start: '18:05', end: '18:50' },
-    ],
-  },
-];
+const TIMETABLES_DATA: unknown = timetablesJson;
 
-/** `systems.json` 的等价副本（JSON 是事实来源）。 */
-const SYSTEMS_DATA: unknown = [
-  {
-    id: 'jwglxt',
-    name: '正方教务',
-    entryPath: '/jwglxt/xtgl/login_slogin.html',
-    hint: '个人课表查询在「信息查询 → 学生课表查询」',
-    detect: {
-      markers: ['jwglxt', 'xskb_list', 'timetable_con', 'kbgrid_table'],
-      timetableTableIds: ['kbtable'],
-      timetableTableClasses: ['kb', 'timetable', 'schedule', 'skb'],
-      gridCellIdPatterns: ['\\d{1,2}[-_]\\d{1,2}'],
-    },
-  },
-  {
-    id: 'qzdatasource',
-    name: '强智教务',
-    entryPath: '/jsxsd/',
-    hint: '课表在「培养管理 → 我的课表」',
-    detect: {
-      markers: ['qzdatasource', '强智', 'qzjw'],
-      timetableTableIds: [],
-      timetableTableClasses: [],
-      gridCellIdPatterns: [],
-    },
-  },
-  {
-    id: 'urp',
-    name: 'URP 教务',
-    entryPath: '/',
-    hint: '综合教务系统，课表在「课表查询」',
-    detect: {
-      markers: ['urp', '教学信息服务平台', 'jwgl\\.urp'],
-      timetableTableIds: [],
-      timetableTableClasses: [],
-      gridCellIdPatterns: [],
-    },
-  },
-  {
-    id: 'other',
-    name: '其他教务',
-    entryPath: '/',
-    hint: '自行登录后打开课表页',
-    detect: {
-      markers: [],
-      timetableTableIds: [],
-      timetableTableClasses: [],
-      gridCellIdPatterns: [],
-    },
-  },
-];
+/** 打包期内联的教务系统数据（`systems.json`）。 */
+const SYSTEMS_DATA: unknown = systemsJson;
 
 /** 严格的 24 小时制 `HH:MM`。 */
 const CLOCK_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -328,6 +240,21 @@ export function validateSystems(input: unknown): SystemConfig[] {
 
   return systems;
 }
+
+/** 读取并校验 `preset-version.json`。 */
+function readPresetVersion(input: unknown): string {
+  const record = asRecord(input, 'preset-version.json');
+  return requireText(record['version'], 'preset-version.json 的 version');
+}
+
+/**
+ * 内置预设的版本号（`preset-version.json`）。
+ *
+ * 它与独立预设仓库 `dawn-tick-presets` 的 `version.json` 保持同一个版本线：
+ * 内置的 `timetables.json` / `systems.json` 就是该版本快照的离线兜底副本。
+ * 运行时的「检查预设更新」以本值为基线，只会接受更高版本。
+ */
+export const BUILTIN_PRESET_VERSION: string = readPresetVersion(presetVersionJson);
 
 /** 内置作息表：模块加载时即完成校验，数据有问题会直接抛错。 */
 export const BUILTIN_TIMETABLES: readonly TimetablePreset[] = validateTimetables(TIMETABLES_DATA);
