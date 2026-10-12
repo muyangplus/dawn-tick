@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   DEFAULT_SETTINGS,
+  addDays,
   createReschedule,
+  dayOfWeek as nextDayOfWeek,
   readSettings,
   updateSchedule,
   updateEvent,
   updateSemester,
+  weekStart,
   writeSettings,
   type AppSettings,
   type ManagedCourse,
@@ -18,12 +21,13 @@ import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
 import { Button } from './components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
+import { Field, Input } from './components/ui/input.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
 import { Plus } from 'lucide-react';
-import { loadAppData, loadCourseDetail, weekDateOf, type AppData, type CourseDetail, type LessonCell } from './data.ts';
+import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type LessonCell } from './data.ts';
 import { openStorage } from './db/platform.ts';
-import { CourseForm } from './screens/course-form.tsx';
+import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { ImportFlow } from './screens/import-flow.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
 import { ScheduleView } from './screens/schedule-view.tsx';
@@ -60,6 +64,34 @@ interface MoveState {
   period: number;
 }
 
+/** 拖动吸附后的四种作用范围（互不重叠）。 */
+type MoveTarget =
+  | { kind: 'week' }
+  | { kind: 'always' }
+  | { kind: 'weeks'; week: number }
+  | { kind: 'date'; date: string };
+
+function weekDateOf(semester: { start_date: string }, week: number, dayOfWeek: number): string {
+  return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
+}
+
+/** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
+function formatPeriodLabel(start: number, end: number): string {
+  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
+}
+
+async function withToast(action: () => Promise<void>, ok: string, fail: string): Promise<boolean> {
+  try {
+    await action();
+    toast.success(ok);
+    return true;
+  } catch (cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    toast.error(`${fail}：${message}`);
+    return false;
+  }
+}
+
 export function App() {
   const [storage, setStorage] = useState<Storage | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -69,6 +101,10 @@ export function App() {
   const [viewWeek, setViewWeek] = useState<number | null>(null);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [move, setMove] = useState<MoveState | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const [moveWeek, setMoveWeek] = useState(1);
+  const [moveDate, setMoveDate] = useState('');
+  const [quickCreate, setQuickCreate] = useState<CourseFormPreset | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<ManagedCourse | null>(null);
@@ -236,33 +272,121 @@ export function App() {
     setDetail({ cell, detail: loaded });
   }
 
-  async function applyMove(target: 'week' | 'always'): Promise<void> {
-    if (storage === null || data?.semester == null || move === null) return;
+  function openMove(cell: LessonCell, dayOfWeek: number, period: number): void {
+    if (data === null) return;
+    setMove({ cell, dayOfWeek, period });
+    // 预填默认值：目标周序号默认当前查看周，指定日期默认拖动落到的日期
+    setMoveWeek(data.viewWeek);
+    setMoveDate(weekDateOf(data.semester ?? { start_date: data.weekStartDate }, data.viewWeek, dayOfWeek));
+  }
+
+  /** 四种作用范围共用的目标校验：夹住节次跨度、算出目标日期、识别空操作。 */
+  function resolveMove(
+    target: MoveTarget,
+  ):
+    | { ok: true; date: string; dayOfWeek: number; period: number; span: number }
+    | { ok: false; message: string } {
+    if (move === null || data?.semester == null) return { ok: false, message: '课程信息已失效' };
     const semester = data.semester;
     const span = move.cell.periodEnd - move.cell.periodStart;
-    if (target === 'always') {
-      await updateSchedule(storage, move.cell.scheduleId, {
-        day_of_week: move.dayOfWeek,
-        period_start: move.period,
-        period_end: move.period + span,
-      });
-      toast.success('已改为每周该时间');
+    if (data.slots.length <= span) {
+      return { ok: false, message: '本学期的节次数装不下这门连堂课' };
+    }
+    const period = Math.min(Math.max(1, move.period), data.slots.length - span);
+    let date: string;
+    let dayOfWeek: number;
+    if (target.kind === 'weeks') {
+      const wanted = Math.round(target.week);
+      if (!Number.isFinite(wanted) || wanted < 1 || wanted > semester.total_weeks) {
+        return { ok: false, message: `目标周要在 1–${semester.total_weeks} 周之间` };
+      }
+      // 跨周调课：目标周的同一个星期几
+      date = weekDateOf(semester, wanted, move.cell.dayOfWeek);
+      dayOfWeek = move.cell.dayOfWeek;
+    } else if (target.kind === 'date') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(target.date)) return { ok: false, message: '请先选择目标日期' };
+      const first = weekStart(semester.start_date);
+      const last = addDays(first, semester.total_weeks * 7 - 1);
+      if (target.date < first || target.date > last) {
+        return { ok: false, message: `目标日期要在学期内（${first} 至 ${last}）` };
+      }
+      date = target.date;
+      dayOfWeek = nextDayOfWeek(target.date);
+    } else if (target.kind === 'week') {
+      // 本周生效：日期仍是本周该天，只改星期/节次
+      date = weekDateOf(semester, data.viewWeek, move.dayOfWeek);
+      dayOfWeek = move.dayOfWeek;
     } else {
-      await createReschedule(storage, {
+      // 每周生效：改课表本身，星期取拖动落点所在列
+      date = weekDateOf(semester, data.viewWeek, move.dayOfWeek);
+      dayOfWeek = move.dayOfWeek;
+    }
+    if (date === weekDateOf(semester, data.viewWeek, move.cell.dayOfWeek) && period === move.cell.periodStart) {
+      return { ok: false, message: '目标位置和现在一样，没有需要调整的' };
+    }
+    return { ok: true, date, dayOfWeek, period, span };
+  }
+
+  async function applyMove(target: MoveTarget): Promise<void> {
+    if (storage === null || data?.semester == null || move === null || moveBusy) return;
+    const semester = data.semester;
+    const resolved = resolveMove(target);
+    if (!resolved.ok) {
+      toast.error(resolved.message);
+      return;
+    }
+    const { date, dayOfWeek, period, span } = resolved;
+    const onDate = weekDateOf(semester, data.viewWeek, move.cell.dayOfWeek);
+    const scheduleId = move.cell.scheduleId;
+    const where = `${WEEKDAYS[dayOfWeek - 1] ?? ''} ${formatPeriodLabel(period, period + span)}`;
+    // 三个「这一次」的作用范围都走 createReschedule，只是 onDate/newDate 不同
+    const reschedule = (): Promise<void> =>
+      createReschedule(storage, {
         userId: USER_ID,
         semesterId: semester.id,
-        refScheduleId: move.cell.scheduleId,
-        onDate: weekDateOf(semester, data.viewWeek, move.cell.dayOfWeek),
+        refScheduleId: scheduleId,
+        onDate,
         action: 'move',
-        newDate: weekDateOf(semester, data.viewWeek, move.dayOfWeek),
-        newPeriodStart: move.period,
-        newPeriodEnd: move.period + span,
-        asDayOfWeek: move.dayOfWeek,
-      });
-      toast.success('已仅调整本周');
+        newDate: date,
+        newPeriodStart: period,
+        newPeriodEnd: period + span,
+        asDayOfWeek: dayOfWeek,
+      }).then(() => undefined);
+    setMoveBusy(true);
+    try {
+      if (target.kind === 'always') {
+        const done = await withToast(
+          () =>
+            updateSchedule(storage, scheduleId, {
+              day_of_week: dayOfWeek,
+              period_start: period,
+              period_end: period + span,
+            }).then(() => undefined),
+          `已改为每周 ${where}`,
+          '改为每周失败',
+        );
+        if (!done) return;
+      } else if (target.kind === 'date') {
+        const done = await withToast(
+          reschedule,
+          `已把这一次课调到 ${date} ${formatPeriodLabel(period, period + span)}`,
+          '按日期调课失败',
+        );
+        if (!done) return;
+      } else {
+        const weeks = target.kind === 'weeks' ? Math.round(target.week) : data.viewWeek;
+        const label =
+          target.kind === 'week'
+            ? `本周的这节课已改到 ${where}`
+            : `已把第 ${data.viewWeek} 周的这节课改到第 ${weeks} 周 ${formatPeriodLabel(period, period + span)}`;
+        const done = await withToast(reschedule, label, '仅调整这一次失败');
+        if (!done) return;
+      }
+      setMove(null);
+      refresh();
+    } finally {
+      setMoveBusy(false);
     }
-    setMove(null);
-    refresh();
   }
 
   async function switchSemester(id: string): Promise<void> {
@@ -339,7 +463,12 @@ export function App() {
             viewDays={settings.viewDays}
             showOtherWeeks={settings.showOtherWeeks}
             onSelectLesson={(cell) => void openLesson(cell)}
-            onMoveLesson={(cell, dayOfWeek, period) => setMove({ cell, dayOfWeek, period })}
+            onMoveLesson={(cell, dayOfWeek, period) => openMove(cell, dayOfWeek, period)}
+            onQuickCreate={(preset) => {
+              setEditingCourse(null);
+              setQuickCreate(preset);
+              setCourseFormOpen(true);
+            }}
             onPrevWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, -1))}
             onNextWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, 1))}
           />
@@ -362,7 +491,6 @@ export function App() {
           tomorrowPreview={settings.tomorrowPreview}
           semesterCountdown={settings.semesterCountdown}
           holidayCountdown={settings.holidayCountdown}
-          sections={settings.uiScheduleSections}
         />
       )}
       {view === 'import' && (
@@ -421,7 +549,11 @@ export function App() {
           mode={mode}
           onModeChange={setMode}
           onSearch={() => setSearchOpen(true)}
-          onAdd={() => setCourseFormOpen(true)}
+          onAdd={() => {
+          setEditingCourse(null);
+          setQuickCreate(null);
+          setCourseFormOpen(true);
+        }}
           compact={!isDesktop}
         />
         <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-24 tablet:p-4 desktop:pb-4">
@@ -521,7 +653,10 @@ export function App() {
       <Dialog
         open={move !== null}
         onOpenChange={(open) => {
-          if (!open) setMove(null);
+          if (!open) {
+            setMove(null);
+            setMoveBusy(false);
+          }
         }}
       >
         <DialogContent
@@ -529,18 +664,90 @@ export function App() {
           description={
             move === null
               ? ''
-              : `把「${move.cell.name}」移到 ${WEEKDAYS[move.dayOfWeek - 1]} 第 ${move.period} 节`
+              : `把「${move.cell.name}」(${formatPeriodLabel(move.cell.periodStart, move.cell.periodEnd)}) 移到 ${
+                  WEEKDAYS[move.dayOfWeek - 1] ?? ''
+                } ${formatPeriodLabel(move.period, move.period + (move.cell.periodEnd - move.cell.periodStart))}，请选择生效范围`
           }
         >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-2">
+              <span className="text-xs text-muted">只改这一周的这一次课</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={moveBusy}
+                onClick={() => void applyMove({ kind: 'week' })}
+              >
+                本周生效
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-2">
+              <span className="text-xs text-muted">改课表本身，之后每周都在这个时间</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={moveBusy}
+                onClick={() => void applyMove({ kind: 'always' })}
+              >
+                每周生效
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-2">
+              <Field label="指定周的同一天" hint={`目标周序号 1–${data.semester.total_weeks}`}>
+                <Input
+                  type="number"
+                  min={1}
+                  max={data.semester.total_weeks}
+                  aria-label="目标周序号"
+                  className="w-24"
+                  value={moveWeek}
+                  onChange={(event) => {
+                    const parsed = Number.parseInt(event.target.value, 10);
+                    setMoveWeek(Number.isFinite(parsed) ? parsed : 1);
+                  }}
+                />
+              </Field>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={moveBusy}
+                onClick={() => void applyMove({ kind: 'weeks', week: moveWeek })}
+              >
+                调到该周
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-2">
+              <Field label="指定日期" hint="只调这一天，可跨星期">
+                <Input
+                  type="date"
+                  aria-label="目标日期"
+                  className="w-40"
+                  value={moveDate}
+                  onChange={(event) => setMoveDate(event.target.value)}
+                />
+              </Field>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={moveBusy}
+                onClick={() => void applyMove({ kind: 'date', date: moveDate })}
+              >
+                调到该日期
+              </Button>
+            </div>
+          </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setMove(null)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setMove(null);
+                setMoveBusy(false);
+              }}
+            >
               取消
-            </Button>
-            <Button variant="secondary" onClick={() => void applyMove('week')}>
-              仅本周
-            </Button>
-            <Button variant="primary" onClick={() => void applyMove('always')}>
-              从本周起每周
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -556,7 +763,10 @@ export function App() {
 
       <CourseForm
         open={courseFormOpen}
-        onOpenChange={setCourseFormOpen}
+        onOpenChange={(open) => {
+          setCourseFormOpen(open);
+          if (!open) setQuickCreate(null);
+        }}
         storage={storage}
         semesterId={data.semester.id}
         semesterStart={data.semester.start_date}
@@ -565,6 +775,7 @@ export function App() {
         slots={data.slots}
         onCreated={refresh}
         course={editingCourse}
+        presetDraft={quickCreate}
       />
 
       <TodoForm

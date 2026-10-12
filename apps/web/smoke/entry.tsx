@@ -133,6 +133,18 @@ function clickByAriaPrefix(container: HTMLElement, prefix: string): boolean {
   return true;
 }
 
+/** 打开顶部「＋」或「⋯」下拉后，点其中的菜单项 */
+function clickMenu(container: HTMLElement, menu: string, label: string): boolean {
+  const trigger = container.querySelector(`summary[aria-label="${menu}"]`);
+  if (trigger instanceof HTMLElement) trigger.click();
+  const item = [...container.querySelectorAll(`[role="menu"][aria-label="${menu}"] [role="menuitem"]`)].find(
+    (entry) => (entry.textContent ?? '').trim() === label,
+  );
+  if (!(item instanceof HTMLElement)) return false;
+  item.click();
+  return true;
+}
+
 function setInputValue(element: HTMLElement, value: string): void {
   const prototype =
     element instanceof window.HTMLTextAreaElement
@@ -140,6 +152,76 @@ function setInputValue(element: HTMLElement, value: string): void {
       : window.HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(element, value);
   element.dispatchEvent(new window.Event('input', { bubbles: true }));
+}
+
+function pointerEvent(type: string, init: Record<string, unknown>): Event {
+  const EventCtor = window.PointerEvent ?? window.MouseEvent;
+  return new EventCtor(type, { bubbles: true, cancelable: true, ...init } as never);
+}
+
+/** 点击某天列首个格子上的一行（该列第 1 节空着时才有效）。 */
+function clickGridCell(container: HTMLElement, day: number): boolean {
+  const column = container.querySelector(`[data-day="${day}"]`);
+  if (!(column instanceof window.HTMLElement)) return false;
+  stubRect(column, day * 100, 100);
+  const row = column.querySelector('div');
+  const target = row instanceof window.HTMLElement ? row : column;
+  target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientY: 104 }));
+  return true;
+}
+
+/**
+ * jsdom 没有布局（getBoundingClientRect 全是 0），周视图的落点定位依赖它，
+ * 所以只在这几个节点上按 100 宽、56 高的规则行造一份几何。
+ */
+function stubRect(element: Element, left: number, top: number, width = 100, height = 56): void {
+  const rect = {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as unknown as DOMRect;
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    value: () => rect,
+    configurable: true,
+    writable: true,
+  });
+}
+
+/** 在课程卡上按下指针并按住超过长按时长，再发窗口指针事件、移动与抬手。 */
+async function dragLesson(container: HTMLElement, name: string, moveTo?: { day: number }): Promise<boolean> {
+  const card = [...container.querySelectorAll('[data-tone]')].find((item) =>
+    (item.textContent ?? '').includes(name),
+  );
+  const holder = card?.parentElement;
+  if (!(card instanceof window.HTMLElement) || !(holder instanceof window.HTMLElement)) return false;
+  stubRect(holder, 100, 100);
+  holder.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 150, clientY: 104 }));
+  window.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, button: 0 }));
+  holder.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 152, clientY: 106 }));
+  await new Promise((resolve) => setTimeout(resolve, 420));
+  await flush(4);
+  if (moveTo !== undefined) {
+    const column = container.querySelector(`[data-day="${moveTo.day}"]`);
+    if (column instanceof window.HTMLElement) stubRect(column, moveTo.day * 100, 100);
+    holder.dispatchEvent(
+      pointerEvent('pointermove', {
+        pointerId: 1,
+        clientX: moveTo.day * 100 + 50,
+        clientY: 104,
+      }),
+    );
+  }
+  await flush(2);
+  holder.dispatchEvent(pointerEvent('pointerup', { pointerId: 1, clientX: 152, clientY: 106 }));
+  await flush(4);
+  window.dispatchEvent(pointerEvent('pointercancel', { pointerId: 1 }));
+  return true;
 }
 
 const PAGE_SAMPLE = `<table id="kbtable"><tr>
@@ -205,16 +287,80 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
+  // C1：长按拖动 + 吸附后选作用范围
+  const heldWithoutMove = await dragLesson(view.container, '高数');
+  await flush(6);
+  check(
+    '原地长按松手不弹调整弹窗',
+    heldWithoutMove && !(document.body.textContent ?? '').includes('调整课程时间'),
+    '',
+  );
+  const heldAndMoved = await dragLesson(view.container, '高数', { day: 4 });
+  await flush(6);
+  const moveDialogText = document.body.textContent ?? '';
+  check(
+    '长按拖到别列后弹出调整课程时间',
+    heldAndMoved &&
+      moveDialogText.includes('调整课程时间') &&
+      moveDialogText.includes('本周生效') &&
+      moveDialogText.includes('每周生效') &&
+      moveDialogText.includes('指定周的同一天') &&
+      moveDialogText.includes('指定日期') &&
+      moveDialogText.includes('第 1–2 节'),
+    moveDialogText.slice(-60),
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+  check('取消调整弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
+
+  // C2：点空白格 → 虚线占位块 → 滚轮改节次 → 进课程表单预填（周二第 1 节是空的）
+  const clickInfo = clickGridCell(view.container, 2);
+  await flush(6);
+  const slot = view.container.querySelector('[data-role="empty-slot"]');
+  const wheel = view.container.querySelector('[data-role="period-wheel"]');
+  check(
+    '点空白格出现单节占位块',
+    slot !== null && (wheel?.textContent ?? '').trim() === '第 1 节',
+    `${(wheel?.textContent ?? '').trim()} | ${clickInfo}`,
+  );
+  wheel?.dispatchEvent(new window.WheelEvent('wheel', { bubbles: true, deltaY: -100 }));
+  await flush(6);
+  check(
+    '滚轮可扩展节次范围',
+    (view.container.querySelector('[data-role="period-wheel"]')?.textContent ?? '').trim() === '第 1–2 节',
+    `${(view.container.querySelector('[data-role="period-wheel"]')?.textContent ?? '').trim()}`,
+  );
+  clickByLabel(view.container, '在此新建课程');
+  await flush(12);
+  const createdText = document.body.textContent ?? '';
+  // 预填的周次应当是「当前查看的那一周」，所以只检查恰好压中一周，不写死周序号
+  const pressedWeeks = [...document.querySelectorAll('[aria-label^="第 "][aria-label$=" 周"]')].filter(
+    (item) => item.getAttribute('aria-pressed') === 'true',
+  );
+  check(
+    '空白格新建预填星期与节次',
+    createdText.includes('添加课程') &&
+      createdText.includes('周二') &&
+      createdText.includes('第 1 节') &&
+      createdText.includes('第 2 节') &&
+      createdText.includes('已选 1/20 周') &&
+      pressedWeeks.length === 1,
+    `weeks=${pressedWeeks.map((item) => item.getAttribute('aria-label')).join(',')} tail=${createdText.slice(-40)}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+  check('取消后占位块消失', view.container.querySelector('[data-role="empty-slot"]') === null, '');
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
+  check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
+  // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/课程调整收进「＋」，其余收进「⋯」
   check(
-    '日程页合并为一条时间线',
-    scheduleText.includes('日程') && scheduleText.includes('考试倒计时') && scheduleText.includes('加日程'),
+    '日程页默认只剩顶部一行与时间线',
+    view.container.querySelector('summary[aria-label="添加"]') !== null &&
+      view.container.querySelector('summary[aria-label="更多操作"]') !== null &&
+      view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
-  check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
-  if (clickByText(view.container, '加考试')) await flush(12);
+  if (clickMenu(view.container, '添加', '加考试')) await flush(12);
   check(
     '加考试入口打开考试表单',
     document.body.textContent?.includes('考试倒计时') === true &&
@@ -223,7 +369,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
-  if (clickByText(view.container, '加日程')) await flush(12);
+  if (clickMenu(view.container, '添加', '加日程')) await flush(12);
   check(
     '加日程可关联课程并带提醒',
     document.querySelector('[aria-label="关联课程"]') !== null &&
@@ -233,17 +379,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
   check('日程与作业合并为一个入口', !scheduleText.includes('加作业/汇报'), '');
 
-  check('日程页提供课程调整入口', scheduleText.includes('课程调整'), '');
   check(
     '日程可切换日期与设置假日',
     view.container.querySelector('[aria-label="前一天"]') !== null &&
       view.container.querySelector('[aria-label="查看日期"]') !== null &&
       view.container.querySelector('[aria-label="后一天"]') !== null &&
-      (view.container.querySelector('[aria-label="设为假日"]') !== null ||
-        view.container.querySelector('[aria-label="设为非假日"]') !== null),
+      view.container.querySelector('summary[aria-label="更多操作"]') !== null &&
+      [...view.container.querySelectorAll('[role="menu"][aria-label="更多操作"] [role="menuitem"]')].some((item) =>
+        ['设为假日', '设为非假日'].includes((item.textContent ?? '').trim()),
+      ),
     '',
   );
-  if (clickByText(view.container, '课程调整')) await flush(12);
+  if (clickMenu(view.container, '添加', '课程调整')) await flush(12);
   const adjustText = document.body.textContent ?? '';
   check(
     '课程调整含三种模式',
@@ -414,9 +561,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   check('悬浮窗样式可选四种', view.container.querySelector('[aria-label="悬浮窗样式"]') !== null, '');
   check(
-    '日程页区块可显隐排序',
-    view.container.querySelector('[aria-label="显示区块：日程时间线"]') !== null &&
-      view.container.querySelector('[aria-label="上移区块：考试倒计时"]') !== null,
+    '日程卡片可显隐排序',
+    view.container.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&
+      view.container.querySelector('[aria-label="上移卡片：考试倒计时"]') !== null &&
+      view.container.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
+      view.container.querySelector('[aria-label="恢复默认布局"]') !== null,
     '',
   );
   // 关于卡片默认收起，更新入口的文案由 update 单元测试覆盖，这里不重复断言

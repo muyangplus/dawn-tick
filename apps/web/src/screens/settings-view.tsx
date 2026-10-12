@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import {
   BACKUP_MODULES,
@@ -7,8 +7,6 @@ import {
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
   WIDGET_VARIANTS,
-  SCHEDULE_SECTIONS,
-  parseSections,
   createCourse,
   createEvent,
   createSemester,
@@ -51,6 +49,10 @@ import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import type { ReminderView } from '../useReminders.ts';
+import { CardLayoutPanel } from './cards/layout-panel.tsx';
+import { readLayout } from './cards/layout-store.ts';
+import { resolveCards, type LayoutConfig } from './cards/registry.ts';
+import { SETTINGS_SECTIONS, settingsSection } from './cards/settings-cards.tsx';
 
 const PERMISSION_LABEL: Record<ReminderView['permission'], string> = {
   unsupported: '当前环境不支持通知',
@@ -70,13 +72,6 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   light: '浅色',
   dark: '深色',
   transparent: '透明',
-};
-
-const SECTION_LABEL: Record<string, string> = {
-  actions: '入口按钮',
-  countdowns: '日期与倒计时',
-  exams: '考试倒计时',
-  timeline: '日程时间线',
 };
 
 const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
@@ -208,8 +203,20 @@ export function SettingsView({
   const [editWeeks, setEditWeeks] = useState(20);
   const [editZone, setEditZone] = useState('');
   const [removing, setRemoving] = useState<SemesterRow | null>(null);
+  const [layout, setLayout] = useState<LayoutConfig>({});
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
   const next = reminders.upcoming[0];
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await readLayout(storage);
+      if (!cancelled) setLayout(stored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
 
   function startEdit(semester: SemesterRow): void {
     setEditing(semester);
@@ -431,9 +438,16 @@ export function SettingsView({
     }
   }
 
-  return (
-    <div className="flex flex-col gap-3">
-      <CollapsibleCard id="semesters" title="学期设置" icon={BadgeCheck} badge={`${semesters.length} 个`}>
+  const layoutGroups: ReactNode = (
+    <div className="flex flex-col gap-2">
+      <span className="text-xs text-muted">每张卡片都可以显示/隐藏、上移下移、在「主列 / 侧列」之间切换。</span>
+      <CardLayoutPanel layout={layout} onChange={setLayout} storage={storage} />
+    </div>
+  );
+
+  const bodies: Record<string, ReactNode> = {
+    semesters: (
+      <>
         {semesters.length > 0 && (
           <ul className="flex flex-col gap-1">
             {semesters.map((semester) => (
@@ -501,23 +515,23 @@ export function SettingsView({
             </Button>
           </div>
         </details>
-      </CollapsibleCard>
+        <PeriodSettings storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
+        {activeSemesterId !== null && (
+          <CourseManager
+            storage={storage}
+            semesterId={activeSemesterId}
+            preset={settings.themePreset}
+            slots={slots}
+            semesterStart={activeStartDate}
+            totalWeeks={totalWeeks}
+            onChanged={onChanged}
+          />
+        )}
+      </>
+    ),
 
-      <PeriodSettings storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
-
-      {activeSemesterId !== null && (
-        <CourseManager
-          storage={storage}
-          semesterId={activeSemesterId}
-          preset={settings.themePreset}
-          slots={slots}
-          semesterStart={activeStartDate}
-          totalWeeks={totalWeeks}
-          onChanged={onChanged}
-        />
-      )}
-
-      <CollapsibleCard id="reminders" title="提醒设置" icon={Bell}>
+    reminders: (
+      <>
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
           <span>通知权限：{PERMISSION_LABEL[reminders.permission]}</span>
           <Button
@@ -579,9 +593,11 @@ export function SettingsView({
         <span className="text-xs text-muted">
           想单独改某门课，在课程详情里打开「单独设置这门课的提醒」再调。
         </span>
-      </CollapsibleCard>
+      </>
+    ),
 
-      <CollapsibleCard id="appearance" title="外观" icon={Palette}>
+    appearance: (
+      <>
         <Field label="主题风格">
           <Select
             value={settings.themePreset}
@@ -685,57 +701,7 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="日程页区块">
-          <div className="flex flex-col gap-1">
-            {SCHEDULE_SECTIONS.map((section) => {
-              const list = parseSections(settings.uiScheduleSections);
-              const index = list.indexOf(section);
-              return (
-                <div key={section} className="flex min-h-tap items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="size-4"
-                    aria-label={`显示区块：${SECTION_LABEL[section] ?? section}`}
-                    checked={index >= 0}
-                    onChange={(event) => {
-                      const next = event.target.checked
-                        ? [...list, section]
-                        : list.filter((item) => item !== section);
-                      void onPatch({ uiScheduleSections: next.join(',') });
-                    }}
-                  />
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{SECTION_LABEL[section] ?? section}</span>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`上移区块：${SECTION_LABEL[section] ?? section}`}
-                    disabled={index <= 0}
-                    onClick={() => {
-                      const next = [...list];
-                      [next[index - 1], next[index]] = [next[index] as string, next[index - 1] as string];
-                      void onPatch({ uiScheduleSections: next.join(',') });
-                    }}
-                  >
-                    ↑
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label={`下移区块：${SECTION_LABEL[section] ?? section}`}
-                    disabled={index < 0 || index >= list.length - 1}
-                    onClick={() => {
-                      const next = [...list];
-                      [next[index + 1], next[index]] = [next[index] as string, next[index + 1] as string];
-                      void onPatch({ uiScheduleSections: next.join(',') });
-                    }}
-                  >
-                    ↓
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        </Field>
+        <Field label="卡片布局">{layoutGroups}</Field>
         {canUseWidget() && (
           <span className="text-xs text-muted">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</span>
         )}
@@ -801,11 +767,12 @@ export function SettingsView({
           />
           时区跟随设备
         </label>
-      </CollapsibleCard>
+        <StartupSettings supported={isAutoStartSupported()} settings={settings} onPatch={onPatch} />
+      </>
+    ),
 
-      <StartupSettings supported={isAutoStartSupported()} settings={settings} onPatch={onPatch} />
-
-      <CollapsibleCard id="data" title="同步与数据" icon={Database}>
+    data: (
+      <>
         <span className="text-xs text-muted">本地存储：{storageKind}</span>
         <span className="text-xs text-muted">
           浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
@@ -842,9 +809,11 @@ export function SettingsView({
           />
         </div>
         {backupMessage !== null && <span className="text-xs text-muted">{backupMessage}</span>}
-      </CollapsibleCard>
+      </>
+    ),
 
-      <CollapsibleCard id="about" title="关于" icon={Info}>
+    about: (
+      <>
         <span className="text-xs text-muted">晓刻 DawnTick · 课表与日程提醒工具</span>
         <span className="tabular text-xs text-muted">
           版本 {appVersion()} · {CHANNEL_LABEL[CHANNEL]}
@@ -899,7 +868,30 @@ export function SettingsView({
         {CHANNEL === 'dev' && (
           <span className="text-xs text-muted">开发渠道：只接收 dev 构建，不参与测试版开关</span>
         )}
-      </CollapsibleCard>
+      </>
+    ),
+  };
+
+  const cards = resolveCards('settings', layout);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {cards.map((card) => {
+        const body = bodies[card.def.id];
+        if (body === undefined) return null;
+        const section = settingsSection(card.def.id);
+        return (
+          <CollapsibleCard
+            key={card.def.id}
+            id={card.def.id}
+            title={card.def.title}
+            {...(section === undefined ? {} : { icon: section.icon })}
+            {...(card.def.id === 'semesters' ? { badge: `${semesters.length} 个` } : {})}
+          >
+            {body}
+          </CollapsibleCard>
+        );
+      })}
 
       <Dialog
         open={editing !== null}

@@ -1,29 +1,16 @@
-import { CalendarClock, ChevronLeft, ChevronRight, GraduationCap, ListChecks, MapPin, Trophy } from 'lucide-react';
-import { useState } from 'react';
-import {
-  addDays,
-  createEvent,
-  createReschedule,
-  dateRange,
-  formatDate,
-  formatTime,
-  parseSections,
-  updateEvent,
-  type EventRow,
-  type Storage,
-} from '@dawn-tick/core';
+import { useEffect, useState } from 'react';
+import { MapPin } from 'lucide-react';
+import type { Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx';
-import { Countdown } from '../components/countdown.tsx';
-import { EmptyState } from '../components/ui/empty-state.tsx';
-import { Card } from '../components/ui/card.tsx';
 import { Button } from '../components/ui/button.tsx';
-import { Input } from '../components/ui/input.tsx';
-import { formatDayCountdown } from '../lib/format.ts';
-import { cn } from '../lib/cn.ts';
-import { toast } from '../components/ui/toaster.tsx';
+import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } from './cards/registry.ts';
+import { readLayout } from './cards/layout-store.ts';
+import { actionsCard, countdownsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
 
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+// 日程页的卡片在注册表里声明：显隐、顺序与区域都可由用户配置。
+// 显式引用这几张卡片，保证注册先于首次渲染完成。
+void [actionsCard, timelineCard, examsCard, countdownsCard, tomorrowCard];
 
 export interface ScheduleViewProps {
   data: AppData;
@@ -37,126 +24,12 @@ export interface ScheduleViewProps {
   semesterCountdown: boolean;
   /** 显示下一个假期倒计时 */
   holidayCountdown: boolean;
-  /** 日程页区块顺序（逗号分隔，缺省即隐藏） */
-  sections: string;
 }
 
-interface TimelineItem {
-  key: string;
-  /** 所属日期；null 表示未排期 */
-  date: string | null;
-  /** 当天排序用的分钟数 */
-  minute: number;
-  /** 同一天内的先后：课程 → 调课/调休 → 待办 */
-  rank: number;
-  kind: 'lesson' | 'adjust' | 'todo';
-  title: string;
-  detail: string;
-  color?: string;
-  done?: boolean;
-  event?: EventRow;
-  lessonTarget?: AdjustTarget;
-}
-
-function dateLabel(date: string | null, timeZone: string): string {
-  if (date === null) return '未排期';
-  const [year, month, day] = date.split('-').map(Number);
-  const weekday =
-    WEEKDAYS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7];
-  void timeZone;
-  return `${month} 月 ${day} 日 ${weekday}`;
-}
-
-function minuteOf(epoch: number | null, timeZone: string): number {
-  if (epoch === null) return 0;
-  const [hour, minute] = formatTime(epoch, timeZone).split(':').map(Number);
-  return (hour ?? 0) * 60 + (minute ?? 0);
-}
-
-function buildTimeline(data: AppData, date: string): TimelineItem[] {
-  const items: TimelineItem[] = [];
-
-  for (const lesson of data.lessonsByDate.get(date) ?? []) {
-    items.push({
-      key: `lesson-${lesson.scheduleId}-${lesson.startAt}`,
-      date: lesson.date,
-      minute: minuteOf(lesson.startAt, data.timeZone),
-      rank: 0,
-      kind: 'lesson',
-      title: lesson.courseName,
-      detail: `第 ${lesson.periodStart}${lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节${
-        lesson.room === null ? '' : ` · ${lesson.room}`
-      }`,
-      color: lesson.color,
-      lessonTarget: {
-        scheduleId: lesson.scheduleId,
-        courseId: lesson.courseId,
-        courseName: lesson.courseName,
-        date: lesson.date,
-        periodStart: lesson.periodStart,
-        periodEnd: lesson.periodEnd,
-      },
-    });
-  }
-
-  for (const item of data.reschedules) {
-    const itemDate = item.on_date ?? null;
-    if (itemDate !== null && itemDate !== date) continue;
-    const detail =
-      item.type === 'makeup'
-        ? '调休'
-        : item.action === 'cancel'
-          ? '停课'
-          : item.new_date !== null
-            ? `改至 ${item.new_date} 第 ${item.new_period_start ?? ''}-${item.new_period_end ?? ''} 节`
-            : '调课';
-    items.push({
-      key: `adjust-${item.id}`,
-      date: itemDate,
-      minute: 0,
-      rank: 1,
-      kind: 'adjust',
-      title: item.title,
-      detail,
-      event: item,
-    });
-  }
-
-  for (const todo of data.todos) {
-    const todoDate =
-      todo.on_date ?? (todo.due_at === null || todo.due_at === undefined ? null : formatDate(todo.due_at, data.timeZone));
-    // 选中日期的日程：当天条目 + 未排期条目
-    if (todoDate !== null && todoDate !== date) continue;
-    const linkedCourse = data.courses.find((course) => course.id === todo.subject);
-    const parts: string[] = [];
-    if (linkedCourse !== undefined) parts.push(linkedCourse.name);
-    if (todo.due_at !== null && todo.due_at !== undefined && todo.due_at > Date.now()) {
-      parts.push(formatDayCountdown(todo.due_at, Date.now()));
-    }
-    if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
-    items.push({
-      key: `todo-${todo.id}`,
-      date: todoDate,
-      minute: minuteOf(todo.due_at ?? null, data.timeZone),
-      rank: 2,
-      kind: 'todo',
-      title: todo.title,
-      detail: parts.join(' · '),
-      done: todo.done === 1,
-      event: todo,
-    });
-  }
-
-  return items.sort((left, right) => {
-    const leftDate = left.date ?? '9999-99-99';
-    const rightDate = right.date ?? '9999-99-99';
-    if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
-    if (left.rank !== right.rank) return left.rank - right.rank;
-    return left.minute - right.minute;
-  });
-}
-
-/** 日程页：考试倒计时 + 按日期切换的时间线。 */
+/**
+ * 日程页：默认视觉只有「顶部一行 + 主列时间线 + 侧列卡片」。
+ * 加日程/加考试/课程调整收进「＋」，设为假日/连续假期/停课/顺延收进「⋯」。
+ */
 export function ScheduleView({
   data,
   storage,
@@ -166,375 +39,65 @@ export function ScheduleView({
   tomorrowPreview,
   semesterCountdown,
   holidayCountdown,
-  sections,
 }: ScheduleViewProps) {
-  const now = Date.now();
+  const [viewDate, setViewDate] = useState(data.today);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
-  const [viewDate, setViewDate] = useState(data.today);
-  const [rangeFrom, setRangeFrom] = useState(data.today);
-  const [rangeTo, setRangeTo] = useState(data.today);
-  const timeline = buildTimeline(data, viewDate);
-  const order = parseSections(sections);
-  const shows = (id: string): boolean => order.includes(id);
-  const orderOf = (id: string): number => {
-    const index = order.indexOf(id);
-    return index < 0 ? 99 : index;
+  const [layout, setLayout] = useState<LayoutConfig>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await readLayout(storage);
+      if (!cancelled) setLayout(stored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
+
+  const ctx: ScheduleCardContext = {
+    scope: 'schedule',
+    data,
+    storage,
+    layout,
+    onLayoutChange: setLayout,
+    viewDate,
+    onViewDateChange: setViewDate,
+    onAddTodo,
+    onAddExam,
+    onOpenAdjust: (target) => {
+      setAdjustTarget(target);
+      setAdjustOpen(true);
+    },
+    onChanged,
+    semesterCountdown,
+    holidayCountdown,
+    tomorrowPreview,
   };
 
-  const daysUntil = (date: string): number =>
-    Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
-  const semesterStart = data.semester?.start_date ?? null;
-  const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
-  const nextHolidayDate =
-    holidayCountdown
-      ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
-      : null;
-
-  const tomorrow = addDays(viewDate, 1);
-  const tomorrowItems = buildTimeline(data, tomorrow).length;
-  const holidayName = data.holidayLabels.get(viewDate);
-
-  async function setHoliday(): Promise<void> {
-    if (data.semester === null) return;
-    await createEvent(storage, {
-      userId: 'u1',
-      semesterId: data.semester.id,
-      type: 'holiday',
-      title: holidayName ?? '放假',
-      onDate: viewDate,
-    });
-    toast.success('已设为假日');
-    onChanged();
-  }
-
-  async function clearHoliday(): Promise<void> {
-    if (data.semester === null) return;
-    await createEvent(storage, {
-      userId: 'u1',
-      semesterId: data.semester.id,
-      type: 'workday',
-      title: '非假日',
-      onDate: viewDate,
-    });
-    toast.success('已设为非假日');
-    onChanged();
-  }
-
-  /** 一次性把一段日期设为假日（最多 60 天）。 */
-  async function setHolidayRange(): Promise<void> {
-    if (data.semester === null) return;
-    const from = rangeFrom <= rangeTo ? rangeFrom : rangeTo;
-    const to = rangeFrom <= rangeTo ? rangeTo : rangeFrom;
-    const dates = dateRange(from, to);
-    if (dates.length === 0 || dates.length > 60) {
-      toast.error('请选择不超过 60 天的连续日期');
-      return;
-    }
-    for (const date of dates) {
-      await createEvent(storage, {
-        userId: 'u1',
-        semesterId: data.semester.id,
-        type: 'holiday',
-        title: '连续假期',
-        onDate: date,
-      });
-    }
-    toast.success(`已把 ${dates.length} 天设为假日`);
-    onChanged();
-  }
-
-  /** 把所选日期的课全部停掉。 */
-  async function cancelDayLessons(): Promise<void> {
-    if (data.semester === null) return;
-    const lessons = data.lessonsByDate.get(viewDate) ?? [];
-    if (lessons.length === 0) {
-      toast.error('这一天没有课');
-      return;
-    }
-    for (const lesson of lessons) {
-      await createReschedule(storage, {
-        userId: 'u1',
-        semesterId: data.semester.id,
-        refScheduleId: lesson.scheduleId,
-        onDate: viewDate,
-        action: 'cancel',
-        title: `停课：${lesson.courseName}`,
-      });
-    }
-    toast.success(`已停掉当天 ${lessons.length} 节课`);
-    onChanged();
-  }
-
-  /** 把所选日期的课顺延到次日同节次。 */
-  async function moveDayLessons(): Promise<void> {
-    if (data.semester === null) return;
-    const lessons = data.lessonsByDate.get(viewDate) ?? [];
-    if (lessons.length === 0) {
-      toast.error('这一天没有课');
-      return;
-    }
-    const target = addDays(viewDate, 1);
-    for (const lesson of lessons) {
-      await createReschedule(storage, {
-        userId: 'u1',
-        semesterId: data.semester.id,
-        refScheduleId: lesson.scheduleId,
-        onDate: viewDate,
-        action: 'move',
-        title: `调课：${lesson.courseName}`,
-        newDate: target,
-        newPeriodStart: lesson.periodStart,
-        newPeriodEnd: lesson.periodEnd,
-      });
-    }
-    toast.success(`已把当天 ${lessons.length} 节课顺延到 ${target}`);
-    onChanged();
-  }
-
-  const groups: Array<{ date: string | null; items: TimelineItem[] }> = [];
-  for (const item of timeline) {
-    const last = groups[groups.length - 1];
-    if (last !== undefined && last.date === item.date) last.items.push(item);
-    else groups.push({ date: item.date, items: [item] });
-  }
-
-  async function toggleDone(event: EventRow): Promise<void> {
-    await updateEvent(storage, event.id, { done: event.done === 1 ? 0 : 1 });
-    onChanged();
-  }
+  const mainCards = cardsInZone('schedule', layout, 'main');
+  const sideCards = cardsInZone('schedule', layout, 'side');
 
   return (
     <section className="flex flex-col gap-4" aria-label="日程视图">
-      <div className="flex flex-wrap gap-2" style={{ order: orderOf('actions') }}>
-        {semesterCountdown && semesterDays !== null && semesterDays > 0 && (
-          <span className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink">
-            距开学还有 {semesterDays} 天
-          </span>
-        )}
-        {nextHolidayDate !== null && (
-          <span className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink">
-            距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
-          </span>
-        )}
-        <Button variant="secondary" size="sm" onClick={onAddTodo}>
-          加日程
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onAddExam}>
-          加考试
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            setAdjustTarget(null);
-            setAdjustOpen(true);
-          }}
-        >
-          课程调整
-        </Button>
-      </div>
-
-      {shows('exams') && (
-      <div className="flex flex-col gap-2" style={{ order: orderOf('exams') }}>
-        <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <GraduationCap className="size-4" aria-hidden />
-          考试倒计时
-        </span>
-        {data.exams.length === 0 ? (
-          <EmptyState icon={GraduationCap} title="暂无考试安排" description="用上方「加考试」录入考试时间" />
-        ) : (
-          <div className="grid gap-2 tablet:grid-cols-2">
-            {data.exams.map((exam) => (
-              <Card key={exam.id} className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-medium text-ink">{exam.title}</span>
-                  <span className="truncate text-xs text-muted">
-                    {exam.on_date ?? (exam.start_at === null ? '' : formatDate(exam.start_at, data.timeZone))}
-                    {exam.location !== null && ` · ${exam.location}`}
-                    {exam.seat_no !== null && ` · 座位 ${exam.seat_no}`}
-                  </span>
-                </div>
-                {exam.start_at !== null && (
-                  <span className="tabular shrink-0 text-sm font-semibold text-danger-strong">
-                    {formatDayCountdown(exam.start_at, now)}
-                  </span>
-                )}
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
-      )}
-
-      {shows('timeline') && (
-      <div className="flex flex-col gap-3" style={{ order: orderOf('timeline') }}>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="icon" variant="ghost" aria-label="前一天" onClick={() => setViewDate(addDays(viewDate, -1))}>
-            <ChevronLeft className="size-4" aria-hidden />
-          </Button>
-          <Input
-            type="date"
-            className="w-40"
-            aria-label="查看日期"
-            value={viewDate}
-            onChange={(event) => setViewDate(event.target.value)}
-          />
-          <Button size="icon" variant="ghost" aria-label="后一天" onClick={() => setViewDate(addDays(viewDate, 1))}>
-            <ChevronRight className="size-4" aria-hidden />
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setViewDate(data.today)}>
-            回到今天
-          </Button>
-          <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-            <CalendarClock className="size-4" aria-hidden />
-            {dateLabel(viewDate, data.timeZone)}
-          </span>
-          {holidayName !== undefined ? (
-            <>
-              <span className="text-xs text-muted">放假：{holidayName}</span>
-              <Button size="sm" variant="ghost" aria-label="设为非假日" onClick={() => void clearHoliday()}>
-                设为非假日
-              </Button>
-            </>
-          ) : (
-            <Button size="sm" variant="ghost" aria-label="设为假日" onClick={() => void setHoliday()}>
-              设为假日
-            </Button>
-          )}
+      {mainCards.map((card) => (
+        <div key={card.def.id} className="flex flex-col gap-4">
+          {renderCard<'schedule'>(card, ctx)}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted">连续假期</span>
-          <Input
-            type="date"
-            className="w-36"
-            aria-label="假期开始"
-            value={rangeFrom}
-            onChange={(event) => setRangeFrom(event.target.value)}
-          />
-          <span className="text-xs text-muted">至</span>
-          <Input
-            type="date"
-            className="w-36"
-            aria-label="假期结束"
-            value={rangeTo}
-            onChange={(event) => setRangeTo(event.target.value)}
-          />
-          <Button size="sm" variant="secondary" aria-label="设为连续假日" onClick={() => void setHolidayRange()}>
-            设为连续假日
-          </Button>
-          <Button size="sm" variant="ghost" aria-label="当天全部停课" onClick={() => void cancelDayLessons()}>
-            当天全部停课
-          </Button>
-          <Button size="sm" variant="ghost" aria-label="当天顺延到次日" onClick={() => void moveDayLessons()}>
-            当天顺延到次日
-          </Button>
-        </div>
-        {groups.length === 0 ? (
-          <div className="flex flex-col gap-2">
-            <EmptyState icon={ListChecks} title="这一天没有安排" description="可切换日期看过去或未来" />
-            {tomorrowPreview && tomorrowItems > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-muted">明日预告：还有 {tomorrowItems} 项安排</span>
-                <Button size="sm" variant="secondary" onClick={() => setViewDate(tomorrow)}>
-                  看明天
-                </Button>
-              </div>
-            )}
-          </div>
-        ) : (
-          groups.map((group) => (
-            <div key={group.date ?? 'undated'} className="flex flex-col gap-1">
-              <span className="text-xs text-muted">{dateLabel(group.date, data.timeZone)}</span>
-              <ul className="flex flex-col gap-1">
-                {group.items.map((item) => (
-                  <li
-                    key={item.key}
-                    className={cn(
-                      'flex min-h-tap items-center gap-3 rounded-md border border-line bg-surface px-3',
-                      item.done === true && 'border-line-strong/50 bg-surface-muted/40 text-muted opacity-45',
-                    )}
-                    style={item.color === undefined ? undefined : { borderLeft: `4px solid ${item.color}` }}
-                    data-kind={item.kind}
-                    data-done={item.done === true ? 'true' : undefined}
-                  >
-                    {item.kind === 'todo' && item.event !== undefined ? (
-                      <input
-                        type="checkbox"
-                        className="size-4 shrink-0"
-                        checked={item.done === true}
-                        aria-label={`标记完成：${item.title}`}
-                        onChange={() => void toggleDone(item.event as EventRow)}
-                      />
-                    ) : (
-                      <span className="shrink-0 text-muted" aria-hidden>
-                        {item.kind === 'lesson' ? (
-                          <CalendarClock className="size-4" />
-                        ) : item.kind === 'adjust' ? (
-                          <Trophy className="size-4" />
-                        ) : (
-                          <ListChecks className="size-4" />
-                        )}
-                      </span>
-                    )}
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className={cn('truncate text-sm text-ink', item.done === true && 'line-through')}>
-                        {item.title}
-                      </span>
-                      {item.detail.length > 0 && (
-                        <span className="flex min-w-0 items-center gap-1 truncate text-xs text-muted">
-                          {item.detail}
-                        </span>
-                      )}
-                    </span>
-                    {item.kind === 'lesson' && item.lessonTarget !== undefined && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="shrink-0"
-                        aria-label={`调课：${item.title}`}
-                        onClick={() => {
-                          setAdjustTarget(item.lessonTarget ?? null);
-                          setAdjustOpen(true);
-                        }}
-                      >
-                        调课
-                      </Button>
-                    )}
-                    {item.kind === 'lesson' && item.minute > 0 && (
-                      <span className="tabular shrink-0 text-xs text-muted">
-                        {String(Math.floor(item.minute / 60)).padStart(2, '0')}:
-                        {String(item.minute % 60).padStart(2, '0')}
-                      </span>
-                    )}
-                    {item.kind === 'adjust' && item.event !== undefined && (
-                      <span className="flex shrink-0 items-center gap-1">
-                        <span className="tabular text-xs text-muted">{item.event.on_date}</span>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          aria-label={`删除调整：${item.title}`}
-                          onClick={() => {
-                            void (async () => {
-                              await updateEvent(storage, String(item.event?.id ?? ''), { deleted_at: Date.now() });
-                              onChanged();
-                            })();
-                          }}
-                        >
-                          删除
-                        </Button>
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+      ))}
+
+      {sideCards.length > 0 && (
+        <aside className="flex flex-col gap-3 tablet:grid tablet:grid-cols-2" aria-label="日程侧栏">
+          {sideCards.map((card) => (
+            <div key={card.def.id} className="min-w-0">
+              {renderCard<'schedule'>(card, ctx)}
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </aside>
       )}
 
-      <div className="flex flex-wrap items-center gap-2" style={{ order: 98 }}>
+      <div className="flex flex-wrap items-center gap-2">
         <MapPin className="size-3 text-muted" aria-hidden />
         <span className="text-xs text-muted">
           今天第 {data.week} 周 · 共 {data.todayLessons.length} 节课 · {data.todos.length} 条待办

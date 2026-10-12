@@ -43,16 +43,31 @@ interface ScheduleDraft {
 }
 
 let draftSeed = 0;
-function newDraft(totalWeeks: number, dayOfWeek: number, periodStart: number): ScheduleDraft {
+function newDraft(
+  totalWeeks: number,
+  dayOfWeek: number,
+  periodStart: number,
+  periodEnd = periodStart,
+  weeks?: readonly number[],
+): ScheduleDraft {
   draftSeed += 1;
   return {
     key: `draft-${draftSeed}`,
     dayOfWeek,
     periodStart,
-    periodEnd: periodStart,
-    weeks: allWeeks(totalWeeks),
+    periodEnd: Math.max(periodStart, periodEnd),
+    weeks: weeks === undefined ? allWeeks(totalWeeks) : [...weeks],
     room: '',
   };
+}
+
+/** 「点空白格新建」时带进来的预填信息。 */
+export interface CourseFormPreset {
+  dayOfWeek: number;
+  periodStart: number;
+  periodEnd: number;
+  /** 预选周次，一般只有当前查看的那一周 */
+  weeks?: readonly number[] | undefined;
 }
 
 export interface CourseFormProps {
@@ -67,6 +82,8 @@ export interface CourseFormProps {
   onCreated: () => void;
   /** 传入时为编辑模式 */
   course?: ManagedCourse | null;
+  /** 新建时的预填星期与节次范围（编辑模式忽略） */
+  presetDraft?: CourseFormPreset | null | undefined;
 }
 
 export function CourseForm({
@@ -74,12 +91,12 @@ export function CourseForm({
   onOpenChange,
   storage,
   semesterId,
-  semesterStart,
   totalWeeks,
   preset,
   slots,
   onCreated,
   course = null,
+  presetDraft = null,
 }: CourseFormProps) {
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
@@ -107,7 +124,24 @@ export function CourseForm({
       setCredits('');
       setNote('');
       setColorIndex(0);
-      setDrafts([newDraft(totalWeeks, 1, firstPeriod)]);
+      if (presetDraft == null) {
+        setDrafts([newDraft(totalWeeks, 1, firstPeriod)]);
+        return;
+      }
+      const start = Math.min(Math.max(1, presetDraft.periodStart), lastPeriod);
+      const end = Math.min(Math.max(start, presetDraft.periodEnd), lastPeriod);
+      const weeks = (presetDraft.weeks ?? [])
+        .map((week) => Math.round(week))
+        .filter((week) => week >= 1 && week <= totalWeeks);
+      setDrafts([
+        newDraft(
+          totalWeeks,
+          Math.min(7, Math.max(1, presetDraft.dayOfWeek)),
+          start,
+          end,
+          weeks.length > 0 ? weeks : undefined,
+        ),
+      ]);
       return;
     }
     setName(course.name);
@@ -134,7 +168,7 @@ export function CourseForm({
             };
           }),
     );
-  }, [open, course, totalWeeks, firstPeriod, palette]);
+  }, [open, course, totalWeeks, firstPeriod, lastPeriod, palette, presetDraft]);
 
   function patchDraft(key: string, changes: Partial<ScheduleDraft>): void {
     setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...changes } : draft)));
