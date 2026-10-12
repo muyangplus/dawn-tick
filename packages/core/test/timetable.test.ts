@@ -6,6 +6,7 @@ import {
   generatePeriods,
   nextPeriod,
   parseClock,
+  reflowPeriods,
   regenerateSections,
   sectionOf,
 } from '../src/timetable.ts';
@@ -173,6 +174,115 @@ test('按范围重排：未指定的时段不受非法参数影响，参数越�
   assert.deepEqual(
     regenerateSections(threeSections, ['pm'], { durationMinutes: 45, breakMinutes: 10 }),
     threeSections,
+  );
+});
+
+const describeReflow = (periods: readonly { periodNo: number; start: string; end: string }[]) =>
+  periods.map((period) => `${period.periodNo} ${period.start}-${period.end}`);
+
+test('锚点顺延重排：锚点前不动、锚点保持 start、后续按 duration+break 顺延', () => {
+  const periods = [
+    { periodNo: 1, start: '08:00', end: '08:45' },
+    // 锚点之前的两节故意留成不对的数据：它们必须原样保留，不被回填
+    { periodNo: 2, start: '08:55', end: '09:40' },
+    { periodNo: 3, start: '09:55', end: '10:40' },
+    { periodNo: 4, start: '13:00', end: '13:45' },
+    { periodNo: 5, start: '20:00', end: '20:45' },
+  ];
+  const reflowed = reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 });
+
+  assert.deepEqual(describeReflow(reflowed), [
+    '1 08:00-08:45',
+    '2 08:55-09:40',
+    '3 09:50-10:35',
+    '4 10:45-11:30',
+    '5 11:40-12:25',
+  ]);
+  assert.notEqual(reflowed, periods, '返回新数组');
+  assert.notEqual(reflowed[2], periods[2], '锚点之后的课次都是新建对象');
+});
+
+test('锚点顺延重排：锚点第 3 节 09:55 时第 4 节为 10:50', () => {
+  const periods = [
+    { periodNo: 1, start: '08:00', end: '08:45' },
+    { periodNo: 2, start: '08:55', end: '09:40' },
+    { periodNo: 3, start: '09:55', end: '10:40' },
+    { periodNo: 4, start: '14:00', end: '14:45' },
+  ];
+  const reflowed = reflowPeriods(periods, { anchorPeriodNo: 3, durationMinutes: 45, breakMinutes: 10 });
+
+  assert.deepEqual(reflowed, [
+    { periodNo: 1, start: '08:00', end: '08:45' },
+    { periodNo: 2, start: '08:55', end: '09:40' },
+    { periodNo: 3, start: '09:55', end: '10:40' },
+    { periodNo: 4, start: '10:50', end: '11:35' },
+  ]);
+  assert.equal(reflowed[3]?.start, '10:50', '第 4 节 = 第 3 节 end 10:40 + 课间 10');
+});
+
+test('锚点顺延重排：一路顺延，不因跨中午/跨傍晚而重置', () => {
+  const periods = [
+    { periodNo: 1, start: '11:40', end: '12:25' },
+    { periodNo: 2, start: '19:00', end: '19:45' },
+    { periodNo: 3, start: '19:55', end: '20:40' },
+  ];
+  const reflowed = reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 });
+
+  assert.deepEqual(describeReflow(reflowed), ['1 11:40-12:25', '2 12:35-13:20', '3 13:30-14:15']);
+});
+
+test('锚点顺延重排：乱序输入按 periodNo 递增重排', () => {
+  const periods = [
+    { periodNo: 3, start: '10:00', end: '10:45' },
+    { periodNo: 1, start: '08:00', end: '08:45' },
+    { periodNo: 2, start: '08:55', end: '09:40' },
+  ];
+  const reflowed = reflowPeriods(periods, { anchorPeriodNo: 2, durationMinutes: 45, breakMinutes: 10 });
+
+  assert.deepEqual(describeReflow(reflowed), ['1 08:00-08:45', '2 08:55-09:40', '3 09:50-10:35']);
+});
+
+test('锚点顺延重排：锚点缺失或参数越界时报错', () => {
+  const periods = [
+    { periodNo: 1, start: '08:00', end: '08:45' },
+    { periodNo: 2, start: '08:55', end: '09:40' },
+  ];
+  assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 9, durationMinutes: 45, breakMinutes: 10 }), /锚点节次不在列表中/);
+  assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 5, breakMinutes: 10 }), /上课时长/);
+  assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 300, breakMinutes: 10 }), /上课时长/);
+  assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: -1 }), /课间间隔/);
+  assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 200 }), /课间间隔/);
+  assert.throws(() => reflowPeriods([], { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 }), /课次列表不能为空/);
+  assert.throws(
+    () =>
+      reflowPeriods(
+        [
+          { periodNo: 2, start: '08:00', end: '08:45' },
+          { periodNo: 2, start: '08:55', end: '09:40' },
+        ],
+        { anchorPeriodNo: 2, durationMinutes: 45, breakMinutes: 10 },
+      ),
+    /课次编号重复/,
+  );
+  assert.doesNotThrow(
+    () => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45.2, breakMinutes: 10.4 }),
+    '课时与课间取整后仍在范围内，不应抛错',
+  );
+});
+
+test('锚点顺延重排：duration + break 的固定步长与 generatePeriods 口径一致', () => {
+  const generated = generatePeriods({
+    durationMinutes: 45,
+    breakMinutes: 10,
+    blocks: [{ section: 'am', startTime: '08:00', count: 6 }],
+  });
+  const reflowed = reflowPeriods(
+    generated.map((period) => ({ periodNo: period.periodNo, start: period.startTime, end: period.endTime })),
+    { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 },
+  );
+  assert.deepEqual(
+    reflowed,
+    generated.map((period) => ({ periodNo: period.periodNo, start: period.startTime, end: period.endTime })),
   );
 });
 

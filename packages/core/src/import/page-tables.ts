@@ -1,3 +1,4 @@
+import { readSystemsConfig, type SchoolSystemId } from '../config/index.ts';
 import type { ImportedSchedule } from './apply.ts';
 import { looksLikeRoom, matchWeekday, parsePeriodLabel } from './csv.ts';
 import { parseTimetable, parseTimetableCells } from './jwglxt.ts';
@@ -39,9 +40,60 @@ export interface PageInspection {
 }
 
 export interface SystemInfo {
-  id: 'jwglxt' | 'qzdatasource' | 'urp' | 'unknown';
+  id: SchoolSystemId | 'unknown';
   label: string;
 }
+
+/**
+ * 页面识别特征：全部来自 src/config/systems.json 的 `detect` 段，模块加载时编译成正则。
+ * 想支持新教务或修正识别规则，改配置即可，不必动这里的代码。
+ */
+interface PageHints {
+  id: SchoolSystemId;
+  label: string;
+  /** 页面里出现任一标记即判定为该教务系统；没有标记的条目（如 other）不参与识别 */
+  markerPattern: RegExp | null;
+  /** 课表表格 id 特征，例如正方的 id="kbtable" */
+  tableIdPattern: RegExp | null;
+  /** 课表表格 class 特征 */
+  tableClassPattern: RegExp | null;
+}
+
+const CONFIGURED_SYSTEMS = readSystemsConfig();
+
+function alternation(parts: readonly string[]): RegExp | null {
+  return parts.length === 0 ? null : new RegExp(parts.join('|'), 'i');
+}
+
+const PAGE_HINTS: readonly PageHints[] = CONFIGURED_SYSTEMS.map((system) => ({
+  id: system.id,
+  label: system.name,
+  markerPattern: alternation(system.detect.markers),
+  tableIdPattern:
+    system.detect.timetableTableIds.length === 0
+      ? null
+      : new RegExp(`id\\s*=\\s*["']?(?:${system.detect.timetableTableIds.join('|')})`, 'i'),
+  tableClassPattern:
+    system.detect.timetableTableClasses.length === 0
+      ? null
+      : new RegExp(`class\\s*=\\s*["'][^"']*(?:${system.detect.timetableTableClasses.join('|')})`, 'i'),
+}));
+
+/** 「日-节」网格单元格 id、以及课表表格 id：命中即说明页面本身就是课表页。 */
+const GRID_PAGE_PATTERNS: readonly RegExp[] = [
+  ...PAGE_HINTS.map((hint) => hint.tableIdPattern),
+  ...CONFIGURED_SYSTEMS.flatMap((system) =>
+    system.detect.gridCellIdPatterns.map(
+      (pattern) => new RegExp(`id\\s*=\\s*["']?(?:${pattern})["']?`, 'i'),
+    ),
+  ),
+].filter((pattern): pattern is RegExp => pattern !== null);
+
+/**
+ * 这一条是跨系统的通用启发式（权重、中文表头用词），不是某所学校的数据，
+ * 因此不适合外置到 systems.json，保留在代码里并在此说明。
+ */
+const LOOSE_TABLE_ID_PATTERN = /id\s*=\s*["'][^"']*(kb|skb|timetable)/i;
 
 const ENTITIES: Record<string, string> = {
   '&nbsp;': ' ',
@@ -163,25 +215,31 @@ function buildSchedule(
 
 /**
  * 已知教务系统标记。命中只用于提高命中率与提示，通用启发式仍然生效。
+ * 标记来自 src/config/systems.json，按配置顺序取第一个命中的系统。
  */
 export function detectSystem(html: string): SystemInfo {
-  if (/jwglxt|xskb_list|timetable_con|kbgrid_table/i.test(html)) {
-    return { id: 'jwglxt', label: '正方教务' };
-  }
-  if (/qzdatasource|强智|qzjw/i.test(html)) {
-    return { id: 'qzdatasource', label: '强智教务' };
-  }
-  if (/urp|教学信息服务平台|jwgl\.urp/i.test(html)) {
-    return { id: 'urp', label: 'URP 教务' };
+  for (const hint of PAGE_HINTS) {
+    if (hint.markerPattern !== null && hint.markerPattern.test(html)) {
+      return { id: hint.id, label: hint.label };
+    }
   }
   return { id: 'unknown', label: '通用识别' };
 }
 
+/** 页面里是否出现课表骨架（「日-节」网格单元格或课表表格 id）。 */
+function looksLikeGridPage(html: string): boolean {
+  return GRID_PAGE_PATTERNS.some((pattern) => pattern.test(html));
+}
+
 function tableScore(tableHtml: string): number {
   let score = 0;
-  if (/id\s*=\s*["']?kbtable/i.test(tableHtml)) score += 5;
-  if (/class\s*=\s*["'][^"']*(kb|timetable|schedule|skb)/i.test(tableHtml)) score += 3;
-  if (/id\s*=\s*["'][^"']*(kb|skb|timetable)/i.test(tableHtml)) score += 3;
+  // 各教务系统自己声明的课表表格特征（systems.json 的 detect 段）
+  for (const hint of PAGE_HINTS) {
+    if (hint.tableIdPattern !== null && hint.tableIdPattern.test(tableHtml)) score += 5;
+    if (hint.tableClassPattern !== null && hint.tableClassPattern.test(tableHtml)) score += 3;
+  }
+  // 下面是跨系统的通用启发式与权重，与具体学校无关，保留在代码里
+  if (LOOSE_TABLE_ID_PATTERN.test(tableHtml)) score += 3;
   if (/星期|周一|周二/.test(tableHtml)) score += 2;
   if (/节次|第\d+节/.test(tableHtml)) score += 1;
   return score;
@@ -265,7 +323,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
     };
   }
 
-  if (/id\s*=\s*["']?\d{1,2}[-_]\d{1,2}["']?/i.test(page) || /id\s*=\s*["']?kbtable/i.test(page)) {
+  if (looksLikeGridPage(page)) {
     const cells = parseTimetableCells(page);
     if (cells.length > 0) {
       const parsed = parseTimetable(page, { totalWeeks });
@@ -352,7 +410,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
 
 /** 页面里是否出现了课表特征，用于判断用户是否已到课表页。 */
 export function looksLikeTimetablePage(html: string): boolean {
-  if (/id\s*=\s*["']?\d{1,2}[-_]\d{1,2}["']?/i.test(html)) return true;
+  if (looksLikeGridPage(html)) return true;
   const tables = parseTables(html);
   for (const rows of tables) {
     for (const row of rows.slice(0, 3)) {
@@ -390,6 +448,10 @@ export const BOOKMARKLET_VERSION = 2;
 /**
  * 书签小工具：等课表渲染出来后再复制，并收集同源 iframe（多数教务把课表放在 iframe 内）。
  * 复制内容依次为：诊断 JSON、各页面片段（以 PAGE_FRAME_SEPARATOR 分隔）。
+ *
+ * 注意：书签里的 `kbtable|^kb|timetable|skb|kbgrid` 等扫描特征刻意保留在字符串里，
+ * 不外置到 systems.json —— 这段代码要在目标教务页面里执行，读不到本项目的配置文件；
+ * 它只用于统计诊断数量，命中不准也不影响解析。
  */
 export const PAGE_BOOKMARKLET = `javascript:(()=>{const SEP='${PAGE_FRAME_SEPARATOR}';const seen=new Set();const parts=[];const walk=(doc,d)=>{if(!doc||d>2||seen.has(doc))return;seen.add(doc);try{parts.push(doc.documentElement.outerHTML)}catch(e){};let fr=[];try{fr=[...doc.querySelectorAll('iframe,frame')]}catch(e){};fr.forEach(f=>{try{walk(f.contentDocument,d+1)}catch(e){}})};const scan=()=>{const info={v:${BOOKMARKLET_VERSION},url:location.href,title:document.title,frames:0,tables:0,kbTables:0,gridCells:0,ready:document.readyState,loading:false};const visit=(doc,d)=>{if(!doc||d>2)return;info.frames++;try{const tables=[...doc.querySelectorAll('table')];info.tables+=tables.length;info.kbTables+=tables.filter(x=>/kbtable|^kb|timetable|skb|kbgrid/i.test((x.id||'')+(x.className||''))).length}catch(e){};try{[...doc.querySelectorAll('[id]')].forEach(el=>{if(/^\\d{1,2}[-_]\\d{1,2}$/.test(el.id))info.gridCells++})}catch(e){};try{if(/加载中|loading/i.test(doc.body?doc.body.textContent:''))info.loading=true}catch(e){};try{[...doc.querySelectorAll('iframe,frame')].forEach(f=>visit(f.contentDocument,d+1))}catch(e){}};visit(document,0);return info};const ready=info=>info.kbTables>0||info.gridCells>0||info.tables>=3;const copy=()=>{seen.clear();parts.length=0;walk(document,0);const info=scan();const head='<<<DAWNTICK>>>'+JSON.stringify(info)+SEP;const body=parts.join(SEP);navigator.clipboard.writeText(head+body+'<<<END>>>').then(()=>alert('已复制（书签 v${BOOKMARKLET_VERSION}）：表格 '+info.tables+' 个，疑似课表 '+info.kbTables+' 个，整点 '+info.gridCells+' 个，页面片段 '+info.frames+' 段')).catch(()=>prompt('复制下面的内容，回晓刻粘贴',head+body+'<<<END>>>'))};let tries=0;const wait=()=>{const info=scan();if(ready(info)||tries>=6){copy();return}tries++;setTimeout(wait,700)};wait()})();`;
 

@@ -1,8 +1,11 @@
+import { readSystemsConfig, type SchoolSystemId } from '../config/index.ts';
 import { DIRECTORY_NAMES, MANUAL_SCHOOLS } from './schools.ts';
 
 export { DIRECTORY_NAMES, MANUAL_SCHOOLS };
 
-export type SchoolSystem = 'jwglxt' | 'qzdatasource' | 'urp' | 'other';
+/** 教务系统 id；事实来源是 src/config/systems.json（见 src/config/index.ts）。 */
+export type SchoolSystem = SchoolSystemId;
+
 export interface SystemEntry {
   id: SchoolSystem;
   label: string;
@@ -11,13 +14,17 @@ export interface SystemEntry {
   hint: string;
 }
 
-/** 教务系统入口模板：路径来自各系统本身的固定写法。 */
-export const SYSTEM_ENTRIES: readonly SystemEntry[] = [
-  { id: 'jwglxt', label: '正方教务', loginPath: '/jwglxt/xtgl/login_slogin.html', hint: '个人课表查询在「信息查询 → 学生课表查询」' },
-  { id: 'qzdatasource', label: '强智教务', loginPath: '/jsxsd/', hint: '课表在「培养管理 → 我的课表」' },
-  { id: 'urp', label: 'URP 教务', loginPath: '/', hint: '综合教务系统，课表在「课表查询」' },
-  { id: 'other', label: '其他教务', loginPath: '/', hint: '自行登录后打开课表页' },
-];
+/**
+ * 教务系统入口模板：数据全部来自 src/config/systems.json（经 src/config 校验）。
+ * 这里只是把配置字段改成既有调用方习惯的名字（name → label、entryPath → loginPath），
+ * 保证 SYSTEM_ENTRIES 的形态与顺序不变，避免别处的引用一起改。
+ */
+export const SYSTEM_ENTRIES: readonly SystemEntry[] = readSystemsConfig().map((system) => ({
+  id: system.id,
+  label: system.name,
+  loginPath: system.entryPath,
+  hint: system.hint,
+}));
 
 export interface SchoolEntry {
   id: string;
