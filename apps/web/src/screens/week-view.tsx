@@ -148,7 +148,7 @@ export function WeekView({
   const [nowTick, setNowTick] = useState(() => Date.now());
   const touchStart = useRef<number | null>(null);
   const session = useRef<DragSession | null>(null);
-  const suppressClickAt = useRef(0);
+  const suppressNextClick = useRef(false);
   const columns = useRef(new Map<number, HTMLElement>());
   const dropRef = useRef<{ day: number; period: number } | null>(null);
   const emptyRef = useRef<EmptyTarget | null>(null);
@@ -313,6 +313,8 @@ export function WeekView({
 
   /** 长按 350ms 后进入拖动；未达时长前抬手仍是单击（打开课程详情）。 */
   function onLessonPointerDown(event: React.PointerEvent<HTMLDivElement>, lesson: LessonCell): void {
+    // 每次按下都先复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次单击
+    suppressNextClick.current = false;
     if (event.button !== 0 || !lesson.inWeek) return;
     clearSession();
     const active: DragSession = {
@@ -374,8 +376,8 @@ export function WeekView({
     const wasDragging = active.active;
     clearSession();
     if (!wasDragging) return;
-    // 刚刚拖过，紧接着的那次 click 不再当单击处理
-    suppressClickAt.current = Date.now();
+    // 刚刚拖过，紧接着的那一次 click 不再当单击处理（只抑制这一次）
+    suppressNextClick.current = true;
     releaseCapture(active);
     setDrag(null);
     const drop = targetCellOf(event.clientX, event.clientY) ?? dropRef.current;
@@ -393,7 +395,7 @@ export function WeekView({
     const wasDragging = active.active;
     clearSession();
     if (!wasDragging) return;
-    suppressClickAt.current = Date.now();
+    suppressNextClick.current = true;
     releaseCapture(active);
     setDrag(null);
     dropRef.current = null;
@@ -623,12 +625,6 @@ export function WeekView({
                       onPointerMove={onLessonPointerMove}
                       onPointerUp={(event) => onLessonPointerUp(event, lesson)}
                       onPointerCancel={onLessonPointerCancel}
-                      onClickCapture={(event) => {
-                        // 拖动结束后的 400ms 内不把这次 click 当单击（防误开详情）
-                        if (Date.now() - suppressClickAt.current > 400) return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                      }}
                     >
                       <CourseCard
                         name={lesson.name}
@@ -637,7 +633,14 @@ export function WeekView({
                         teacher={lesson.teacher}
                         meta={`${lesson.startTime}-${lesson.endTime}`}
                         tone={!lesson.inWeek ? 'ghost' : lesson.holiday ? 'holiday' : 'solid'}
-                        onClick={() => onSelectLesson(lesson)}
+                        onClick={() => {
+                          // 拖动收尾的那一次 click 只用来清标记，不打开详情
+                          if (suppressNextClick.current) {
+                            suppressNextClick.current = false;
+                            return;
+                          }
+                          onSelectLesson(lesson);
+                        }}
                         className={cn('h-full', lesson.inWeek && 'cursor-grab select-none')}
                       />
                     </div>

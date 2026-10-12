@@ -224,6 +224,42 @@ async function dragLesson(container: HTMLElement, name: string, moveTo?: { day: 
   return true;
 }
 
+/** 找到课程卡（CourseCard 渲染的按钮）与承接指针事件的外层容器。 */
+function findLessonCard(container: HTMLElement, name: string): { card: HTMLElement; holder: HTMLElement } | null {
+  const card = [...container.querySelectorAll('[data-tone]')].find((item) =>
+    (item.textContent ?? '').includes(name),
+  );
+  const holder = card?.parentElement;
+  if (!(card instanceof window.HTMLElement) || !(holder instanceof window.HTMLElement)) return null;
+  return { card, holder };
+}
+
+/** 只补发一次 click（不再按下指针）：用来验证拖动收尾那次 click 是否被抑制。 */
+function clickLessonCard(container: HTMLElement, name: string): boolean {
+  const found = findLessonCard(container, name);
+  if (found === null) return false;
+  found.card.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  return true;
+}
+
+/**
+ * 普通单击课程卡：pointerdown → pointerup → click。
+ * 两帧之间只有 40ms，远小于长按阈值 350ms，因此不会进入拖动。
+ * React 18 只在根容器上监听，click 必须打在卡片自身上才会命中它的 onClick。
+ */
+async function tapLessonCard(container: HTMLElement, name: string): Promise<boolean> {
+  const found = findLessonCard(container, name);
+  if (found === null) return false;
+  stubRect(found.holder, 100, 100);
+  found.holder.dispatchEvent(pointerEvent('pointerdown', { pointerId: 7, button: 0, clientX: 150, clientY: 104 }));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  found.holder.dispatchEvent(pointerEvent('pointerup', { pointerId: 7, clientX: 150, clientY: 104 }));
+  await flush(2);
+  found.card.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush(10);
+  return true;
+}
+
 const PAGE_SAMPLE = `<table id="kbtable"><tr>
   <td id="1-1"><div><span class="title">网页导入课程</span><p>张老师</p><p>教三-401</p><p>1-16周</p></div></td>
   <td id="2-1"><div><span class="title">网页导入课程二</span><p>李老师</p><p>理科楼-201</p><p>2-16周(双)</p></div></td>
@@ -311,6 +347,32 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
   check('取消调整弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
+
+  // C1b：单击课程卡打开详情。拖动收尾只抑制紧随的那一次 click，且 pointerdown 会复位抑制标记。
+  await dragLesson(view.container, '高数');
+  await flush(4);
+  const tailClick = clickLessonCard(view.container, '高数');
+  await flush(6);
+  check(
+    '拖动收尾的那次点击不打开详情',
+    tailClick && document.querySelector('[aria-label="课前提醒"]') === null,
+    '',
+  );
+  // 再拖一次但不补 click（模拟抬手落在卡片外，抑制标记会残留），随后普通单击必须仍能打开详情
+  await dragLesson(view.container, '高数');
+  await flush(4);
+  const tapped = await tapLessonCard(view.container, '高数');
+  const detailText = document.body.textContent ?? '';
+  check(
+    '点课程卡打开详情',
+    tapped &&
+      document.querySelector('[aria-label="课前提醒"]') !== null &&
+      detailText.includes('删除整门课'),
+    detailText.slice(-60),
+  );
+  // 关掉详情面板，避免影响后续断言
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(8);
 
   // C2：点空白格 → 虚线占位块 → 滚轮改节次 → 进课程表单预填（周二第 1 节是空的）
   const clickInfo = clickGridCell(view.container, 2);

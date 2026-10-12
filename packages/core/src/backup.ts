@@ -22,7 +22,6 @@ export const BACKUP_META_KEYS: readonly string[] = [
   'semester_countdown',
   'holiday_countdown',
   'widget_variant',
-  'ui_schedule_sections',
   'receive_beta',
 ];
 
