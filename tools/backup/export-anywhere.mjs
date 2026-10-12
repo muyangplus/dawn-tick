@@ -35,7 +35,7 @@ function knownLocations() {
   const list = [];
   if (process.env.APPDATA) list.push(path.join(process.env.APPDATA, 'com.dawntick.app', 'dawn-tick.db'));
   if (process.env.LOCALAPPDATA) list.push(path.join(process.env.LOCALAPPDATA, 'DawnTick', 'dawn-tick.db'));
-  list.push(path.resolve('out-local/DawnTick-data/dawn-tick.db'));
+  list.push(path.resolve('out-local/com.dawntick.app/dawn-tick.db'));
   return list;
 }
 

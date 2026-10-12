@@ -7,6 +7,26 @@ pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
+/// 数据目录锁定为程序所在目录下的 com.dawntick.app（不做候选与回退）。
+fn data_dir() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("com.dawntick.app")))
+        .unwrap_or_else(|| std::path::PathBuf::from("com.dawntick.app"))
+}
+
+/// 数据库地址：绝对路径，位于数据目录内。
+fn database_url_string() -> String {
+    let file = data_dir().join("dawn-tick.db");
+    format!("sqlite:{}", file.to_string_lossy().replace('\\', "/"))
+}
+
+#[tauri::command]
+fn database_url() -> String {
+    database_url_string()
+}
+
+
 fn log_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(base) = std::env::var("LOCALAPPDATA") {
@@ -287,95 +307,17 @@ fn log_database_status() {}
 /// 不可用先改名让 WebView2 重建，改名也失败就改用可写目录。
 #[cfg(windows)]
 fn ensure_webview_folder_writable() {
-    let mut failures: Vec<String> = Vec::new();
-    let mut candidates: Vec<(PathBuf, bool)> = Vec::new();
-
-    // 使用者显式指定的目录也要探测：盲信环境变量会让 WebView2 直接失败并 panic。
-    if let Ok(custom) = std::env::var("WEBVIEW2_USER_DATA_FOLDER") {
-        let path = PathBuf::from(&custom);
-        match probe_folder(&path) {
-            Ok(()) => {
-                append_log(&format!("WebView2 数据目录可用: {}（环境变量指定）", path.display()));
-                return;
-            }
-            Err(error) => {
-                failures.push(format!("{}: 环境变量指定但不可用({error})", path.display()));
-                std::env::remove_var("WEBVIEW2_USER_DATA_FOLDER");
-            }
+    // 数据目录锁死：不再列候选、不再探测回退
+    let locked = data_dir();
+    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &locked);
+    match probe_folder(&locked) {
+        Ok(()) => append_log(&format!("WebView2 数据目录已锁定: {}", locked.display())),
+        Err(error) => {
+            note_access_denied(&format!("锁定目录 {}", locked.display()), &error);
+            append_log(&format!("WebView2 数据目录不可写: {error}"));
         }
     }
-
-    let base = std::env::var("LOCALAPPDATA").ok();
-    if let Some(ref base) = base {
-        candidates.push((PathBuf::from(base).join("com.dawntick.app"), true));
-        // 与数据库同根的用户目录：默认位置若被提权进程改坏 ACL，这里通常仍可写
-        candidates.push((PathBuf::from(base).join("DawnTick-data"), false));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(program_dir) = exe.parent() {
-            candidates.push((program_dir.join("DawnTick-data"), false));
-        }
-    }
-    if let Ok(roaming) = std::env::var("APPDATA") {
-        candidates.push((PathBuf::from(roaming).join("com.dawntick.app"), false));
-    }
-
-    let holders = describe_holders();
-
-    for (folder, is_default) in candidates {
-        match probe_folder(&folder) {
-            Ok(()) => {
-                if !is_default {
-                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &folder);
-                }
-                append_log(&format!(
-                    "WebView2 数据目录可用: {}{}",
-                    folder.display(),
-                    if is_default { "（默认位置）" } else { "（已切换）" }
-                ));
-                return;
-            }
-            Err(error) => {
-                failures.push(format!("{}: {error}", folder.display()));
-                note_access_denied(&format!("WebView2 候选目录 {}", folder.display()), &error);
-                // 默认位置被占用时尝试改名重建一次，再重新探测
-                if is_default {
-                    let stamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|value| value.as_secs())
-                        .unwrap_or(0);
-                    let dir = folder.join("EBWebView");
-                    let backup = dir.with_file_name(format!("EBWebView.bak-{stamp}"));
-                    if dir.exists() && std::fs::rename(&dir, &backup).is_ok() {
-                        append_log(&format!("已改名重建: {}", backup.display()));
-                        if probe_folder(&folder).is_ok() {
-                            append_log(&format!("WebView2 数据目录可用: {}（改名后）", folder.display()));
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for line in &failures {
-        append_log(&format!("数据目录不可用: {line}"));
-    }
-    let restricted = failures.iter().all(|line| line.contains("拒绝访问") || line.contains("os error 5"));
-    let hint = if restricted {
-        "所有候选目录都因「拒绝访问」失败：当前进程对用户目录与程序目录都没有写权限（可能以受限权限或沙箱方式启动）。请用普通双击方式运行本程序。"
-    } else {
-        "请结束上述进程（或在任务管理器里结束残留的 msedgewebview2.exe）后重试。"
-    };
-    let message = format!(
-        "WebView2 数据目录不可用，应用无法启动。\n\n{}\n\n{}\n\n{}",
-        holders,
-        failures.join("\n"),
-        hint
-    );
-    append_log("没有可写的数据目录，退出启动流程");
-    show_error_box("晓刻 DawnTick 启动失败", &message);
-    std::process::exit(1);
+    return;
 }
 
 /// 真实验证一个目录能否作为 WebView2 数据目录：建目录、建 EBWebView 子目录、写并删除探针文件。
@@ -1161,114 +1103,6 @@ fn elevate_on_access_denied(reason: &str) -> bool {
     }
 }
 
-#[derive(serde::Serialize)]
-struct DatabaseCandidate {
-    path: String,
-    size: u64,
-}
-
-/// 列出可导入的数据库：常见位置 + 指定目录（含一层子目录）。
-#[tauri::command]
-async fn list_data_locations(extra_dir: Option<String>) -> Vec<DatabaseCandidate> {
-    let mut paths: Vec<PathBuf> = Vec::new();
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        paths.push(PathBuf::from(&appdata).join("com.dawntick.app").join("dawn-tick.db"));
-    }
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        paths.push(PathBuf::from(&local).join("DawnTick").join("dawn-tick.db"));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            paths.push(dir.join("DawnTick-data").join("dawn-tick.db"));
-        }
-    }
-    if let Some(directory) = extra_dir {
-        let base = PathBuf::from(&directory);
-        if !base.as_os_str().is_empty() {
-            paths.push(base.join("dawn-tick.db"));
-            if let Ok(entries) = std::fs::read_dir(&base) {
-                for entry in entries.flatten() {
-                    let nested = entry.path().join("dawn-tick.db");
-                    if nested.is_file() {
-                        paths.push(nested);
-                    }
-                }
-            }
-        }
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for path in paths {
-        if !path.is_file() {
-            continue;
-        }
-        let key = path.to_string_lossy().to_string();
-        if !seen.insert(key.clone()) {
-            continue;
-        }
-        let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        out.push(DatabaseCandidate { path: key, size });
-    }
-    out
-}
-
-/// 读取指定数据库，返回与应用备份一致的结构（stores + meta）。
-#[tauri::command]
-async fn read_foreign_database(path: String, stores: Vec<String>) -> Result<serde_json::Value, String> {
-    use sqlx::sqlite::SqliteConnectOptions;
-    use sqlx::{Column, Connection, Row, TypeInfo, ValueRef};
-
-    let options = SqliteConnectOptions::new().filename(&path).read_only(true);
-    let mut conn = sqlx::SqliteConnection::connect_with(&options)
-        .await
-        .map_err(|error| format!("打开数据库失败: {error}"))?;
-
-    let mut store_map = serde_json::Map::new();
-    for table in stores {
-        if !table.chars().all(|item| item.is_ascii_alphanumeric() || item == '_') {
-            continue;
-        }
-        let Ok(rows) = sqlx::query(&format!("SELECT * FROM {table}")).fetch_all(&mut conn).await else {
-            continue;
-        };
-        let mut list = Vec::new();
-        for row in rows {
-            let mut object = serde_json::Map::new();
-            for (index, column) in row.columns().iter().enumerate() {
-                let value = match row.try_get_raw(index) {
-                    Ok(raw) if !raw.is_null() => {
-                        let name = raw.type_info().name().to_string();
-                        if name.contains("INT") {
-                            row.try_get::<i64, _>(index).map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
-                        } else if name.contains("REAL") || name.contains("FLOA") || name.contains("DOUB") {
-                            row.try_get::<f64, _>(index).map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
-                        } else {
-                            row.try_get::<String, _>(index).map(serde_json::Value::from).unwrap_or(serde_json::Value::Null)
-                        }
-                    }
-                    _ => serde_json::Value::Null,
-                };
-                object.insert(column.name().to_string(), value);
-            }
-            list.push(serde_json::Value::Object(object));
-        }
-        store_map.insert(table, serde_json::Value::Array(list));
-    }
-
-    let mut meta = serde_json::Map::new();
-    if let Ok(rows) = sqlx::query("SELECT key, value FROM app_meta").fetch_all(&mut conn).await {
-        for row in rows {
-            if let (Ok(key), Ok(value)) = (row.try_get::<String, _>(0), row.try_get::<String, _>(1)) {
-                meta.insert(key, serde_json::Value::String(value));
-            }
-        }
-    }
-    let _ = conn.close().await;
-
-    Ok(serde_json::json!({ "stores": store_map, "meta": meta }))
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
@@ -1323,8 +1157,7 @@ pub fn run() {
             set_autostart,
             relaunch_elevated,
             elevation_status,
-            list_data_locations,
-            read_foreign_database,
+            database_url,
             open_import_window,
             close_import_window,
             submit_page_import,
@@ -1335,7 +1168,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
-                    DATABASE_URL,
+                    &database_url_string(),
                     vec![tauri_plugin_sql::Migration {
                         version: 1,
                         description: "init",

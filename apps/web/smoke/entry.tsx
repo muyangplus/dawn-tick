@@ -65,13 +65,18 @@ async function seed(): Promise<void> {
   });
   // 周视图铺满 7 天，才能验证「高亮当天列」
   await writeSettings(storage, { viewDays: 7 });
-  // 第 5 周周一放假，用来验证放假日灰显
+  // 当前周的周一放假，用来验证放假日灰显（跟随当天日期，避免跨周后失效）
+  const now = new Date();
+  const mondayOffset = (now.getDay() + 6) % 7;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayOffset);
+  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
+  const mondayText = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
     type: 'holiday',
     title: '国庆调休放假',
-    onDate: '2026-10-05',
+    onDate: mondayText,
   });
 }
 

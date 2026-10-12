@@ -40,7 +40,7 @@ import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
 import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
-import { ForeignImport } from '../components/foreign-import.tsx';import { PeriodSettings } from '../components/period-settings.tsx';
+import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
@@ -842,10 +842,6 @@ export function SettingsView({
           />
         </div>
         {backupMessage !== null && <span className="text-xs text-muted">{backupMessage}</span>}
-      </CollapsibleCard>
-
-      <CollapsibleCard id="foreign" title="从其他位置导入" icon={Upload}>
-        <ForeignImport storage={storage} onImported={onChanged} />
       </CollapsibleCard>
 
       <CollapsibleCard id="about" title="关于" icon={Info}>

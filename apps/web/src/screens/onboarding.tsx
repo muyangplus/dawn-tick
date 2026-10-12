@@ -12,7 +12,6 @@ import {
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
-import { ForeignImport } from '../components/foreign-import.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 
@@ -161,7 +160,6 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
                 导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
               </span>
             )}
-            <ForeignImport storage={storage} onImported={onDone} />
           </div>
         </Card>
       </div>
