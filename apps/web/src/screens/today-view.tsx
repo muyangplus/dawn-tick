@@ -44,7 +44,7 @@ export function TodayView({ data }: { data: AppData }) {
       )}
 
       {data.todayLessons.length === 0 ? (
-        <EmptyState title="今天没有课，好好休息" description="可切换到周视图查看本周安排" />
+        <EmptyState title="今天没有课" description="可切换到周视图查看本周安排" />
       ) : (
         <ul className="flex flex-col gap-2">
           {data.todayLessons.map((lesson) => {

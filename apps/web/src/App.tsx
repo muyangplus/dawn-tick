@@ -213,9 +213,9 @@ export function App() {
         const opened = await openStorage();
         attachLogStorage(opened);
         await loadLogs();
-        // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切过去，否则用内置。
-        // 运行时绝不热替换——设置页下载成功只提示「下次启动生效」。
-        // 这里单独兜一层：预设是外部数据，坏缓存只能退回内置，不能拦住启动。
+        // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，否则使用内置。
+        // 运行时不替换；设置页下载成功后只提示「下次启动生效」。
+        // 预设是外部数据，异常缓存退回内置，不阻断启动。
         try {
           const preset = await applyCachedPreset(opened);
           logInfo('preset', '启动套用预设', {

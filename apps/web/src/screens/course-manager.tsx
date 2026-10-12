@@ -101,7 +101,7 @@ export function CourseManager({
   return (
     <CollapsibleCard id="courses" title="课程管理" icon={BookOpen} badge={`${courses.length} 门`}>
       {courses.length === 0 ? (
-        <span className="text-xs text-muted">当前学期还没有课程，可在导入页添加或导入</span>
+        <span className="text-xs text-muted">当前学期没有课程，可在导入页添加或导入</span>
       ) : (
         <ul className="flex flex-col gap-2">
           {courses.map((course) => (

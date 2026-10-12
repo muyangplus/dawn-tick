@@ -230,7 +230,7 @@ export const SHADOW = {
 export const TAP_MIN = 44;
 export const BREAKPOINT = { tablet: 768, desktop: 1024 } as const;
 
-/** 课程块底色：以表面色为基底混入课程色，保证块内文字仍满足对比度要求。 */
+/** 课程块底色：以表面色为基底混入课程色，块内文字满足对比度要求。 */
 export function courseTint(surface: string, courseColor: string, amount = 0.18): string {
   return mix(surface, courseColor, amount);
 }

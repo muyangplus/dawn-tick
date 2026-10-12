@@ -237,7 +237,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
               </Select>
             </Field>
             {schedules.length === 0 ? (
-              <span className="text-sm text-muted">这门课还没有排课，先去课程管理里加排课</span>
+              <span className="text-sm text-muted">这门课还没有排课，请在课程管理中添加排课</span>
             ) : (
               <Field label="要调整的课次">
                 <Select value={scheduleId} onValueChange={setScheduleId}>

@@ -218,9 +218,9 @@ export function SettingsView({
   }, []);
 
   /**
-   * 检查预设更新：只提示与下载，**不会**在运行时静默替换正在使用的预设。
-   * 下载成功的快照写进缓存，下次启动由 resolvePresetSource 读取生效；
-   * 离线、404、哈希不符等任何失败都只给一句可读提示，界面照旧用内置预设。
+   * 检查预设更新：提示与下载。
+   * 下载成功的快照写入缓存，下次启动由 resolvePresetSource 读取生效；
+   * 离线、404、哈希不符等失败返回一条提示，界面沿用内置预设。
    */
   async function runPresetCheck(): Promise<void> {
     setPresetBusy(true);
@@ -239,8 +239,8 @@ export function SettingsView({
       }
       const snapshot = await fetchSnapshot(status.version);
       await writeCachedSnapshot(storage, snapshot);
-      // 快照是清单；「下次启动生效」还要有正文，这一步把正文一并校验后落盘。
-      // 正文不合法时只记日志：界面照旧提示已下载，下次启动仍会回退内置。
+      // 快照是清单；「下次启动生效」还需要正文，这一步把正文一并校验后落盘。
+      // 正文不合法时只记日志：界面提示已下载，下次启动回退内置。
       const content = await cacheSnapshotContent(storage, snapshot);
       if (!content.ok) {
         logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
@@ -510,7 +510,7 @@ export function SettingsView({
 
   const layoutGroups: ReactNode = (
     <div className="flex flex-col gap-2">
-      <span className="text-xs text-muted">每张卡片都可以显示/隐藏、上移下移、在「主列 / 侧列」之间切换。</span>
+      <span className="text-xs text-muted">每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换。</span>
       <CardLayoutPanel layout={layout} onChange={setLayout} storage={storage} />
     </div>
   );
@@ -850,31 +850,7 @@ export function SettingsView({
           浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
         </span>
         <span className="text-xs text-muted">本期无服务端，同步协议已就绪但未启用；跨设备迁移请用 JSON 备份。</span>
-        <span className="text-xs text-muted" data-role="preset-version">
-          预设版本：
-          {presetSource === null
-            ? '读取中…'
-            : `${presetSource.version}（${presetSource.kind === 'cached' ? '已更新' : '内置'}）`}
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            aria-label="检查预设更新"
-            disabled={presetBusy}
-            onClick={() => void runPresetCheck()}
-          >
-            检查预设更新
-          </Button>
-          {presetResult !== null && (
-            <span className="text-xs text-muted" data-role="preset-result">
-              {presetResult}
-            </span>
-          )}
-        </div>
-        <span className="text-xs text-muted">
-          预设来自独立仓库 dawn-tick-presets，会校验哈希后缓存；下载成功不会立刻替换当前预设，下次启动才生效。
-        </span>
+        <span className="text-xs text-muted">预设来源：独立仓库 dawn-tick-presets；更新于下次启动生效。</span>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
             导出备份
@@ -919,6 +895,41 @@ export function SettingsView({
         <a className="text-xs text-primary-strong underline" href="https://github.com/muyangplus/dawn-tick">
           https://github.com/muyangplus/dawn-tick
         </a>
+        <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
+          <span>预设仓库</span>
+          <a
+            data-role="preset-repo-link"
+            className="text-primary-strong underline"
+            href="https://github.com/muyangplus/dawn-tick-presets"
+            target="_blank"
+            rel="noreferrer noopener"
+            aria-label="打开预设仓库 dawn-tick-presets（GitHub，新窗口）"
+          >
+            https://github.com/muyangplus/dawn-tick-presets
+          </a>
+          <span data-role="preset-version">
+            预设版本：
+            {presetSource === null
+              ? '读取中…'
+              : `${presetSource.version}（${presetSource.kind === 'cached' ? '已更新' : '内置'}）`}
+          </span>
+        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="检查预设更新"
+            disabled={presetBusy}
+            onClick={() => void runPresetCheck()}
+          >
+            检查预设更新
+          </Button>
+          {presetResult !== null && (
+            <span className="text-xs text-muted" data-role="preset-result">
+              {presetResult}
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"

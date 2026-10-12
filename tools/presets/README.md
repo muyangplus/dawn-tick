@@ -1,7 +1,7 @@
 # 预设快照的同步（tools/presets）
 
-这个目录只有一个脚本：`sync-snapshot.mjs`。它把**预设仓库** `dawn-tick-presets` 产出的
-真实快照同步进主仓库，成为「内置预设」——也就是 App 离线时用的那份兜底数据。
+本目录含一个脚本：`sync-snapshot.mjs`，把预设仓库 `dawn-tick-presets` 产出的
+快照同步进主仓库，作为内置预设（App 离线时的兜底数据）。
 
 零依赖：只用 Node 内置模块（`node:crypto` / `node:fs` / `node:path` / `node:url`）。
 
@@ -22,10 +22,10 @@ snapshot/presets-<version>.json                                        唯一分
 version.json                                                           { version, schemaVersion, generatedAt, channel }
 ```
 
-**`presets/index.json` 已取消**：它原来的全部信息（学校索引 + 系统引用）现在是快照的**顶层新增字段
-`index`**（`{_generated: true, version, schemaVersion, generatedAt, schools[], systems[]}`），
-并且**参与快照内容哈希**。所以索引与清单天然同源同版本，客户端也不再需要单独请求那个地址
-（`apps/web/src/preset-update.ts` 里旧的 `PRESET_INDEX_URL` 已删除——它指向的文件会 404）。
+**`presets/index.json` 已取消**：它原来的信息（学校索引 + 系统引用）现为快照的顶层新增字段
+`index`（`{_generated: true, version, schemaVersion, generatedAt, schools[], systems[]}`），
+并且参与快照内容哈希。索引与清单因此同源同版本，客户端不再单独请求该地址
+（`apps/web/src/preset-update.ts` 里旧的 `PRESET_INDEX_URL` 已删除，该地址返回 404）。
 
 主仓库里与预设有关的一共四个文件：
 
@@ -46,7 +46,7 @@ version.json                                                           { version
 | `sources.systems[]` | `presets/systems/<id>/system.json`。合并后这个文件**存在**，但条目 `sha256` 覆盖的是 `scripts/lib/legacy.mjs` 把它编译成**旧扁平结构**后那段文本，与文件自身的哈希不同 | 能读，但**不能按它复算哈希** |
 | `sources.adapters` | `{ 文件名: sha256 }`，取自 `systems/<id>/parse.js` 与学校级 `schools/<id>/parse.js` | —— |
 
-因此：**主仓库任何代码都不该按 `path` 读文件做校验**。真实路径一律看快照内嵌的 `index`
+**约束：主仓库任何代码都不按 `path` 读文件做校验。** 真实路径一律看快照内嵌的 `index`
 （学校的 `configPath` / `timetablePath` 都指向 `presets/schools/<校目录>/school.json`，
 系统的 `metaPath` / `loginPath` 都指向 `presets/systems/<id>/system.json`）。
 `verifyBuiltinPresetSnapshot()` 只校验 `path` 与这些真实路径的**形状**（不读文件），
@@ -58,13 +58,13 @@ version.json                                                           { version
 # 版本从 <预设仓库>/version.json 取
 node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets"
 
-# 指定版本（必须真的存在 snapshot/presets-<version>.json）
+# 指定版本（该版本快照须存在于 snapshot/presets-<version>.json）
 node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets" --version 0.1.1
 
 # 只校验、不写盘（CI 里可以用来发现「预设仓库有新快照但主仓库没同步」）
 node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets" --check
 
-# 写到别的目录（两个文件名不变；目录不存在时按需创建）——试跑与自动化测试用
+# 写到别的目录（两个文件名不变；目录不存在时按需创建），用于试跑与自动化测试
 node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets" --out "$env:TEMP/预设试跑"
 ```
 
@@ -91,13 +91,13 @@ hash = "sha256:" + sha256( canonicalJson( 去掉 hash 字段后的快照对象 )
 ```
 
 - `canonicalJson`：对象键排序、数组保序、无多余空白；
-- 与预设仓库 `scripts/snapshot.mjs` 的口径逐字一致，因此同一份数据在任何机器上得到同一个哈希。
+- 口径与预设仓库 `scripts/snapshot.mjs` 逐字一致：同一份数据在任何机器上得到同一个哈希。
 
 实现只存在一处：
 
-- `packages/core/src/config/preset-hash.ts` —— `canonicalPresetJson()` + `sha256HexSync()`；
-  它是**纯 TS**（自己实现 SHA-256，不用 `node:crypto`），因为同一份代码要跑在浏览器里：
-  Vite 会把 `node:crypto` 「为浏览器外部化」，调用 `createHash` 会直接抛错，所以这里不能用平台 API；
+- `packages/core/src/config/preset-hash.ts` 定义 `canonicalPresetJson()` 与 `sha256HexSync()`；
+  其为**纯 TS**（自实现 SHA-256，不使用 `node:crypto`），同一份代码要运行在浏览器里：
+  Vite 会把 `node:crypto` 为浏览器外部化，调用 `createHash` 直接抛错，故不使用平台 API；
 - `packages/core/src/config/index.ts` 转出这两个函数（`BUILTIN_PRESET_SNAPSHOT`、
   `verifyBuiltinPresetSnapshot()` 也在这里）；
 - `apps/web/src/preset-update.ts` 只从 core **转出**同名函数（Web 端下载校验用的异步
@@ -107,16 +107,16 @@ hash = "sha256:" + sha256( canonicalJson( 去掉 hash 字段后的快照对象 )
 
 ## 4. 版本与 schemaVersion 的语义
 
-- **`version`（内容版本）**：预设仓库的版本线，形如 `0.1.0`（SemVer）。每发布一版内容就 +1；
-  App 的「检查预设更新」用它做比较，只接受**更高**的版本。内置值即 `BUILTIN_PRESET_VERSION`。
+- **`version`（内容版本）**：预设仓库的版本线，形如 `0.1.0`（SemVer）。每发布一版内容即递增；
+  App 的「检查预设更新」按该版本比较，只接受**更高**的版本。内置值即 `BUILTIN_PRESET_VERSION`。
 - **`schemaVersion`（结构版本）**：快照字段形状的版本，当前为 `1`。只在快照字段增删或改语义时 +1；
   App 见到比自己能消费的 `schemaVersion` 更高的快照会**拒收**（而不是猜着解析）。
 - 两者独立：可以只发内容（`version` 变、`schemaVersion` 不变）；结构一变，旧 App 必须拒收。
 - 快照文件里没有 `schemaVersion` 时按 `1` 处理（1.0.0 时期的形状）。
 
-> 版本线的现状：预设仓库从 `1.0.0` 改到了 `0.1.0`（回到 0.x 起步），主仓库内置版本随之变成 `0.1.0`。
-> 比较逻辑不变（SemVer 逐段比大小），但**任何「更旧」的测试数据都要取 0.x 里比 0.1.0 小的版本**，
-> 例如 `0.0.9`——`0.9.0` 现在反而比内置**新**。
+> 版本线现状：预设仓库从 `1.0.0` 调整为 `0.1.0`，主仓库内置版本随之变为 `0.1.0`。
+> 比较逻辑不变（SemVer 逐段比大小）；「更旧」的测试数据须取 0.x 中小于 0.1.0 的版本，
+> 例如 `0.0.9`；`0.9.0` 大于内置版本。
 
 ## 5. 规矩（重要）
 
@@ -143,7 +143,7 @@ node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets"
 
 - 运行时自检：`verifyBuiltinPresetSnapshot()` 返回 `{ ok, reason? }`，复算快照哈希（含内嵌 `index`），
   并核对快照 `sources.timetables` / `sources.systems` 与内置 `timetables.json` / `systems.json`
-  的 id 集合完全一致（只比集合，不比顺序——快照按 id 排序，内置顺序是识别优先级），
+  的 id 集合逐项一致（只比集合，不比顺序；快照按 id 排序，内置顺序为识别优先级），
   同时校验每条 `path` 的形状（作息表 = 历史契约符号路径，教务系统 = `systems/<id>/system.json`）
   与内嵌 `index` 的路径形状（学校都指向 `schools/<校目录>/school.json`，系统都指向 `systems/<id>/system.json`）。
 - 单元测试：

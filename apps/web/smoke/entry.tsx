@@ -1332,6 +1332,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     requestLink?.getAttribute('href') ?? '(没有链接)',
   );
 
+  const qinghuaBadge = (qinghuaRow?.querySelector('[data-role="school-badge"]')?.textContent ?? '').trim();
+  const qinghuaLabel = qinghuaRow?.getAttribute('aria-label') ?? '';
+  check(
+    '未适配徽标为文字态且不含符号',
+    qinghuaBadge === '暂未适配' && /^[^\p{Emoji_Presentation}]*$/u.test(qinghuaBadge) && qinghuaLabel.endsWith('，暂未适配'),
+    `徽标=${qinghuaBadge} / aria-label=${qinghuaLabel}`,
+  );
+
   if (searchBox !== null) setInputValue(searchBox, '');
   await flush(10);
   view.container.querySelector<HTMLElement>('button[aria-label="筛选 985"]')?.click();
@@ -1553,6 +1561,20 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
       view.container.querySelector('[aria-label="恢复默认布局"]') !== null,
     '',
+  );
+  // 关于卡片：预设仓库必须是一个可点击的外部入口，且与预设版本信息并列
+  const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
+  const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';
+  const presetRepoOpensOutside =
+    presetRepoLink instanceof window.HTMLAnchorElement &&
+    presetRepoLink.target === '_blank' &&
+    /\bnoopener\b/.test(presetRepoLink.rel);
+  check(
+    '关于卡片提供预设仓库外部链接（与预设版本并列）',
+    presetRepoHref.includes('muyangplus/dawn-tick-presets') &&
+      presetRepoOpensOutside &&
+      presetRepoLink.parentElement?.querySelector('[data-role="preset-version"]') !== null,
+    `${presetRepoHref} target=${presetRepoLink?.getAttribute('target') ?? '(无)'} rel=${presetRepoLink?.getAttribute('rel') ?? '(无)'}`,
   );
   // 关于卡片默认收起，更新入口的文案由 update 单元测试覆盖，这里不重复断言
 

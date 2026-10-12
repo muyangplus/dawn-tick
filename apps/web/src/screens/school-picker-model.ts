@@ -1,30 +1,28 @@
 /**
- * 学校选择器的**纯逻辑**：搜索筛选、按省份分组、适配徽标判定、学校作息定位，以及
+ * 学校选择器的纯逻辑：搜索筛选、按省份分组、适配徽标判定、学校作息定位，以及
  * 「请求适配」的 Issue 模板地址。
  *
- * 为什么不写在 `components/school-picker.tsx` 里：单测用 `node --test` 直接跑源码，
- * 而 Node 的类型剥离**不支持 `.tsx`**（JSX 是语法错误，不是类型），所以能被单测覆盖的
- * 部分必须待在不含 JSX 的模块里；组件文件只负责渲染与键盘交互。
- * 本仓库允许的改动范围里，`apps/web/src/screens/**` 是唯一能放新 `.ts` 的地方，所以它在这里。
+ * 组件文件只负责渲染与键盘交互：单测用 `node --test` 直接跑源码，Node 的类型剥离不支持 `.tsx`，
+ * 可被单测覆盖的部分因此不含 JSX。
  *
- * 数据来源分三处，用途不同，别混：
- *   1. `packages/core/src/schools`（2659 所）：**检索目录**——校名/简称/拼音检索、省份、标签、门类。
- *      它的 `system` 字段在当前数据源里恒为空（见该模块顶部说明），所以适配判定不能只看它；
- *   2. `apps/web/src/preset-update.ts` 的 `PresetIndex`：**预设目录**——哪些学校/教务系统
- *      真的有解析脚本（`parserPath`）、学校作息文件在预设仓库里的路径；
- *   3. core 的 `findTimetable()`：**生效中的作息正文**（内置或被启动时套用的缓存覆盖）。
+ * 数据来源分三处，用途不同：
+ *   1. `packages/core/src/schools`（2659 所）：检索目录，含校名/简称/拼音检索、省份、标签、门类；
+ *      其 `system` 字段在当前数据源恒为空，适配判定不单独依赖该字段；
+ *   2. `apps/web/src/preset-update.ts` 的 `PresetIndex`：预设目录，记录哪些学校/教务系统
+ *      有解析脚本（`parserPath`）与学校作息文件在预设仓库内的路径；
+ *   3. core 的 `findTimetable()`：生效中的作息正文（内置或被启动时套用的缓存覆盖）。
  *
- * 适配徽标（`adapterInfo`）只判两种状态，不编造「部分可用/失效」：
- *   - ✅ 已适配：这所学校有有效教务系统 id（目录字段，或预设索引里该校条目的 `system`），
+ * 适配徽标（`adapterInfo`）判定两态：
+ *   - 已适配：这所学校有有效教务系统 id（目录字段，或预设索引里该校条目的 `system`），
  *     且预设索引的 `systems` 里有该系统、且它的 `parserPath` 非空；
- *   - ⏳ 暂未适配：其余情况（索引里没这所学校、系统缺解析脚本、索引不可用…），
- *     界面上同时给「请求适配」入口。
+ *   - 暂未适配：其余情况（索引里没有这所学校、系统缺解析脚本、索引不可用等），
+ *     界面上同时给出「请求适配」入口。
  *
- * TODO（等预设索引补上逐校字段后再做，现在**不要**编造）：
+ * 待预设索引补上逐校字段后可增加的状态：
  *   - 「部分可用」：需要索引给学校条目一个可用性字段（例如 `status: 'partial'` 与原因），
- *     目前 `PresetIndexSchool` 只有 `system` / `timetablePath` / `configPath`，判不出来；
- *   - 「已失效」：需要索引记录该校解析脚本的最近校验时间或失败原因，同样没有字段。
- *   这两档一旦有字段，只改 `adapterInfo` 一处即可，UI 已经是「徽标 + 说明」的结构。
+ *     当前 `PresetIndexSchool` 只有 `system` / `timetablePath` / `configPath`；
+ *   - 「已失效」：需要索引记录该校解析脚本的最近校验时间或失败原因。
+ *   两者字段齐备后只改 `adapterInfo` 一处，界面已按「徽标 + 说明」结构渲染。
  */
 import { BUILTIN_PRESET_SNAPSHOT, findTimetable, matchSchools, type SchoolEntry, type Storage } from '@dawn-tick/core';
 import {
@@ -202,8 +200,8 @@ export interface PresetContext {
 
 /**
  * 读当前生效的预设：缓存快照（版本高于内置且哈希可信）优先，否则内置快照。
- * 索引一律从**已校验的快照**里取（预设仓库已没有独立的 `presets/index.json`）。
- * 任何解析失败都收敛成 `index: null` + 可读原因，绝不抛给界面。
+ * 索引一律取自已校验的快照（预设仓库已没有独立的 `presets/index.json`）。
+ * 解析失败收敛成 `index: null` 与一条可读原因，不向界面抛出。
  */
 export async function loadPresetContext(storage: Storage): Promise<PresetContext> {
   const source = await resolvePresetSource(storage);
@@ -265,9 +263,9 @@ export interface AdapterInfo {
 /**
  * 判定「已适配 / 暂未适配」。
  *
- * 有效教务系统 id 的来源顺序：目录的 `school.system`（当前数据源恒为空，但字段语义在）
- * → 预设索引里该校条目的 `system`。拿到 id 后必须能在索引的 `systems` 里找到它，
- * 且它的 `parserPath` 非空——**只有真的有解析脚本才算适配**。
+ * 有效教务系统 id 的来源顺序：目录的 `school.system`（当前数据源恒为空，字段语义保留）
+ * → 预设索引里该校条目的 `system`。拿到 id 后须能在索引的 `systems` 里找到它，
+ * 且它的 `parserPath` 非空；解析脚本存在是「已适配」的判定条件。
  */
 export function adapterInfo(context: PresetContext | null, school: School): AdapterInfo {
   const miss = (reason: string, systemId: string | null = null, systemName: string | null = null): AdapterInfo => ({
@@ -359,7 +357,7 @@ export interface SchoolTimetableResolution {
 
 /**
  * 该校有没有专属作息：预设索引里这所学校要有 `timetablePath`，快照的作息清单里要能
- * 定位到对应文件，且**生效的预设里真的有这套作息正文**（内置或被启动时套用的缓存）。
+ * 定位到对应文件，且生效的预设内含这套作息正文（内置或被启动时套用的缓存）。
  * 三者缺一都算「暂无专属作息」，由调用方套用内置通用作息并提示。
  */
 export function resolveSchoolTimetable(context: PresetContext | null, school: School): SchoolTimetableResolution {
@@ -397,7 +395,7 @@ export function resolveSchoolTimetable(context: PresetContext | null, school: Sc
 
 /**
  * 把「已保存的教务条目」合成一条可检索的学校行：它的 `system` 直接来自条目，
- * 所以适配判定走的是系统维度（索引里有该系统且有解析脚本 → ✅）。
+ * 适配判定据此走系统维度（索引里有该系统且有解析脚本即判为已适配）。
  */
 export function schoolFromEntry(entry: SchoolEntry): School {
   return { id: entry.id, name: entry.name, tags: [], system: entry.system };

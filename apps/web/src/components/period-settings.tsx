@@ -106,7 +106,7 @@ function durationBetween(startTime: string, endTime: string): number | null {
   return minutes > 0 ? minutes : null;
 }
 
-/** 出现次数最多的值；并列时取较小的那个，保证结果稳定。 */
+/** 出现次数最多的值；并列时取较小的那个，结果可复现。 */
 function mostFrequent(counts: ReadonlyMap<number, number>): number | null {
   let best: number | null = null;
   let bestCount = 0;
@@ -199,7 +199,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const selectedPreset = findTimetable(presetId);
   const presetHint =
     selectedPreset === undefined
-      ? '内置作息：套用后整张时间表按它重排'
+      ? '内置作息：套用后整张时间表按该作息重排'
       : `${selectedPreset.periods.length} 节${
           selectedPreset.source !== undefined && selectedPreset.source.length > 0
             ? ` · ${selectedPreset.source}`
@@ -423,7 +423,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     try {
       const rows = await listTimeSlots(storage, semesterId);
       if (rows.length === 0) {
-        setMessage('还没有可重排的课次，请先点「自动生成课次」');
+        setMessage('还没有可重排的课次，请先生成课次');
         return;
       }
       const anchor = current.periodNo;
@@ -629,7 +629,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             </Button>
           </li>
         ))}
-        {slots.length === 0 && <li className="text-xs text-muted">还没有课次，先点「自动生成课次」</li>}
+        {slots.length === 0 && <li className="text-xs text-muted">还没有课次，请先生成课次</li>}
       </ul>
       <span className="text-xs text-muted">
         每节起止时间可单独修改。改完会问一次作用范围：可以只保留这一节，也可以按每节时长与课间从这一节起顺延重排后面的课次。

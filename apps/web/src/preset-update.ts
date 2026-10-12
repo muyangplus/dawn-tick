@@ -1,19 +1,19 @@
 /**
- * 预设版本与更新：从独立预设仓库读数据，缓存到本地，失败一律回退内置预设。
+ * 预设版本与更新：从独立预设仓库读数据，缓存到本地，失败回退内置预设。
  *
  * 数据流：
- *   1. `checkPresetUpdate` 只拉 `version.json`，按 SemVer 与本地版本比较，回答「有没有更新」；
- *   2. `fetchSnapshot` 拉 `snapshot/presets-<version>.json`，**规范化后做 sha256 校验**，
- *      校验不过直接抛可读错误（内容不可信，绝不使用）；
- *   3. `writeCachedSnapshot` 把校验通过的快照写进 `app_meta`，下次启动由
- *      `resolvePresetSource` / `applyCachedPreset` 读取——「下载」与「生效」是分开的两步：
- *      正在使用的预设不会被静默替换，下载成功只提示「下次启动生效」。
- *   4. `writeCachedPresetContent` 把快照清单里的正文单独存一份（`presets_content_v1`），
- *      启动时由 `applyCachedPreset` 过校验收进 core 的覆盖层——**启动套用、运行时不热替换**。
+ *   1. `checkPresetUpdate` 拉取 `version.json`，按 SemVer 与本地版本比较，返回「有无更新」；
+ *   2. `fetchSnapshot` 拉取 `snapshot/presets-<version>.json`，规范化后做 sha256 校验，
+ *      校验不符则抛出可读错误，内容不使用；
+ *   3. `writeCachedSnapshot` 把校验通过的快照写入 `app_meta`，下次启动由
+ *      `resolvePresetSource` / `applyCachedPreset` 读取；「下载」与「生效」分两步：
+ *      当前预设不被替换，下载成功后提示「下次启动生效」；
+ *   4. `writeCachedPresetContent` 把快照清单对应的正文单独存入 `presets_content_v1`，
+ *      启动时由 `applyCachedPreset` 过校验收进 core 的覆盖层；启动套用，运行时不替换。
  *
- * 安全边界：本模块**只消费数据**，不执行预设仓库里的任何 JS 适配器。
+ * 安全边界：本模块消费数据，不执行预设仓库里的 JS 适配器。
  *
- * 哈希口径与预设仓库 `scripts/snapshot.mjs` 完全一致：
+ * 哈希口径与预设仓库 `scripts/snapshot.mjs` 一致：
  * 对「去掉 hash 字段后的对象」做键序规范化的 JSON 序列化，再取 sha256。
  */
 
@@ -34,12 +34,12 @@ import { compareVersions } from './update.ts';
 /**
  * 哈希口径与预设仓库 `scripts/snapshot.mjs` 一致，实现只有一份：core 的
  * `packages/core/src/config/preset-hash.ts`。
- * 这里**只做转出**（`export { ... } from` 会保留同名导出，外部调用方不受影响），
- * 免得「浏览器一份纯 TS、Node 一份」两边漂移。
+ * 这里只做转出（`export { ... } from` 保留同名导出，外部调用方不需要改动），
+ * 以免「浏览器一份纯 TS、Node 一份」两侧漂移。
  */
 export { canonicalPresetJson, sha256HexSync } from '@dawn-tick/core';
 
-/** 预设仓库的版本清单地址（只写常量，运行时不主动联网，除非用户点「检查预设更新」）。 */
+/** 预设仓库的版本清单地址（常量；运行时仅由「检查预设更新」发起请求）。 */
 export const PRESET_VERSION_URL =
   'https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/version.json';
 
@@ -558,14 +558,14 @@ export async function resolvePresetSource(storage: Storage): Promise<PresetSourc
   return { version: cached.version, kind: 'cached', snapshot: cached };
 }
 
-// —— 缓存正文：启动时真正「套用」的那一份数据 ——
+// —— 缓存正文：启动时套用的那一份数据 ——
 //
-// 快照（`presets_snapshot_v1`）是**清单**：每条只记 `{ id, path, sha256 }`，
-// 它回答「预设仓库有哪些文件、内容哈希是多少」，本身不含作息表/教务系统的正文。
-// 因此「启动时套用缓存」还差一份正文，它单独存在 `presets_content_v1`：
-//   1. 版本必须与快照一致，且必须比内置新——否则一律不用（不允许降级、不允许串版本）；
-//   2. 正文必须过 core 的 `validateTimetables` / `validateSystems`——不合格就整体忽略；
-//   3. 任何读取/解析失败都收敛成 null，绝不抛到调用方（坏缓存只能退回内置）。
+// 快照（`presets_snapshot_v1`）是清单：每条只记 `{ id, path, sha256 }`，
+// 记录预设仓库有哪些文件与内容哈希，不含作息表/教务系统的正文。
+// 「启动时套用缓存」还需要正文，正文单独存放于 `presets_content_v1`：
+//   1. 版本须与快照一致，且高于内置版本；降级与跨版本不接受；
+//   2. 正文须通过 core 的 `validateTimetables` / `validateSystems`；不合格则整体忽略；
+//   3. 读取或解析失败返回 null，不向调用方抛出（异常缓存回退内置）。
 
 /** 缓存正文在 `app_meta` 里的键。 */
 export const PRESET_CONTENT_META_KEY = 'presets_content_v1';
@@ -643,16 +643,16 @@ export interface AppliedPreset {
 }
 
 /**
- * **启动套用**：把「本地缓存且版本高于内置」的预设注进 core 的覆盖层。
+ * 启动套用：把「本地缓存且版本高于内置」的预设注入 core 的覆盖层。
  *
- * 判定顺序（任何一步不成立都回退内置，且本函数永不抛错）：
- *   1. `resolvePresetSource` 认可缓存（版本 > 内置、快照结构与哈希可信）→ 否则内置；
- *   2. 缓存正文版本与快照一致、且通过 core 的校验 → 否则内置；
- *   3. 满足①②才 `setPresetOverride()`，此后 `findTimetable` / `readSystemsConfig`
- *      等读取函数返回的就是缓存预设。
+ * 判定顺序（任一步不成立则回退内置；本函数不抛错）：
+ *   1. `resolvePresetSource` 认可缓存（版本 > 内置、快照结构与哈希可信），否则内置；
+ *   2. 缓存正文版本与快照一致、且通过 core 的校验，否则内置；
+ *   3. ①② 成立才调用 `setPresetOverride()`，此后 `findTimetable` / `readSystemsConfig`
+ *      等读取函数返回缓存预设。
  *
- * **运行时绝不热替换**：本函数只应在启动时调用一次。设置页下载成功后只写缓存、
- * 提示「下次启动生效」，不会调用它去改正在使用的预设。
+ * 运行时不替换：本函数只在启动时调用一次。设置页下载成功后只写缓存并提示
+ * 「下次启动生效」，不调用本函数改动当前预设。
  */
 export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset> {
   try {
@@ -690,7 +690,7 @@ export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset
     }
     return { version: effectivePresetVersion(), kind: 'cached', applied: true };
   } catch (cause: unknown) {
-    // 兜底：缓存是外部数据，任何意外都只让它退回内置，绝不影响启动
+    // 兜底：缓存是外部数据，异常时退回内置，不影响启动
     setPresetOverride(null);
     const message = cause instanceof Error ? cause.message : String(cause);
     return { version: BUILTIN_PRESET_VERSION, kind: 'builtin', applied: false, reason: message };

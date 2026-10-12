@@ -124,7 +124,7 @@ interface DragSession {
   startY: number;
   timer: number;
   active: boolean;
-  /** 长按生效后接收指针事件的卡片节点，保证拖出卡片也不丢事件 */
+  /** 长按生效后接收指针事件的卡片节点：指针移出卡片后事件仍可达 */
   element: HTMLElement | null;
 }
 
@@ -144,7 +144,7 @@ interface EmptyDragState {
   startY: number;
   startPeriod: number;
   endPeriod: number;
-  /** 是否已经超过点击抖动阈值：只有真的拖过才在松手时弹窗 */
+  /** 是否已经超过点击抖动阈值：仅实际拖动过才在松手时弹窗 */
   moved: boolean;
 }
 
@@ -410,7 +410,7 @@ export function WeekView({
       if (changed) toast.success(`已调整为 ${formatPeriods(current.start, current.end)}`);
       return;
     }
-    // 只是点了一下块里的空白：交给按钮自己的 click，不在这里弹窗
+    // 仅点击了块内空白：交给按钮自身的 click，本处不弹窗
     if (!active.moved) return;
     // 拖动松手：直接带着拖出来的范围打开加课弹窗；紧跟的那一次 click 不再生成占位块
     suppressSlotClick.current = true;
@@ -565,7 +565,7 @@ export function WeekView({
       {!data.hasLessons && (
         <EmptyState
           title={`第 ${data.viewWeek} 周没有课程`}
-          description="可用右上角添加课程，或到导入页从 ICS、CSV/Excel 与教务系统导入"
+          description="可通过右上角添加课程，或到导入页从 ICS、CSV/Excel 与教务系统导入"
         />
       )}
 

@@ -1,18 +1,17 @@
 /**
  * 学校选择器：搜索 + 筛选（标签 / 地区）+ 按省份分组的结果 + 适配徽标 + 请求适配入口。
  *
- * 导入（教务）流程与作息设置共用这一个组件：两边都只关心「用户选了哪所学校」
- * （`onPick(school)`），差别在选中之后干什么——导入生成教务入口 URL，作息套用该校作息。
+ * 导入（教务）流程与作息设置共用这一个组件：两处都只消费「用户选了哪所学校」
+ * （`onPick(school)`）；选中之后的行为由调用方决定，导入据此生成教务入口 URL，作息据此套用该校作息。
  *
  * 交互要点：
  *   - 搜索框受控、输入即筛选，支持中文名/简称/简称全拼/首字母/校名全拼（口径见 core 的
- *     `searchSchools`，本组件不另立一套排序）；
+ *     `searchSchools`，本组件不另立排序规则）；
  *   - 键盘可达：↑↓ 移动高亮、Enter 选中、Escape 交给外层（弹窗场景关闭弹窗）；
- *   - 每行点击区 ≥ 44px（`min-h-tap`），行的 `aria-label` 带上校名、次要行与适配状态；
- *   - 徽标只有「✅ 已适配 <预设版本>」与「⏳ 暂未适配」两态，判定与 TODO 见
- *     `school-picker-model.ts` 的 `adapterInfo`（预设索引没有逐校 status 字段，
- *     所以不编造「部分可用/失效」）；
- *   - 未适配的行给「请求适配」、底部给「找不到你的学校？提交学校信息」，两处都指向
+ *   - 每行点击区 ≥ 44px（`min-h-tap`），行的 `aria-label` 含校名、次要行与适配状态；
+ *   - 徽标取值两态：「已适配 <预设版本>」与「暂未适配」，判定见
+ *     `school-picker-model.ts` 的 `adapterInfo`（预设索引没有逐校 status 字段）；
+ *   - 未适配的行给「请求适配」，底部给「找不到你的学校？提交学校信息」，两处指向
  *     同一个 GitHub Issue 模板地址（集中在 model 的 `requestSchoolUrl`）。
  */
 import { useEffect, useId, useMemo, useState } from 'react';
@@ -216,7 +215,7 @@ export function SchoolPicker({
       >
         {flat.length === 0 && (
           <div data-role="school-empty" className="p-3 text-sm text-muted">
-            没有匹配的学校，换个说法试试（校名、简称、拼音首字母都可以）
+            没有匹配的学校，请调整关键词（校名、简称、拼音首字母均可）
           </div>
         )}
         {groups.map((group) => (
@@ -262,7 +261,6 @@ export function SchoolPicker({
                       title={info.reason}
                       className={cn('text-xs', info.adapted ? 'text-success-strong' : 'text-muted')}
                     >
-                      {info.adapted ? '✅ ' : '⏳ '}
                       {badge}
                     </span>
                     {!info.adapted && (
@@ -292,7 +290,7 @@ export function SchoolPicker({
             ? '正在读取预设…'
             : context.problem !== null
               ? `预设索引不可用：${context.problem}`
-              : `适配状态来自预设 ${context.version}：✅ 有解析脚本，⏳ 暂无`}
+              : `适配状态来自预设 ${context.version}：已适配为有解析脚本，暂未适配为无解析脚本`}
         </span>
         <span className="flex items-center gap-1 text-xs text-muted">
           找不到你的学校？

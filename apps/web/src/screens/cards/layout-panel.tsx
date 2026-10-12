@@ -53,7 +53,7 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
   return (
     <div className="flex flex-col gap-3">
       <span className="text-xs text-muted">
-        每张卡片可以显示/隐藏、上移下移、在「主列 / 侧列」之间切换；恢复默认即回到出厂顺序。
+        每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换；恢复默认即返回出厂顺序。
       </span>
       {(['schedule', 'settings'] as const).map((scope) => (
         <ScopeGroup key={scope} scope={scope} layout={layout} busy={busy} onApply={(next) => void apply(next)} />

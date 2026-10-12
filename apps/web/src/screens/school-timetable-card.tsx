@@ -1,16 +1,14 @@
 /**
  * 「按学校套用作息」：作息设置里与 SchoolPicker 共用的选校入口。
  *
- * 为什么单独一张卡片：作息设置原有的「作息预设」下拉列的是**内置作息表**（与学校无关），
- * 用户真正的诉求是「我这所学校几点上课」。这里把选校体验与导入流程统一成同一个
- * `SchoolPicker`，选中后：
- *   1. 预设索引里这所学校有 `timetablePath`、快照的作息清单里能定位到它、且**生效的预设**
- *      里真有这套作息正文 → 照抄它的节次（`presetToTimeSlots` → `replaceTimeSlots`）；
- *   2. 否则回退**内置通用作息**，并明确提示「该校暂无专属作息，已套用通用作息」——
- *      不回退到「什么都没发生」，也不假装套用了专属作息。
+ * 与「作息预设」下拉的分工：下拉列的是内置作息表（与学校无关），本卡片按学校定位作息。
+ * 选中学校后：
+ *   1. 预设索引里这所学校有 `timetablePath`、快照的作息清单里能定位到它、且生效的预设
+ *      里含这套作息正文 → 照抄其节次（`presetToTimeSlots` → `replaceTimeSlots`）；
+ *   2. 否则回退内置通用作息，并提示「该校暂无专属作息，已套用通用作息」。
  *
- * 与 `PeriodSettings` 的分工：节次时间的逐节编辑 / 顺延重排仍在那张卡片里，
- * 这张卡片只负责「按学校一次性套用」，两边都用 core 的 `replaceTimeSlots` 落库。
+ * 与 `PeriodSettings` 的分工：节次时间的逐节编辑 / 顺延重排在该卡片内，
+ * 本卡片只做「按学校一次性套用」，两处都用 core 的 `replaceTimeSlots` 落库。
  */
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarClock } from 'lucide-react';
@@ -140,7 +138,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
   return (
     <CollapsibleCard id="school-timetable" title="按学校套用作息" icon={CalendarClock} badge={presetLine}>
       <span className="text-xs text-muted">
-        选一所学校：预设里有该校作息就按它重排整张时间表，没有就套用内置通用作息（会明确提示）。
+        选择一所学校：预设内该校作息存在则按它重排整张时间表，不存在则套用内置通用作息并给出提示。
       </span>
       <div className="flex flex-wrap items-center gap-2">
         <Button

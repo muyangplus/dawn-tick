@@ -87,7 +87,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
         <Card className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <CardTitle>欢迎使用晓刻 DawnTick</CardTitle>
-            <span className="text-xs text-muted">先创建学期，课表按周次计算</span>
+            <span className="text-xs text-muted">先创建学期；课表按周次计算</span>
           </div>
           <Field label="学期名称">
             <Input
@@ -122,8 +122,8 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
           </div>
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">
-            <span className="text-xs font-semibold text-ink">已有数据？直接导入</span>
-            <span className="text-xs text-muted">选择晓刻导出的备份文件导入</span>
+            <span className="text-xs font-semibold text-ink">已有数据：直接导入</span>
+            <span className="text-xs text-muted">选择晓刻导出的备份文件并导入</span>
             <input
               ref={fileRef}
               type="file"

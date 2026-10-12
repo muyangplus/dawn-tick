@@ -1,6 +1,6 @@
 # 晓刻 DawnTick
 
-课表与日程提醒工具：课表导入一次、多端同步、课前准时提醒、桌面与主屏小组件随时看。
+课表与日程提醒工具。功能范围：课表导入与导出、多端数据同步、课前提醒、桌面与主屏小组件。
 
 ## 平台与产物
 
@@ -19,9 +19,40 @@
 | 日程 | 考试倒计时、待办分组与勾选、调课与临时日程 |
 | 检索 | 课程、教师、地点、周次与日程全文搜索（`/` 唤起） |
 | 提醒 | 课前 5/10/15/30 分钟与自定义、放假跳过、贪睡、勿扰分级 |
-| 主题 | 四套配色 × 深浅模式（含跟随系统），设计令牌与无障碍自动校验 |
+| 主题 | 四套配色 × 深浅模式（含跟随系统），设计令牌与对比度校验 |
 | 数据 | JSON 全量备份导出导入，支持按模块选择与覆盖策略；同步协议 pull → push → pull |
 | 组件 | Windows 紧凑条；Android 2×2 下一节课、4×2 今日课表、4×4 一周概览、2×2 考试倒计时 |
+
+## 预设仓库（作息与教务配置）
+
+作息表、教务系统与页面解析器由独立仓库
+[`muyangplus/dawn-tick-presets`](https://github.com/muyangplus/dawn-tick-presets) 维护。
+主仓库保存一份内置快照，作为离线来源在打包期内联进三端产物。
+
+内容范围：
+
+- 学校作息时间：上下课时间表，路径 `presets/schools/<校>/school.json`（逐节起止时间）。
+- 教务系统配置与识别特征：登录入口、页面标记、课表表格 id / class、网格单元格 id 正则，路径 `presets/systems/<系统>/system.json`。
+- 页面解析器与夹具：`parse.js` 把教务页面解析成课程事件；同目录 `fixtures/` 携带页面样本与期望事件。
+- 某校的覆盖配置：只改本校差异（作息、识别特征、入口）的覆盖文件；解析器优先级为学校级 `parse.js` ＞ 系统级 `parse.js`。
+
+应用侧的消费路径：
+
+1. 内置快照：无网、快照损坏或校验不符时使用内置预设。
+2. 在线更新：设置页「检查预设更新」→ 语义化版本比较 → 下载对应版本快照 → 规范化 sha256 校验 → 写入本地缓存；任一步失败则回退内置。下载成功后提示「下次启动生效」，运行时不替换当前预设。
+3. 设置页「关于」区块展示预设版本（内置 / 已更新）与「检查预设更新」按钮。
+
+提交方式：
+
+- Issue 表单：[`request-school.yml`](https://github.com/muyangplus/dawn-tick-presets/issues/new?template=request-school.yml) 请求适配或提交学校信息；[`report-adapter-broken.yml`](https://github.com/muyangplus/dawn-tick-presets/issues/new?template=report-adapter-broken.yml) 报告适配失效（附页面样本与现象）。
+- PR 要求：`parse.js` 与 `fixtures/` 同时提交（≥1 页面样本 + ≥1 期望事件），沙箱产出与期望逐条一致，否则 `validate.mjs` 失败。
+
+维护流程：
+
+- 预设仓库内容修改后执行 `node scripts/validate.mjs`（校验 + 静态安全扫描 + 沙箱冒烟），再执行 `node scripts/snapshot.mjs` 重新生成快照并提交；快照是唯一分发产物，禁止手改。
+- 主仓库侧用 `node tools/presets/sync-snapshot.mjs --from <预设仓库>` 同步内置快照；该脚本幂等：内容一致时不触碰文件。
+
+解析器在受限环境中执行，输出限事件数据；应用端消费的数据限于 JSON（快照清单、索引、作息与系统配置），不执行第三方 JS。
 
 ## 技术栈
 
@@ -46,7 +77,7 @@
 | `tools/design` | 设计令牌导出与无障碍校验 |
 | `tools/release` | 版本号同步与发布规则 |
 | `tools/setup` | 镜像、Rust、Android SDK、JDK、图标、密钥脚本 |
-| `tools/verify` | 一键验证脚本 |
+| `tools/verify` | 验证脚本 |
 | `docs` | 规范与记录 |
 
 ## 常用命令

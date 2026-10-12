@@ -75,7 +75,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
         if (status === true) {
           setRegistered(true);
           setCanElevate(false);
-          setMessage('已通过管理员权限注册开机自启');
+          setMessage('开机自启已注册（管理员权限）');
           await onPatch({ autoStart: true });
           return;
         }
@@ -113,7 +113,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
       <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
         <span className="flex flex-col">
           <span>启动时隐藏窗口</span>
-          <span className="text-xs text-muted">仅开机自启时生效，手动打开始终显示主窗口，只驻留托盘</span>
+          <span className="text-xs text-muted">仅开机自启时生效；手动启动始终显示主窗口，只驻留托盘</span>
         </span>
         <Switch
           checked={settings.startHidden}

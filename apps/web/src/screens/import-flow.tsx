@@ -178,7 +178,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       if (matched !== undefined) setSchoolSystem(matched.id);
       setImportUrl('');
       setWindowNote(
-        `${school.name} 暂无内置入口：在「手动填写入口地址」里选教务系统并填域名，点「按入口补齐」即可`,
+        `${school.name} 暂无内置入口：在「手动填写入口地址」中选择教务系统并填写域名，再用「按入口补齐」生成入口地址`,
       );
       return;
     }
@@ -190,7 +190,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       setWindowNote(`已填入 ${entry.name} 的教务入口（${systemEntry(entry.system).label}）`);
     } else {
       setImportUrl('');
-      setWindowNote(`${entry.name} 没有内置入口：选教务系统并填域名后点「按入口补齐」，可再「保存到我的学校」`);
+      setWindowNote(`${entry.name} 没有内置入口：选择教务系统并填写域名后用「按入口补齐」，可再用「保存到我的学校」`);
     }
   }
 
@@ -380,8 +380,8 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               <span className="text-sm text-ink">选择学校</span>
               <span className="text-xs text-muted">
                 {canOpenImportWindow()
-                  ? '选中学校 → 打开窗口 → 在里面自行登录并进入课表页 → 点右下角「导入到晓刻」，本页自动识别'
-                  : '选中学校拿到入口地址，自行在浏览器登录并打开课表页，再回来粘贴内容'}
+                  ? '选中学校 → 打开窗口 → 在窗口内登录并进入课表页 → 用窗口右下角「导入到晓刻」，本页自动识别'
+                  : '选中学校取得入口地址，在浏览器登录并打开课表页，再回到本页粘贴内容'}
               </span>
             </div>
 
@@ -444,7 +444,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                       setCustomSchools(
                         saveCustomSchool({ id, name, system: schoolSystem, url: schoolDomain.trim(), source: 'user' }),
                       );
-                      setWindowNote(`已把「${name}」保存到我的学校列表`);
+                      setWindowNote(`「${name}」已保存到我的学校列表`);
                     }}
                   >
                     保存到我的学校
@@ -471,7 +471,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                   onClick={() => {
                     void (async () => {
                       const result = await openImportWindow(importUrl.trim());
-                      setWindowNote(result.ok ? '窗口已打开，登录后点右下角「导入到晓刻」' : (result.error ?? '打开失败'));
+                      setWindowNote(result.ok ? '窗口已打开：登录后用窗口右下角「导入到晓刻」' : (result.error ?? '打开失败'));
                     })();
                   }}
                 >
@@ -492,7 +492,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
 
           <span className="text-sm text-ink">或用浏览器书签复制</span>
           <span className="text-xs text-muted">
-            把下面代码存成书签：新建书签，名称随意，地址粘贴这段代码；在课表页点一下该书签，页面内容会复制到剪贴板
+            将下方代码存为书签：新建书签，名称自定，地址栏粘贴该段代码；打开课表页后执行该书签，页面内容复制到剪贴板
           </span>
           <textarea
             readOnly
@@ -506,11 +506,11 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             </Button>
             {bookmarkCopied && <span className="text-xs text-muted">已复制</span>}
           </div>
-          <span className="text-sm text-ink">3. 回到这里粘贴，自动识别课表</span>
+          <span className="text-sm text-ink">3. 回到本页粘贴，自动识别课表</span>
           <textarea
             value={pageText}
             aria-label="粘贴课表页面内容"
-            placeholder="把课表页面的内容（或书签复制的内容）粘贴到这里"
+            placeholder="将课表页面内容（或书签复制的内容）粘贴到这里"
             onChange={(event) => setPageText(event.target.value)}
             className="h-28 w-full rounded-md border border-line bg-surface p-2 text-xs text-ink"
           />

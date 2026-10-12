@@ -207,7 +207,7 @@ function ScheduleActions(ctx: ScheduleCardContext) {
       />
 
       <Dialog open={rangeOpen} onOpenChange={setRangeOpen}>
-        <DialogContent title="连续假期" description="一次把一段连续日期设为假日，最多 60 天">
+        <DialogContent title="连续假期" description="把一段连续日期设为假日，最多 60 天">
           <div className="flex flex-wrap items-end gap-2">
             <Field label="开始日期">
               <Input
@@ -294,7 +294,7 @@ function ScheduleTimeline({
   return (
     <div className="flex flex-col gap-3">
       {timeline.length === 0 ? (
-        <EmptyState icon={ListChecks} title="这一天没有安排" description="可切换日期看过去或未来" />
+        <EmptyState icon={ListChecks} title="这一天没有安排" description="可切换日期查看其他日期" />
       ) : (
         <>
           {completed.length > 0 && (
@@ -516,7 +516,7 @@ export const examsCard = defineCard({
           <EmptyState
             icon={GraduationCap}
             title="暂无考试安排"
-            description="用顶部「＋」里的加考试录入考试时间"
+            description="通过顶部「＋」中的加考试录入考试时间"
             action={
               <Button size="sm" variant="secondary" onClick={onAddExam}>
                 加考试
