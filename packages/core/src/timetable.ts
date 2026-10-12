@@ -77,6 +77,53 @@ export function generatePeriods(input: TimetableInput): GeneratedPeriod[] {
   return periods;
 }
 
+export interface RegenerateInput {
+  /** 固定上课时长（分钟） */
+  durationMinutes: number;
+  /** 同一时段内相邻两节的间隔（分钟） */
+  breakMinutes: number;
+}
+
+/**
+ * 按新的时长与课间重排指定时段，未列入 sections 的时段原样保留。
+ * 每个待重排时段都用它在 existing 里的第一节开始时间作为起点、现有的节数作为节数，
+ * 因此各时段的起点与节数不变，只有时段内的课次时间被重算。
+ * 返回与 existing 等长、顺序一致的课次，periodNo 沿用原值。
+ */
+export function regenerateSections(
+  existing: readonly GeneratedPeriod[],
+  sections: readonly PeriodSection[],
+  input: RegenerateInput,
+): GeneratedPeriod[] {
+  const wanted = new Set(sections);
+  const groups = new Map<PeriodSection, GeneratedPeriod[]>();
+  for (const period of existing) {
+    const group = groups.get(period.section);
+    if (group === undefined) groups.set(period.section, [period]);
+    else group.push(period);
+  }
+
+  const regenerated = new Map<number, GeneratedPeriod>();
+  for (const [section, group] of groups) {
+    if (!wanted.has(section)) continue;
+    const first = group[0];
+    if (first === undefined) continue;
+    if (group.length > 20) throw new Error(`单个时段的课次不能超过 20 节：${section} 有 ${group.length} 节`);
+    const fresh = generatePeriods({
+      durationMinutes: input.durationMinutes,
+      breakMinutes: input.breakMinutes,
+      blocks: [{ section, startTime: first.startTime, count: group.length }],
+    });
+    group.forEach((period, index) => {
+      const next = fresh[index];
+      if (next === undefined) return;
+      regenerated.set(period.periodNo, { ...period, startTime: next.startTime, endTime: next.endTime });
+    });
+  }
+
+  return existing.map((period) => regenerated.get(period.periodNo) ?? period);
+}
+
 /** 在最后一节之后追加一节，用于「自动添加课次」。 */
 export function nextPeriod(
   periods: readonly GeneratedPeriod[],
