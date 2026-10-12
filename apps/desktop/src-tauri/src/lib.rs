@@ -330,8 +330,9 @@ fn probe_folder(folder: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 列出正在使用或残留占用 WebView2 目录的进程。
+/// 列出正在使用或残留占用 WebView2 目录的进程。保留供排查使用，暂未接入命令。
 #[cfg(windows)]
+#[allow(dead_code)]
 fn describe_holders() -> String {
     let processes = list_processes();
     let ours: Vec<&ProcessInfo> = processes.iter().filter(|item| is_our_app(&item.name)).collect();
@@ -416,6 +417,7 @@ fn list_processes() -> Vec<ProcessInfo> {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 fn is_writable(dir: &std::path::Path) -> bool {
     let probe = dir.join(".dt-write-probe");
     match OpenOptions::new().create(true).write(true).truncate(true).open(&probe) {
@@ -479,7 +481,6 @@ fn widget_size(variant: &str) -> (f64, f64) {
 /// 按当前样式调整悬浮窗大小并显示。
 #[tauri::command]
 async fn show_widget(app: tauri::AppHandle, variant: Option<String>) -> Result<(), String> {
-    use tauri::Manager;
     let key = variant.unwrap_or_else(|| "bar".to_string());
     let window = ensure_mini(&app).ok_or_else(|| "悬浮窗不可用".to_string())?;
     let (width, height) = widget_size(&key);
@@ -565,7 +566,7 @@ fn hold_instance_mutex() -> bool {
         return true;
     }
     // 句柄随进程生命周期保留，进程退出时系统自动释放
-    std::mem::forget(handle);
+    let _ = handle;
     (unsafe { GetLastError() }) != ERROR_ALREADY_EXISTS
 }
 
@@ -694,7 +695,13 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                     let _ = window.hide();
                 }
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                // 退出前补一次落盘，避免最后 500ms 内的移动/缩放随防抖一起丢掉
+                if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
+                    save_geometry_now(&main);
+                }
+                app.exit(0)
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -1102,6 +1109,253 @@ fn elevate_on_access_denied(reason: &str) -> bool {
     }
 }
 
+/// 主窗口几何（物理像素），字段与 `window.json` 一一对应。
+/// 注意：宽高是窗口**内尺寸**（客户区），与 `set_size` 的语义一致；
+/// 若存外尺寸（`outer_size`），恢复时会被再加一圈边框，窗口每次重启都变大。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct WindowGeometry {
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    maximized: bool,
+}
+
+/// 显示器可见矩形（物理像素）。抽成纯数据类型，便于对可见性判定做单元测试。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScreenRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+/// 尺寸下限：小于该值基本是最小化过程中的脏数据。
+const MIN_WINDOW_SIZE: u32 = 400;
+/// 尺寸上限：防止显示器热插拔等异常写出离谱尺寸。
+const MAX_WINDOW_SIZE: u32 = 10000;
+/// 坐标绝对值上限：Windows 虚拟桌面坐标不会超出该范围。
+const MAX_WINDOW_COORD: u32 = 20000;
+/// 位置容错边距（像素）：窗口与显示器的重叠在宽、高上都达到该值才算「可见」。
+const VISIBLE_MARGIN: i32 = 40;
+/// 移动/缩放落盘防抖窗口：500ms 内只写一次。
+const GEOMETRY_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// 几何是否合理：宽高在 [400, 10000]，坐标绝对值不超过 20000。
+fn geometry_is_sane(geometry: &WindowGeometry) -> bool {
+    (MIN_WINDOW_SIZE..=MAX_WINDOW_SIZE).contains(&geometry.width)
+        && (MIN_WINDOW_SIZE..=MAX_WINDOW_SIZE).contains(&geometry.height)
+        // 用 unsigned_abs 而不是 abs：i32::MIN 上 abs 会溢出 panic
+        && geometry.x.unsigned_abs() <= MAX_WINDOW_COORD
+        && geometry.y.unsigned_abs() <= MAX_WINDOW_COORD
+}
+
+/// 保存的位置是否仍落在某台显示器的可见区域内。
+/// 判定口径：窗口矩形与某台显示器矩形的重叠，宽和高都要 ≥ `margin` 像素（容错边距）。
+/// 拿不到显示器列表时返回 false —— 宁可不设位置改居中，也不要开出一扇看不见的窗口。
+fn position_visible(x: i32, y: i32, width: u32, height: u32, screens: &[ScreenRect], margin: i32) -> bool {
+    if screens.is_empty() {
+        return false;
+    }
+    let clamp = |value: u32| -> i32 { value.min(i32::MAX as u32) as i32 };
+    let left = x;
+    let top = y;
+    let right = x.saturating_add(clamp(width));
+    let bottom = y.saturating_add(clamp(height));
+    screens.iter().any(|screen| {
+        let screen_right = screen.x.saturating_add(clamp(screen.width));
+        let screen_bottom = screen.y.saturating_add(clamp(screen.height));
+        let overlap_width = right.min(screen_right) - left.max(screen.x);
+        let overlap_height = bottom.min(screen_bottom) - top.max(screen.y);
+        overlap_width >= margin && overlap_height >= margin
+    })
+}
+
+/// 窗口几何文件：放在数据目录内，与其他状态文件同处。
+#[cfg(desktop)]
+fn window_geometry_path() -> PathBuf {
+    data_dir().join("window.json")
+}
+
+/// 读取并校验窗口几何。缺失、损坏或数值不合理都返回 None（用默认值），绝不 panic、不弹窗。
+#[cfg(desktop)]
+fn read_window_geometry() -> Option<WindowGeometry> {
+    let path = window_geometry_path();
+    let Some(geometry) = read_json::<WindowGeometry>(&path) else {
+        if path.exists() {
+            append_log("窗口几何文件不可解析，按默认值处理");
+        }
+        return None;
+    };
+    if !geometry_is_sane(&geometry) {
+        append_log(&format!(
+            "窗口几何不合理，按默认值处理: {}x{} @ ({},{})",
+            geometry.width, geometry.height, geometry.x, geometry.y
+        ));
+        return None;
+    }
+    Some(geometry)
+}
+
+/// 落盘并记日志。数值不合理时不写入，保留上一次的有效值。
+#[cfg(desktop)]
+fn save_window_geometry(geometry: &WindowGeometry) -> bool {
+    if !geometry_is_sane(geometry) {
+        return false;
+    }
+    if !write_json(&window_geometry_path(), geometry) {
+        append_log("窗口几何写入失败");
+        return false;
+    }
+    append_log(&format!(
+        "窗口几何已保存: {}x{} @ ({},{}) 最大化={}",
+        geometry.width, geometry.height, geometry.x, geometry.y, geometry.maximized
+    ));
+    true
+}
+
+/// 待落盘的最新几何：防抖期间的多次事件只保留最后一个值。
+#[cfg(desktop)]
+static GEOMETRY_PENDING: std::sync::Mutex<Option<WindowGeometry>> = std::sync::Mutex::new(None);
+/// 是否已有计时线程在等待落盘，保证每 500ms 最多起一个线程。
+#[cfg(desktop)]
+static GEOMETRY_TIMER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// 最大化前最后一次普通状态的几何：最大化时保存它，避免之后「还原」出铺满屏幕的窗口。
+#[cfg(desktop)]
+static GEOMETRY_LAST_NORMAL: std::sync::Mutex<Option<WindowGeometry>> = std::sync::Mutex::new(None);
+
+/// 取当前窗口几何。最小化期间尺寸没有意义，返回 None 跳过本次保存。
+#[cfg(desktop)]
+fn capture_window_geometry(window: &tauri::WebviewWindow) -> Option<WindowGeometry> {
+    if window.is_minimized().unwrap_or(false) {
+        return None;
+    }
+    let maximized = window.is_maximized().unwrap_or(false);
+    // 用内尺寸：tauri 的 set_size 设的就是内尺寸，二者配套才能原样往返
+    let size = window.inner_size().ok()?;
+    let position = window.outer_position().ok()?;
+    let current = WindowGeometry {
+        width: size.width,
+        height: size.height,
+        x: position.x,
+        y: position.y,
+        maximized,
+    };
+    if !maximized {
+        if let Ok(mut slot) = GEOMETRY_LAST_NORMAL.lock() {
+            *slot = Some(current);
+        }
+        return Some(current);
+    }
+    // 最大化时的尺寸/坐标是铺满屏幕的值：改用最大化前的普通几何，
+    // 这样用户之后点「还原」仍能得到原来的大小与位置。
+    match GEOMETRY_LAST_NORMAL.lock().ok().and_then(|slot| *slot) {
+        Some(mut normal) => {
+            normal.maximized = true;
+            Some(normal)
+        }
+        None => Some(current),
+    }
+}
+
+/// 防抖落盘：500ms 内的多次移动/缩放只写一次。
+#[cfg(desktop)]
+fn schedule_geometry_save(window: &tauri::WebviewWindow) {
+    let Some(geometry) = capture_window_geometry(window) else {
+        return;
+    };
+    if let Ok(mut slot) = GEOMETRY_PENDING.lock() {
+        *slot = Some(geometry);
+    }
+    if GEOMETRY_TIMER_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return; // 已有计时线程在等待，本次事件的值已并入待写入
+    }
+    std::thread::spawn(|| {
+        std::thread::sleep(GEOMETRY_DEBOUNCE);
+        GEOMETRY_TIMER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        let pending = GEOMETRY_PENDING.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(geometry) = pending {
+            save_window_geometry(&geometry);
+        }
+    });
+}
+
+/// 关窗/退出等时机立即落盘：丢弃排队中的旧值，改写成当前值。
+#[cfg(desktop)]
+fn save_geometry_now(window: &tauri::WebviewWindow) {
+    if let Ok(mut slot) = GEOMETRY_PENDING.lock() {
+        *slot = None;
+    }
+    if let Some(geometry) = capture_window_geometry(window) {
+        save_window_geometry(&geometry);
+    }
+}
+
+/// 恢复主窗口几何：先尺寸、再位置（不可见则居中）、最后最大化。
+/// 只作用于主窗口；任何失败都只记日志，不影响启动。
+#[cfg(desktop)]
+fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
+    let Some(geometry) = read_window_geometry() else {
+        return;
+    };
+
+    if let Err(error) = window.set_size(tauri::PhysicalSize::new(geometry.width, geometry.height)) {
+        append_log(&format!("恢复窗口尺寸失败: {error}"));
+    }
+
+    let screens: Vec<ScreenRect> = match window.available_monitors() {
+        Ok(monitors) => monitors
+            .iter()
+            .map(|monitor| ScreenRect {
+                x: monitor.position().x,
+                y: monitor.position().y,
+                width: monitor.size().width,
+                height: monitor.size().height,
+            })
+            .collect(),
+        Err(error) => {
+            append_log(&format!("获取显示器信息失败: {error}"));
+            Vec::new()
+        }
+    };
+
+    let position_note = if position_visible(
+        geometry.x,
+        geometry.y,
+        geometry.width,
+        geometry.height,
+        &screens,
+        VISIBLE_MARGIN,
+    ) {
+        if let Err(error) = window.set_position(tauri::PhysicalPosition::new(geometry.x, geometry.y)) {
+            append_log(&format!("恢复窗口位置失败: {error}"));
+        }
+        format!("({},{})", geometry.x, geometry.y)
+    } else {
+        // 保存的位置已不在任何显示器可见区域内：只应用大小，位置改为居中。
+        if let Err(error) = window.center() {
+            append_log(&format!("窗口居中失败: {error}"));
+        }
+        format!("居中（原位置 ({},{}) 不在可见区域）", geometry.x, geometry.y)
+    };
+
+    // 记录普通状态几何，供之后最大化时保存使用
+    if let Ok(mut slot) = GEOMETRY_LAST_NORMAL.lock() {
+        *slot = Some(WindowGeometry { maximized: false, ..geometry });
+    }
+
+    if geometry.maximized {
+        if let Err(error) = window.maximize() {
+            append_log(&format!("恢复最大化失败: {error}"));
+        }
+    }
+
+    append_log(&format!(
+        "窗口几何已恢复: {}x{} @ {} 最大化={}",
+        geometry.width, geometry.height, position_note, geometry.maximized
+    ));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_panic_logger();
@@ -1146,7 +1400,7 @@ pub fn run() {
         }
     }
 
-    let mut builder = tauri::Builder::default();
+    let builder = tauri::Builder::default();
 
     let builder = builder
         .invoke_handler(tauri::generate_handler![
@@ -1189,6 +1443,8 @@ pub fn run() {
 
             match app.get_webview_window(MAIN_WINDOW) {
                 Some(window) => {
+                    // 在显示之前套用上次的几何，避免窗口先出现在默认位置再跳过去
+                    restore_main_window_geometry(&window);
                     if start_hidden() {
                         let _ = window.hide();
                         append_log("按设置隐藏主窗口，仅驻留托盘");
@@ -1206,11 +1462,27 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == MAIN_WINDOW {
+            // 只处理主窗口：悬浮窗（mini）与导入窗口（import）不参与几何记忆
+            if window.label() != MAIN_WINDOW {
+                return;
+            }
+            use tauri::Manager;
+            match event {
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    // 事件只给 &Window，几何读写统一走 WebviewWindow
+                    if let Some(main) = window.get_webview_window(MAIN_WINDOW) {
+                        schedule_geometry_save(&main);
+                    }
+                }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // 关闭（实际是隐藏到托盘）先立即落盘，再拦下关闭
+                    if let Some(main) = window.get_webview_window(MAIN_WINDOW) {
+                        save_geometry_now(&main);
+                    }
                     api.prevent_close();
                     let _ = window.hide();
                 }
+                _ => {}
             }
         });
 
@@ -1309,5 +1581,127 @@ mod tests {
             assert!(command.contains(HIDDEN_ARG), "启动项需带 --hidden: {command}");
             assert!(command.starts_with('"'), "程序路径需加引号: {command}");
         }
+    }
+
+    fn geometry(width: u32, height: u32, x: i32, y: i32, maximized: bool) -> WindowGeometry {
+        WindowGeometry { width, height, x, y, maximized }
+    }
+
+    #[test]
+    fn geometry_accepts_normal_values() {
+        assert!(geometry_is_sane(&geometry(1200, 800, 100, 80, false)));
+        assert!(geometry_is_sane(&geometry(1000, 720, 0, 0, true)));
+        // 边界值本身合法
+        assert!(geometry_is_sane(&geometry(MIN_WINDOW_SIZE, MIN_WINDOW_SIZE, 0, 0, false)));
+        assert!(geometry_is_sane(&geometry(MAX_WINDOW_SIZE, MAX_WINDOW_SIZE, 0, 0, false)));
+        // 副屏在主屏左侧/上方时为负坐标，仍然合法
+        assert!(geometry_is_sane(&geometry(1200, 800, -1920, -200, false)));
+    }
+
+    #[test]
+    fn geometry_rejects_bad_sizes_and_coords() {
+        assert!(!geometry_is_sane(&geometry(MIN_WINDOW_SIZE - 1, 800, 0, 0, false)));
+        assert!(!geometry_is_sane(&geometry(1200, MIN_WINDOW_SIZE - 1, 0, 0, false)));
+        assert!(!geometry_is_sane(&geometry(MAX_WINDOW_SIZE + 1, 800, 0, 0, false)));
+        assert!(!geometry_is_sane(&geometry(1200, MAX_WINDOW_SIZE + 1, 0, 0, false)));
+        // 最小化过程中可能出现的 0 尺寸
+        assert!(!geometry_is_sane(&geometry(0, 0, 0, 0, false)));
+        assert!(!geometry_is_sane(&geometry(1200, 800, 20001, 0, false)));
+        assert!(!geometry_is_sane(&geometry(1200, 800, 0, -20001, false)));
+        // i32::MIN 不能让校验 panic
+        assert!(!geometry_is_sane(&geometry(1200, 800, i32::MIN, 0, false)));
+        assert!(!geometry_is_sane(&geometry(1200, 800, 0, i32::MIN, false)));
+    }
+
+    #[test]
+    fn geometry_json_roundtrip_matches_spec() {
+        let text = r#"{"width":1200,"height":800,"x":100,"y":80,"maximized":false}"#;
+        let parsed: WindowGeometry = serde_json::from_str(text).expect("应能解析");
+        assert_eq!(parsed, geometry(1200, 800, 100, 80, false));
+        assert_eq!(serde_json::to_string(&parsed).expect("应能序列化"), text);
+        // 字段缺失 / 损坏一律按默认值处理
+        assert!(serde_json::from_str::<WindowGeometry>(r#"{"width":1200}"#).is_err());
+        assert!(serde_json::from_str::<WindowGeometry>("not json").is_err());
+    }
+
+    /// 找一个可写的临时目录：优先系统临时目录，受限环境（只允许写工作区）退回 target 下。
+    #[cfg(desktop)]
+    fn scratch_dir(name: &str) -> PathBuf {
+        let candidates = [
+            std::env::temp_dir().join(name),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target").join(name),
+        ];
+        for candidate in candidates {
+            let _ = std::fs::remove_dir_all(&candidate);
+            if std::fs::create_dir_all(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+        panic!("找不到可写的临时目录");
+    }
+
+    /// 落盘/读取的完整往返：用临时目录顶替 APPDATA，避免污染真实数据目录。
+    #[cfg(desktop)]
+    #[test]
+    fn geometry_file_roundtrip_uses_data_dir() {
+        let temp = scratch_dir(&format!("dawntick-geometry-test-{}", std::process::id()));
+        let previous_appdata = std::env::var("APPDATA").ok();
+        let previous_local = std::env::var("LOCALAPPDATA").ok();
+        std::env::set_var("APPDATA", &temp);
+        std::env::set_var("LOCALAPPDATA", &temp);
+
+        let file = temp.join("com.dawntick.app").join("window.json");
+        // 文件缺失：按默认值处理
+        assert!(read_window_geometry().is_none());
+
+        // 写入后能原样读回，且落在 <data_dir>\window.json
+        let sample = geometry(1200, 800, 100, 80, false);
+        assert!(save_window_geometry(&sample), "写入应成功");
+        assert!(file.exists(), "文件应位于 {}", file.display());
+        assert_eq!(read_window_geometry(), Some(sample));
+
+        // 损坏内容按默认值处理
+        std::fs::write(&file, "{不是 JSON").expect("写坏文件");
+        assert!(read_window_geometry().is_none());
+
+        // 数值不合理按默认值处理，且不覆盖上一次的有效内容
+        std::fs::write(&file, r#"{"width":10,"height":10,"x":0,"y":0,"maximized":false}"#).expect("写小尺寸");
+        assert!(read_window_geometry().is_none());
+        assert!(!save_window_geometry(&geometry(10, 10, 0, 0, false)), "不合理数值不落盘");
+
+        // 还原环境变量并清理
+        match previous_appdata {
+            Some(value) => std::env::set_var("APPDATA", value),
+            None => std::env::remove_var("APPDATA"),
+        }
+        match previous_local {
+            Some(value) => std::env::set_var("LOCALAPPDATA", value),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn position_visible_requires_overlap_margin() {
+        let screens = [
+            ScreenRect { x: 0, y: 0, width: 1920, height: 1080 },
+            ScreenRect { x: -1920, y: 0, width: 1920, height: 1080 },
+        ];
+
+        // 完全在主屏内
+        assert!(position_visible(100, 80, 1200, 800, &screens, VISIBLE_MARGIN));
+        // 在左侧副屏内（负坐标）
+        assert!(position_visible(-1900, 0, 1200, 800, &screens, VISIBLE_MARGIN));
+        // 贴着主屏右/下边缘，可见部分 70x80 像素，超过 40px 容错边距
+        assert!(position_visible(1850, 1000, 1200, 800, &screens, VISIBLE_MARGIN));
+        // 只露出 20px：不足容错边距，视为不可见
+        assert!(!position_visible(1900, 1000, 1200, 800, &screens, VISIBLE_MARGIN));
+        assert!(!position_visible(100, 1060, 1200, 800, &screens, VISIBLE_MARGIN));
+        // 显示器已被拔掉：位置停在旧坐标上
+        assert!(!position_visible(5000, 5000, 1200, 800, &screens, VISIBLE_MARGIN));
+        // 极端坐标不能 panic
+        assert!(!position_visible(i32::MIN, i32::MIN, u32::MAX, u32::MAX, &screens, VISIBLE_MARGIN));
+        // 拿不到显示器列表时不设位置
+        assert!(!position_visible(100, 80, 1200, 800, &[], VISIBLE_MARGIN));
     }
 }
