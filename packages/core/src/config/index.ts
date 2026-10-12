@@ -2,7 +2,8 @@
  * 作息表与教务系统配置的加载器。
  *
  * 事实来源（唯一需要人工编辑、可以直接分享给别人的文件）是同一目录下的
- * `timetables.json`、`systems.json` 与 `preset-version.json`。
+ * `timetables.json`、`systems.json`、`preset-version.json` 与
+ * `builtin-preset-snapshot.json`（后两者由同步脚本生成，不要手改）。
  * 这些 JSON 在打包期直接被 import 进来（tsconfig 打开了 `resolveJsonModule`），
  * 因此不再需要手写的 TS 等价副本，也就不存在「两份常量漂移」的问题。
  *
@@ -11,12 +12,26 @@
  *
  * 加载即校验：模块被引入时就会跑一遍 validateTimetables / validateSystems，
  * 数据不合法会立刻抛出可读错误（而不是等到用户点了导入才炸）。
+ *
+ * 内置快照的来源与同步方式见 `tools/presets/README.md`：
+ * 它是预设仓库 `dawn-tick-presets` 产出的原文副本（含 hash），
+ * 改完预设仓库必须跑 `node tools/presets/sync-snapshot.mjs --from <预设仓库>` 重新同步。
  */
 import timetablesJson from './timetables.json' with { type: 'json' };
 import systemsJson from './systems.json' with { type: 'json' };
 import presetVersionJson from './preset-version.json' with { type: 'json' };
+import builtinPresetSnapshotJson from './builtin-preset-snapshot.json' with { type: 'json' };
 import { formatClock, parseClock, sectionOf } from '../timetable.ts';
 import type { PeriodSection } from '../types.ts';
+// 具名别名导入：下面还要把同名函数转出，直接同名导入会构成「重复导出」
+import { canonicalPresetJson, sha256HexSync as digestSha256 } from './preset-hash.ts';
+
+/**
+ * 哈希口径在本模块转出一次：`./preset-hash.ts` 是全仓唯一实现，
+ * 而调用方（快照自检、Web 端下载校验、同步脚本、单测）通常只 import 本模块，
+ * 少一条 import 路径就少一次「两份实现漂移」的机会。
+ */
+export { canonicalPresetJson, sha256HexSync } from './preset-hash.ts';
 
 /** 一节作息时间；start / end 都是 24 小时制的 `HH:MM`。 */
 export interface TimetablePeriod {
@@ -248,28 +263,367 @@ function readPresetVersion(input: unknown): string {
 }
 
 /**
+ * 读取 `preset-version.json` 的 `schemaVersion`。
+ * 1.0.0 时期的 `preset-version.json` 只有 `version`，缺失时按 1 处理（当时的结构就是 1）。
+ */
+function readSchemaVersion(input: unknown): number {
+  const record = asRecord(input, 'preset-version.json');
+  const schemaVersion = record['schemaVersion'];
+  if (schemaVersion === undefined) return 1;
+  if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion) || schemaVersion < 1) {
+    throw new Error(`preset-version.json 的 schemaVersion 应为正整数：${String(schemaVersion)}`);
+  }
+  return schemaVersion;
+}
+
+/**
  * 内置预设的版本号（`preset-version.json`）。
  *
  * 它与独立预设仓库 `dawn-tick-presets` 的 `version.json` 保持同一个版本线：
  * 内置的 `timetables.json` / `systems.json` 就是该版本快照的离线兜底副本。
  * 运行时的「检查预设更新」以本值为基线，只会接受更高版本。
+ *
+ * 该文件由 `tools/presets/sync-snapshot.mjs` 写出，不要手改。
  */
 export const BUILTIN_PRESET_VERSION: string = readPresetVersion(presetVersionJson);
+
+/**
+ * 内置快照声明的数据格式版本（`preset-version.json` 的 `schemaVersion`）。
+ *
+ * 语义：`version` 是**内容版本**（预设仓库每发一版就 +1，App 以它做更新比较），
+ * `schemaVersion` 是**结构版本**（快照字段形状的版本，只在字段增删改语义时 +1）。
+ * 两者独立：可以只发内容（version 变、schemaVersion 不变），
+ * 而结构一变，认识旧结构的 App 必须拒收而不是猜着解析。
+ *
+ * 快照文件缺失该字段时回退 1（1.0.0 时期的快照就是这个形状）。
+ */
+export const BUILTIN_PRESET_SCHEMA_VERSION: number = readSchemaVersion(presetVersionJson);
 
 /** 内置作息表：模块加载时即完成校验，数据有问题会直接抛错。 */
 export const BUILTIN_TIMETABLES: readonly TimetablePreset[] = validateTimetables(TIMETABLES_DATA);
 
 const SYSTEMS_CONFIG: readonly SystemConfig[] = validateSystems(SYSTEMS_DATA);
 
-/** 按 id 查内置作息表；找不到返回 undefined。id 忽略大小写与首尾空白。 */
-export function findTimetable(id: string): TimetablePreset | undefined {
-  const wanted = id.trim().toLowerCase();
-  return BUILTIN_TIMETABLES.find((preset) => preset.id.toLowerCase() === wanted);
+// —— 内置预设快照 ——
+
+/** 快照里的一个源文件条目：id 即文件名（不含扩展名），sha256 是该文件内容的哈希。 */
+export interface PresetSnapshotSourceFile {
+  id: string;
+  /** 相对预设仓库根目录的路径，例如 `presets/timetables/default.json` */
+  path: string;
+  /** `sha256:<hex>`，对文件原文（UTF-8）计算 */
+  sha256: string;
 }
 
-/** 读取校验后的教务系统配置（顺序即识别优先级）。 */
+/** 预设快照的源清单。`adapters` 是 `{ 文件名: sha256 }`，本仓库只保存不执行。 */
+export interface PresetSnapshotSources {
+  timetables: PresetSnapshotSourceFile[];
+  systems: PresetSnapshotSourceFile[];
+  adapters?: Record<string, string>;
+}
+
+/**
+ * 预设仓库 `dawn-tick-presets` 产出的快照结构。
+ * `generatedAt` 在结构里是可选的，但真实快照一定带（见 `tools/presets/README.md`）。
+ */
+export interface PresetSnapshot {
+  version: string;
+  schemaVersion: number;
+  generatedAt?: string;
+  sources: PresetSnapshotSources;
+  /** `sha256:<hex>`，对去掉本字段后的快照对象做规范化序列化再取 sha256 */
+  hash: string;
+}
+
+/**
+ * 内置快照：预设仓库 `presets-<version>.json` 的**原文副本**（含 hash 与生成时间）。
+ *
+ * 它由 `tools/presets/sync-snapshot.mjs` 从预设仓库同步而来，只读不改：
+ * 需要更新时改预设仓库、重新生成快照，再跑同步脚本，而不是在这里手改。
+ * 这里只做类型收敛，内容可信度由 `verifyBuiltinPresetSnapshot()` 负责背书。
+ */
+export const BUILTIN_PRESET_SNAPSHOT: PresetSnapshot =
+  builtinPresetSnapshotJson as unknown as PresetSnapshot;
+
+/** 预期长度的 sha256 hex（去掉 `sha256:` 前缀后）。 */
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+
+/** 按 id 排序后规范化序列化再取 sha256：给内置正文算一个「指纹」，用于审计与呈现。 */
+function semanticDigest(value: unknown): string {
+  const list = Array.isArray(value) ? value : [];
+  const entries = list as Array<Record<string, unknown>>;
+  const sorted = [...entries].sort((left, right) => String(left['id']).localeCompare(String(right['id'])));
+  return `sha256:${digestSha256(canonicalPresetJson(sorted))}`;
+}
+
+/**
+ * 用内置配置的当前正文复算「语义摘要」（按 id 排序后规范化再取 sha256）。
+ *
+ * 用途是**审计与呈现**：让人一眼看出内置正文的指纹（例如写进发布检查、人工核对）。
+ * 它不参与自证——拿内置内容算出来的值再去对内置内容，是循环论证。
+ */
+export function builtinPresetSourcesDigest(): { timetables: string; systems: string } {
+  return {
+    timetables: semanticDigest(BUILTIN_TIMETABLES),
+    systems: semanticDigest(SYSTEMS_CONFIG),
+  };
+}
+
+/**
+ * 校验内置快照：复算内容哈希，并确认「内置快照 ⇔ 内置配置」没有漂移。
+ *
+ * 做三件事：
+ *   1. **复算哈希**：去掉 `hash` 字段后规范化序列化，sha256 必须等于 `hash`
+ *      （口径与预设仓库 `scripts/snapshot.mjs` 一致，实现见 `./preset-hash.ts`）；
+ *   2. **比对作息表**：快照 `sources.timetables` 的 id 集合与 `BUILTIN_TIMETABLES` 完全相同；
+ *   3. **比对教务系统**：快照 `sources.systems` 的 id 集合与内置 `systems.json`（`SYSTEMS_CONFIG`）完全相同。
+ *
+ * 注意本函数判的是**内置**（`timetables.json` / `systems.json`）与内置快照是否对得上，
+ * 与运行时的预设覆盖层（`setPresetOverride`）无关：覆盖层换的是「当前生效值」，
+ * 内置快照永远是打包时固化的那一份，所以这里不受覆盖状态影响。
+ *
+ * 判据为什么是这样——快照清单里每条只记 `{ id, path, sha256 }`，描述的是预设仓库里的
+ * **单个文件**；内置 `timetables.json` / `systems.json` 是合并后的数组。两边形态不同：
+ * 单文件哈希是带缩进的单对象原文哈希，与合并数组复算的哈希**本来就不同**，
+ * 所以清单里的 `sha256` 无法拿来对内置正文做内容级比对（它的价值在预设仓库侧：
+ * 证明那些文件没被改）。因此这里判「不漂移」用的是 id 集合：
+ * **数量一致 + 双向无缺失**——内置多一个、少一个、被改名都会立刻失败。
+ *
+ * 已知边界（见 `tools/presets/README.md`）：改内置 `systems.json` 里某个字段的**值**
+ * （id 不动）不会让本函数失败，因为快照里没有那份内容可比。这类漂移靠两件事兜住：
+ *   1. 流程规矩——预设仓库是唯一内容来源，改完必须跑 `tools/presets/sync-snapshot.mjs`；
+ *   2. 两侧各自的单测——内置侧有 `config.test.ts`（逐节比对作息、系统字段），
+ *      预设仓库侧有自己的快照 CI。
+ * `builtinPresetSourcesDigest()` 导出的指纹可用于人工审计（例如写进发布检查）。
+ *
+ * 关于顺序：**只比集合，不比顺序**。快照清单是预设仓库按文件名排序得到的
+ * （`default` 在 `usts` 前、`other` 在 `urp` 前），而内置 `systems.json` 的顺序是
+ * 「识别优先级」这一业务语义，两者本来就不该相等。
+ *
+ * 不抛异常：任何问题都收敛成 `{ ok: false, reason }`，方便启动自检与测试直接判定。
+ */
+export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } {
+  const snapshot = BUILTIN_PRESET_SNAPSHOT;
+
+  // ① 结构自查，避免后面的比较在坏数据上给出误导性结论
+  if (snapshot === null || typeof snapshot !== 'object') {
+    return { ok: false, reason: '内置快照应为对象' };
+  }
+  if (typeof snapshot.version !== 'string' || snapshot.version.trim() === '') {
+    return { ok: false, reason: '内置快照缺少 version' };
+  }
+  if (!Number.isInteger(snapshot.schemaVersion)) {
+    return { ok: false, reason: '内置快照的 schemaVersion 应为整数' };
+  }
+  if (snapshot.version !== BUILTIN_PRESET_VERSION) {
+    return {
+      ok: false,
+      reason: `内置快照版本与 preset-version.json 不一致：快照 ${snapshot.version}，配置 ${BUILTIN_PRESET_VERSION}`,
+    };
+  }
+  if (snapshot.schemaVersion !== BUILTIN_PRESET_SCHEMA_VERSION) {
+    return {
+      ok: false,
+      reason: `内置快照的 schemaVersion 与 preset-version.json 不一致：快照 ${snapshot.schemaVersion}，配置 ${BUILTIN_PRESET_SCHEMA_VERSION}`,
+    };
+  }
+
+  // ② 复算哈希
+  const declared = typeof snapshot.hash === 'string' ? snapshot.hash.trim().toLowerCase() : '';
+  if (!SHA256_HEX_PATTERN.test(declared.replace(/^sha256:/, '')) || !declared.startsWith('sha256:')) {
+    return { ok: false, reason: `内置快照的 hash 格式不合法：${String(snapshot.hash)}` };
+  }
+  const { hash: _ignored, ...unsigned } = snapshot as unknown as Record<string, unknown>;
+  const recomputed = `sha256:${digestSha256(canonicalPresetJson(unsigned))}`;
+  if (recomputed !== declared) {
+    return { ok: false, reason: `内置快照哈希不符：声明 ${declared}，复算 ${recomputed}` };
+  }
+
+  // ③ 内置快照 ⇔ 内置配置：id 集合双向对齐，且清单条目自身自洽
+  const checks: Array<{
+    label: string;
+    listed: readonly PresetSnapshotSourceFile[];
+    builtin: readonly { id: string }[];
+    builtinFile: string;
+    sourceDir: string;
+  }> = [
+    {
+      label: '作息表',
+      listed: snapshot.sources?.timetables ?? [],
+      builtin: BUILTIN_TIMETABLES,
+      builtinFile: 'timetables.json',
+      sourceDir: 'presets/timetables',
+    },
+    {
+      label: '教务系统',
+      listed: snapshot.sources?.systems ?? [],
+      builtin: SYSTEMS_CONFIG,
+      builtinFile: 'systems.json',
+      sourceDir: 'presets/systems',
+    },
+  ];
+
+  for (const check of checks) {
+    if (!Array.isArray(check.listed)) {
+      return { ok: false, reason: `内置快照的 sources 缺少${check.label}清单` };
+    }
+    const listedIds = check.listed.map((item) => item.id);
+    if (new Set(listedIds).size !== listedIds.length) {
+      return { ok: false, reason: `内置快照的${check.label}清单存在重复 id` };
+    }
+
+    const builtinIds = check.builtin.map((entry) => entry.id);
+    const missing = builtinIds.filter((id) => !listedIds.includes(id));
+    const extra = listedIds.filter((id) => !builtinIds.includes(id));
+    if (missing.length > 0 || extra.length > 0) {
+      return {
+        ok: false,
+        reason:
+          `内置快照与内置 ${check.builtinFile} 的${check.label}清单不一致：` +
+          `快照多出 [${extra.join('、')}]，内置多出 [${missing.join('、')}]`,
+      };
+    }
+
+    for (const item of check.listed) {
+      // 条目自洽：id 必须能在内置配置里找到，且与 path 指的文件名一致
+      const builtin = check.builtin.find((entry) => entry.id === item.id);
+      if (builtin === undefined) {
+        return {
+          ok: false,
+          reason: `内置快照列出的${check.label}「${item.id}」在内置 ${check.builtinFile} 里不存在（两侧已漂移）`,
+        };
+      }
+      const expectedPath = `${check.sourceDir}/${item.id}.json`;
+      if (item.path !== expectedPath) {
+        return {
+          ok: false,
+          reason: `内置快照的${check.label}「${item.id}」路径应为 ${expectedPath}，实际 ${String(item.path)}`,
+        };
+      }
+      if (typeof item.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(item.sha256.replace(/^sha256:/, ''))) {
+        return {
+          ok: false,
+          reason: `内置快照的${check.label}「${item.id}」缺少合法的 sha256：${String(item.sha256)}`,
+        };
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+// —— 可注入的预设覆盖层 ——
+//
+// 语义一句话：**启动时套用缓存、运行时绝不热替换**。
+//
+// 应用启动时（`apps/web/src/App.tsx` 的初始化）会把「本地缓存且版本高于内置」的预设
+// 通过 `setPresetOverride()` 注进这一层；此后进程内所有读取（`findTimetable`、
+// `readSystemsConfig`、`effectiveTimetables`/`effectiveSystems`/`effectivePresetVersion`）
+// 都返回**有效预设**（有覆盖就是覆盖，没有就是内置）。
+//
+// 为什么不在运行时热替换：用户正在用的一套作息/教务配置，不能因为后台下载完成就在
+// 半路换掉——设置页里下载成功只提示「下次启动生效」正是这个约定。
+//
+// 安全边界：覆盖内容必须**先过 `validateTimetables` / `validateSystems`**。
+// 只有全部合法才整体生效，任何一条不合法都整体忽略并继续用内置，
+// 且**不向上抛错**（缓存是外部数据，坏缓存只能让功能退回内置，不能让应用起不来）。
+
+/** 一次覆盖注入的入参；三项都可选，全部省略等价于「清空覆盖」。 */
+export interface PresetOverrideInput {
+  /** 作息表正文，形状与 `timetables.json` 相同；不合法则整体忽略 */
+  timetables?: unknown;
+  /** 教务系统正文，形状与 `systems.json` 相同；不合法则整体忽略 */
+  systems?: unknown;
+  /** 这份覆盖的版本号（缓存快照的 version）；缺失时沿用内置版本号 */
+  version?: string;
+}
+
+/** 覆盖注入的结果：`applied` 为假表示输入不合法、已按约定忽略并保持内置。 */
+export interface PresetOverrideResult {
+  applied: boolean;
+  /** 忽略原因（仅用于日志与测试断言，界面不该展示） */
+  reason?: string;
+  /** 本次生效的版本号 */
+  version: string;
+}
+
+/** 校验通过的覆盖内容；`undefined` 表示没有覆盖（等价于内置）。 */
+interface NormalizedPresetOverride {
+  timetables: readonly TimetablePreset[];
+  systems: readonly SystemConfig[];
+  version: string;
+}
+
+let presetOverride: NormalizedPresetOverride | undefined;
+
+/** 把值收敛成非空字符串；空白串与其它类型都返回 undefined。 */
+function optionalText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.trim() === '' ? undefined : value.trim();
+}
+
+/**
+ * 注入（或清空）预设覆盖。
+ *
+ * - 传 `null` / `undefined`：清空覆盖，恢复到内置预设；
+ * - `timetables` / `systems` 省略：该维度保持内置，另一维度仍可单独覆盖；
+ * - 任一维度存在但不合法：**什么都不改**（既不清空已生效的覆盖，也不破坏内置），
+ *   返回 `{ applied: false, reason }`。
+ *
+ * 本函数不抛错；调用方只记日志即可。
+ */
+export function setPresetOverride(input: PresetOverrideInput | null | undefined): PresetOverrideResult {
+  if (input === null || input === undefined) {
+    presetOverride = undefined;
+    return { applied: true, version: BUILTIN_PRESET_VERSION };
+  }
+
+  const next: NormalizedPresetOverride = {
+    timetables: presetOverride?.timetables ?? BUILTIN_TIMETABLES,
+    systems: presetOverride?.systems ?? SYSTEMS_CONFIG,
+    version: optionalText(input.version) ?? presetOverride?.version ?? BUILTIN_PRESET_VERSION,
+  };
+
+  try {
+    if (input.timetables !== undefined) next.timetables = validateTimetables(input.timetables);
+    if (input.systems !== undefined) next.systems = validateSystems(input.systems);
+  } catch (cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return { applied: false, reason: message, version: effectivePresetVersion() };
+  }
+
+  presetOverride = next;
+  return { applied: true, version: next.version };
+}
+
+/** 当前有效作息表：有覆盖用覆盖，否则等价于 `BUILTIN_TIMETABLES`。 */
+export function effectiveTimetables(): readonly TimetablePreset[] {
+  return presetOverride?.timetables ?? BUILTIN_TIMETABLES;
+}
+
+/** 当前有效教务系统配置（顺序即识别优先级）：有覆盖用覆盖，否则等价于 `readSystemsConfig()` 的内置值。 */
+export function effectiveSystems(): readonly SystemConfig[] {
+  return presetOverride?.systems ?? SYSTEMS_CONFIG;
+}
+
+/** 当前有效预设版本号：有覆盖用覆盖的版本，否则为 `BUILTIN_PRESET_VERSION`。 */
+export function effectivePresetVersion(): string {
+  return presetOverride?.version ?? BUILTIN_PRESET_VERSION;
+}
+
+/** 按 id 查**有效**作息表（覆盖层优先）；找不到返回 undefined。id 忽略大小写与首尾空白。 */
+export function findTimetable(id: string): TimetablePreset | undefined {
+  const wanted = id.trim().toLowerCase();
+  return effectiveTimetables().find((preset) => preset.id.toLowerCase() === wanted);
+}
+
+/**
+ * 读取校验后的**有效**教务系统配置（顺序即识别优先级）。
+ *
+ * 保持既有签名与返回类型；没有覆盖时逐条等于内置 `systems.json`。
+ */
 export function readSystemsConfig(): readonly SystemConfig[] {
-  return SYSTEMS_CONFIG;
+  return effectiveSystems();
 }
 
 /** 把一张作息表摊平成课次（periodNo / startTime / endTime / section），可直接灌进 time_slots。 */

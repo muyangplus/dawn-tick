@@ -6,8 +6,10 @@
  *   2. `fetchSnapshot` 拉 `snapshot/presets-<version>.json`，**规范化后做 sha256 校验**，
  *      校验不过直接抛可读错误（内容不可信，绝不使用）；
  *   3. `writeCachedSnapshot` 把校验通过的快照写进 `app_meta`，下次启动由
- *      `resolvePresetSource` 读取——「下载」与「生效」是分开的两步：
+ *      `resolvePresetSource` / `applyCachedPreset` 读取——「下载」与「生效」是分开的两步：
  *      正在使用的预设不会被静默替换，下载成功只提示「下次启动生效」。
+ *   4. `writeCachedPresetContent` 把快照清单里的正文单独存一份（`presets_content_v1`），
+ *      启动时由 `applyCachedPreset` 过校验收进 core 的覆盖层——**启动套用、运行时不热替换**。
  *
  * 安全边界：本模块**只消费数据**，不执行预设仓库里的任何 JS 适配器。
  *
@@ -15,8 +17,27 @@
  * 对「去掉 hash 字段后的对象」做键序规范化的 JSON 序列化，再取 sha256。
  */
 
-import { BUILTIN_PRESET_VERSION as CORE_BUILTIN_PRESET_VERSION, type Storage } from '@dawn-tick/core';
+import {
+  BUILTIN_PRESET_VERSION as CORE_BUILTIN_PRESET_VERSION,
+  canonicalPresetJson,
+  effectivePresetVersion,
+  setPresetOverride,
+  sha256HexSync,
+  validateSystems,
+  validateTimetables,
+  type Storage,
+  type SystemConfig,
+  type TimetablePreset,
+} from '@dawn-tick/core';
 import { compareVersions } from './update.ts';
+
+/**
+ * 哈希口径与预设仓库 `scripts/snapshot.mjs` 一致，实现只有一份：core 的
+ * `packages/core/src/config/preset-hash.ts`。
+ * 这里**只做转出**（`export { ... } from` 会保留同名导出，外部调用方不受影响），
+ * 免得「浏览器一份纯 TS、Node 一份」两边漂移。
+ */
+export { canonicalPresetJson, sha256HexSync } from '@dawn-tick/core';
 
 /** 预设仓库的版本清单地址（只写常量，运行时不主动联网，除非用户点「检查预设更新」）。 */
 export const PRESET_VERSION_URL =
@@ -65,26 +86,6 @@ export interface PresetSource {
 
 // —— SHA-256 ——
 
-const SHA256_K = new Uint32Array([
-  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-]);
-
-/** Uint32Array 取值：本仓库开了 noUncheckedIndexedAccess，索引一定在范围内。 */
-function at(values: Uint32Array, index: number): number {
-  return values[index] ?? 0;
-}
-
-function rotr(value: number, bits: number): number {
-  return ((value >>> bits) | (value << (32 - bits))) >>> 0;
-}
-
 function bytesToHex(bytes: Uint8Array): string {
   let hex = '';
   for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
@@ -92,88 +93,11 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 /**
- * 纯 TS 的 SHA-256（同步）。
- *
- * 为什么需要它：`crypto.subtle.digest` 只有异步 API，而 `verifySnapshot` 按约定
- * 必须同步返回布尔值，因此这里留一份等价实现；异步路径优先走 WebCrypto。
- * 两者结果一致由单元测试对拍（`sha256Hex` 与 `verifySnapshot` 必须同判）。
- */
-export function sha256HexSync(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  const bitLength = bytes.length * 8;
-  const padded = new Uint8Array(((bytes.length + 8) >> 6 << 6) + 64);
-  padded.set(bytes);
-  padded[bytes.length] = 0x80;
-  const view = new DataView(padded.buffer);
-  view.setUint32(padded.length - 8, Math.floor(bitLength / 0x1_0000_0000));
-  view.setUint32(padded.length - 4, bitLength >>> 0);
-
-  const state = new Uint32Array([
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
-  ]);
-  const words = new Uint32Array(64);
-
-  for (let offset = 0; offset < padded.length; offset += 64) {
-    for (let index = 0; index < 16; index += 1) {
-      words[index] = view.getUint32(offset + index * 4);
-    }
-    for (let index = 16; index < 64; index += 1) {
-      const x = at(words, index - 15);
-      const y = at(words, index - 2);
-      const s0 = rotr(x, 7) ^ rotr(x, 18) ^ (x >>> 3);
-      const s1 = rotr(y, 17) ^ rotr(y, 19) ^ (y >>> 10);
-      words[index] = (at(words, index - 16) + s0 + at(words, index - 7) + s1) >>> 0;
-    }
-
-    let a = at(state, 0);
-    let b = at(state, 1);
-    let c = at(state, 2);
-    let d = at(state, 3);
-    let e = at(state, 4);
-    let f = at(state, 5);
-    let g = at(state, 6);
-    let h = at(state, 7);
-
-    for (let index = 0; index < 64; index += 1) {
-      const s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-      const ch = (e & f) ^ (~e & g);
-      const temp1 = (h + s1 + ch + at(SHA256_K, index) + at(words, index)) >>> 0;
-      const s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
-      const maj = (a & b) ^ (a & c) ^ (b & c);
-      const temp2 = (s0 + maj) >>> 0;
-      h = g;
-      g = f;
-      f = e;
-      e = (d + temp1) >>> 0;
-      d = c;
-      c = b;
-      b = a;
-      a = (temp1 + temp2) >>> 0;
-    }
-
-    state[0] = (at(state, 0) + a) >>> 0;
-    state[1] = (at(state, 1) + b) >>> 0;
-    state[2] = (at(state, 2) + c) >>> 0;
-    state[3] = (at(state, 3) + d) >>> 0;
-    state[4] = (at(state, 4) + e) >>> 0;
-    state[5] = (at(state, 5) + f) >>> 0;
-    state[6] = (at(state, 6) + g) >>> 0;
-    state[7] = (at(state, 7) + h) >>> 0;
-  }
-
-  // 状态字按大端写成 hex：不能直接读 state.buffer 的字节，那样会带上平台字节序
-  let hex = '';
-  for (let index = 0; index < 8; index += 1) {
-    hex += at(state, index).toString(16).padStart(8, '0');
-  }
-  return hex;
-}
-
-/**
  * 对字符串做 sha256，返回小写 hex。
  *
  * 浏览器与 Node 24 都有 `crypto.subtle`，优先走它（原生实现、快）；
- * 环境确实没有 WebCrypto 时退回同口径的纯 TS 实现，而不是让功能不可用。
+ * 环境确实没有 WebCrypto 时退回同口径的同步实现（core 的 `sha256HexSync`），
+ * 而不是让功能不可用。
  */
 export async function sha256Hex(text: string): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
@@ -182,15 +106,6 @@ export async function sha256Hex(text: string): Promise<string> {
     return bytesToHex(new Uint8Array(digest));
   }
   return sha256HexSync(text);
-}
-
-/** 规范化 JSON：对象键排序、数组保序、无多余空白（与预设仓库 snapshot.mjs 同口径）。 */
-export function canonicalPresetJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalPresetJson(item)).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record).sort();
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalPresetJson(record[key])}`).join(',')}}`;
 }
 
 /** 去掉 `sha256:` 前缀并小写，便于比较。 */
@@ -362,6 +277,26 @@ export async function writeCachedSnapshot(storage: Storage, snapshot: PresetSnap
 }
 
 /**
+ * 下载成功后的**同一步**：把快照里带的正文校验一遍再落盘（`presets_content_v1`）。
+ *
+ * 正文不合法时**不写**（也不清掉可能存在的旧正文），只返回原因——
+ * 于是下次启动仍会退回内置，而不会用半截数据去覆盖正在用的预设。
+ */
+export async function cacheSnapshotContent(
+  storage: Storage,
+  snapshot: PresetSnapshot,
+): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    const timetables = validateTimetables(snapshot.sources?.timetables);
+    const systems = validateSystems(snapshot.sources?.systems);
+    await writeCachedPresetContent(storage, { version: snapshot.version, timetables, systems });
+    return { ok: true };
+  } catch (cause: unknown) {
+    return { ok: false, reason: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
+
+/**
  * 当前应当使用的预设来源：缓存比内置新且哈希可信时用缓存，否则回退内置。
  * 「下次启动生效」的语义就落在这一步——正在运行的界面不会被静默换掉。
  */
@@ -372,4 +307,143 @@ export async function resolvePresetSource(storage: Storage): Promise<PresetSourc
     return { version: BUILTIN_PRESET_VERSION, kind: 'builtin', snapshot: null };
   }
   return { version: cached.version, kind: 'cached', snapshot: cached };
+}
+
+// —— 缓存正文：启动时真正「套用」的那一份数据 ——
+//
+// 快照（`presets_snapshot_v1`）是**清单**：每条只记 `{ id, path, sha256 }`，
+// 它回答「预设仓库有哪些文件、内容哈希是多少」，本身不含作息表/教务系统的正文。
+// 因此「启动时套用缓存」还差一份正文，它单独存在 `presets_content_v1`：
+//   1. 版本必须与快照一致，且必须比内置新——否则一律不用（不允许降级、不允许串版本）；
+//   2. 正文必须过 core 的 `validateTimetables` / `validateSystems`——不合格就整体忽略；
+//   3. 任何读取/解析失败都收敛成 null，绝不抛到调用方（坏缓存只能退回内置）。
+
+/** 缓存正文在 `app_meta` 里的键。 */
+export const PRESET_CONTENT_META_KEY = 'presets_content_v1';
+
+/** 缓存正文的落盘结构；`version` 与快照版本一一对应。 */
+export interface CachedPresetContent {
+  version: string;
+  timetables: TimetablePreset[];
+  systems: SystemConfig[];
+}
+
+/** 解析并校验一段正文；缺失或不合法返回 null（调用方据此回退内置）。 */
+function parseContentOrNull<T>(parse: (input: unknown) => T, input: unknown): T | null {
+  if (input === undefined) return null;
+  try {
+    return parse(input);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写入缓存正文。只负责落盘，校验在写入前（`fetchSnapshot` 之后）与读回时各做一次。
+ * 校验不通过的内容不该走到这里；万一是坏数据，读回侧也会拦住它。
+ */
+export async function writeCachedPresetContent(storage: Storage, content: CachedPresetContent): Promise<void> {
+  await storage.writeMeta(PRESET_CONTENT_META_KEY, JSON.stringify(content));
+}
+
+/**
+ * 读取缓存的预设正文（`app_meta` / `presets_content_v1`）。
+ *
+ * `expectedVersion` 不为空时要求两者一致——否则视为不可用：
+ * 清单说 1.1.0、正文却是别的版本，说明缓存被写坏或来自另一个版本，宁可用内置。
+ * 返回 null 表示「没有可用的缓存正文」，调用方必须回退内置。
+ */
+export async function resolveCachedPresetContent(
+  storage: Storage,
+  expectedVersion?: string,
+): Promise<CachedPresetContent | null> {
+  let raw: string | undefined;
+  try {
+    raw = await storage.readMeta(PRESET_CONTENT_META_KEY);
+  } catch {
+    return null;
+  }
+  if (raw === undefined || raw.trim() === '') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+
+  const record = parsed as Record<string, unknown>;
+  const version = typeof record['version'] === 'string' ? record['version'].trim() : '';
+  if (version === '') return null;
+  if (expectedVersion !== undefined && version !== expectedVersion) return null;
+
+  const timetables = parseContentOrNull(validateTimetables, record['timetables']);
+  const systems = parseContentOrNull(validateSystems, record['systems']);
+  if (timetables === null || systems === null) return null;
+  return { version, timetables, systems };
+}
+
+/** 启动套用的结果：`applied` 为真表示本次进程内已切到缓存预设。 */
+export interface AppliedPreset {
+  version: string;
+  kind: 'builtin' | 'cached';
+  applied: boolean;
+  /** 没套用时的可读原因（只进日志） */
+  reason?: string;
+}
+
+/**
+ * **启动套用**：把「本地缓存且版本高于内置」的预设注进 core 的覆盖层。
+ *
+ * 判定顺序（任何一步不成立都回退内置，且本函数永不抛错）：
+ *   1. `resolvePresetSource` 认可缓存（版本 > 内置、快照结构与哈希可信）→ 否则内置；
+ *   2. 缓存正文版本与快照一致、且通过 core 的校验 → 否则内置；
+ *   3. 满足①②才 `setPresetOverride()`，此后 `findTimetable` / `readSystemsConfig`
+ *      等读取函数返回的就是缓存预设。
+ *
+ * **运行时绝不热替换**：本函数只应在启动时调用一次。设置页下载成功后只写缓存、
+ * 提示「下次启动生效」，不会调用它去改正在使用的预设。
+ */
+export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset> {
+  try {
+    const source = await resolvePresetSource(storage);
+    if (source.kind !== 'cached' || source.snapshot === null) {
+      // 没有缓存、缓存不比内置新、或快照不可信：清掉可能存在的旧覆盖，保持内置
+      setPresetOverride(null);
+      return { version: BUILTIN_PRESET_VERSION, kind: 'builtin', applied: false };
+    }
+
+    const content = await resolveCachedPresetContent(storage, source.version);
+    if (content === null) {
+      setPresetOverride(null);
+      return {
+        version: BUILTIN_PRESET_VERSION,
+        kind: 'builtin',
+        applied: false,
+        reason: `缓存 ${source.version} 缺少可用正文（或正文与快照版本不一致），继续使用内置预设`,
+      };
+    }
+
+    const result = setPresetOverride({
+      timetables: content.timetables,
+      systems: content.systems,
+      version: source.version,
+    });
+    if (!result.applied) {
+      setPresetOverride(null);
+      return {
+        version: BUILTIN_PRESET_VERSION,
+        kind: 'builtin',
+        applied: false,
+        reason: `缓存 ${source.version} 的正文未通过校验（${result.reason ?? '未知原因'}），继续使用内置预设`,
+      };
+    }
+    return { version: effectivePresetVersion(), kind: 'cached', applied: true };
+  } catch (cause: unknown) {
+    // 兜底：缓存是外部数据，任何意外都只让它退回内置，绝不影响启动
+    setPresetOverride(null);
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return { version: BUILTIN_PRESET_VERSION, kind: 'builtin', applied: false, reason: message };
+  }
 }

@@ -11,17 +11,24 @@ import {
   createSchedule,
   createSemester,
   DEFAULT_TIMETABLE_ID,
+  effectivePresetVersion,
   findTimetable,
+  setPresetOverride,
   validatedStorage,
   writeSettings,
 } from '@dawn-tick/core';
 import { App } from '../src/App.tsx';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
+  PRESET_CONTENT_META_KEY,
+  PRESET_SNAPSHOT_META_KEY,
   PRESET_SNAPSHOT_URL,
   PRESET_VERSION_URL,
   canonicalPresetJson,
   sha256HexSync,
+  writeCachedPresetContent,
+  type CachedPresetContent,
+  type PresetSnapshot,
 } from '../src/preset-update.ts';
 
 // jsdom 不带 IndexedDB，这里把 fake-indexeddb 的全部实现挂到全局（显式引用，避免被 tree-shake）
@@ -444,19 +451,73 @@ function presetJsonResponse(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as unknown as Response;
 }
 
-/** 造一份哈希自洽的快照（hash 用模块自身的规范化口径算，等价于预设仓库的生成器）。 */
-function fakePresetSnapshot(version: string): Record<string, unknown> {
+/**
+ * 缓存快照 1.1.0 自带的作息正文：内容是「内置 default 的另一种作息」。
+ * 用同一份数据测两件事——下载时能通过正文校验、启动时能真的覆盖掉内置预设。
+ */
+const CACHE_TIMETABLE_ID = 'default';
+const CACHE_TIMETABLE_NAME = '缓存作息（测试）';
+const CACHE_PERIODS = [
+  { periodNo: 1, start: '08:30', end: '09:15' },
+  { periodNo: 2, start: '09:25', end: '10:10' },
+  { periodNo: 3, start: '10:25', end: '11:10' },
+  { periodNo: 4, start: '11:20', end: '12:05' },
+  { periodNo: 5, start: '13:30', end: '14:15' },
+  { periodNo: 6, start: '14:25', end: '15:10' },
+  { periodNo: 7, start: '15:20', end: '16:05' },
+  { periodNo: 8, start: '16:15', end: '17:00' },
+  { periodNo: 9, start: '18:30', end: '19:15' },
+  { periodNo: 10, start: '19:25', end: '20:10' },
+];
+
+/** 缓存正文（`presets_content_v1` 的形状）：与内置同名 id，但正文不同，足以证明「换掉了」。 */
+function fakePresetContent(version: string): CachedPresetContent {
+  return {
+    version,
+    timetables: [
+      { id: CACHE_TIMETABLE_ID, name: CACHE_TIMETABLE_NAME, periods: CACHE_PERIODS },
+      { id: 'usts', name: '苏州科技大学', periods: [{ periodNo: 1, start: '08:00', end: '08:45' }] },
+    ],
+    systems: [
+      {
+        id: 'jwglxt',
+        name: '正方教务（缓存）',
+        entryPath: '/jwglxt/xtgl/login_slogin.html',
+        hint: '缓存正文',
+        detect: { markers: ['jwglxt'] },
+      },
+    ],
+  };
+}
+
+/**
+ * 造一份哈希自洽的快照（hash 用模块自身的规范化口径算，等价于预设仓库的生成器）。
+ * `sources` 里的每一条同时带正文：`id`/`path`/`sha256` 进清单哈希，多出来的正文字段
+ * **不参与**哈希（清单描述的是预设仓库里的文件），因此这里加正文不会改变签名口径。
+ */
+function fakePresetSnapshot(version: string): PresetSnapshot {
+  const content = fakePresetContent(version);
   const unsigned = {
     version,
     schemaVersion: 1,
     generatedAt: '2026-02-01T00:00:00.000Z',
     sources: {
-      timetables: [{ id: 'default', path: 'presets/timetables/default.json', sha256: 'sha256:0' }],
-      systems: [{ id: 'jwglxt', path: 'presets/systems/jwglxt.json', sha256: 'sha256:0' }],
+      timetables: content.timetables.map((preset) => ({
+        id: preset.id,
+        path: `presets/timetables/${preset.id}.json`,
+        sha256: `sha256:${sha256HexSync(canonicalPresetJson(preset))}`,
+        ...preset,
+      })),
+      systems: content.systems.map((system) => ({
+        id: system.id,
+        path: `presets/systems/${system.id}.json`,
+        sha256: `sha256:${sha256HexSync(canonicalPresetJson(system))}`,
+        ...system,
+      })),
       adapters: {},
     },
   };
-  return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` };
+  return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` } as unknown as PresetSnapshot;
 }
 
 export async function runSmoke(): Promise<SmokeResult[]> {
@@ -1040,6 +1101,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('设置页提供检查预设更新按钮', presetButton instanceof window.HTMLElement, presetVersionLine());
 
   const realFetch = globalThis.fetch;
+  /** ② 里下载到的版本号；块外（③④ 校验缓存与启动套用）还要用。 */
+  let nextVersion = '';
   const stubFetch = (impl: (url: string) => Promise<Response>): void => {
     Object.defineProperty(globalThis, 'fetch', {
       value: (input: unknown) => impl(String(input)),
@@ -1061,7 +1124,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     );
 
     // ② 有更新：下载 → 校验哈希 → 写入缓存，提示「下次启动生效」，版本行改为已更新
-    const nextVersion = '1.1.0';
+    nextVersion = '1.1.0';
     stubFetch(async (url) => {
       if (url === PRESET_VERSION_URL) {
         return presetJsonResponse({ version: nextVersion, schemaVersion: 1, generatedAt: '2026-02-01T00:00:00.000Z' });
@@ -1081,6 +1144,41 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   } finally {
     Object.defineProperty(globalThis, 'fetch', { value: realFetch, configurable: true, writable: true });
   }
+
+  /*
+    ③ 下载后的快照带正文：下载这一步就该把正文一并校验并缓存（`presets_content_v1`），
+    否则「下次启动生效」永远没有正文可用。这里直接读缓存确认它确实落了盘。
+  */
+  const seedStorage = validatedStorage(await openIndexedDbStorage());
+  const cachedBody = await seedStorage.readMeta(PRESET_CONTENT_META_KEY);
+  check(
+    '下载时把预设正文一并写入缓存',
+    cachedBody !== undefined && cachedBody.includes(CACHE_TIMETABLE_NAME) && cachedBody.includes(`${nextVersion}`),
+    (cachedBody ?? '(空)').slice(0, 60),
+  );
+
+  // ④ 启动套用：把缓存正文直接塞进 app_meta 再挂载，验证「启动时套用缓存」这条链路真的通了
+  //    先清掉覆盖层（前一步的下载按约定不在运行时生效），保证下面看到的差异来自启动套用
+  setPresetOverride(null);
+  await seedStorage.writeMeta(PRESET_CONTENT_META_KEY, JSON.stringify(fakePresetContent(nextVersion)));
+  const reborn = mount(<App />);
+  await flush(20);
+  check(
+    '启动时若有更高版本缓存则使用缓存预设',
+    effectivePresetVersion() === nextVersion &&
+      findTimetable(CACHE_TIMETABLE_ID)?.name === CACHE_TIMETABLE_NAME,
+    `版本=${effectivePresetVersion()} / 作息=${findTimetable(CACHE_TIMETABLE_ID)?.name ?? '(无)'}`,
+  );
+  check(
+    '启动套用后界面读数仍与缓存一致（周视图照常渲染）',
+    (reborn.container.textContent ?? '').includes('高数'),
+    (reborn.container.textContent ?? '').slice(0, 60),
+  );
+  // 收尾：还原成内置，免得后面重挂载的用例看到「被换过的预设」
+  setPresetOverride(null);
+  await seedStorage.writeMeta(PRESET_CONTENT_META_KEY, '');
+  await seedStorage.writeMeta(PRESET_SNAPSHOT_META_KEY, '');
+  reborn.root.unmount();
 
   const switchedToTimeline = clickByText(view.container, '课表');
   await flush(10);

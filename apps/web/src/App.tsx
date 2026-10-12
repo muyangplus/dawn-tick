@@ -38,7 +38,8 @@ import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
 import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
-import { attachLogStorage, loadLogs, logDebug, logError, logInfo } from './log.ts';
+import { attachLogStorage, loadLogs, logDebug, logError, logInfo, logWarn } from './log.ts';
+import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta } from './update.ts';
@@ -212,6 +213,21 @@ export function App() {
         const opened = await openStorage();
         attachLogStorage(opened);
         await loadLogs();
+        // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切过去，否则用内置。
+        // 运行时绝不热替换——设置页下载成功只提示「下次启动生效」。
+        // 这里单独兜一层：预设是外部数据，坏缓存只能退回内置，不能拦住启动。
+        try {
+          const preset = await applyCachedPreset(opened);
+          logInfo('preset', '启动套用预设', {
+            version: preset.version,
+            source: preset.applied ? 'cached' : 'builtin',
+            applied: preset.applied,
+            ...(preset.reason === undefined ? {} : { reason: preset.reason }),
+          });
+        } catch (cause: unknown) {
+          const message = cause instanceof Error ? cause.message : String(cause);
+          logWarn('preset', '启动套用预设失败，继续使用内置预设', { message });
+        }
         const loaded = await readSettings(opened);
         if (cancelled) return;
         setStorage(opened);

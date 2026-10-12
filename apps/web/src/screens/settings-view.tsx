@@ -37,6 +37,7 @@ import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.t
 import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
 import {
   BUILTIN_PRESET_VERSION,
+  cacheSnapshotContent,
   checkPresetUpdate,
   fetchSnapshot,
   resolvePresetSource,
@@ -237,6 +238,15 @@ export function SettingsView({
       }
       const snapshot = await fetchSnapshot(status.version);
       await writeCachedSnapshot(storage, snapshot);
+      // 快照是清单；「下次启动生效」还要有正文，这一步把正文一并校验后落盘。
+      // 正文不合法时只记日志：界面照旧提示已下载，下次启动仍会回退内置。
+      const content = await cacheSnapshotContent(storage, snapshot);
+      if (!content.ok) {
+        logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
+          version: snapshot.version,
+          message: content.reason ?? '未知原因',
+        });
+      }
       setPresetSource(await resolvePresetSource(storage));
       setPresetResult(
         `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统），下次启动生效`,

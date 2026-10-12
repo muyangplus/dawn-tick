@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  BUILTIN_PRESET_SCHEMA_VERSION,
   BUILTIN_PRESET_VERSION,
   BUILTIN_TIMETABLES,
   DEFAULT_TIMETABLE_ID,
@@ -117,8 +118,9 @@ test('内置 JSON 通过 schema 校验，且 BUILTIN_TIMETABLES 与其内容一�
   assert.deepEqual(BUILTIN_TIMETABLES, timetablesJson, 'BUILTIN_TIMETABLES 应与 timetables.json 内容一致');
   assert.deepEqual(readSystemsConfig(), systemsJson, 'readSystemsConfig() 应与 systems.json 内容一致');
 
-  // ③ 内置预设版本号来自 preset-version.json，并与预设仓库 1.0.0 对齐
-  assert.deepEqual(presetVersionJson, { version: BUILTIN_PRESET_VERSION });
+  // ③ 内置预设版本号来自 preset-version.json，并与预设仓库 1.0.0 对齐。
+  //    该文件由 tools/presets/sync-snapshot.mjs 写出：version 是内容版本，schemaVersion 是结构版本。
+  assert.deepEqual(presetVersionJson, { version: BUILTIN_PRESET_VERSION, schemaVersion: BUILTIN_PRESET_SCHEMA_VERSION });
   assert.equal(BUILTIN_PRESET_VERSION, '1.0.0');
   assert.match(BUILTIN_PRESET_VERSION, /^\d+\.\d+\.\d+$/, '内置预设版本应为 SemVer');
 });
