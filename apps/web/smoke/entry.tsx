@@ -494,6 +494,7 @@ function fakePresetContent(version: string): CachedPresetContent {
  * 造一份哈希自洽的快照（hash 用模块自身的规范化口径算，等价于预设仓库的生成器）。
  * `sources` 里的每一条同时带正文：`id`/`path`/`sha256` 进清单哈希，多出来的正文字段
  * **不参与**哈希（清单描述的是预设仓库里的文件），因此这里加正文不会改变签名口径。
+ * 路径照新目录结构写：作息表是真实文件路径，教务系统是符号路径（那个文件并不存在）。
  */
 function fakePresetSnapshot(version: string): PresetSnapshot {
   const content = fakePresetContent(version);
@@ -504,13 +505,13 @@ function fakePresetSnapshot(version: string): PresetSnapshot {
     sources: {
       timetables: content.timetables.map((preset) => ({
         id: preset.id,
-        path: `presets/timetables/${preset.id}.json`,
+        path: `presets/schools/${preset.id}/timetable.json`,
         sha256: `sha256:${sha256HexSync(canonicalPresetJson(preset))}`,
         ...preset,
       })),
       systems: content.systems.map((system) => ({
         id: system.id,
-        path: `presets/systems/${system.id}.json`,
+        path: `presets/systems/${system.id}/system.json`,
         sha256: `sha256:${sha256HexSync(canonicalPresetJson(system))}`,
         ...system,
       })),

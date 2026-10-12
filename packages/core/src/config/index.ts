@@ -306,12 +306,21 @@ const SYSTEMS_CONFIG: readonly SystemConfig[] = validateSystems(SYSTEMS_DATA);
 
 // —— 内置预设快照 ——
 
-/** 快照里的一个源文件条目：id 即文件名（不含扩展名），sha256 是该文件内容的哈希。 */
+/** 快照里的一个源文件条目：id 是源 id，sha256 是该源内容的哈希。 */
 export interface PresetSnapshotSourceFile {
   id: string;
-  /** 相对预设仓库根目录的路径，例如 `presets/timetables/default.json` */
+  /**
+   * 相对预设仓库根目录的路径。**两类源的语义不同，取决于字段结构（见 `tools/presets/README.md`）**：
+   * - `sources.timetables[].path`：**真实文件**，形如 `presets/schools/<校目录>/timetable.json`；
+   *   校目录与作息 id 可以不同（`_default` 目录 → `default` 作息），因此不能由 id 推导。
+   * - `sources.systems[].path`：**符号路径**，恒为 `presets/systems/<id>/system.json`；
+   *   新目录结构下没有这个文件，它代表 `meta.json` + `login.json` 的编译产物。
+   *
+   * 本仓库只把 `path` 当描述性字段（记录来源），**任何代码都不该按它去读文件**：
+   * 符号路径根本不存在，真实路径也只对预设仓库有意义。需要定位内容请按 `id` 或读 `presets/index.json`。
+   */
   path: string;
-  /** `sha256:<hex>`，对文件原文（UTF-8）计算 */
+  /** `sha256:<hex>`；作息表是文件原文（UTF-8），教务系统是编译产物文本的哈希 */
   sha256: string;
 }
 
@@ -348,6 +357,13 @@ export const BUILTIN_PRESET_SNAPSHOT: PresetSnapshot =
 /** 预期长度的 sha256 hex（去掉 `sha256:` 前缀后）。 */
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 
+/**
+ * 作息表条目 `path` 的形状：`presets/schools/<校目录>/timetable.json`。
+ * 只校验形状，因为校目录名与作息 id 可以不同（`_default` → `default`），
+ * 想拿到 id → 路径的对应关系要读预设仓库的 `presets/index.json`。
+ */
+const TIMETABLE_SOURCE_PATH_PATTERN = /^presets\/schools\/[^/]+\/timetable\.json$/;
+
 /** 按 id 排序后规范化序列化再取 sha256：给内置正文算一个「指纹」，用于审计与呈现。 */
 function semanticDigest(value: unknown): string {
   const list = Array.isArray(value) ? value : [];
@@ -383,11 +399,13 @@ export function builtinPresetSourcesDigest(): { timetables: string; systems: str
  * 内置快照永远是打包时固化的那一份，所以这里不受覆盖状态影响。
  *
  * 判据为什么是这样——快照清单里每条只记 `{ id, path, sha256 }`，描述的是预设仓库里的
- * **单个文件**；内置 `timetables.json` / `systems.json` 是合并后的数组。两边形态不同：
- * 单文件哈希是带缩进的单对象原文哈希，与合并数组复算的哈希**本来就不同**，
- * 所以清单里的 `sha256` 无法拿来对内置正文做内容级比对（它的价值在预设仓库侧：
- * 证明那些文件没被改）。因此这里判「不漂移」用的是 id 集合：
+ * **单个来源**；内置 `timetables.json` / `systems.json` 是合并后的数组。两边形态不同：
+ * 单文件哈希是带缩进的单对象原文哈希（教务系统那项更是编译产物的文本哈希），
+ * 与合并数组复算的哈希**本来就不同**，所以清单里的 `sha256` 无法拿来对内置正文做内容级比对
+ * （它的价值在预设仓库侧：证明那些来源没被改）。因此这里判「不漂移」用的是 id 集合：
  * **数量一致 + 双向无缺失**——内置多一个、少一个、被改名都会立刻失败。
+ * `path` 只校验**形状**（不读文件）：作息表是真实文件 `presets/schools/<校目录>/timetable.json`，
+ * 教务系统是符号路径 `presets/systems/<id>/system.json`（该文件并不存在）。
  *
  * 已知边界（见 `tools/presets/README.md`）：改内置 `systems.json` 里某个字段的**值**
  * （id 不动）不会让本函数失败，因为快照里没有那份内容可比。这类漂移靠两件事兜住：
@@ -445,21 +463,35 @@ export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } 
     listed: readonly PresetSnapshotSourceFile[];
     builtin: readonly { id: string }[];
     builtinFile: string;
-    sourceDir: string;
+    /** 该组条目 `path` 的期望语义；返回 null 表示合法，返回字符串表示问题描述 */
+    describePathProblem: (item: PresetSnapshotSourceFile) => string | null;
   }> = [
     {
       label: '作息表',
       listed: snapshot.sources?.timetables ?? [],
       builtin: BUILTIN_TIMETABLES,
       builtinFile: 'timetables.json',
-      sourceDir: 'presets/timetables',
+      // 真实文件：presets/schools/<校目录>/timetable.json。
+      // 校目录名与作息 id 可以不同（`_default` 目录 → `default` 作息），所以只校验形状。
+      describePathProblem: (item) =>
+        TIMETABLE_SOURCE_PATH_PATTERN.test(item.path)
+          ? null
+          : `的路径应为 presets/schools/<校目录>/timetable.json，实际 ${String(item.path)}`,
     },
     {
       label: '教务系统',
       listed: snapshot.sources?.systems ?? [],
       builtin: SYSTEMS_CONFIG,
       builtinFile: 'systems.json',
-      sourceDir: 'presets/systems',
+      // 符号路径：新结构下该文件并不存在，它代表 meta.json + login.json 的编译产物。
+      // 因为由 id 唯一决定，这里可以逐字比对。
+      describePathProblem: (item) => {
+        const expected = `presets/systems/${item.id}/system.json`;
+        return item.path === expected
+          ? null
+          : `的路径应为符号路径 ${expected}，实际 ${String(item.path)}` +
+              '（新结构下该文件不存在，它代表 meta.json + login.json 的编译产物）';
+      },
     },
   ];
 
@@ -485,7 +517,7 @@ export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } 
     }
 
     for (const item of check.listed) {
-      // 条目自洽：id 必须能在内置配置里找到，且与 path 指的文件名一致
+      // 条目自洽：id 必须能在内置配置里找到，且 path 符合该组在当前目录结构下的语义
       const builtin = check.builtin.find((entry) => entry.id === item.id);
       if (builtin === undefined) {
         return {
@@ -493,12 +525,9 @@ export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } 
           reason: `内置快照列出的${check.label}「${item.id}」在内置 ${check.builtinFile} 里不存在（两侧已漂移）`,
         };
       }
-      const expectedPath = `${check.sourceDir}/${item.id}.json`;
-      if (item.path !== expectedPath) {
-        return {
-          ok: false,
-          reason: `内置快照的${check.label}「${item.id}」路径应为 ${expectedPath}，实际 ${String(item.path)}`,
-        };
+      const pathProblem = check.describePathProblem(item);
+      if (pathProblem !== null) {
+        return { ok: false, reason: `内置快照的${check.label}「${item.id}」${pathProblem}` };
       }
       if (typeof item.sha256 !== 'string' || !SHA256_HEX_PATTERN.test(item.sha256.replace(/^sha256:/, ''))) {
         return {

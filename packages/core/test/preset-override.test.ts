@@ -73,7 +73,7 @@ test('无覆盖时：有效预设逐条等于内置，版本号取自 preset-ver
   assert.deepEqual(effectiveTimetables(), BUILTIN_TIMETABLES, 'effectiveTimetables() 应等于内置作息表');
   assert.deepEqual(effectiveSystems(), BUILTIN_SYSTEMS, 'effectiveSystems() 应等于内置教务系统配置');
   assert.equal(effectivePresetVersion(), BUILTIN_PRESET_VERSION);
-  assert.equal(BUILTIN_PRESET_VERSION, '1.0.0');
+  assert.equal(BUILTIN_PRESET_VERSION, '0.1.0');
 
   // 既有读取函数的行为不变
   assert.equal(findTimetable('usts')?.name, '苏州科技大学');

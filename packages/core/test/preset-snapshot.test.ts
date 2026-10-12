@@ -90,8 +90,72 @@ const ORIGINAL_VERSION_TEXT = readText(VERSION_TARGET);
 const ORIGINAL_SNAPSHOT_SHA256 = sha256OfFile(SNAPSHOT_TARGET);
 const ORIGINAL_VERSION_SHA256 = sha256OfFile(VERSION_TARGET);
 const ORIGINAL_DIGEST = builtinPresetSourcesDigest();
-/** 内置快照是否还是预设仓库 1.0.0 的原文（为假说明工作区被假数据污染了，见 before 钩子）。 */
-const SNAPSHOT_IS_REAL = /"version": "1\.0\.0"/.test(ORIGINAL_SNAPSHOT_TEXT);
+
+/**
+ * 预设仓库 `dawn-tick-presets` 当前版本（0.1.0）快照的**原文**，手抄在此作「外部基准」。
+ *
+ * 里面的 `path`、单条 `sha256` 与整份 `hash` 全部是预设仓库 `scripts/snapshot.mjs`
+ * 在 0.1.0 上真实产出的值（可从 `<预设仓库>/snapshot/presets-0.1.0.json` 逐字核对）。
+ * 用自己的实现去签自己的数据是循环论证，只有这份**别人算出来的 hash** 才能证明口径对齐。
+ *
+ * 注意两类 `path` 的语义不同（见 `tools/presets/README.md`）：
+ * - `timetables[].path` 是真实文件 `presets/schools/<校目录>/timetable.json`；
+ * - `systems[].path` 是**符号路径** `presets/systems/<id>/system.json`，新结构下没有这个文件，
+ *   它代表 `meta.json` + `login.json` 编译出的旧扁平结构文本——所以**不能按它读文件**。
+ */
+const PRESET_REPO_SNAPSHOT_0_1_0: PresetSnapshot = {
+  version: '0.1.0',
+  schemaVersion: 1,
+  generatedAt: '2026-01-01T00:00:00.000Z',
+  sources: {
+    timetables: [
+      {
+        id: 'default',
+        path: 'presets/schools/_default/timetable.json',
+        sha256: 'sha256:1dea538e8d0113060d63dee0c2ebd4068e515b7d77dce6e9446200343f3564b3',
+      },
+      {
+        id: 'usts',
+        path: 'presets/schools/usts/timetable.json',
+        sha256: 'sha256:7f60536005ef6bce600b4beff8bed52fe32f223f72cb8eb2ba3b1d90a80c58b0',
+      },
+    ],
+    systems: [
+      {
+        id: 'jwglxt',
+        path: 'presets/systems/jwglxt/system.json',
+        sha256: 'sha256:1941bb2ba38310ddd806761b73bb8b6b8dbb88873588fdfa91459214d4b302f6',
+      },
+      {
+        id: 'other',
+        path: 'presets/systems/other/system.json',
+        sha256: 'sha256:5267d69d0c21271af940fb68d84b011a0808154294fae2b9e92a3efe065e8669',
+      },
+      {
+        id: 'qzdatasource',
+        path: 'presets/systems/qzdatasource/system.json',
+        sha256: 'sha256:4bcd4571220c4be38f4ae319b4eae3d641d1ea1bf655a82d8d65814d330b23e1',
+      },
+      {
+        id: 'urp',
+        path: 'presets/systems/urp/system.json',
+        sha256: 'sha256:9e7c5f59be36d1bbf6909e8f27cd881c4beff0662732e2fd6881b8c2190cb961',
+      },
+    ],
+    adapters: {
+      'jwglxt.js': 'sha256:070522737bf3d60b4f2fff8dd246c2664acef7ce9189e862a8934c40068fa4b0',
+    },
+  },
+  hash: 'sha256:9e561d57adbfef0d4fe74a71f8958207e10d0ea0ff399e2011c033472d39fb63',
+};
+
+/**
+ * 内置快照是否还是预设仓库 0.1.0 的原文（为假说明工作区被假数据污染了，见 before 钩子）。
+ * 判据用外部基准的版本号写进原文里的那一行（快照是 `JSON.stringify(_, null, 2)` 写的）。
+ */
+const SNAPSHOT_IS_REAL = ORIGINAL_SNAPSHOT_TEXT.includes(
+  `"version": "${PRESET_REPO_SNAPSHOT_0_1_0.version}"`,
+);
 
 before(() => {
   // 本测试不再改写真实文件，所以这里只做「进来时工作区必须是干净的」这一条体检；
@@ -120,7 +184,7 @@ test('前置：内置快照是真实快照（工作区没被假数据污染）',
   assert.equal(
     SNAPSHOT_IS_REAL,
     true,
-    '内置快照不是预设仓库 1.0.0 的原文，说明工作区里留着测试注入的假数据；' +
+    '内置快照不是预设仓库 0.1.0 的原文，说明工作区里留着测试注入的假数据；' +
       '请重跑 node tools/presets/sync-snapshot.mjs --from <预设仓库> 恢复',
   );
 });
@@ -131,54 +195,9 @@ test('内置快照：verifyBuiltinPresetSnapshot() 通过', () => {
   assert.equal(result.reason, undefined);
 });
 
-test('内置快照：逐字段与预设仓库 1.0.0 的真快照一致（含 hash 与 generatedAt）', () => {
-  // 这份期望值是预设仓库 1.0.0 快照的原文，手抄在此作「外部基准」：
-  // 用自己的实现签自己的数据是循环论证，只有这份别人算出来的 hash 能证明口径对齐。
-  assert.deepEqual(BUILTIN_PRESET_SNAPSHOT, {
-    version: '1.0.0',
-    schemaVersion: 1,
-    generatedAt: '2026-01-01T00:00:00.000Z',
-    sources: {
-      timetables: [
-        {
-          id: 'default',
-          path: 'presets/timetables/default.json',
-          sha256: 'sha256:1dea538e8d0113060d63dee0c2ebd4068e515b7d77dce6e9446200343f3564b3',
-        },
-        {
-          id: 'usts',
-          path: 'presets/timetables/usts.json',
-          sha256: 'sha256:7f60536005ef6bce600b4beff8bed52fe32f223f72cb8eb2ba3b1d90a80c58b0',
-        },
-      ],
-      systems: [
-        {
-          id: 'jwglxt',
-          path: 'presets/systems/jwglxt.json',
-          sha256: 'sha256:1941bb2ba38310ddd806761b73bb8b6b8dbb88873588fdfa91459214d4b302f6',
-        },
-        {
-          id: 'other',
-          path: 'presets/systems/other.json',
-          sha256: 'sha256:5267d69d0c21271af940fb68d84b011a0808154294fae2b9e92a3efe065e8669',
-        },
-        {
-          id: 'qzdatasource',
-          path: 'presets/systems/qzdatasource.json',
-          sha256: 'sha256:4bcd4571220c4be38f4ae319b4eae3d641d1ea1bf655a82d8d65814d330b23e1',
-        },
-        {
-          id: 'urp',
-          path: 'presets/systems/urp.json',
-          sha256: 'sha256:9e7c5f59be36d1bbf6909e8f27cd881c4beff0662732e2fd6881b8c2190cb961',
-        },
-      ],
-      adapters: {
-        'jwglxt.js': 'sha256:d408705908db8419c38a19299a7a491a0bb66387f7c70639a90c5f32cb70e1c6',
-      },
-    },
-    hash: 'sha256:9b144c0ceaf56e50c0e3bfe2e8baf114ff4606288952f36e6078da643d931edf',
-  });
+test('内置快照：逐字段与预设仓库 0.1.0 的真快照一致（含 hash 与 generatedAt）', () => {
+  // 期望值就是上面那份「外部基准」——由预设仓库的生成器算出来、手抄进来的真快照。
+  assert.deepEqual(BUILTIN_PRESET_SNAPSHOT, PRESET_REPO_SNAPSHOT_0_1_0);
   // 版本文件与快照必须同一版本线
   assert.equal(BUILTIN_PRESET_VERSION, BUILTIN_PRESET_SNAPSHOT.version);
   assert.equal(BUILTIN_PRESET_SCHEMA_VERSION, BUILTIN_PRESET_SNAPSHOT.schemaVersion);
@@ -219,11 +238,14 @@ test('一致性：BUILTIN_TIMETABLES 与快照 sources.timetables 对齐', () =>
     BUILTIN_TIMETABLES.map((preset) => preset.id).sort(),
     '快照清单 id 与内置作息表 id 必须一一对应',
   );
-  // 内置顺序不必等于快照顺序（快照按文件名排序），但内容集合必须相同
+  // 内置顺序不必等于快照顺序（快照按 id 排序），但内容集合必须相同
   for (const item of listed) {
     const builtin: { id: string } | undefined = BUILTIN_TIMETABLES.find((preset) => preset.id === item.id);
     assert.ok(builtin !== undefined, `内置作息表应含 ${item.id}`);
-    assert.equal(item.path, `presets/timetables/${item.id}.json`);
+    // 作息表的 path 是**真实文件**：presets/schools/<校目录>/timetable.json。
+    // 校目录名与作息 id 可以不同（`_default` 目录 → `default` 作息），所以只校验形状；
+    // 真实的 id → 路径对应关系由「预设仓库在场」那条用例读 index.json 核对。
+    assert.match(item.path, /^presets\/schools\/[^/]+\/timetable\.json$/, `${item.id} 的 path 应为真实文件路径`);
   }
 });
 
@@ -239,41 +261,96 @@ test('一致性：readSystemsConfig() 与快照 sources.systems 对齐', () => {
   for (const item of listed) {
     const builtin: { id: string } | undefined = systems.find((system) => system.id === item.id);
     assert.ok(builtin !== undefined, `内置教务系统应含 ${item.id}`);
-    assert.equal(item.path, `presets/systems/${item.id}.json`);
+    // 教务系统的 path 是**符号路径**：新结构下没有 presets/systems/<id>/system.json 这个文件，
+    // 它代表 meta.json + login.json 编译出的旧扁平结构。由 id 唯一决定，所以可以逐字比对。
+    assert.equal(item.path, `presets/systems/${item.id}/system.json`);
   }
 });
 
-/** 一致性：预设仓库只读参考在场时，逐条内容与内置配置 deepEqual。 */
+/**
+ * 一致性：预设仓库只读参考在场时，逐条内容与内置配置 deepEqual。
+ *
+ * 两类源的核对方式**必须分开**，因为 `path` 的语义不同（见 `tools/presets/README.md`）：
+ * - 作息表：`path` 是真实文件，直接按它读原文，比内容 + 复算 sha256；
+ * - 教务系统：`path` 是**符号路径**，那个文件根本不存在，**绝不能按它读**。
+ *   它的内容是 `meta.json` + `login.json` 的编译产物，编译规则在预设仓库的
+ *   `scripts/lib/legacy.mjs` 里；主仓库不重复实现那套规则（重复实现就会漂移），
+ *   改为核对预设仓库的生成物 `presets/index.json` 里的同名字段——
+ *   那份索引正是编译产物的字段来源，且它由预设仓库自己的 CI 守着。
+ */
 test('一致性：预设仓库只读参考在场时，逐条内容与内置配置 deepEqual', (t) => {
   if (!existsSync(PRESETS_DIR)) {
     t.skip(`预设仓库不在 ${PRESETS_DIR}，跳过端到端内容比对`);
     return;
   }
 
-  const groups = [
-    { label: '作息表', listed: BUILTIN_PRESET_SNAPSHOT.sources.timetables, builtin: BUILTIN_TIMETABLES },
-    { label: '教务系统', listed: BUILTIN_PRESET_SNAPSHOT.sources.systems, builtin: readSystemsConfig() },
-  ];
-  for (const group of groups) {
-    for (const item of group.listed) {
-      const sourcePath = join(PRESETS_DIR, item.path);
-      assert.ok(existsSync(sourcePath), `预设仓库应存在 ${item.path}`);
-      const sourceText = readText(sourcePath);
-      const builtin: { id: string } | undefined = group.builtin.find((entry) => entry.id === item.id);
-      assert.ok(builtin !== undefined);
+  // —— 作息表：path 是真实文件，按 path 读原文 ——
+  for (const item of BUILTIN_PRESET_SNAPSHOT.sources.timetables) {
+    const sourcePath = join(PRESETS_DIR, item.path);
+    assert.ok(existsSync(sourcePath), `预设仓库应存在真实的作息表文件 ${item.path}`);
+    const builtin = BUILTIN_TIMETABLES.find((entry) => entry.id === item.id);
+    assert.ok(builtin !== undefined);
 
-      if (SNAPSHOT_IS_REAL) {
-        // 内置快照还是预设仓库 1.0.0 的原文：内容与清单里的单文件哈希都要对得上
-        assert.deepEqual(
-          builtin,
-          JSON.parse(sourceText) as unknown,
-          `内置${group.label}「${item.id}」应与预设仓库 ${item.path} 逐字段一致`,
-        );
-        assert.equal(`sha256:${sha256HexSync(sourceText)}`, item.sha256, `${item.path} 的 sha256 应与快照一致`);
-      } else {
-        // 内置快照被外部污染时退一步只比 id 集合（本测试自己不会再造成这种污染）
-        assert.equal(typeof builtin.id, 'string');
-      }
+    if (SNAPSHOT_IS_REAL) {
+      const sourceText = readText(sourcePath);
+      assert.deepEqual(
+        builtin,
+        JSON.parse(sourceText) as unknown,
+        `内置作息表「${item.id}」应与预设仓库 ${item.path} 逐字段一致`,
+      );
+      assert.equal(`sha256:${sha256HexSync(sourceText)}`, item.sha256, `${item.path} 的 sha256 应与快照一致`);
+    } else {
+      assert.equal(typeof builtin.id, 'string');
+    }
+  }
+
+  // —— 教务系统：path 是符号路径，改读 index.json ——
+  const indexPath = join(PRESETS_DIR, 'presets', 'index.json');
+  if (!existsSync(indexPath)) {
+    t.diagnostic(`预设仓库缺少 presets/index.json（${indexPath}），跳过教务系统比对`);
+    return;
+  }
+  const index = JSON.parse(readText(indexPath)) as {
+    _generated?: unknown;
+    systems?: Array<Record<string, unknown>>;
+  };
+  assert.equal(index._generated, true, '预设仓库 index.json 应是生成物（_generated: true）');
+  const indexSystems = index.systems ?? [];
+
+  for (const item of BUILTIN_PRESET_SNAPSHOT.sources.systems) {
+    // 符号路径只校验形状：它指向的文件在新结构下**不存在**，按它读文件就是错的
+    assert.equal(item.path, `presets/systems/${item.id}/system.json`);
+    assert.equal(
+      existsSync(join(PRESETS_DIR, item.path)),
+      false,
+      `符号路径 ${item.path} 不该被当成真实文件`,
+    );
+
+    const entry = indexSystems.find((system) => system['id'] === item.id);
+    assert.ok(entry !== undefined, `预设仓库 index.json 应含教务系统 ${item.id}（它是该项内容的来源）`);
+    const builtin = readSystemsConfig().find((system) => system.id === item.id);
+    assert.ok(builtin !== undefined);
+
+    if (SNAPSHOT_IS_REAL) {
+      assert.deepEqual(
+        {
+          id: builtin.id,
+          name: builtin.name,
+          entryPath: builtin.entryPath,
+          hint: builtin.hint,
+          detect: builtin.detect,
+        },
+        {
+          id: entry['id'],
+          name: entry['name'],
+          entryPath: entry['entryPath'],
+          hint: entry['hint'],
+          detect: entry['detect'],
+        },
+        `内置教务系统「${item.id}」应与预设仓库 index.json 的系统引用逐字段一致`,
+      );
+    } else {
+      assert.equal(typeof builtin.id, 'string');
     }
   }
 });
@@ -306,12 +383,13 @@ function makeFakePresetRepo(version = '9.9.9'): { root: string; snapshotText: st
     sources: {
       timetables: BUILTIN_TIMETABLES.map((preset) => ({
         id: preset.id,
-        path: `presets/timetables/${preset.id}.json`,
+        // 假仓库也照新结构写：作息表是真实文件路径、教务系统是符号路径
+        path: `presets/schools/${preset.id}/timetable.json`,
         sha256: `sha256:${'1'.repeat(64)}`,
       })),
       systems: readSystemsConfig().map((system) => ({
         id: system.id,
-        path: `presets/systems/${system.id}.json`,
+        path: `presets/systems/${system.id}/system.json`,
         sha256: `sha256:${'2'.repeat(64)}`,
       })),
       adapters: { 'demo.js': `sha256:${'f'.repeat(64)}` },

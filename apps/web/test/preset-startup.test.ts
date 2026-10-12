@@ -74,10 +74,11 @@ function signedSnapshot(version: string): PresetSnapshot {
     generatedAt: '2026-02-01T00:00:00.000Z',
     sources: {
       timetables: [
-        { id: 'default', path: 'presets/timetables/default.json', sha256: `sha256:${'0'.repeat(64)}` },
+        // 照新结构：作息表是真实文件路径，教务系统是符号路径（预设仓库里没有那个文件）
+        { id: 'default', path: 'presets/schools/_default/timetable.json', sha256: `sha256:${'0'.repeat(64)}` },
       ],
       systems: [
-        { id: 'jwglxt', path: 'presets/systems/jwglxt.json', sha256: `sha256:${'1'.repeat(64)}` },
+        { id: 'jwglxt', path: 'presets/systems/jwglxt/system.json', sha256: `sha256:${'1'.repeat(64)}` },
       ],
       adapters: {},
     },
@@ -131,8 +132,9 @@ test('缓存版本等于或低于内置：不套用，继续用内置', async ()
   assert.equal(findTimetable('default')?.name, '通用作息');
   assert.equal(findTimetable('cached-demo'), undefined);
 
-  // 装回旧包后残留的更新缓存：禁止降级
-  const older = await applyCachedPreset(await storageWithCache('0.9.0'));
+  // 装回旧包后残留的更新缓存：禁止降级。
+  // 内置现在是 0.1.0，所以「更旧」要取 0.x 里比它小的版本（0.9.0 反而比内置新）。
+  const older = await applyCachedPreset(await storageWithCache('0.0.9'));
   assert.equal(older.applied, false);
   assert.equal(effectivePresetVersion(), BUILTIN_PRESET_VERSION);
   assert.equal(findTimetable('default')?.name, '通用作息');

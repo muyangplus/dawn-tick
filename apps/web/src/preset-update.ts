@@ -47,7 +47,18 @@ export const PRESET_VERSION_URL =
 export const PRESET_SNAPSHOT_URL = (version: string): string =>
   `https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/snapshot/presets-${version}.json`;
 
-/** 内置预设的版本号：来自 core 的 `preset-version.json`（当前 = 预设仓库 1.0.0）。 */
+/**
+ * 预设索引地址（`presets/index.json`，生成物）。
+ *
+ * 与快照的分工：快照回答「有哪些来源文件、哈希是多少」，索引回答
+ * 「有哪些学校、各自的作息表/覆盖配置在哪、绑哪个教务系统」。
+ * 索引里的路径是**当前目录结构下的真实路径**，需要读文件时按它读；
+ * 而快照里 `sources.systems[].path` 是符号路径（那个文件并不存在），不能按它读。
+ */
+export const PRESET_INDEX_URL =
+  'https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/presets/index.json';
+
+/** 内置预设的版本号：来自 core 的 `preset-version.json`（当前 = 预设仓库 0.1.0）。 */
 export const BUILTIN_PRESET_VERSION: string = CORE_BUILTIN_PRESET_VERSION;
 
 /** 本版应用能消费的快照数据格式版本；高于它的快照一律拒收。 */
@@ -245,6 +256,233 @@ export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): 
     throw new Error('预设快照哈希校验未通过（内容与 hash 不一致），已拒绝使用');
   }
   return snapshot;
+}
+
+// —— 预设索引（`presets/index.json`）——
+//
+// 快照与索引的分工：快照是**分发清单**（`{ id, path, sha256 }`），索引是**可读目录**
+// （学校 → 作息表/覆盖配置的真实路径、系统 → 识别特征与入口）。
+// 索引也是生成物（`_generated: true`，预设仓库 `scripts/snapshot.mjs` 写出），本模块只读。
+//
+// 为什么要单独校验：索引会把路径喂给「按路径读文件」的调用方（学校搜索、覆盖配置读取）。
+// 索引是外部数据，一条 `../` 或一个绝对路径就能把读取带出仓库根，所以除了字段齐全，
+// 这里还强制路径是**安全的相对路径**。校验不通过一律抛出可读错误，由调用方决定回退。
+
+/** 索引里的一条学校。 */
+export interface PresetIndexSchool {
+  id: string;
+  name: string;
+  /** 绑定的教务系统 id；通用作息为 null */
+  system: string | null;
+  /** 作息表**真实文件**的相对路径，例如 `presets/schools/usts/timetable.json` */
+  timetablePath: string;
+  /** 学校覆盖配置的相对路径；没有则为 null */
+  configPath: string | null;
+}
+
+/** 索引里的一条教务系统引用。 */
+export interface PresetIndexSystem {
+  id: string;
+  /**
+   * 页面识别特征；四项都可能为空数组。
+   * 与快照 `sources.systems[].path`（符号路径、文件不存在）不同，
+   * 索引还给 `metaPath` / `loginPath` / `parserPath` 这些**真实存在**的路径，需要读文件时按它们读。
+   */
+  detect: {
+    markers: string[];
+    timetableTableIds: string[];
+    timetableTableClasses: string[];
+    gridCellIdPatterns: string[];
+  };
+  /** 登录入口路径（相对站点根，以 `/` 开头） */
+  entryPath: string;
+  hint: string;
+}
+
+/** 预设仓库 `presets/index.json` 的结构；本模块只取需要的字段（其余字段原样保留）。 */
+export interface PresetIndex {
+  _generated: true;
+  version: string;
+  schemaVersion: number;
+  schools: PresetIndexSchool[];
+  systems: PresetIndexSystem[];
+}
+
+/** 索引里 `detect` 的四个固定子键（与 core 的 `SystemDetectConfig` 同形）。 */
+const PRESET_INDEX_DETECT_KEYS = [
+  'markers',
+  'timetableTableIds',
+  'timetableTableClasses',
+  'gridCellIdPatterns',
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 非空字符串（去首尾空白后）才算数；其余一律 null。 */
+function nonEmptyText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text === '' ? null : text;
+}
+
+/**
+ * 路径安全检查：非空、POSIX 分隔符、相对路径、不含 `..` 段、不带盘符。
+ * 索引里的路径会被拿去读文件（相对预设仓库根），这几条是必须的边界。
+ */
+function describePresetPathProblem(value: unknown, where: string): string | null {
+  const text = nonEmptyText(value);
+  if (text === null) return `${where} 应为非空字符串`;
+  if (text.startsWith('/') || text.includes('\\')) return `${where} 应为 POSIX 风格的相对路径：${text}`;
+  if (/^[A-Za-z]:/.test(text)) return `${where} 不应带盘符：${text}`;
+  if (text.split('/').includes('..')) return `${where} 不应包含 .. 段：${text}`;
+  return null;
+}
+
+/** 字符串数组校验；元素必须是非空字符串。 */
+function describeTextArrayProblem(value: unknown, where: string): string | null {
+  if (!Array.isArray(value)) return `${where} 应为字符串数组`;
+  for (const [index, item] of value.entries()) {
+    if (nonEmptyText(item) === null) return `${where}[${index}] 应为非空字符串`;
+  }
+  return null;
+}
+
+/** 存在的可选字段要类型正确；缺失（undefined）不追究——索引会随结构演进加字段。 */
+function describeOptionalProblem(entry: Record<string, unknown>, key: string, where: string): string | null {
+  if (entry[key] === undefined) return null;
+  const value = entry[key];
+  if (key === 'aliases') return describeTextArrayProblem(value, `${where} 的 aliases`);
+  if (key === 'generic' || key === 'default' || key === 'hasParser') {
+    return typeof value === 'boolean' ? null : `${where} 的 ${key} 应为布尔值`;
+  }
+  if (key === 'region' || key === 'type' || key === 'version') {
+    return nonEmptyText(value) === null ? `${where} 的 ${key} 应为非空字符串` : null;
+  }
+  // metaPath / loginPath / parserPath：可选，但一旦出现就必须是安全的相对路径
+  return describePresetPathProblem(value, `${where} 的 ${key}`);
+}
+
+/**
+ * 结构校验 `presets/index.json`；返回可读的问题描述，合法时返回 null。
+ *
+ * 判定要点：
+ *   - `_generated` 必须**恒为 true**：索引是生成物，手写或被人改过的文件一律拒收；
+ *   - `version` / `schemaVersion` 必须有，且 `schemaVersion` 不得高于本版能消费的版本；
+ *   - 学校条目必须有 `id` / `name` / `system` / `timetablePath` / `configPath`
+ *     （没有绑定系统或没有 config.json 时**显式写 null**，缺键算结构变了）；
+ *   - 系统引用必须有 `id` / `name` / `detect`（四个固定子键）/ `entryPath` / `hint`；
+ *   - 同一份索引里 id 不得重复；
+ *   - 所有路径必须是安全的相对路径。
+ *
+ * 任何输入都不抛异常（坏结构只变成一条描述），调用方可以放心把网络数据丢进来。
+ */
+export function describePresetIndexProblem(value: unknown): string | null {
+  if (!isRecord(value)) return '预设索引应为对象';
+  if (value['_generated'] !== true) {
+    return '预设索引缺少 _generated: true（它不是生成物，已拒绝）';
+  }
+  if (nonEmptyText(value['version']) === null) return '预设索引缺少 version';
+  const schemaVersion = value['schemaVersion'];
+  if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) {
+    return '预设索引的 schemaVersion 应为整数';
+  }
+  if (schemaVersion > PRESET_SCHEMA_VERSION) {
+    return `预设索引使用了更新的格式（schemaVersion ${schemaVersion}），请升级应用`;
+  }
+  if (!Array.isArray(value['schools'])) return '预设索引的 schools 应为数组';
+  if (!Array.isArray(value['systems'])) return '预设索引的 systems 应为数组';
+
+  const schoolIds = new Set<string>();
+  for (const [index, raw] of value['schools'].entries()) {
+    const where = `预设索引的学校 #${index + 1}`;
+    if (!isRecord(raw)) return `${where} 应为对象`;
+    const id = nonEmptyText(raw['id']);
+    if (id === null) return `${where} 缺少 id`;
+    if (schoolIds.has(id)) return `${where} 的 id 重复：${id}`;
+    schoolIds.add(id);
+
+    if (nonEmptyText(raw['name']) === null) return `预设索引的学校「${id}」缺少 name`;
+    if (!('system' in raw)) {
+      return `预设索引的学校「${id}」缺少 system（不绑定教务系统时应显式写 null）`;
+    }
+    if (raw['system'] !== null && nonEmptyText(raw['system']) === null) {
+      return `预设索引的学校「${id}」的 system 应为非空字符串或 null`;
+    }
+    if (!('configPath' in raw)) {
+      return `预设索引的学校「${id}」缺少 configPath（没有 config.json 时应显式写 null）`;
+    }
+    if (raw['configPath'] !== null) {
+      const problem = describePresetPathProblem(raw['configPath'], `预设索引的学校「${id}」的 configPath`);
+      if (problem !== null) return problem;
+    }
+    const timetableProblem = describePresetPathProblem(
+      raw['timetablePath'],
+      `预设索引的学校「${id}」的 timetablePath`,
+    );
+    if (timetableProblem !== null) return timetableProblem;
+    for (const key of ['aliases', 'generic', 'default', 'region', 'type']) {
+      const problem = describeOptionalProblem(raw, key, `预设索引的学校「${id}」`);
+      if (problem !== null) return problem;
+    }
+  }
+
+  const systemIds = new Set<string>();
+  for (const [index, raw] of value['systems'].entries()) {
+    const where = `预设索引的系统 #${index + 1}`;
+    if (!isRecord(raw)) return `${where} 应为对象`;
+    const id = nonEmptyText(raw['id']);
+    if (id === null) return `${where} 缺少 id`;
+    if (systemIds.has(id)) return `${where} 的 id 重复：${id}`;
+    systemIds.add(id);
+
+    if (nonEmptyText(raw['name']) === null) return `预设索引的系统「${id}」缺少 name`;
+    const detect = raw['detect'];
+    if (!isRecord(detect)) return `预设索引的系统「${id}」缺少 detect`;
+    for (const key of PRESET_INDEX_DETECT_KEYS) {
+      const problem = describeTextArrayProblem(detect[key], `预设索引的系统「${id}」的 detect.${key}`);
+      if (problem !== null) return problem;
+    }
+    const entryPath = nonEmptyText(raw['entryPath']);
+    if (entryPath === null) return `预设索引的系统「${id}」缺少 entryPath`;
+    if (!entryPath.startsWith('/')) {
+      return `预设索引的系统「${id}」的 entryPath 应以 / 开头：${entryPath}`;
+    }
+    if (nonEmptyText(raw['hint']) === null) return `预设索引的系统「${id}」缺少 hint`;
+    for (const key of ['aliases', 'hasParser', 'version', 'metaPath', 'loginPath', 'parserPath']) {
+      const problem = describeOptionalProblem(raw, key, `预设索引的系统「${id}」`);
+      if (problem !== null) return problem;
+    }
+  }
+
+  return null;
+}
+
+/** 解析并校验 `presets/index.json` 的内容；不合法时抛出可读错误。 */
+export function parsePresetIndex(value: unknown): PresetIndex {
+  const problem = describePresetIndexProblem(value);
+  if (problem !== null) throw new Error(`预设索引不可用：${problem}`);
+  return value as PresetIndex;
+}
+
+/**
+ * 拉取并校验 `presets/index.json`。
+ * 无网络环境、HTTP 失败、JSON 非法、结构不对都抛出可读错误——调用方负责回退。
+ */
+export async function fetchPresetIndex(fetchImpl?: typeof fetch): Promise<PresetIndex> {
+  const doFetch = fetchImpl ?? globalThis.fetch;
+  if (typeof doFetch !== 'function') throw new Error('当前环境无法联网读取预设索引');
+
+  let parsed: unknown;
+  try {
+    const response = await doFetch(PRESET_INDEX_URL, { headers: { accept: 'application/json' } });
+    if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
+    parsed = await response.json();
+  } catch (cause: unknown) {
+    throw new Error(`预设索引下载失败：${describeFetchError(cause)}`);
+  }
+  return parsePresetIndex(parsed);
 }
 
 /**

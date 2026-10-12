@@ -4,7 +4,7 @@
  *
  * 用法：
  *   node tools/presets/sync-snapshot.mjs --from "E:/work/dsh/dawn-tick-presets"
- *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --version 1.0.1
+ *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --version 0.1.1
  *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --check   # 只校验不写盘
  *   node tools/presets/sync-snapshot.mjs --from <预设仓库> --out <目录>   # 写到别的目录（文件名不变）
  *
@@ -20,9 +20,17 @@
  * 给了 --out 就只在那一个目录里写（目录不存在时按需创建），
  * `--check` 则改为拿该目录里的两份文件做比对，语义仍是「只校验不写盘、一个文件都不写」。
  *
- * 规矩（重要）：**预设仓库是内容的唯一来源**。改了预设仓库里的 timetables / systems / adapters，
- * 必须先在预设仓库跑 `node scripts/snapshot.mjs` 生成新快照，再回来跑本脚本同步；
- * 本脚本只做「校验 + 复制」，绝不重新生成时间戳、也绝不改写 hash。
+ * 规矩（重要）：**预设仓库是内容的唯一来源**。改了预设仓库里的 schools / systems / adapters，
+ * 必须先在预设仓库跑 `node scripts/snapshot.mjs` 生成新快照（同时会重写 `presets/index.json`），
+ * 再回来跑本脚本同步；本脚本只做「校验 + 复制」，绝不重新生成时间戳、也绝不改写 hash。
+ *
+ * 关于快照里的 `path`（2026 结构重构后两类语义不同，本脚本**不受影响**）：
+ *   - `sources.timetables[].path` 是**真实文件** `presets/schools/<校目录>/timetable.json`；
+ *   - `sources.systems[].path` 是**符号路径** `presets/systems/<id>/system.json`，新结构下没有这个文件，
+ *     它代表 `<id>/meta.json` + `<id>/login.json` 编译出的旧扁平结构。
+ *   本脚本从头到尾只按 **id** 比对清单（见 compareSourceIds），**从不按 path 读文件**，
+ *   所以符号路径不会被误当成真实文件；path 的形状校验由 core 的 verifyBuiltinPresetSnapshot() 负责。
+ *   需要真实路径的调用方请读 `presets/index.json`（timetablePath / configPath / metaPath / loginPath）。
  *
  * 失败即不落盘：目录不存在、快照缺失、hash 不符、文件清单对不上内置配置，
  * 都会打印中文错误并以非 0 退出，且**一个文件都不写**。
