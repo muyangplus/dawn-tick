@@ -1285,6 +1285,107 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       entryBox instanceof window.HTMLInputElement ? entryBox.value : '',
     );
   }
+
+  // —— 学校选择器（SchoolPicker）：筛选行、省份分组、搜索、985 筛选、适配徽标与请求适配入口 ——
+  const picker = view.container.querySelector('[data-role="school-picker"]');
+  const schoolRows = (): HTMLElement[] => [
+    ...view.container.querySelectorAll<HTMLElement>('[data-role="school-row"]'),
+  ];
+  const schoolRowTexts = (): string[] => schoolRows().map((row) => (row.textContent ?? '').trim());
+  const schoolCountText = (): string =>
+    (view.container.querySelector('[data-role="school-count"]')?.textContent ?? '').trim();
+
+  if (schoolInput instanceof window.HTMLInputElement) setInputValue(schoolInput, '');
+  await flush(10);
+  const provinceGroups = [...view.container.querySelectorAll('[data-role="school-group"]')].map(
+    (group) => group.getAttribute('data-province') ?? '',
+  );
+  check(
+    '学校选择器渲染筛选行与省份分组',
+    picker !== null &&
+      view.container.querySelector('button[aria-label="筛选 985"]') !== null &&
+      view.container.querySelector('button[aria-label="筛选 211"]') !== null &&
+      view.container.querySelector('button[aria-label="筛选 双一流"]') !== null &&
+      view.container.querySelector('[aria-label="地区"]') !== null &&
+      view.container.querySelector('[data-role="request-school-form"]') !== null &&
+      provinceGroups.length >= 2,
+    `分组 ${provinceGroups.length} 个：${provinceGroups.slice(0, 4).join(' / ')}`,
+  );
+
+  const searchBox = view.container.querySelector<HTMLInputElement>('input[aria-label="搜索学校"]');
+  if (searchBox !== null) setInputValue(searchBox, '清华');
+  await flush(12);
+  const qinghuaRow = schoolRows().find((row) => (row.textContent ?? '').includes('清华大学'));
+  check(
+    '学校选择器搜索清华命中清华大学',
+    qinghuaRow !== undefined && schoolRowTexts().length > 0 && schoolCountText().includes('共 2 所'),
+    `${schoolCountText()} / ${schoolRowTexts()[0] ?? '(空)'}`,
+  );
+  const requestLink = qinghuaRow?.querySelector<HTMLAnchorElement>('[data-role="request-school"]');
+  check(
+    '未适配学校显示暂未适配并给出请求适配链接',
+    qinghuaRow?.getAttribute('data-adapted') === 'false' &&
+      (qinghuaRow?.textContent ?? '').includes('暂未适配') &&
+      requestLink instanceof window.HTMLAnchorElement &&
+      (requestLink.getAttribute('href') ?? '').includes('template=request-school.yml') &&
+      decodeURIComponent(requestLink.getAttribute('href') ?? '').includes('清华大学'),
+    requestLink?.getAttribute('href') ?? '(没有链接)',
+  );
+
+  if (searchBox !== null) setInputValue(searchBox, '');
+  await flush(10);
+  view.container.querySelector<HTMLElement>('button[aria-label="筛选 985"]')?.click();
+  await flush(10);
+  check(
+    '985 筛选只保留 985 院校',
+    schoolCountText().includes('共 39 所') &&
+      schoolRows().some((row) => (row.textContent ?? '').includes('清华大学')) &&
+      !schoolRows().some((row) => (row.textContent ?? '').includes('苏州大学')),
+    schoolCountText(),
+  );
+
+  view.container.querySelector<HTMLElement>('button[aria-label="筛选 全部"]')?.click();
+  await flush(8);
+  view.container.querySelector<HTMLElement>('[aria-label="地区"]')?.click();
+  await flush(10);
+  const provinceOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (item) => (item.textContent ?? '').trim() === '江苏省',
+  );
+  check(
+    '地区下拉按 listProvinces 列出省份',
+    provinceOption !== undefined && (document.body.textContent ?? '').includes('北京市'),
+    provinceOption?.textContent ?? '(没有省份选项)',
+  );
+  if (provinceOption !== undefined) {
+    provinceOption.click();
+    await flush(12);
+  }
+  check(
+    '地区筛选生效（江苏省）',
+    schoolCountText().includes('共 167 所') && schoolCountText().includes('江苏省'),
+    schoolCountText(),
+  );
+
+  if (searchBox !== null) setInputValue(searchBox, '苏州');
+  await flush(12);
+  schoolRows()
+    .find((row) => (row.textContent ?? '').includes('苏州科技大学'))
+    ?.click();
+  await flush(16);
+  const pickedRow = schoolRows().find((row) => (row.textContent ?? '').includes('苏州科技大学'));
+  const entryBoxAgain = view.container.querySelector<HTMLInputElement>('input[aria-label="入口地址"]');
+  check(
+    '选中学校后导入入口 URL 反映该校',
+    (view.container.querySelector('[data-role="school-picked"]')?.textContent ?? '').includes('苏州科技大学') &&
+      entryBoxAgain?.value.includes('jwgl.usts.edu.cn') === true &&
+      pickedRow?.getAttribute('data-adapted') === 'true' &&
+      pickedRow?.getAttribute('data-picked') === 'true' &&
+      (pickedRow?.textContent ?? '').includes('已适配'),
+    `${(view.container.querySelector('[data-role="school-picked"]')?.textContent ?? '').trim()} / ${
+      entryBoxAgain?.value ?? ''
+    }`,
+  );
+
   const pasteBox = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBox instanceof window.HTMLTextAreaElement) {
     setInputValue(pasteBox, PAGE_SAMPLE);
@@ -1683,6 +1784,58 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       scopeDialogCount() === 0 &&
       remountEnd?.value === '10:55',
     `对话框 ${scopeDialogCount()} 个，结束时间=${remountEnd?.value ?? '?'}（原 10:50）`,
+  );
+
+  // —— 按学校套用作息：与导入流程共用 SchoolPicker，专属作息优先、否则通用作息 ——
+  const applySchoolButton = (): HTMLElement | null =>
+    remounted.container.querySelector<HTMLElement>('button[aria-label="按学校套用作息"]');
+  const schoolTimetableStatus = (): string =>
+    (remounted.container.querySelector('[data-role="school-timetable-status"]')?.textContent ?? '').trim();
+  const schoolTimetableMessage = (): string =>
+    (remounted.container.querySelector('[data-role="school-timetable-message"]')?.textContent ?? '').trim();
+  /** 在弹出的作息选校对话框里搜关键词并点中某一行；返回那一行（没找到时为 null）。 */
+  const pickSchoolInDialog = async (keyword: string, name: string): Promise<HTMLElement | null> => {
+    applySchoolButton()?.click();
+    await flush(16);
+    const box = document.querySelector<HTMLInputElement>('input[aria-label="搜索学校"]');
+    if (box !== null) setInputValue(box, keyword);
+    await flush(14);
+    const row = [...document.querySelectorAll<HTMLElement>('[data-role="school-row"]')].find((item) =>
+      (item.textContent ?? '').includes(name),
+    );
+    row?.click();
+    await flush(24);
+    return row ?? null;
+  };
+
+  check('作息设置提供按学校套用作息入口', applySchoolButton() !== null, '');
+  applySchoolButton()?.click();
+  await flush(16);
+  check(
+    '作息设置可打开学校选择器',
+    document.querySelector('[data-role="school-picker"]') !== null &&
+      document.querySelector('input[aria-label="搜索学校"]') !== null,
+    '',
+  );
+  // 关掉这次打开的对话框，下面用统一入口重开
+  if (clickByText(document.body, '取消')) await flush(10);
+
+  const genericPicked = await pickSchoolInDialog('清华', '清华大学');
+  check(
+    '该校暂无专属作息时套用通用作息并提示',
+    genericPicked?.getAttribute('data-adapted') === 'false' &&
+      schoolTimetableMessage().includes('该校暂无专属作息，已套用通用作息') &&
+      schoolTimetableStatus().includes('当前 12 节课次'),
+    `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
+  );
+
+  const exclusivePicked = await pickSchoolInDialog('苏州', '苏州科技大学');
+  check(
+    '已适配学校套用该校专属作息',
+    exclusivePicked?.getAttribute('data-adapted') === 'true' &&
+      schoolTimetableMessage().includes('已套用 苏州科技大学 的作息（14 节）') &&
+      schoolTimetableStatus().includes('当前 14 节课次'),
+    `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
 
   check('学期设置显示编辑与删除入口', clickByLabel(remounted.container, '编辑学期'), '');

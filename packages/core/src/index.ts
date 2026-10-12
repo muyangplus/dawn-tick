@@ -19,3 +19,4 @@ export * from './search.ts';
 export * from './backup.ts';
 export * from './import/index.ts';
 export * from './config/index.ts';
+export * from './schools/index.ts';

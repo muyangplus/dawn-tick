@@ -51,6 +51,7 @@ import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
+import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
@@ -585,6 +586,8 @@ export function SettingsView({
           </div>
         </details>
         <PeriodSettings storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
+        {/* 选校体验与导入流程统一：同一个 SchoolPicker，选中后套用该校作息或通用作息 */}
+        <SchoolTimetableCard storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
         {activeSemesterId !== null && (
           <CourseManager
             storage={storage}
