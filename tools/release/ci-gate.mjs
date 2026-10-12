@@ -78,7 +78,7 @@ async function main() {
     console.error(`CI 未通过（${result.verdict}），停止发布 ${result.sha}`);
     return 1;
   }
-  console.log(`::notice::CI 已通过 ${result.sha}`);
+  console.log(`::notice::CI 通过 ${result.sha}`);
   return 0;
 }
 

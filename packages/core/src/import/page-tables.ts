@@ -119,7 +119,7 @@ function activePageHints(): PageHintsState {
 
 /**
  * 这一条是跨系统的通用启发式（权重、中文表头用词），不是某所学校的数据，
- * 因此不适合外置到 systems.json，保留在代码里并在此说明。
+ * 不放到 systems.json，保留在代码里并在此说明。
  */
 const LOOSE_TABLE_ID_PATTERN = /id\s*=\s*["'][^"']*(kb|skb|timetable)/i;
 
@@ -206,7 +206,7 @@ function pickTeacher(lines: readonly string[], used: readonly (string | null)[])
   return null;
 }
 
-/** 单元格里的节次只在出现「节」或时间范围时才可信，避免把「3-5周」当成节次。 */
+/** 单元格里的节次只在出现「节」或时间范围时取值，避免把「3-5周」当成节次。 */
 function periodFromCell(text: string): number | null {
   if (!/节|\d{1,2}:\d{2}/.test(text)) return null;
   return parsePeriodLabel(text)?.periodStart ?? null;

@@ -30,7 +30,7 @@ export interface ApplyImportResult {
   warnings: string[];
 }
 
-/** 把解析出的排课写入存储。同一课程同一星期同一节次同一周次的排课会被跳过，保证重复导入幂等。 */
+/** 把解析出的排课写入存储。同一课程同一星期同一节次同一周次的排课被跳过（重复导入幂等）。 */
 export async function applyImport(
   storage: Storage,
   semesterId: string,

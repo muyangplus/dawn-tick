@@ -5,9 +5,9 @@
  * `timetables.json`、`systems.json`、`preset-version.json` 与
  * `builtin-preset-snapshot.json`（后两者由同步脚本生成，不要手改）。
  * 这些 JSON 在打包期直接被 import 进来（tsconfig 打开了 `resolveJsonModule`），
- * 因此不再需要手写的 TS 等价副本，也就不存在「两份常量漂移」的问题。
+ * 不再需要手写的 TS 等价副本，「两份常量漂移」的问题随之消失。
  *
- * 为什么要用 import 而不是运行时读文件：Web 端在浏览器里运行、不能读本地文件，
+ * 用 import 而不是运行时读文件：Web 端在浏览器里运行、不能读本地文件，
  * 打包期内联的 JSON 是三端唯一可用的同一份数据。
  *
  * 加载即校验：模块被引入时就会跑一遍 validateTimetables / validateSystems，
@@ -407,7 +407,7 @@ export interface PresetSnapshot {
  *
  * 它由 `tools/presets/sync-snapshot.mjs` 从预设仓库同步而来，只读不改：
  * 需要更新时改预设仓库、重新生成快照，再跑同步脚本，而不是在这里手改。
- * 这里只做类型收敛，内容可信度由 `verifyBuiltinPresetSnapshot()` 负责背书。
+ * 这里只做类型收敛，内容比对由 `verifyBuiltinPresetSnapshot()` 负责。
  */
 export const BUILTIN_PRESET_SNAPSHOT: PresetSnapshot =
   builtinPresetSnapshotJson as unknown as PresetSnapshot;
@@ -419,7 +419,7 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
  * 作息表条目的 `path` 形状：`presets/schools/<校目录>/timetable.json`。
  *
  * 这是**符号路径**（合并后没有这个文件）：它代表 `schools/<校目录>/school.json` 里内嵌的
- * `timetable` 值。只校验形状，因为校目录名与作息 id 可以不同（`_default` → `default`），
+ * `timetable` 值。只校验形状：校目录名与作息 id 可以不同（`_default` → `default`），
  * id → 真实路径的对应关系在快照的 `index.schools[].timetablePath` 里。
  */
 const TIMETABLE_SOURCE_PATH_PATTERN = /^presets\/schools\/[^/]+\/timetable\.json$/;
@@ -443,7 +443,7 @@ function semanticDigest(value: unknown): string {
  * 用内置配置的当前正文复算「语义摘要」（按 id 排序后规范化再取 sha256）。
  *
  * 用途是**审计与呈现**：让人一眼看出内置正文的指纹（例如写进发布检查、人工核对）。
- * 它不参与自证——拿内置内容算出来的值再去对内置内容，是循环论证。
+ * 它不参与校验：拿内置内容算出来的值再去对内置内容，是循环论证。
  */
 export function builtinPresetSourcesDigest(): { timetables: string; systems: string } {
   return {
@@ -467,13 +467,13 @@ export function builtinPresetSourcesDigest(): { timetables: string; systems: str
  *
  * 注意本函数判的是**内置**（`timetables.json` / `systems.json`）与内置快照是否对得上，
  * 与运行时的预设覆盖层（`setPresetOverride`）无关：覆盖层换的是「当前生效值」，
- * 内置快照永远是打包时固化的那一份，所以这里不受覆盖状态影响。
+ * 内置快照永远是打包时固化的那一份，这里不受覆盖状态影响。
  *
- * 判据为什么是这样——快照清单里每条只记 `{ id, path, sha256 }`，描述的是预设仓库里的
+ * 判据：快照清单里每条只记 `{ id, path, sha256 }`，描述的是预设仓库里的
  * **单个来源**；内置 `timetables.json` / `systems.json` 是合并后的数组。两边形态不同：
  * 单文件哈希是带缩进的单对象原文哈希（教务系统那项更是编译产物的文本哈希），
- * 与合并数组复算的哈希**本来就不同**，所以清单里的 `sha256` 无法拿来对内置正文做内容级比对
- * （它的价值在预设仓库侧：证明那些来源没被改）。因此这里判「不漂移」用的是 id 集合：
+ * 与合并数组复算的哈希**本来就不同**，清单里的 `sha256` 无法拿来对内置正文做内容级比对
+ * （它的价值在预设仓库侧：证明那些来源没被改）。这里的「不漂移」判据用的是 id 集合：
  * **数量一致 + 双向无缺失**——内置多一个、少一个、被改名都会立刻失败。
  * `path` 只校验**形状**（不读文件）：作息表是历史契约符号路径
  * `presets/schools/<校目录>/timetable.json`（该文件已并入 school.json、不再存在），
@@ -481,7 +481,7 @@ export function builtinPresetSourcesDigest(): { timetables: string; systems: str
  * 真实路径看 `index` 里的同名字段。
  *
  * 已知边界（见 `tools/presets/README.md`）：改内置 `systems.json` 里某个字段的**值**
- * （id 不动）不会让本函数失败，因为快照里没有那份内容可比。这类漂移靠两件事兜住：
+ * （id 不动）不会让本函数失败——快照里没有那份内容可比。这类漂移由两处覆盖：
  *   1. 流程规矩——预设仓库是唯一内容来源，改完必须跑 `tools/presets/sync-snapshot.mjs`；
  *   2. 两侧各自的单测——内置侧有 `config.test.ts`（逐节比对作息、系统字段），
  *      预设仓库侧有自己的快照 CI。
@@ -489,7 +489,7 @@ export function builtinPresetSourcesDigest(): { timetables: string; systems: str
  *
  * 关于顺序：**只比集合，不比顺序**。快照清单是预设仓库按文件名排序得到的
  * （`default` 在 `usts` 前、`other` 在 `urp` 前），而内置 `systems.json` 的顺序是
- * 「识别优先级」这一业务语义，两者本来就不该相等。
+ * 「识别优先级」这一业务语义，两者不相等。
  *
  * 不抛异常：任何问题都收敛成 `{ ok: false, reason }`，方便启动自检与测试直接判定。
  */
@@ -691,8 +691,8 @@ export function verifyBuiltinPresetSnapshot(): { ok: boolean; reason?: string } 
 // `readSystemsConfig`、`effectiveTimetables`/`effectiveSystems`/`effectivePresetVersion`）
 // 都返回**有效预设**（有覆盖就是覆盖，没有就是内置）。
 //
-// 为什么不在运行时热替换：用户正在用的一套作息/教务配置，不能因为后台下载完成就在
-// 半路换掉——设置页里下载成功只提示「下次启动生效」正是这个约定。
+// 运行时不做热替换：用户正在用的一套作息/教务配置不在半路更换——
+// 设置页里下载成功只提示「下次启动生效」正是这个约定。
 //
 // 安全边界：覆盖内容必须**先过 `validateTimetables` / `validateSystems`**。
 // 只有全部合法才整体生效，任何一条不合法都整体忽略并继续用内置，
@@ -801,7 +801,7 @@ export function presetToTimeSlots(
   preset: TimetablePreset,
 ): Array<{ periodNo: number; startTime: string; endTime: string; section: PeriodSection }> {
   return preset.periods.map((period) => {
-    // 用 parseClock 过一遍，保证产出的时间与库里的 time_slots 口径一致
+    // 用 parseClock 过一遍，产出的时间与库里的 time_slots 口径一致
     const start = formatClock(parseClock(period.start));
     return {
       periodNo: period.periodNo,

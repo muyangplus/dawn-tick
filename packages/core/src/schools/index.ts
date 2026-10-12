@@ -153,7 +153,7 @@ function matchesFilters(school: School, options: SearchSchoolsOptions): boolean 
  * 这正是简称检索要解决的问题。
  *
  * 拼音部分同理分两档：**简称全拼**（94/88/80）优先于首字母缩写（66…）与校名全拼（58…）。
- * 因为简称全拼命中的是「用户按读音念出来的那个简称」——`beida` 只可能是北京大学；
+ * 简称全拼命中的是「用户按读音念出来的那个简称」——`beida` 只可能是北京大学；
  * 而校名全拼只是碰巧包含同样的字母时，多半是噪声。反过来说，`beijingdaxue`
  * 不会被简称全拼 `beida` 抢走：`shortPinyin.startsWith(query)` 为假。
  */
@@ -196,7 +196,7 @@ function compareSchools(left: School, right: School): number {
 /**
  * 办学层次权重，只作**同分时的次序**用：缩写撞车很常见
  * （`qhdx` 同时是清华大学与青海大学），先出层次更高的那所更符合直觉。
- * 它不参与打分，因此不会把「文字更贴近」的结果压下去。
+ * 它不参与打分，不会把「文字更贴近」的结果压下去。
  */
 function prominence(school: School): number {
   if (school.tags.includes('985')) return 0;
@@ -211,7 +211,7 @@ function prominence(school: School): number {
  * - `query` 可以是中文全名、中文简称、简称全拼（`beida`）、校名拼音全拼或拼音首字母缩写；
  * - 空字符串（或纯空白）返回全部学校，顺序与 `listSchools()` 一致；
  * - 命中的结果按「精确 > 前缀 > 包含」排序；同分时先看办学层次
- *   （985 > 211 > 双一流 > 其他），再看拼音/校名，因此结果稳定可预期。
+ *   （985 > 211 > 双一流 > 其他），再看拼音/校名，结果稳定可预期。
  */
 export function searchSchools(query: string, options: SearchSchoolsOptions = {}): School[] {
   const trimmed = query.trim();

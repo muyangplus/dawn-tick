@@ -5,17 +5,17 @@
  *   1. Web 端 `apps/web/src/preset-update.ts` 的下载校验（浏览器里同步判定，不能等异步）；
  *   2. 内置快照的自检 `verifyBuiltinPresetSnapshot()`（Node / 三端同判）；
  *   3. 同步脚本 `tools/presets/sync-snapshot.mjs` 的复算校验。
- * 三处必须是同一份实现，否则「同一个快照在两端得到不同结论」这类问题会非常难查。
- * 因此这里做实现，Web 端与同步脚本只做转出/直接 import，不再各存一份。
+ * 三处必须是同一份实现：不同实现会让「同一个快照在两端得到不同结论」这类问题难以定位。
+ * 实现放在这里，Web 端与同步脚本只做转出/直接 import，不各存一份。
  *
  * 为什么是**纯 TS**、不用 `node:crypto`：同一份代码要跑在浏览器里。
  * Vite 会把 `node:crypto` 标记为「为浏览器外部化」，产出的 `createHash` 只是空壳，调用即抛错
- * （轻则页面启动时报错，重则预设校验静默失效）。因此这里自己实现 SHA-256，
+ * （轻则页面启动时报错，重则预设校验静默失效）。实现自己写的 SHA-256，
  * 不用任何平台 API，Node 24（同步脚本、单测）与浏览器得到完全相同的哈希。
  *
  * 口径与预设仓库 `dawn-tick-presets` 的 `scripts/snapshot.mjs` 完全一致：
  *   哈希 = sha256( canonicalJson(去掉 hash 字段后的快照对象) )，写作 `sha256:<hex>`。
- * 其中 canonicalJson 对对象键排序、数组保序、无多余空白，保证同一份数据在任何机器上同哈希。
+ * 其中 canonicalJson 对对象键排序、数组保序、无多余空白，同一份数据在任何机器上同哈希。
  */
 
 /** SHA-256 轮常量。 */

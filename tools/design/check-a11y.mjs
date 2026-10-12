@@ -142,5 +142,5 @@ if (invokedDirectly) {
     for (const failure of failures) console.error(`  - ${failure}`);
     process.exit(1);
   }
-  console.log('全部通过');
+  console.log('无失败项');
 }

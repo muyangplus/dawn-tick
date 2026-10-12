@@ -1,8 +1,8 @@
-﻿# 生成 Windows 自签名代码签名证书（只在本机执行一次）
+# 生成 Windows 自签名代码签名证书（只在本机执行一次）
 # 用法：powershell -File tools/release/make-signing-cert.ps1
 # 产物：local-notes/signing/dawntick-codesign.pfx 与 .cer（都在 .gitignore 内）
 #
-# 自签名的真实效果：能证明"文件由本证书签发、未被篡改"，
+# 自签名的实际效果：签名可核对"文件由本证书签发、未被篡改"，
 # 但 Windows 默认不信任它 —— 目标机器需要先安装 .cer 到
 # 「受信任的根证书颁发机构」与「受信任的发布者」，之后才不再提示"未知发布者"。
 # 对公网陌生用户，自签名仍然会被 SmartScreen 拦。
@@ -46,7 +46,7 @@ Write-Output "已生成：$pfx"
 Write-Output "已导出公钥证书：$cer"
 Write-Output "指纹：$($cert.Thumbprint)"
 Write-Output ''
-Write-Output '目标机器安装（只需一次，需管理员）：'
+Write-Output '目标机器安装（一次，需管理员）：'
 Write-Output "  Import-Certificate -FilePath `"$cer`" -CertStoreLocation Cert:\LocalMachine\Root"
 Write-Output "  Import-Certificate -FilePath `"$cer`" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher"
 Write-Output ''

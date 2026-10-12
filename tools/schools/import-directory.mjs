@@ -79,7 +79,7 @@ function sha256(text) {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** 目录摘要：文件名 + 内容一起哈希，顺序固定，因此对同一份输入稳定。 */
+/** 目录摘要：文件名 + 内容一起哈希，顺序固定，同一份输入得到同一个摘要。 */
 function digestDir(dir) {
   const hash = createHash('sha256');
   for (const file of readdirSync(dir).sort()) {

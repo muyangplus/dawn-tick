@@ -16,7 +16,7 @@ export interface SystemEntry {
 
 /**
  * 把一份教务系统配置映射成既有调用方习惯的字段名（name → label、entryPath → loginPath）。
- * 保证 SystemEntry 的形态与顺序不变，避免别处的引用一起改。
+ * SystemEntry 的形态与顺序不变，别处的引用不必跟着改。
  */
 function toSystemEntries(systems: readonly SystemConfig[]): readonly SystemEntry[] {
   return systems.map((system) => ({

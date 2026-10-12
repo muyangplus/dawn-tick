@@ -779,7 +779,7 @@ test('同步脚本：--check 只校验不写盘（--out 目录为空 → 需要�
 
     runSync(['--from', repo.root, '--out', outDir]);
     const second = runSync(['--from', repo.root, '--out', outDir, '--check']);
-    assert.match(second, /--check：.*已是最新，无需同步/);
+    assert.match(second, /--check：.*已是最新，不需要同步/);
     assert.deepEqual(
       readdirSync(outDir).sort(),
       ['builtin-preset-snapshot.json', 'preset-version.json'],

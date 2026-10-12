@@ -42,11 +42,11 @@
  * 失败即不落盘：目录不存在、快照缺失、hash 不符、文件清单对不上内置配置，
  * 都会打印中文错误并以非 0 退出，且**一个文件都不写**。
  *
- * 幂等：内容一致时报告「未变化」，不触碰文件（不改 mtime），因此连跑两次 git status 干净。
+ * 幂等：内容一致时报告「未变化」，不触碰文件（不改 mtime），连跑两次 git status 干净。
  *
  * 零依赖：只用 Node 内置模块。哈希口径直接 import 自 core 的唯一实现
- * （`packages/core/src/config/preset-hash.ts`；Node 24 能直接 import .ts，无需构建），
- * 所以「脚本复算」「Web 端校验」「内置自检」三处永远是同一份代码。
+ * （`packages/core/src/config/preset-hash.ts`；Node 24 能直接 import .ts，不需要构建），
+ * 「脚本复算」「Web 端校验」「内置自检」三处永远是同一份代码。
  */
 
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -199,7 +199,7 @@ function compareSourceIds(snapshot, hostLabel) {
   }
 }
 
-/** 写出文件；内容一致时返回 false（不触碰文件，保证幂等）。 */
+/** 写出文件；内容一致时返回 false（不触碰文件，写入幂等）。 */
 function writeIfChanged(path, text) {
   const previous = existsSync(path) ? readFileSync(path, 'utf8') : null;
   if (previous === text) return false;
@@ -216,7 +216,7 @@ function note(line) {
  * 同步一次。成功返回 0；失败抛 SyncError（由 main 收敛为中文错误 + 非 0 退出）。
  *
  * 落盘顺序：先算出两份文件的**全部内容**，再写。任何校验失败都发生在写之前，
- * 所以「出错不写文件」是结构性保证，而不是靠事后回滚。
+ * 「出错不写文件」来自这个顺序，不靠事后回滚。
  */
 export function syncSnapshot(options) {
   summary.length = 0;
@@ -302,11 +302,11 @@ export function syncSnapshot(options) {
     const currentSnapshotText = existsSync(snapshotOutPath) ? readFileSync(snapshotOutPath, 'utf8') : null;
     const currentVersionText = existsSync(versionOutPath) ? readFileSync(versionOutPath, 'utf8') : null;
     const inSync = currentSnapshotText === nextSnapshotText && currentVersionText === nextVersionText;
-    note(`--check：${rel(outDir)} 里的内置快照${inSync ? '已是最新，无需同步' : '与预设仓库不一致，需要同步'}`);
+    note(`--check：${rel(outDir)} 里的内置快照${inSync ? '已是最新，不需要同步' : '与预设仓库不一致，需要同步'}`);
     return { version, hash: info.declared, wrote: [], inSync };
   }
 
-  // 目录不存在时按需创建——只发生在「校验全部通过、马上要写」这一刻
+  // 目录不存在时按需创建——只发生在「校验通过、马上要写」这一刻
   mkdirSync(outDir, { recursive: true });
 
   const wrote = [];

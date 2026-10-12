@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """生成 `pinyin-table.json`（**作者期**工具，不参与日常导入与测试）。
 
-为什么需要一个生成器而不是一份手抄表
-------------------------------------
-本仓库零第三方依赖，Node 侧没有任何汉字转拼音的能力；而学校目录需要
+为何需要生成器而不是手抄表
+------------------------
+本仓库零第三方依赖，Node 侧没有汉字转拼音的能力；而学校目录需要
 「全拼」与「首字母缩写」两种检索键（`qinghuadaxue` / `qhdx`）。
 做法是：用一次性工具把「汉字 → 拼音」固化成一份纯数据表
 `tools/schools/pinyin-table.json` 提交进仓库，
@@ -95,7 +95,7 @@ def syllables_of(name: str) -> "list[str]":
 
     整名一起交给 pypinyin，让它用内置词组词典消歧（如「会计」kuai ji、
     「六安」lu an、「番禺」pan yu）；非汉字原样保留，导入脚本会跳过它们。
-    pypinyin 保证返回的条目数与输入字数一致（本脚本会断言这一点）。
+    pypinyin 返回的条目数与输入字数一致（本脚本断言这一点）。
     """
     result = [item[0] for item in pinyin(name, style=Style.NORMAL, heteronym=False)]
     if len(result) != len(name):
@@ -124,7 +124,7 @@ def main() -> int:
                 counter[char][syllable] += 1
 
     chars = {char: readings.most_common(1)[0][0] for char, readings in counter.items()}
-    # 平局时固定取字典序最小者，保证同一数据源多次运行结果一致
+    # 平局时固定取字典序最小者，同一数据源多次运行结果一致
     for char, readings in counter.items():
         best = max(readings.values())
         chars[char] = sorted(syllable for syllable, count in readings.items() if count == best)[0]

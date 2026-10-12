@@ -132,7 +132,7 @@ async function main() {
     console.error(`冒烟测试未通过 ${failed} 项`);
     return 1;
   }
-  console.log(`冒烟测试全部通过（${results.length} 项）`);
+  console.log(`冒烟测试通过（${results.length} 项）`);
   return 0;
 }
 

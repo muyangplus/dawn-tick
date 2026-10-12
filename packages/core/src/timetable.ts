@@ -87,7 +87,7 @@ export interface RegenerateInput {
 /**
  * 按新的时长与课间重排指定时段，未列入 sections 的时段原样保留。
  * 每个待重排时段都用它在 existing 里的第一节开始时间作为起点、现有的节数作为节数，
- * 因此各时段的起点与节数不变，只有时段内的课次时间被重算。
+ * 各时段的起点与节数不变，只有时段内的课次时间被重算。
  * 返回与 existing 等长、顺序一致的课次，periodNo 沿用原值。
  */
 export function regenerateSections(
