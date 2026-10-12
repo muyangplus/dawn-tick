@@ -3,6 +3,7 @@ export * from './weeks.ts';
 export * from './timetable.ts';
 export * from './db.ts';
 export * from './storage.ts';
+export * from './columns.ts';
 export * from './migrate.ts';
 export * from './sqlite-storage.ts';
 export * from './types.ts';

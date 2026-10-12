@@ -1,3 +1,4 @@
+import { normalizeRow } from './columns.ts';
 import type { SqlDriver, SqlValue } from './db.ts';
 import { STORE_KEYS, type Collection, type Storage, type StoreName } from './storage.ts';
 
@@ -28,7 +29,8 @@ class SqliteCollection<T> implements Collection<T> {
   }
 
   async put(value: T): Promise<void> {
-    const row = value as Row;
+    // 最后一道防线：对象键先翻译成真实列名，避免驼峰键被当成列名写进 SQL。
+    const row = normalizeRow(this.name, value as Row);
     const columns = Object.keys(row).filter((column) => row[column] !== undefined);
     if (columns.length === 0) return;
     const primary = STORE_KEYS[this.name];

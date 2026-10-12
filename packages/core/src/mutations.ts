@@ -1,3 +1,4 @@
+import { normalizeRow } from './columns.ts';
 import { DEFAULT_TIME_ZONE } from './time.ts';
 import { addMinutes, parseClock, sectionOf } from './timetable.ts';
 import { maskToWeeks, weeksToMask } from './weeks.ts';
@@ -46,10 +47,16 @@ function context(storage: Storage, options: WriteOptions = {}): Context {
   };
 }
 
+/**
+ * 写入前把对象键翻译成真实列名。
+ * 对外输入是驼峰（shortName、startDate…），表里是下划线（short_name、start_date…），
+ * 不翻译的话 SQLite 会报 `table X has no column named Y`。
+ */
 async function insert(ctx: Context, store: Parameters<Storage['collection']>[0], row: Row): Promise<Row> {
-  await assertValid(ctx.storage, store, row);
-  await ctx.storage.collection(store).put(row);
-  return row;
+  const values = normalizeRow(store, row);
+  await assertValid(ctx.storage, store, values);
+  await ctx.storage.collection(store).put(values);
+  return values;
 }
 
 async function patch(
@@ -62,7 +69,7 @@ async function patch(
   if (existing === undefined) throw new Error(`${store} 不存在: ${id}`);
   const updated: Row = {
     ...existing,
-    ...changes,
+    ...normalizeRow(store, changes),
     updated_at: ctx.now(),
     rev: Number(existing['rev'] ?? 0) + 1,
     dirty: 1,
@@ -456,6 +463,11 @@ export async function createCourse(
   });
 }
 
+/**
+ * 修改课程字段。changes 的键既可以是驼峰（`shortName`、`semesterId`），
+ * 也可以是真实列名（`short_name`、`semester_id`），写入前统一翻译成列名。
+ * 颜色走同一个入口：`updateCourse(storage, id, { color: '#F2994A', shortName: '高数' })`。
+ */
 export async function updateCourse(
   storage: Storage,
   id: string,
