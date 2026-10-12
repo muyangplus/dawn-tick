@@ -138,6 +138,7 @@ export function WeekView({
                 >
                   <span className="tabular font-semibold text-ink">{slot.periodNo}</span>
                   <span className="tabular">{slot.startTime}</span>
+                  <span className="tabular">{slot.endTime}</span>
                 </div>
               ))}
             </div>

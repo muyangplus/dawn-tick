@@ -80,6 +80,8 @@ async function seed(): Promise<void> {
   });
 }
 
+// 冒烟固定把所有设置卡片视为展开，避免折叠记忆影响断言
+globalThis.localStorage?.setItem('dt.settings.collapsed', '[]');
 function mount(element: ReactElement): { root: Root; container: HTMLElement } {
   const container = document.createElement('div');
   document.body.append(container);
