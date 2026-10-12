@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Plus } from 'lucide-react';
+import { addDays } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
@@ -15,6 +16,8 @@ const AXIS_WIDTH = '3.5rem';
 const LONG_PRESS_MS = 350;
 /** 长按期间允许的手指/鼠标抖动半径（像素），超过就取消长按。 */
 const MOVE_TOLERANCE = 8;
+/** 拖动占位块松手后，抑制紧随那次 click 的时间窗（毫秒）。 */
+const SUPPRESS_SLOT_CLICK_MS = 500;
 
 /** 查看周里第 day 天的日期（周一为第 1 天）。 */
 function weekDayDate(weekStartDate: string, day: number): string {
@@ -34,6 +37,15 @@ function formatPeriods(start: number, end: number): string {
   return start === end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
+/**
+ * 多天假期的第一天：当天放假、且前一天不放假。
+ * 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。
+ */
+function isHolidayRunStart(data: AppData, date: string): boolean {
+  if (!data.holidayLabels.has(date)) return false;
+  return !data.holidayLabels.has(addDays(date, -1));
+}
+
 /** 该格里是否已有课。 */
 function occupied(data: AppData, day: number, period: number): boolean {
   return (data.grid.get(`${day}:${period}`) ?? []).length > 0;
@@ -44,42 +56,51 @@ function periodAt(clientY: number, columnTop: number, periodCount: number): numb
   return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop) / ROW_HEIGHT) + 1));
 }
 
-/** 给一个节次范围，返回不越过已有课、也不越界的就近可用范围。 */
-function nearestFreeRange(
-  data: AppData,
-  day: number,
-  start: number,
-  end: number,
-  periodCount: number,
-): { start: number; end: number } {
-  const length = Math.max(1, end - start + 1);
-  const fit = (value: number): number => Math.min(Math.max(1, periodCount - length + 1), Math.max(1, value));
-  const candidate = fit(start);
-  if (length <= periodCount && !rangeBlocked(data, day, candidate, candidate + length - 1, periodCount)) {
-    return { start: candidate, end: candidate + length - 1 };
-  }
-  for (let delta = 1; delta <= periodCount; delta += 1) {
-    for (const value of [fit(start + delta), fit(start - delta)]) {
-      if (rangeBlocked(data, day, value, value + length - 1, periodCount)) continue;
-      return { start: value, end: value + length - 1 };
+/** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
+function clashingLessons(data: AppData, day: number, start: number, end: number): LessonCell[] {
+  const out: LessonCell[] = [];
+  const seen = new Set<string>();
+  for (const list of data.grid.values()) {
+    for (const cell of list) {
+      if (!cell.inWeek || cell.dayOfWeek !== day) continue;
+      if (cell.periodEnd < start || cell.periodStart > end) continue;
+      if (seen.has(cell.scheduleId)) continue;
+      seen.add(cell.scheduleId);
+      out.push(cell);
     }
   }
-  return { start: candidate, end: candidate + length - 1 };
+  return out;
 }
 
-/** 该范围内是否有课（用于截断拖动落点与占位块）。 */
-function rangeBlocked(
-  data: AppData,
-  day: number,
-  start: number,
-  end: number,
-  periodCount: number,
-): boolean {
-  if (start < 1 || end > periodCount) return true;
-  for (let period = start; period <= end; period += 1) {
-    if (occupied(data, day, period)) return true;
-  }
-  return false;
+interface Clash {
+  name: string;
+  start: number;
+  end: number;
+}
+
+/** 范围里第一门重叠的课，用课程全名，提示文案更清楚。 */
+function firstClash(data: AppData, day: number, start: number, end: number): Clash | null {
+  const cell = clashingLessons(data, day, start, end)[0];
+  if (cell === undefined) return null;
+  const name = data.courses.find((course) => course.id === cell.courseId)?.name ?? cell.name;
+  return { name, start: cell.periodStart, end: cell.periodEnd };
+}
+
+/** 重叠提示：与「高等数学」第 1–2 节重叠。 */
+function clashLabel(clash: Clash): string {
+  return `与「${clash.name}」${formatPeriods(clash.start, clash.end)}重叠`;
+}
+
+/** 按住的位置决定哪条边跟着指针：单节时上下都算扩展，否则按上半/下半取边。 */
+function emptyDragEdgeOf(
+  element: HTMLElement,
+  clientY: number,
+  target: EmptyTarget,
+  mode: EmptyDragMode,
+): EmptyDragEdge {
+  if (mode === 'wheel' || target.start === target.end) return 'both';
+  const bounds = element.getBoundingClientRect();
+  return clientY < bounds.top + bounds.height / 2 ? 'top' : 'bottom';
 }
 
 interface EmptyTarget {
@@ -105,6 +126,26 @@ interface DragSession {
   active: boolean;
   /** 长按生效后接收指针事件的卡片节点，保证拖出卡片也不丢事件 */
   element: HTMLElement | null;
+}
+
+/** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩。 */
+type EmptyDragMode = 'wheel' | 'body';
+
+/**
+ * 块本体拖动时哪条边跟着指针走：
+ * both 是起始就是单节（上下都算扩展），top / bottom 是按住的位置在上半还是下半。
+ */
+type EmptyDragEdge = 'both' | 'top' | 'bottom';
+
+interface EmptyDragState {
+  pointerId: number;
+  mode: EmptyDragMode;
+  edge: EmptyDragEdge;
+  startY: number;
+  startPeriod: number;
+  endPeriod: number;
+  /** 是否已经超过点击抖动阈值：只有真的拖过才在松手时弹窗 */
+  moved: boolean;
 }
 
 export interface QuickCreatePreset {
@@ -145,6 +186,7 @@ export function WeekView({
 }: WeekViewProps) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
+  const [emptyDragMode, setEmptyDragMode] = useState<EmptyDragMode | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const touchStart = useRef<number | null>(null);
   const session = useRef<DragSession | null>(null);
@@ -154,9 +196,12 @@ export function WeekView({
   const emptyRef = useRef<EmptyTarget | null>(null);
   const wheelAt = useRef(0);
   const sectionRef = useRef<HTMLElement | null>(null);
-  const emptyDrag = useRef<{ pointerId: number; startY: number; startPeriod: number; endPeriod: number } | null>(
-    null,
-  );
+  const emptyDrag = useRef<EmptyDragState | null>(null);
+  /** 拖动占位块松手后紧跟着的那次 click：只用来清标记，不再生成占位块 */
+  const suppressSlotClick = useRef(false);
+  const suppressSlotTimer = useRef(0);
+  /** 已经播报过的重叠提示，拖动过程中同一处只提示一次 */
+  const lastClash = useRef('');
 
   useEffect(() => {
     const timer = setInterval(() => setNowTick(Date.now()), 30_000);
@@ -174,6 +219,7 @@ export function WeekView({
   useEffect(
     () => () => {
       if (session.current !== null) window.clearTimeout(session.current.timer);
+      window.clearTimeout(suppressSlotTimer.current);
     },
     [],
   );
@@ -220,8 +266,11 @@ export function WeekView({
   }, [empty !== null]);
 
   function setEmptyTarget(next: EmptyTarget | null): void {
+    const previous = emptyRef.current;
     emptyRef.current = next;
     setEmpty(next);
+    // 换了一天或关掉占位块后，同一处重叠可以再提示一次
+    if (next === null || previous === null || next.day !== previous.day) lastClash.current = '';
   }
 
   /** 点到空白格：先给出一个「目标节次 + 单节」的虚线占位块。 */
@@ -233,58 +282,129 @@ export function WeekView({
     setEmptyTarget({ day, start: period, end: period });
   }
 
+  /** 范围落进已有课时提醒一次：课程允许重叠，这里只提示、不拦截。 */
+  function warnClash(day: number, start: number, end: number): void {
+    const clash = firstClash(data, day, start, end);
+    const key = clash === null ? '' : `${clash.name}:${clash.start}-${clash.end}`;
+    if (key === lastClash.current) return;
+    lastClash.current = key;
+    if (clash !== null) toast.info(`${clashLabel(clash)}，仍可继续新建`);
+  }
+
+  /** 带当前范围打开加课弹窗：点「＋」与拖动松手共用。 */
+  function openQuickCreate(target: EmptyTarget): void {
+    onQuickCreate({
+      dayOfWeek: target.day,
+      periodStart: Math.min(target.start, target.end),
+      periodEnd: Math.max(target.start, target.end),
+      weeks: [data.viewWeek],
+    });
+    setEmptyTarget(null);
+  }
+
   /**
-   * 调整占位节次：delta > 0 向下扩展、delta < 0 向上收缩/上移。
-   * 越过已有课或超出节次上下限时就近截断，并给出提示。
+   * 调整占位节次：delta > 0 向下扩展、delta < 0 向上扩展。
+   * 只受节次上下限约束，与已有课重叠时给出提示、仍可继续。
    */
   function step(target: EmptyTarget, delta: number): void {
     let start = target.start;
     let end = target.end;
     if (delta > 0) end = Math.min(periodCount, end + delta);
     else if (start > 1) start = start - 1;
-    const fit = nearestFreeRange(data, target.day, start, end, periodCount);
-    setEmptyTarget({ day: target.day, start: fit.start, end: fit.end });
-    if (fit.start !== start || fit.end !== end) {
-      toast.info(`这里有课挡着，已就近调整为 ${formatPeriods(fit.start, fit.end)}`);
-    }
+    start = Math.max(1, Math.min(start, end));
+    setEmptyTarget({ day: target.day, start, end });
+    warnClash(target.day, start, end);
   }
 
-  /** 拖动占位块右侧滚轮：上下拖动改变节次范围。 */
-  function onWheelPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
-    if (event.button !== 0 || empty === null) return;
-    // 必须挡住冒泡：列上的 pointerdown 会重置占位块
-    event.preventDefault();
+  /** 按下占位块（滚轮条或块本体）：记录起点，之后由 pointermove 改范围。 */
+  function beginEmptyDrag(event: React.PointerEvent<HTMLElement>, mode: EmptyDragMode): void {
+    const current = emptyRef.current;
+    if (event.button !== 0 || current === null) return;
+    // 必须挡住冒泡：列上的 pointerdown 会把已经选好的范围重置成单节
     event.stopPropagation();
+    // 块内按钮（＋、上一节/下一节）不 preventDefault，免得影响它们自己的 click
+    const onButton = event.target instanceof Element && event.target.closest('button') !== null;
+    if (!onButton) event.preventDefault();
     emptyDrag.current = {
       pointerId: event.pointerId,
+      mode,
+      edge: emptyDragEdgeOf(event.currentTarget, event.clientY, current, mode),
       startY: event.clientY,
-      startPeriod: empty.start,
-      endPeriod: empty.end,
+      startPeriod: current.start,
+      endPeriod: current.end,
+      moved: false,
     };
+    if (mode === 'body') setEmptyDragMode('body');
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
-  function onWheelPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
+  function moveEmptyDrag(event: React.PointerEvent<HTMLElement>): void {
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     const current = emptyRef.current;
     if (current === null) return;
     event.preventDefault();
+    if (Math.abs(event.clientY - active.startY) > MOVE_TOLERANCE) active.moved = true;
     const rows = Math.round((event.clientY - active.startY) / ROW_HEIGHT);
-    const start = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
-    const end = Math.min(periodCount, Math.max(start, active.endPeriod + rows));
-    const fit = nearestFreeRange(data, current.day, start, end, periodCount);
-    setEmptyTarget({ day: current.day, start: fit.start, end: fit.end });
+    const range = active.mode === 'wheel' ? wheelRangeOf(active, rows) : bodyRangeOf(active, rows);
+    setEmptyTarget({ day: current.day, start: range.start, end: range.end });
+    warnClash(current.day, range.start, range.end);
   }
 
-  function onWheelPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+  /** 滚轮条：整段上下平移。 */
+  function wheelRangeOf(active: EmptyDragState, rows: number): { start: number; end: number } {
+    const start = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
+    const end = Math.min(periodCount, Math.max(start, active.endPeriod + rows));
+    return { start, end };
+  }
+
+  /** 块本体：按住的那条边跟着指针走，另一边不动（起始单节时上下都算扩展）。 */
+  function bodyRangeOf(active: EmptyDragState, rows: number): { start: number; end: number } {
+    if (active.edge === 'top') {
+      const start = Math.min(active.endPeriod, Math.max(1, active.startPeriod + rows));
+      return { start, end: active.endPeriod };
+    }
+    if (active.edge === 'bottom') {
+      const end = Math.min(periodCount, Math.max(active.startPeriod, active.endPeriod + rows));
+      return { start: active.startPeriod, end };
+    }
+    const pointer = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
+    return {
+      start: Math.min(active.startPeriod, pointer),
+      end: Math.max(active.endPeriod, pointer),
+    };
+  }
+
+  function endEmptyDrag(event: React.PointerEvent<HTMLElement>): void {
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     emptyDrag.current = null;
+    setEmptyDragMode(null);
+    lastClash.current = '';
     const current = emptyRef.current;
     if (current === null) return;
-    const changed = current.start !== active.startPeriod || current.end !== active.endPeriod;
-    if (changed) toast.success(`已调整为 ${formatPeriods(current.start, current.end)}`);
+    if (active.mode === 'wheel') {
+      const changed = current.start !== active.startPeriod || current.end !== active.endPeriod;
+      if (changed) toast.success(`已调整为 ${formatPeriods(current.start, current.end)}`);
+      return;
+    }
+    // 只是点了一下块里的空白：交给按钮自己的 click，不在这里弹窗
+    if (!active.moved) return;
+    // 拖动松手：直接带着拖出来的范围打开加课弹窗；紧跟的那一次 click 不再生成占位块
+    suppressSlotClick.current = true;
+    window.clearTimeout(suppressSlotTimer.current);
+    suppressSlotTimer.current = window.setTimeout(() => {
+      suppressSlotClick.current = false;
+    }, SUPPRESS_SLOT_CLICK_MS);
+    openQuickCreate(current);
+  }
+
+  function cancelEmptyDrag(event: React.PointerEvent<HTMLElement>): void {
+    const active = emptyDrag.current;
+    if (active === null || active.pointerId !== event.pointerId) return;
+    emptyDrag.current = null;
+    setEmptyDragMode(null);
+    lastClash.current = '';
   }
 
   function targetCellOf(clientX: number, clientY: number): { day: number; period: number } | null {
@@ -482,11 +602,19 @@ export function WeekView({
             {Array.from({ length: viewDays }, (_, index) => {
               const day = index + 1;
               const isToday = data.viewWeek === data.week && day === data.todayOfWeek;
+              const columnDate = weekDayDate(data.weekStartDate, day);
+              // 放假优先于非本周；多天假期只有第一天显示假期名称，之后只显示「放假」
+              const holidayFirstDay = isHolidayRunStart(data, columnDate);
+              const holidayName = data.holidayLabels.get(columnDate);
               const dayLessons = lessons
                 .filter((lesson) => lesson.dayOfWeek === day)
                 .filter((lesson) => lesson.inWeek || showOtherWeeks);
               const isDropColumn = drag !== null && drag.day === day;
               const placeholder = empty !== null && empty.day === day ? empty : null;
+              const placeholderClash =
+                placeholder === null
+                  ? null
+                  : firstClash(data, placeholder.day, placeholder.start, placeholder.end);
               return (
                 <div
                   key={`column-${day}`}
@@ -507,12 +635,19 @@ export function WeekView({
                   data-day={day}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return;
+                    // 每次按下都复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次点击
+                    suppressSlotClick.current = false;
                     // 长按拖动课程卡时会冒泡到列上，此时不要弹占位块
                     if (session.current !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
                     pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount));
                   }}
                   onClick={(event) => {
+                    // 拖动占位块松手后的那一次 click 只用来清标记（此时加课弹窗已经打开）
+                    if (suppressSlotClick.current) {
+                      suppressSlotClick.current = false;
+                      return;
+                    }
                     // 点空白格（含格线上的细分行）才弹出占位块，课程卡与占位块自己处理点击
                     const target = event.target as HTMLElement;
                     if (target.closest('[data-role="empty-slot"]') !== null) return;
@@ -542,31 +677,57 @@ export function WeekView({
 
                   {placeholder !== null && (
                     <div
-                      className="absolute inset-x-1 z-10 flex flex-col items-stretch gap-1 overflow-hidden rounded-sm border-2 border-dashed border-primary-strong bg-surface px-1.5 py-1"
+                      className={cn(
+                        'absolute inset-x-1 z-10 flex select-none flex-col items-stretch gap-1 overflow-hidden rounded-sm border-2 border-dashed border-primary-strong bg-surface px-1.5 py-1',
+                        emptyDragMode === 'body' && 'ring-2 ring-primary-strong',
+                      )}
                       style={{
                         top: `${(placeholder.start - 1) * ROW_HEIGHT + 2}px`,
                         height: `${Math.max(ROW_HEIGHT - 4, (placeholder.end - placeholder.start + 1) * ROW_HEIGHT - 4)}px`,
+                        touchAction: 'none',
                       }}
                       data-role="empty-slot"
+                      data-dragging={emptyDragMode === 'body' ? 'true' : undefined}
+                      onPointerDown={(event) => beginEmptyDrag(event, 'body')}
+                      onPointerMove={moveEmptyDrag}
+                      onPointerUp={endEmptyDrag}
+                      onPointerCancel={cancelEmptyDrag}
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <button
-                        type="button"
-                        aria-label="在此新建课程"
-                        className="flex min-h-0 flex-1 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onQuickCreate({
-                            dayOfWeek: placeholder.day,
-                            periodStart: Math.min(placeholder.start, placeholder.end),
-                            periodEnd: Math.max(placeholder.start, placeholder.end),
-                            weeks: [data.viewWeek],
-                          });
-                          setEmptyTarget(null);
-                        }}
-                      >
-                        <Plus className="size-5" aria-hidden />
-                      </button>
+                      {emptyDragMode === 'body' ? (
+                        // 拖动中的实时反馈：直接把「＋」的位置换成节次范围标签
+                        <div
+                          data-role="empty-drag-label"
+                          className="flex min-h-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-hidden"
+                        >
+                          <span className="tabular rounded-sm bg-primary px-1.5 py-0.5 text-[11px] text-on-primary shadow-sm">
+                            {formatPeriods(placeholder.start, placeholder.end)}
+                          </span>
+                          {placeholderClash !== null && (
+                            <span
+                              data-role="empty-clash"
+                              className="max-w-full truncate text-[10px] text-danger-strong"
+                            >
+                              与「{placeholderClash.name}」重叠
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label="在此新建课程"
+                          className="flex min-h-0 flex-1 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            // 用当前范围（含滚轮/箭头/拖动调好的节次），不要重置成单节
+                            const current = emptyRef.current;
+                            if (current === null) return;
+                            openQuickCreate(current);
+                          }}
+                        >
+                          <Plus className="size-5" aria-hidden />
+                        </button>
+                      )}
                       <div className="flex items-center justify-center gap-1 text-[11px]">
                         <button
                           type="button"
@@ -574,7 +735,8 @@ export function WeekView({
                           className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink"
                           onClick={(event) => {
                             event.stopPropagation();
-                            if (empty !== null) step(empty, -1);
+                            const current = emptyRef.current;
+                            if (current !== null) step(current, -1);
                           }}
                         >
                           <ChevronUp className="size-3.5" aria-hidden />
@@ -590,10 +752,10 @@ export function WeekView({
                           title="上下拖动（或滚动鼠标滚轮）调整节次范围"
                           className="tabular cursor-ns-resize select-none whitespace-nowrap rounded-sm px-1 text-ink"
                           style={{ touchAction: 'none' }}
-                          onPointerDown={onWheelPointerDown}
-                          onPointerMove={onWheelPointerMove}
-                          onPointerUp={onWheelPointerUp}
-                          onPointerCancel={onWheelPointerUp}
+                          onPointerDown={(event) => beginEmptyDrag(event, 'wheel')}
+                          onPointerMove={moveEmptyDrag}
+                          onPointerUp={endEmptyDrag}
+                          onPointerCancel={cancelEmptyDrag}
                         >
                           {formatPeriods(placeholder.start, placeholder.end)}
                         </div>
@@ -603,7 +765,8 @@ export function WeekView({
                           className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink"
                           onClick={(event) => {
                             event.stopPropagation();
-                            if (empty !== null) step(empty, 1);
+                            const current = emptyRef.current;
+                            if (current !== null) step(current, 1);
                           }}
                         >
                           <ChevronDown className="size-3.5" aria-hidden />
@@ -632,7 +795,8 @@ export function WeekView({
                         room={lesson.room}
                         teacher={lesson.teacher}
                         meta={`${lesson.startTime}-${lesson.endTime}`}
-                        tone={!lesson.inWeek ? 'ghost' : lesson.holiday ? 'holiday' : 'solid'}
+                        tone={lesson.holiday ? 'holiday' : lesson.inWeek ? 'solid' : 'ghost'}
+                        holidayLabel={lesson.holiday && holidayFirstDay ? holidayName ?? '放假' : '放假'}
                         onClick={() => {
                           // 拖动收尾的那一次 click 只用来清标记，不打开详情
                           if (suppressNextClick.current) {

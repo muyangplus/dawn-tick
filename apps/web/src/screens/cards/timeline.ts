@@ -16,6 +16,8 @@ export interface TimelineItem {
   kind: 'lesson' | 'adjust' | 'todo';
   title: string;
   detail: string;
+  /** 课程的上课时间区间（开始–结束），如 08:00–08:45 */
+  timeRange?: string;
   color?: string;
   done?: boolean;
   event?: EventRow;
@@ -52,6 +54,7 @@ export function buildTimeline(data: AppData, date: string): TimelineItem[] {
       detail: `第 ${lesson.periodStart}${lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节${
         lesson.room === null ? '' : ` · ${lesson.room}`
       }`,
+      timeRange: `${formatTime(lesson.startAt, data.timeZone)}–${formatTime(lesson.endAt, data.timeZone)}`,
       color: lesson.color,
       lessonTarget: {
         scheduleId: lesson.scheduleId,

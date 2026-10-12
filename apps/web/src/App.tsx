@@ -8,6 +8,7 @@ import {
   updateSchedule,
   updateEvent,
   updateSemester,
+  weekOfDate,
   weekStart,
   writeSettings,
   type AppSettings,
@@ -16,6 +17,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { AppToolbar } from './components/app-toolbar.tsx';
+import { AdjustDialog, type AdjustTarget } from './components/adjust-dialog.tsx';
 import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
 import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
@@ -28,6 +30,7 @@ import { Plus } from 'lucide-react';
 import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type LessonCell } from './data.ts';
 import { openStorage } from './db/platform.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
+import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
 import { ImportFlow } from './screens/import-flow.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
 import { ScheduleView } from './screens/schedule-view.tsx';
@@ -56,6 +59,8 @@ const STORAGE_LABEL: Record<Storage['kind'], string> = {
 interface DetailState {
   cell: LessonCell;
   detail: CourseDetail;
+  /** 这一课次所在的日期：详情页的「调课」把它作为原日期 */
+  date: string;
 }
 
 interface MoveState {
@@ -80,6 +85,65 @@ function formatPeriodLabel(start: number, end: number): string {
   return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
+/**
+ * 日程时间线里的课次不是周视图的格子，这里按当天的课次还原一张课程卡需要的信息，
+ * 让课程详情（含「调课」入口）用同一份数据打开。
+ */
+function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
+  const occurrence = (data.lessonsByDate.get(target.date) ?? []).find(
+    (item) => item.scheduleId === target.scheduleId,
+  );
+  const periodStart = occurrence?.periodStart ?? target.periodStart;
+  const periodEnd = occurrence?.periodEnd ?? target.periodEnd;
+  const slotOf = (period: number): string =>
+    data.slots.find((slot) => slot.period_no === period)?.start_time ?? '';
+  const endSlotOf = (period: number): string =>
+    data.slots.find((slot) => slot.period_no === period)?.end_time ?? '';
+  return {
+    scheduleId: target.scheduleId,
+    courseId: target.courseId,
+    name: occurrence?.shortName ?? occurrence?.courseName ?? target.courseName,
+    teacher: null,
+    room: occurrence?.room ?? null,
+    color: occurrence?.color ?? 'var(--dt-primary)',
+    dayOfWeek: nextDayOfWeek(target.date),
+    periodStart,
+    periodEnd,
+    startTime: slotOf(periodStart),
+    endTime: endSlotOf(periodEnd),
+    inWeek: true,
+    holiday: data.holidayLabels.has(target.date),
+  };
+}
+
+/**
+ * 目标位置已有的课：课程允许重叠，这里只用来给出提醒。
+ * week 为 null 表示不限周次（每周生效），否则只看确实在该周上的课。
+ */
+function overlapAt(
+  courses: readonly ManagedCourse[],
+  target: {
+    dayOfWeek: number;
+    period: number;
+    span: number;
+    week: number | null;
+    excludeCourseId: string;
+  },
+): { name: string; start: number; end: number } | null {
+  const start = target.period;
+  const end = target.period + target.span;
+  for (const course of courses) {
+    if (course.id === target.excludeCourseId) continue;
+    for (const schedule of course.schedules) {
+      if (schedule.dayOfWeek !== target.dayOfWeek) continue;
+      if (schedule.periodEnd < start || schedule.periodStart > end) continue;
+      if (target.week !== null && !schedule.weeks.includes(target.week)) continue;
+      return { name: course.name, start: schedule.periodStart, end: schedule.periodEnd };
+    }
+  }
+  return null;
+}
+
 async function withToast(action: () => Promise<void>, ok: string, fail: string): Promise<boolean> {
   try {
     await action();
@@ -100,6 +164,8 @@ export function App() {
   const [mode, setMode] = useState<'week' | 'today'>('week');
   const [viewWeek, setViewWeek] = useState<number | null>(null);
   const [detail, setDetail] = useState<DetailState | null>(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjust, setAdjust] = useState<AdjustTarget | null>(null);
   const [move, setMove] = useState<MoveState | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const [moveWeek, setMoveWeek] = useState(1);
@@ -266,10 +332,36 @@ export function App() {
     })();
   }, [data, storage, refresh]);
 
+  /** 课次所在日期：周视图卡片按查看周与该课星期几算出来。 */
+  function lessonDateOf(cell: LessonCell): string {
+    if (data?.semester != null) return weekDateOf(data.semester, data.viewWeek, cell.dayOfWeek);
+    return data?.today ?? '';
+  }
+
   async function openLesson(cell: LessonCell): Promise<void> {
     if (storage === null) return;
     const loaded = await loadCourseDetail(storage, cell.courseId);
-    setDetail({ cell, detail: loaded });
+    setDetail({ cell, detail: loaded, date: lessonDateOf(cell) });
+  }
+
+  /** 日程时间线里点课程：按当天课次还原课程卡，再打开同一份课程详情。 */
+  async function openLessonFromSchedule(target: AdjustTarget): Promise<void> {
+    if (storage === null || data === null) return;
+    const loaded = await loadCourseDetail(storage, target.courseId);
+    setDetail({ cell: lessonCellOf(data, target), detail: loaded, date: target.date });
+  }
+
+  /** 详情页的「调课」：以当前这一课次为预设目标，打开课程调整弹窗。 */
+  function openAdjustForLesson(cell: LessonCell, date: string): void {
+    setAdjust({
+      scheduleId: cell.scheduleId,
+      courseId: cell.courseId,
+      courseName: data?.courses.find((course) => course.id === cell.courseId)?.name ?? cell.name,
+      date,
+      periodStart: cell.periodStart,
+      periodEnd: cell.periodEnd,
+    });
+    setAdjustOpen(true);
   }
 
   function openMove(cell: LessonCell, dayOfWeek: number, period: number): void {
@@ -382,6 +474,25 @@ export function App() {
         const done = await withToast(reschedule, label, '仅调整这一次失败');
         if (!done) return;
       }
+      // 重叠只提醒不阻止：上面已经保存成功
+      const overlapWeek =
+        target.kind === 'weeks'
+          ? Math.round(target.week)
+          : target.kind === 'date'
+            ? weekOfDate(date, semester.start_date)
+            : target.kind === 'always'
+              ? null
+              : data.viewWeek;
+      const overlap = overlapAt(data.courses, {
+        dayOfWeek,
+        period,
+        span,
+        week: overlapWeek,
+        excludeCourseId: move.cell.courseId,
+      });
+      if (overlap !== null) {
+        toast.info(`调整后与「${overlap.name}」${formatPeriodLabel(overlap.start, overlap.end)}重叠，已同时保留`);
+      }
       setMove(null);
       refresh();
     } finally {
@@ -476,22 +587,24 @@ export function App() {
           <TodayView data={data} />
         ))}
       {view === 'schedule' && (
-        <ScheduleView
-          data={data}
-          storage={storage}
-          onChanged={refresh}
-          onAddTodo={() => {
-            setEventFormKind('todo');
-            setTodoFormOpen(true);
-          }}
-          onAddExam={() => {
-            setEventFormKind('exam');
-            setTodoFormOpen(true);
-          }}
-          tomorrowPreview={settings.tomorrowPreview}
-          semesterCountdown={settings.semesterCountdown}
-          holidayCountdown={settings.holidayCountdown}
-        />
+        <LessonDetailOpener.Provider value={(target) => void openLessonFromSchedule(target)}>
+          <ScheduleView
+            data={data}
+            storage={storage}
+            onChanged={refresh}
+            onAddTodo={() => {
+              setEventFormKind('todo');
+              setTodoFormOpen(true);
+            }}
+            onAddExam={() => {
+              setEventFormKind('exam');
+              setTodoFormOpen(true);
+            }}
+            tomorrowPreview={settings.tomorrowPreview}
+            semesterCountdown={settings.semesterCountdown}
+            holidayCountdown={settings.holidayCountdown}
+          />
+        </LessonDetailOpener.Provider>
       )}
       {view === 'import' && (
         <ImportFlow
@@ -524,6 +637,29 @@ export function App() {
       )}
     </>
   );
+
+  // 桌面侧栏与移动端 Sheet 共用同一份课程详情内容
+  const detailPanel =
+    detail === null ? null : (
+      <LessonDetail
+        storage={storage}
+        userId={USER_ID}
+        cell={detail.cell}
+        detail={detail.detail}
+        onChanged={refresh}
+        onClose={() => setDetail(null)}
+        onEditCourse={(id) => {
+          const managed = data.courses.find((item) => item.id === id) ?? null;
+          if (managed === null) {
+            toast.error('找不到这门课');
+            return;
+          }
+          setEditingCourse(managed);
+          setCourseFormOpen(true);
+        }}
+        onAdjust={(cell) => openAdjustForLesson(cell, detail.date)}
+      />
+    );
 
   return (
     <div className="flex h-dvh overflow-hidden bg-page text-ink">
@@ -563,23 +699,7 @@ export function App() {
 
       {isDesktop && detail !== null && (
         <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label="课程详情">
-          <LessonDetail
-            storage={storage}
-            userId={USER_ID}
-            cell={detail.cell}
-            detail={detail.detail}
-            onChanged={refresh}
-            onClose={() => setDetail(null)}
-            onEditCourse={(id) => {
-              const managed = data.courses.find((item) => item.id === id) ?? null;
-              if (managed === null) {
-                toast.error('找不到这门课');
-                return;
-              }
-              setEditingCourse(managed);
-              setCourseFormOpen(true);
-            }}
-          />
+          {detailPanel}
         </aside>
       )}
 
@@ -604,26 +724,21 @@ export function App() {
         side={breakpoint === 'tablet' ? 'right' : 'bottom'}
         title="课程详情"
       >
-        {detail !== null && (
-          <LessonDetail
-            storage={storage}
-            userId={USER_ID}
-            cell={detail.cell}
-            detail={detail.detail}
-            onChanged={refresh}
-            onClose={() => setDetail(null)}
-            onEditCourse={(id) => {
-              const managed = data.courses.find((item) => item.id === id) ?? null;
-              if (managed === null) {
-                toast.error('找不到这门课');
-                return;
-              }
-              setEditingCourse(managed);
-              setCourseFormOpen(true);
-            }}
-          />
-        )}
+        {detailPanel}
       </Sheet>
+
+      {/* 课程详情里的「调课」入口打开的调整弹窗（日程页自己的入口在 ScheduleView 内） */}
+      <AdjustDialog
+        open={adjustOpen}
+        onOpenChange={(open) => {
+          setAdjustOpen(open);
+          if (!open) setAdjust(null);
+        }}
+        storage={storage}
+        data={data}
+        target={adjust}
+        onChanged={refresh}
+      />
 
       <Dialog open={addMenuOpen} onOpenChange={setAddMenuOpen}>
         <DialogContent title="快速添加">

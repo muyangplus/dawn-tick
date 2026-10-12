@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   createCourse,
+  listManagedCourses,
   setSchedules,
   updateCourse,
   type ManagedCourse,
@@ -68,6 +69,41 @@ export interface CourseFormPreset {
   periodEnd: number;
   /** 预选周次，一般只有当前查看的那一周 */
   weeks?: readonly number[] | undefined;
+}
+
+/** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
+function formatPeriods(start: number, end: number): string {
+  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
+}
+
+interface ScheduleShape {
+  dayOfWeek: number;
+  periodStart: number;
+  periodEnd: number;
+  weeks: readonly number[];
+}
+
+/**
+ * 这次要保存的排课与已有课程重叠的第一处。
+ * 课程允许重叠，这里只用来给提醒，不阻断写入。
+ */
+function findOverlap(
+  courses: readonly ManagedCourse[],
+  selfId: string,
+  schedules: readonly ScheduleShape[],
+): { name: string; start: number; end: number } | null {
+  for (const course of courses) {
+    if (course.id === selfId) continue;
+    for (const other of course.schedules) {
+      for (const draft of schedules) {
+        if (other.dayOfWeek !== draft.dayOfWeek) continue;
+        if (other.periodEnd < draft.periodStart || other.periodStart > draft.periodEnd) continue;
+        if (!other.weeks.some((week) => draft.weeks.includes(week))) continue;
+        return { name: course.name, start: other.periodStart, end: other.periodEnd };
+      }
+    }
+  }
+  return null;
 }
 
 export interface CourseFormProps {
@@ -195,16 +231,24 @@ export function CourseForm({
         room: draft.room.trim().length > 0 ? draft.room.trim() : null,
       }));
 
+      let savedId: string;
       if (course === null) {
         const created = await createCourse(storage, { semesterId, ...payload });
-        await setSchedules(storage, String(created['id']), schedules);
+        savedId = String(created['id']);
+        await setSchedules(storage, savedId, schedules);
         logInfo('course', '新建课程', { name: payload.name, schedules: schedules.length });
         toast.success('已添加课程');
       } else {
+        savedId = course.id;
         await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
         await setSchedules(storage, course.id, schedules);
         logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
         toast.success('已保存课程');
+      }
+      // 重叠只提醒不阻止：课程此时已经保存成功
+      const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
+      if (overlap !== null) {
+        toast.info(`与「${overlap.name}」${formatPeriods(overlap.start, overlap.end)}重叠，已同时保留`);
       }
       onCreated();
       onOpenChange(false);

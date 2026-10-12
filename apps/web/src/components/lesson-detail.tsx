@@ -1,4 +1,4 @@
-import { MapPin, PencilLine, Trash2, User } from 'lucide-react';
+import { CalendarClock, MapPin, PencilLine, Trash2, User } from 'lucide-react';
 import { deleteCourse, deleteSchedule, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
@@ -16,6 +16,8 @@ export interface LessonDetailProps {
   onClose: () => void;
   /** 打开课程编辑（课程信息与排课时段都在同一个表单里） */
   onEditCourse?: (courseId: string) => void;
+  /** 打开「课程调整」弹窗（调课／调休／临时加课），目标就是当前这一课次 */
+  onAdjust?: (cell: LessonCell) => void;
 }
 
 export function LessonDetail({
@@ -26,6 +28,7 @@ export function LessonDetail({
   onChanged,
   onClose,
   onEditCourse,
+  onAdjust,
 }: LessonDetailProps) {
   async function removeSchedule(id: string): Promise<void> {
     await deleteSchedule(storage, id);
@@ -116,6 +119,12 @@ export function LessonDetail({
       )}
 
       <div className="mt-2 flex flex-wrap gap-2">
+        {onAdjust !== undefined && (
+          <Button variant="secondary" aria-label="调课" onClick={() => onAdjust(cell)}>
+            <CalendarClock className="size-4" aria-hidden />
+            调课
+          </Button>
+        )}
         {onEditCourse !== undefined && (
           <Button variant="secondary" onClick={() => onEditCourse(detail.course?.id ?? cell.courseId)}>
             <PencilLine className="size-4" aria-hidden />

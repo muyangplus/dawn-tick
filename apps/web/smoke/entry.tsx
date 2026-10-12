@@ -2,6 +2,8 @@ import * as fakeIndexedDb from 'fake-indexeddb';
 import type { ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
+  addDays,
+  builtinHolidays,
   createCourse,
   createEvent,
   createSchedule,
@@ -26,7 +28,8 @@ export interface SmokeResult {
   detail: string;
 }
 
-async function seed(): Promise<void> {
+/** 造一份固定数据；返回当前周的周一日期，供后续断言推算有课的日期。 */
+async function seed(): Promise<string> {
   const storage = validatedStorage(await openIndexedDbStorage());
   const semester = await createSemester(storage, {
     userId: USER_ID,
@@ -63,6 +66,39 @@ async function seed(): Promise<void> {
     periodEnd: 4,
     weeks: [1, 2],
   });
+  // 周二、周四都上的课：用来验证假期第二天（周二）与日程时间线的时间区间
+  const linearCourse = await createCourse(storage, {
+    semesterId: String(semester['id']),
+    name: '线性代数',
+    shortName: '线代',
+  });
+  await createSchedule(storage, {
+    courseId: String(linearCourse['id']),
+    dayOfWeek: 2,
+    periodStart: 5,
+    periodEnd: 6,
+    weeks: Array.from({ length: 20 }, (_, index) => index + 1),
+  });
+  await createSchedule(storage, {
+    courseId: String(linearCourse['id']),
+    dayOfWeek: 4,
+    periodStart: 7,
+    periodEnd: 8,
+    weeks: Array.from({ length: 20 }, (_, index) => index + 1),
+  });
+  // 只在第 1-2 周上的周一课：当天放假又非本周，用来验证放假优先于非本周
+  const probabilityCourse = await createCourse(storage, {
+    semesterId: String(semester['id']),
+    name: '概率论',
+    shortName: '概率',
+  });
+  await createSchedule(storage, {
+    courseId: String(probabilityCourse['id']),
+    dayOfWeek: 1,
+    periodStart: 5,
+    periodEnd: 6,
+    weeks: [1, 2],
+  });
   // 周视图铺满 7 天，才能验证「高亮当天列」
   await writeSettings(storage, { viewDays: 7 });
   // 当前周的周一放假，用来验证放假日灰显（跟随当天日期，避免跨周后失效）
@@ -75,9 +111,26 @@ async function seed(): Promise<void> {
     userId: USER_ID,
     semesterId: String(semester['id']),
     type: 'holiday',
-    title: '国庆调休放假',
+    title: '国庆节',
     onDate: mondayText,
   });
+  // 把假期前一天设为工作日：保证周一是这段假期的第一天（不受内置节假日表影响）
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'workday',
+    title: '非假日',
+    onDate: addDays(mondayText, -1),
+  });
+  // 周二也放假：形成一段两天假期，用来验证第二天起只显示「放假」
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'holiday',
+    title: '国庆节',
+    onDate: addDays(mondayText, 1),
+  });
+  return mondayText;
 }
 
 // 冒烟固定把所有设置卡片视为展开，避免折叠记忆影响断言
@@ -159,15 +212,50 @@ function pointerEvent(type: string, init: Record<string, unknown>): Event {
   return new EventCtor(type, { bubbles: true, cancelable: true, ...init } as never);
 }
 
-/** 点击某天列首个格子上的一行（该列第 1 节空着时才有效）。 */
-function clickGridCell(container: HTMLElement, day: number): boolean {
+/** 点击某天列某一节上的一行（该节空着时才有效，period 从 1 开始）。 */
+function clickGridCell(container: HTMLElement, day: number, period = 1): boolean {
   const column = container.querySelector(`[data-day="${day}"]`);
   if (!(column instanceof window.HTMLElement)) return false;
   stubRect(column, day * 100, 100);
-  const row = column.querySelector('div');
+  const row = [...column.querySelectorAll('div')][period - 1];
   const target = row instanceof window.HTMLElement ? row : column;
-  target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientY: 104 }));
+  const clientY = 100 + (period - 1) * 56 + 4;
+  // 真实鼠标点击前一定先有 pointerdown，周视图的落点判断依赖它
+  target.dispatchEvent(pointerEvent('pointerdown', { pointerId: 41, button: 0, clientX: 150, clientY }));
+  target.dispatchEvent(pointerEvent('pointerup', { pointerId: 41, clientX: 150, clientY }));
+  target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientY }));
   return true;
+}
+
+/** 占位块滚轮条上的节次范围文案。 */
+function slotRange(container: HTMLElement): string {
+  return (container.querySelector('[data-role="period-wheel"]')?.textContent ?? '').trim();
+}
+
+/** 课程表单里某个下拉框当前显示的值。 */
+function triggerText(label: string): string {
+  return (document.querySelector(`[aria-label="${label}"]`)?.textContent ?? '').trim();
+}
+
+/** 按住占位块本体拖动：dy 为相对按下的像素位移（56 一格）。 */
+function dragEmptySlot(
+  slot: HTMLElement,
+  startY = 400,
+): {
+  down: () => void;
+  move: (dy: number) => void;
+  up: (dy: number) => void;
+} {
+  const fire = (type: string, dy: number): void => {
+    slot.dispatchEvent(
+      pointerEvent(type, { pointerId: 31, button: 0, clientX: 150, clientY: startY + dy }),
+    );
+  };
+  return {
+    down: () => fire('pointerdown', 0),
+    move: (dy: number) => fire('pointermove', dy),
+    up: (dy: number) => fire('pointerup', dy),
+  };
 }
 
 /**
@@ -194,7 +282,11 @@ function stubRect(element: Element, left: number, top: number, width = 100, heig
 }
 
 /** 在课程卡上按下指针并按住超过长按时长，再发窗口指针事件、移动与抬手。 */
-async function dragLesson(container: HTMLElement, name: string, moveTo?: { day: number }): Promise<boolean> {
+async function dragLesson(
+  container: HTMLElement,
+  name: string,
+  moveTo?: { day: number; clientY?: number },
+): Promise<boolean> {
   const card = [...container.querySelectorAll('[data-tone]')].find((item) =>
     (item.textContent ?? '').includes(name),
   );
@@ -213,12 +305,18 @@ async function dragLesson(container: HTMLElement, name: string, moveTo?: { day: 
       pointerEvent('pointermove', {
         pointerId: 1,
         clientX: moveTo.day * 100 + 50,
-        clientY: 104,
+        clientY: moveTo.clientY ?? 104,
       }),
     );
   }
   await flush(2);
-  holder.dispatchEvent(pointerEvent('pointerup', { pointerId: 1, clientX: 152, clientY: 106 }));
+  holder.dispatchEvent(
+    pointerEvent('pointerup', {
+      pointerId: 1,
+      clientX: moveTo === undefined ? 152 : moveTo.day * 100 + 50,
+      clientY: moveTo?.clientY ?? 106,
+    }),
+  );
   await flush(4);
   window.dispatchEvent(pointerEvent('pointercancel', { pointerId: 1 }));
   return true;
@@ -285,7 +383,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   empty.root.unmount();
 
-  await seed();
+  const seededMonday = await seed();
   const view = mount(<App />);
   await flush(20);
   const text = view.container.textContent ?? '';
@@ -322,6 +420,28 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
     '',
   );
+
+  // ③ 放假优先于非本周：周一既放假、又只在第 1-2 周上的「概率论」必须按放假渲染
+  const holidayGhostCard = [...view.container.querySelectorAll('[data-tone]')].find((item) =>
+    (item.textContent ?? '').includes('概率'),
+  );
+  const holidayGhostTone = holidayGhostCard?.getAttribute('data-tone') ?? '(未找到)';
+  check(
+    '放假与非本周同时成立时按放假渲染',
+    holidayGhostTone === 'holiday' && holidayGhostCard?.getAttribute('data-dashed') === null,
+    `${holidayGhostTone} / dashed=${holidayGhostCard?.getAttribute('data-dashed') ?? 'null'}`,
+  );
+
+  // ④ 多天假期：第一天卡片上显示假期名称，第二天起只显示「放假」
+  const holidayLabelOf = (name: string): string | undefined =>
+    [...view.container.querySelectorAll('[data-tone="holiday"]')]
+      .find((item) => (item.textContent ?? '').includes(name))
+      ?.querySelector('[data-role="holiday-label"]')
+      ?.textContent?.trim();
+  const firstDayLabel = holidayLabelOf('高数');
+  const laterDayLabel = holidayLabelOf('线代');
+  check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
+  check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
 
   // C1：长按拖动 + 吸附后选作用范围
   const heldWithoutMove = await dragLesson(view.container, '高数');
@@ -391,6 +511,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (view.container.querySelector('[data-role="period-wheel"]')?.textContent ?? '').trim() === '第 1–2 节',
     `${(view.container.querySelector('[data-role="period-wheel"]')?.textContent ?? '').trim()}`,
   );
+  check('滚轮改范围不弹出加课弹窗', document.querySelector('[aria-label="起始节"]') === null, '');
+  // 真实鼠标点「＋」之前会先发 pointerdown：范围不能被列上的 pointerdown 重置成单节
+  const plusButton = slot?.querySelector('button[aria-label="在此新建课程"]');
+  if (plusButton instanceof window.HTMLElement) {
+    plusButton.dispatchEvent(pointerEvent('pointerdown', { pointerId: 11, button: 0, clientX: 150, clientY: 104 }));
+    plusButton.dispatchEvent(pointerEvent('pointerup', { pointerId: 11, clientX: 150, clientY: 104 }));
+    await flush(4);
+  }
   clickByLabel(view.container, '在此新建课程');
   await flush(12);
   const createdText = document.body.textContent ?? '';
@@ -408,8 +536,147 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       pressedWeeks.length === 1,
     `weeks=${pressedWeeks.map((item) => item.getAttribute('aria-label')).join(',')} tail=${createdText.slice(-40)}`,
   );
+  check(
+    '点 + 保留占位块节次范围',
+    triggerText('起始节') === '第 1 节' && triggerText('结束节') === '第 2 节',
+    `${triggerText('起始节')} → ${triggerText('结束节')}`,
+  );
   if (clickByText(document.body, '取消')) await flush(6);
   check('取消后占位块消失', view.container.querySelector('[data-role="empty-slot"]') === null, '');
+
+  // C2b：按住占位块本体拖动改范围 → 跨过已占用的格只提示不阻止 → 松手直接进课程表单
+  clickGridCell(view.container, 1, 3);
+  await flush(6);
+  const bodySlot = view.container.querySelector('[data-role="empty-slot"]');
+  check(
+    '周一空白格出现单节占位块',
+    bodySlot instanceof window.HTMLElement && slotRange(view.container) === '第 3 节',
+    slotRange(view.container),
+  );
+  if (bodySlot instanceof window.HTMLElement) {
+    const drag = dragEmptySlot(bodySlot);
+    drag.down();
+    await flush(4);
+    check(
+      '按住占位块本体出现拖动反馈',
+      bodySlot.getAttribute('data-dragging') === 'true' &&
+        view.container.querySelector('[data-role="empty-drag-label"]') !== null,
+      `${bodySlot.getAttribute('data-dragging')}`,
+    );
+    drag.move(-2 * 56);
+    await flush(4);
+    check('拖动占位块可扩展节次范围', slotRange(view.container) === '第 1–3 节', slotRange(view.container));
+    drag.move(0);
+    await flush(4);
+    check('拖动占位块可收缩回单节', slotRange(view.container) === '第 3 节', slotRange(view.container));
+    drag.move(-2 * 56);
+    await flush(4);
+    const clashText = view.container.querySelector('[data-role="empty-clash"]')?.textContent ?? '';
+    const clashToast = document.body.textContent ?? '';
+    check(
+      '跨越已占用格只提示不阻止',
+      slotRange(view.container) === '第 1–3 节' &&
+        clashText.includes('高等数学') &&
+        clashToast.includes('与「高等数学」第 1–2 节重叠，仍可继续新建'),
+      `${slotRange(view.container)} | ${clashText} | ${clashToast.includes('仍可继续新建')}`,
+    );
+    drag.up(-2 * 56);
+    await flush(12);
+    check(
+      '拖动松手自动打开加课弹窗并预填范围',
+      (document.body.textContent ?? '').includes('添加课程') &&
+        triggerText('星期') === '周一' &&
+        triggerText('起始节') === '第 1 节' &&
+        triggerText('结束节') === '第 3 节' &&
+        (document.body.textContent ?? '').includes('已选 1/20 周'),
+      `${triggerText('星期')} ${triggerText('起始节')} → ${triggerText('结束节')}`,
+    );
+  }
+  const nameBox = document.querySelector('[role="dialog"] input');
+  if (nameBox instanceof window.HTMLInputElement) setInputValue(nameBox, '重叠测试课');
+  await flush(4);
+  if (clickByText(document.body, '保存')) await flush(16);
+  check(
+    '重叠课程保存成功并提示',
+    (view.container.textContent ?? '').includes('重叠测试课') &&
+      (document.body.textContent ?? '').includes('与「高等数学」第 1–2 节重叠，已同时保留'),
+    (document.body.textContent ?? '').slice(-70),
+  );
+
+  // C2b-2：多节占位块按住下半（下缘跟随）：向下继续扩展、向上收缩
+  clickGridCell(view.container, 5, 1);
+  await flush(6);
+  clickByLabel(view.container, '下一节');
+  await flush(4);
+  clickByLabel(view.container, '下一节');
+  await flush(4);
+  const bottomSlot = view.container.querySelector('[data-role="empty-slot"]');
+  check(
+    '箭头按钮可把占位块扩到多节',
+    bottomSlot instanceof window.HTMLElement && slotRange(view.container) === '第 1–3 节',
+    slotRange(view.container),
+  );
+  if (bottomSlot instanceof window.HTMLElement) {
+    // jsdom 没有布局：给占位块造一份几何，按下点才会落在下半（下缘跟随）
+    stubRect(bottomSlot, 500, 102, 100, 152);
+    const drag = dragEmptySlot(bottomSlot);
+    drag.down();
+    drag.move(56);
+    await flush(4);
+    check('多节占位块按住下半向下扩展', slotRange(view.container) === '第 1–4 节', slotRange(view.container));
+    drag.move(-56);
+    await flush(4);
+    check('多节占位块按住下半向上收缩', slotRange(view.container) === '第 1–2 节', slotRange(view.container));
+    drag.up(-56);
+    await flush(12);
+    check(
+      '多节占位块松手也自动弹窗并预填',
+      triggerText('起始节') === '第 1 节' && triggerText('结束节') === '第 2 节',
+      `${triggerText('起始节')} → ${triggerText('结束节')}`,
+    );
+  }
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // C2b-3：多节占位块按住上半（上缘跟随）：起点随指针走
+  clickGridCell(view.container, 6, 1);
+  await flush(6);
+  clickByLabel(view.container, '下一节');
+  await flush(4);
+  clickByLabel(view.container, '下一节');
+  await flush(4);
+  const topSlot = view.container.querySelector('[data-role="empty-slot"]');
+  if (topSlot instanceof window.HTMLElement) {
+    stubRect(topSlot, 600, 102, 100, 152);
+    const drag = dragEmptySlot(topSlot, 110);
+    drag.down();
+    drag.move(56);
+    await flush(4);
+    check('按住占位块上半拖动时上缘跟随', slotRange(view.container) === '第 2–3 节', slotRange(view.container));
+    drag.up(56);
+    await flush(12);
+    check(
+      '按住上半松手也自动弹窗并预填',
+      triggerText('起始节') === '第 2 节' && triggerText('结束节') === '第 3 节',
+      `${triggerText('起始节')} → ${triggerText('结束节')}`,
+    );
+  }
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // C2c：拖动调课落到已占用的节次：仍然能调，只多一条重叠提醒
+  await dragLesson(view.container, '高数', { day: 1, clientY: 216 });
+  await flush(6);
+  const overlapMoveText = document.body.textContent ?? '';
+  check(
+    '拖到已占用节次仍可打开调整弹窗',
+    overlapMoveText.includes('调整课程时间') && overlapMoveText.includes('第 3–4 节'),
+    overlapMoveText.slice(-60),
+  );
+  if (clickByText(document.body, '本周生效')) await flush(16);
+  check(
+    '重叠调课保存成功并提示',
+    (document.body.textContent ?? '').includes('调整后与「重叠测试课」第 1–3 节重叠，已同时保留'),
+    (document.body.textContent ?? '').slice(-70),
+  );
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
@@ -422,6 +689,52 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
+  // ① 时间线课程显示开始–结束；② 行内「调课」按钮移除，改为点课程进详情再调课
+  const seededHolidays = new Set<string>(builtinHolidays());
+  seededHolidays.delete(addDays(seededMonday, -1));
+  seededHolidays.add(seededMonday);
+  seededHolidays.add(addDays(seededMonday, 1));
+  const timelinePicks = [
+    { date: addDays(seededMonday, 7), range: '08:00–09:40', course: '高等数学' },
+    { date: addDays(seededMonday, 8), range: '14:00–15:40', course: '线性代数' },
+    { date: addDays(seededMonday, 10), range: '16:00–17:40', course: '线性代数' },
+  ];
+  const picked = timelinePicks.find((item) => !seededHolidays.has(item.date)) ?? timelinePicks[0];
+  const dateBox = view.container.querySelector('input[aria-label="查看日期"]');
+  if (dateBox instanceof window.HTMLInputElement) setInputValue(dateBox, picked.date);
+  await flush(10);
+  const rangeText = (view.container.querySelector('[data-role="lesson-time"]')?.textContent ?? '').trim();
+  check('日程时间线课程显示开始–结束', rangeText === picked.range, `${rangeText} @ ${picked.date}`);
+  check('时间线行不再有行内调课按钮', !hasLabel(view.container, '调课：'), '');
+
+  const timelineLessonRow = view.container.querySelector('[data-role="timeline-lesson"]');
+  let rowClicked = false;
+  if (timelineLessonRow instanceof window.HTMLElement) {
+    timelineLessonRow.click();
+    rowClicked = true;
+  }
+  await flush(14);
+  check(
+    '点时间线课程打开课程详情',
+    rowClicked &&
+      document.querySelector('[aria-label="调课"]') !== null &&
+      (document.body.textContent ?? '').includes('删除整门课'),
+    (document.body.textContent ?? '').slice(-60),
+  );
+  if (clickByLabel(document.body, '调课')) await flush(14);
+  const adjustFromDate = document.querySelector('input[aria-label="原来哪一天"]');
+  check(
+    '详情页调课入口打开调整弹窗并预填课次',
+    (document.body.textContent ?? '').includes('临时加课') &&
+      triggerText('哪门课') === picked.course &&
+      adjustFromDate instanceof window.HTMLInputElement &&
+      adjustFromDate.value === picked.date,
+    `${triggerText('哪门课')} / ${adjustFromDate instanceof window.HTMLInputElement ? adjustFromDate.value : '(无)'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(8);
+
   if (clickMenu(view.container, '添加', '加考试')) await flush(12);
   check(
     '加考试入口打开考试表单',

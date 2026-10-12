@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import {
   CalendarClock,
   CalendarDays,
@@ -31,6 +31,12 @@ import { formatDayCountdown } from '../../lib/format.ts';
 import { ActionMenu } from './card-actions.tsx';
 import { defineCard, type ScheduleCardContext } from './registry.ts';
 import { buildTimeline, dateLabel, groupTimeline } from './timeline.ts';
+
+/**
+ * 打开课程详情的桥：日程卡片的渲染上下文（registry.ts）里没有这一项，
+ * 由 App 用 Provider 注入（App 自己渲染课程详情）；没有 Provider 时点击不响应。
+ */
+export const LessonDetailOpener = createContext<((target: AdjustTarget) => void) | null>(null);
 
 /** 顶部一行：日期选择器 + 加号菜单 + 溢出菜单 */
 export const actionsCard = defineCard({
@@ -251,12 +257,12 @@ function ScheduleTimeline({
   storage,
   viewDate,
   onViewDateChange,
-  onOpenAdjust,
   onChanged,
   tomorrowPreview,
 }: ScheduleCardContext) {
   const timeline = buildTimeline(data, viewDate);
   const groups = groupTimeline(timeline);
+  const openLessonDetail = useContext(LessonDetailOpener);
   const tomorrow = addDays(viewDate, 1);
   const tomorrowItems = buildTimeline(data, tomorrow).length;
 
@@ -274,18 +280,10 @@ function ScheduleTimeline({
           <div key={group.date ?? 'undated'} className="flex flex-col gap-1">
             <span className="text-xs text-muted">{dateLabel(group.date, data.timeZone)}</span>
             <ul className="flex flex-col gap-1">
-              {group.items.map((item) => (
-                <li
-                  key={item.key}
-                  className={cn(
-                    'flex min-h-tap items-center gap-3 rounded-md border border-line bg-surface px-3',
-                    item.done === true && 'border-line-strong/50 bg-surface-muted/40 text-muted opacity-45',
-                  )}
-                  style={item.color === undefined ? undefined : { borderLeft: `4px solid ${item.color}` }}
-                  data-kind={item.kind}
-                  data-done={item.done === true ? 'true' : undefined}
-                >
-                  {item.kind === 'todo' && item.event !== undefined ? (
+              {group.items.map((item) => {
+                const lessonTarget = item.lessonTarget ?? null;
+                const marker =
+                  item.kind === 'todo' && item.event !== undefined ? (
                     <input
                       type="checkbox"
                       className="size-4 shrink-0"
@@ -303,7 +301,8 @@ function ScheduleTimeline({
                         <ListChecks className="size-4" />
                       )}
                     </span>
-                  )}
+                  );
+                const body = (
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className={cn('truncate text-sm text-ink', item.done === true && 'line-through')}>
                       {item.title}
@@ -314,43 +313,62 @@ function ScheduleTimeline({
                       </span>
                     )}
                   </span>
-                  {item.kind === 'lesson' && item.lessonTarget !== undefined && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="shrink-0"
-                      aria-label={`调课：${item.title}`}
-                      onClick={() => onOpenAdjust(item.lessonTarget ?? null)}
-                    >
-                      调课
-                    </Button>
-                  )}
-                  {item.kind === 'lesson' && item.minute > 0 && (
-                    <span className="tabular shrink-0 text-xs text-muted">
-                      {String(Math.floor(item.minute / 60)).padStart(2, '0')}:
-                      {String(item.minute % 60).padStart(2, '0')}
-                    </span>
-                  )}
-                  {item.kind === 'adjust' && item.event !== undefined && (
-                    <span className="flex shrink-0 items-center gap-1">
-                      <span className="tabular text-xs text-muted">{item.event.on_date}</span>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        aria-label={`删除调整：${item.title}`}
-                        onClick={() => {
-                          void (async () => {
-                            await updateEvent(storage, String(item.event?.id ?? ''), { deleted_at: Date.now() });
-                            onChanged();
-                          })();
-                        }}
+                );
+                return (
+                  <li
+                    key={item.key}
+                    className={cn(
+                      'flex min-h-tap items-center gap-3 rounded-md border border-line bg-surface px-3',
+                      item.done === true && 'border-line-strong/50 bg-surface-muted/40 text-muted opacity-45',
+                    )}
+                    style={item.color === undefined ? undefined : { borderLeft: `4px solid ${item.color}` }}
+                    data-kind={item.kind}
+                    data-done={item.done === true ? 'true' : undefined}
+                  >
+                    {lessonTarget === null ? (
+                      <>
+                        {marker}
+                        {body}
+                      </>
+                    ) : (
+                      // 课程行整体可点：进课程详情，调课在详情里操作
+                      <button
+                        type="button"
+                        data-role="timeline-lesson"
+                        aria-label={`查看课程详情：${item.title}`}
+                        className="flex min-w-0 flex-1 items-center gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+                        onClick={() => openLessonDetail?.(lessonTarget)}
                       >
-                        删除
-                      </Button>
-                    </span>
-                  )}
-                </li>
-              ))}
+                        {marker}
+                        {body}
+                      </button>
+                    )}
+                    {item.kind === 'lesson' && item.timeRange !== undefined && (
+                      <span className="tabular shrink-0 text-xs text-muted" data-role="lesson-time">
+                        {item.timeRange}
+                      </span>
+                    )}
+                    {item.kind === 'adjust' && item.event !== undefined && (
+                      <span className="flex shrink-0 items-center gap-1">
+                        <span className="tabular text-xs text-muted">{item.event.on_date}</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`删除调整：${item.title}`}
+                          onClick={() => {
+                            void (async () => {
+                              await updateEvent(storage, String(item.event?.id ?? ''), { deleted_at: Date.now() });
+                              onChanged();
+                            })();
+                          }}
+                        >
+                          删除
+                        </Button>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ))

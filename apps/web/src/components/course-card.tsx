@@ -14,6 +14,8 @@ export interface CourseCardProps {
    * holiday：放假日课（灰显）。
    */
   tone?: 'solid' | 'ghost' | 'holiday';
+  /** tone="holiday" 时卡片标签上的文案，默认「放假」；多天假期第一天传节次 */
+  holidayLabel?: string;
   /** 兼容旧调用：等价于 tone="ghost" */
   dashed?: boolean;
   onClick?: () => void;
@@ -32,6 +34,7 @@ export function CourseCard({
   meta,
   badge,
   tone,
+  holidayLabel,
   dashed = false,
   onClick,
   className,
@@ -42,7 +45,13 @@ export function CourseCard({
     (resolvedTone === 'ghost' ? (
       <span className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted">非本周</span>
     ) : resolvedTone === 'holiday' ? (
-      <span className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted">放假</span>
+      // 假期名称可能较长（如「国庆节」），限制宽度并省略，避免挤掉课程名
+      <span
+        className="max-w-[65%] shrink-0 truncate rounded-sm bg-surface px-1 text-[10px] text-muted"
+        data-role="holiday-label"
+      >
+        {holidayLabel ?? '放假'}
+      </span>
     ) : undefined);
   const content = (
     <>
@@ -78,7 +87,10 @@ export function CourseCard({
         : resolvedTone === 'ghost'
           ? `color-mix(in srgb, var(--dt-surface) 97%, ${color})`
           : `color-mix(in srgb, var(--dt-surface) 82%, ${color})`,
-    ...(resolvedTone === 'ghost' ? { borderWidth: '1px', borderStyle: 'dashed', borderLeftWidth: '4px' } : {}),
+    // 放假优先于非本周：即使两种状态同时成立，也只按放假灰显，不出现非本周的虚线框
+    ...(resolvedTone === 'ghost'
+      ? { borderWidth: '1px', borderStyle: 'dashed' as const, borderLeftWidth: '4px' }
+      : { borderStyle: 'solid' as const }),
   } as const;
 
   const base = 'flex w-full min-w-0 flex-col gap-0.5 overflow-hidden rounded-sm border-l-4 px-2 py-1.5';
