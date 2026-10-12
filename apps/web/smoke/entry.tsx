@@ -207,6 +207,20 @@ function setInputValue(element: HTMLElement, value: string): void {
   element.dispatchEvent(new window.Event('input', { bubbles: true }));
 }
 
+/**
+ * 让输入框失焦：真实浏览器失焦会先派发不冒泡的 blur，再派发冒泡的 focusout；
+ * React 的 onBlur 挂在 focusout 上，所以两个都派发，保持与浏览器一致的事件序列。
+ */
+function blurInput(element: HTMLElement): void {
+  element.dispatchEvent(new window.FocusEvent('blur'));
+  element.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true }));
+}
+
+/** 在输入框里按回车。 */
+function pressEnter(element: HTMLElement): void {
+  element.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+}
+
 function pointerEvent(type: string, init: Record<string, unknown>): Event {
   const EventCtor = window.PointerEvent ?? window.MouseEvent;
   return new EventCtor(type, { bubbles: true, cancelable: true, ...init } as never);
@@ -967,6 +981,96 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(view.container, '追加一节')) await flush(22);
   const appended = startInputs(view.container).length;
   check('追加一节生效', appended === generated.length + 1, `${generated.length} → ${appended}（原 ${beforePeriods}）`);
+
+  // —— 「调整范围」对话框：输入过程中不弹，失焦或回车才弹 ——
+  // 锚点：时间表卡片里第 1/2 节的开始、结束时间输入框，以及第 1 节后的课间输入框
+  const scopeDialog = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>('[data-role="scope-dialog"]');
+  const scopeDialogCount = (): number => document.querySelectorAll('[data-role="scope-dialog"]').length;
+  const scopeText = (): string => (scopeDialog()?.textContent ?? '').trim();
+  const clockInput = (period: number, field: '开始' | '结束'): HTMLInputElement | null => {
+    const found = view.container.querySelector(`input[aria-label="第 ${period} 节${field}时间"]`);
+    return found instanceof window.HTMLInputElement ? found : null;
+  };
+  const gapInput = (period: number): HTMLInputElement | null => {
+    const found = view.container.querySelector(`input[aria-label="第 ${period} 节后课间分钟"]`);
+    return found instanceof window.HTMLInputElement ? found : null;
+  };
+
+  // 场景一：改第 1 节开始时间 → 输入过程中只有落库，没有对话框；失焦才弹一个
+  const firstStart = clockInput(1, '开始');
+  const firstStartBefore = firstStart?.value ?? '';
+  if (firstStart !== null) setInputValue(firstStart, '08:10');
+  await flush(10);
+  check(
+    '输入过程中不弹出调整范围对话框',
+    scopeDialog() === null && firstStart?.value === '08:10',
+    `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，输入框=${firstStart?.value ?? '?'}（原 ${firstStartBefore}）`,
+  );
+
+  if (firstStart !== null) blurInput(firstStart);
+  await flush(10);
+  check(
+    '失焦后弹出调整范围对话框',
+    scopeDialogCount() === 1 && scopeText().includes('这次改动要应用到哪些课次'),
+    `对话框 ${scopeDialogCount()} 个：${scopeText().slice(0, 30)}`,
+  );
+  check(
+    '调整范围对话框保留三个范围与取消',
+    ['只改这一节', '本时段重排（上午）', '全部时段重排', '取消'].every((label) => scopeText().includes(label)),
+    scopeText().slice(-60),
+  );
+
+  if (clickByText(document.body, '只改这一节')) await flush(8);
+  check(
+    '只改这一节关掉对话框且单节改动保留',
+    scopeDialog() === null && firstStart?.value === '08:10',
+    `对话框=${scopeDialog() === null ? '已关闭' : '仍在'}，输入框=${firstStart?.value ?? '?'}`,
+  );
+
+  // 同一次编辑只问一次：失焦/回车已经消费掉这次编辑，再失焦不会重新弹
+  if (firstStart !== null) blurInput(firstStart);
+  await flush(8);
+  check('同一次编辑不再重复弹窗', scopeDialogCount() === 0, `对话框 ${scopeDialogCount()} 个`);
+
+  // 没有编辑过的字段失焦也不该弹窗
+  const secondEnd = clockInput(2, '结束');
+  if (secondEnd !== null) blurInput(secondEnd);
+  await flush(8);
+  check('未改动字段失焦不弹窗', scopeDialogCount() === 0, `对话框 ${scopeDialogCount()} 个`);
+
+  // 场景二：半成品时间（HH:MM 不完整）失焦不弹窗
+  const secondStart = clockInput(2, '开始');
+  const secondStartBefore = secondStart?.value ?? '';
+  if (secondStart !== null) setInputValue(secondStart, '9:9');
+  await flush(6);
+  if (secondStart !== null) blurInput(secondStart);
+  await flush(8);
+  check(
+    '时间半成品失焦不弹出调整范围对话框',
+    scopeDialog() === null,
+    `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，值=${secondStart?.value ?? '?'}（原 ${secondStartBefore}）`,
+  );
+
+  // 场景三：课间输入框 → 输入过程中不弹，按回车才弹
+  const firstGap = gapInput(1);
+  if (firstGap !== null) setInputValue(firstGap, '20');
+  await flush(10);
+  check(
+    '课间输入过程中不弹窗且已落库',
+    scopeDialog() === null && firstGap?.value === '20',
+    `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，课间=${firstGap?.value ?? '?'}`,
+  );
+
+  if (firstGap !== null) pressEnter(firstGap);
+  await flush(10);
+  check(
+    '回车弹出调整范围对话框',
+    scopeDialog() !== null && scopeText().includes('课间 20 分钟'),
+    scopeText().slice(-40),
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
+  check('取消关掉对话框', scopeDialogCount() === 0, `对话框 ${scopeDialogCount()} 个`);
 
   check('学期设置显示编辑与删除入口', clickByLabel(view.container, '编辑学期'), '');
   await flush(6);

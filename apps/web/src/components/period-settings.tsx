@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { CalendarRange, Plus, Trash2, Wand2 } from 'lucide-react';
 import {
   appendTimeSlot,
@@ -48,6 +48,19 @@ interface RerollDraft {
   durationFromEdit: boolean;
   /** 课间是否由刚才手改的课间输入而来 */
   breakFromEdit: boolean;
+}
+
+/**
+ * 一次「已经落库、但还没询问作用范围」的编辑。
+ * 输入过程中只把它记下来（不弹窗），等到失焦或回车时才拿它去问一次。
+ */
+interface PendingEdit {
+  /** 字段 + 本次落库的值的签名：同一次编辑只问一次 */
+  signature: string;
+  /** 这次编辑对应的重排参数 */
+  draft: RerollDraft;
+  /** 落库是否成功；失败时不打扰用户 */
+  commit: Promise<boolean>;
 }
 
 /** 把 HH:MM 往后推 minutes 分钟，返回 HH:MM。 */
@@ -115,6 +128,10 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const [busy, setBusy] = useState(false);
   /** 单节改动已生效，等待用户选择重排范围；null 表示没有待回答的询问 */
   const [draft, setDraft] = useState<RerollDraft | null>(null);
+  /** 已落库、但还没问范围的编辑：输入过程中只记在这里，失焦或回车时才弹窗 */
+  const pendingEdit = useRef<PendingEdit | null>(null);
+  /** 已经问过范围的签名：同一次编辑（回车后又失焦）只弹一个对话框 */
+  const askedEdit = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     setSlots(await listTimeSlots(storage, semesterId));
@@ -137,6 +154,52 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     }
     setDraft(next);
   }
+
+  /**
+   * 记下一次「已经落库、但还没问范围」的编辑。
+   * 输入过程中只调用它（所以打字时不会弹窗），弹窗留给失焦或回车。
+   */
+  function markPending(signature: string, next: RerollDraft, commit: Promise<boolean>): void {
+    pendingEdit.current = { signature, draft: next, commit };
+  }
+
+  /**
+   * 失焦或回车时才真正询问范围。
+   * 同一个签名只问一次，所以「回车之后紧接着失焦」也只会弹一个对话框；
+   * 落库失败（commit 为 false）时保持沉默，与改动前的行为一致。
+   */
+  function flushPending(): void {
+    const pending = pendingEdit.current;
+    if (pending === null || askedEdit.current === pending.signature) return;
+    pendingEdit.current = null;
+    askedEdit.current = pending.signature;
+    const { draft: next, commit } = pending;
+    void commit.then((saved) => {
+      if (saved) askScope(next);
+    });
+  }
+
+  /** 关掉「调整范围」对话框（只改这一节 / 取消 / Esc / ✕），之后新的编辑可以重新询问。 */
+  function closeScope(): void {
+    pendingEdit.current = null;
+    askedEdit.current = null;
+    setDraft(null);
+  }
+
+  /**
+   * 时间/课间输入框共用的触发：失焦或回车时才把挂起的改动拿去问范围。
+   * 输入框里的 onChange 只负责落库，所以连输多位数时不会中途弹窗抢焦点。
+   */
+  const scopeTriggers = {
+    onBlur: () => {
+      flushPending();
+    },
+    onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      flushPending();
+    },
+  };
 
   async function generate(): Promise<void> {
     setBusy(true);
@@ -180,38 +243,50 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   }
 
   /**
-   * 单节课次改起止时间：先只改这一节并立即生效，再询问重排范围。
+   * 单节课次改起止时间：先只改这一节并立即生效（不弹窗）。
    * 改了结束时间（或起止一起改）时，把推算出的时长当作重排用的新时长。
    */
-  async function saveTime(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): Promise<void> {
+  async function saveTime(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): Promise<boolean> {
     setMessage(null);
-    const nextStart = changes.startTime ?? slot.start_time;
-    const nextEnd = changes.endTime ?? slot.end_time;
-    const editedDuration = changes.endTime === undefined ? null : durationBetween(nextStart, nextEnd);
     try {
       await updateTimeSlot(storage, slot.id, changes);
       logInfo('timetable', '修改课次时间', { periodNo: slot.period_no, ...changes });
       await reload();
       onChanged();
-      askScope({
-        periodNo: slot.period_no,
-        section: sectionOf(nextStart),
-        durationMinutes: editedDuration ?? duration,
-        breakMinutes: gap,
-        durationFromEdit: editedDuration !== null,
-        breakFromEdit: false,
-      });
+      return true;
     } catch (cause: unknown) {
       setMessage(cause instanceof Error ? cause.message : String(cause));
+      return false;
     }
   }
 
+  /** 这次时间改动对应的重排参数（同步算好，等失焦或回车时再问范围）。 */
+  function timeDraft(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): RerollDraft {
+    const nextStart = changes.startTime ?? slot.start_time;
+    const nextEnd = changes.endTime ?? slot.end_time;
+    const editedDuration = changes.endTime === undefined ? null : durationBetween(nextStart, nextEnd);
+    return {
+      periodNo: slot.period_no,
+      section: sectionOf(nextStart),
+      durationMinutes: editedDuration ?? duration,
+      breakMinutes: gap,
+      durationFromEdit: editedDuration !== null,
+      breakFromEdit: false,
+    };
+  }
+
+  /** 时间输入框：立刻落库，失焦或回车时才弹「调整范围」。 */
+  function editTime(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): void {
+    const field = changes.startTime !== undefined ? 'start' : 'end';
+    const value = changes.startTime ?? changes.endTime ?? '';
+    markPending(`time:${slot.id}:${field}=${value}`, timeDraft(slot, changes), saveTime(slot, changes));
+  }
+
   /**
-   * 改某节课后的课间：只挪后一节的开始时间并立即生效，再询问重排范围。
+   * 改某节课后的课间：只挪后一节的开始时间并立即生效（不弹窗）。
    * 刚输入的课间分钟数就是这次重排要用的课间，作用时段取开始时间被改的那一节。
    */
-  async function saveGap(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): Promise<void> {
-    if (!within(minutes, 0, MAX_GAP)) return;
+  async function saveGap(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): Promise<boolean> {
     const startTime = addMinutesText(slot.end_time, minutes);
     setMessage(null);
     try {
@@ -219,17 +294,30 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       logInfo('timetable', '修改课间', { afterPeriodNo: slot.period_no, minutes });
       await reload();
       onChanged();
-      askScope({
-        periodNo: nextSlot.period_no,
-        section: sectionOf(startTime),
-        durationMinutes: duration,
-        breakMinutes: Math.round(minutes),
-        durationFromEdit: false,
-        breakFromEdit: true,
-      });
+      return true;
     } catch (cause: unknown) {
       setMessage(cause instanceof Error ? cause.message : String(cause));
+      return false;
     }
+  }
+
+  /** 这次课间改动对应的重排参数。 */
+  function gapDraft(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): RerollDraft {
+    const startTime = addMinutesText(slot.end_time, minutes);
+    return {
+      periodNo: nextSlot.period_no,
+      section: sectionOf(startTime),
+      durationMinutes: duration,
+      breakMinutes: Math.round(minutes),
+      durationFromEdit: false,
+      breakFromEdit: true,
+    };
+  }
+
+  /** 课间输入框：范围内才落库，失焦或回车时才弹「调整范围」。 */
+  function editGap(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): void {
+    if (!within(minutes, 0, MAX_GAP)) return;
+    markPending(`gap:${slot.id}=${minutes}`, gapDraft(slot, nextSlot, minutes), saveGap(slot, nextSlot, minutes));
   }
 
   /**
@@ -239,7 +327,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   async function reroll(scope: 'section' | 'all'): Promise<void> {
     const current = draft;
     if (current === null) return;
-    setDraft(null);
+    closeScope();
     setBusy(true);
     setMessage(null);
     try {
@@ -391,8 +479,9 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               value={slot.start_time}
               onChange={(event) => {
                 if (!isClockText(event.target.value)) return;
-                void saveTime(slot, { startTime: event.target.value });
+                editTime(slot, { startTime: event.target.value });
               }}
+              {...scopeTriggers}
             />
             <span className="text-muted">–</span>
             <Input
@@ -402,8 +491,9 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               value={slot.end_time}
               onChange={(event) => {
                 if (!isClockText(event.target.value)) return;
-                void saveTime(slot, { endTime: event.target.value });
+                editTime(slot, { endTime: event.target.value });
               }}
+              {...scopeTriggers}
             />
             {(() => {
               const nextSlot = slots.find((item) => item.period_no === slot.period_no + 1);
@@ -421,8 +511,9 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
                     onChange={(event) => {
                       const minutes = Number(event.target.value);
                       if (Number.isNaN(minutes)) return;
-                      void saveGap(slot, nextSlot, minutes);
+                      editGap(slot, nextSlot, minutes);
                     }}
+                    {...scopeTriggers}
                   />
                   <span className="text-xs text-muted">分</span>
                 </span>
@@ -450,7 +541,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         <Dialog
           open
           onOpenChange={(open) => {
-            if (!open) setDraft(null);
+            if (!open) closeScope();
           }}
         >
           <DialogContent
@@ -467,7 +558,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               {draftError !== null && <span className="text-danger-strong">{draftError}</span>}
             </div>
             <DialogFooter>
-              <Button variant="ghost" size="sm" aria-label="只改这一节" onClick={() => setDraft(null)}>
+              <Button variant="ghost" size="sm" aria-label="只改这一节" onClick={() => closeScope()}>
                 只改这一节
               </Button>
               <Button
@@ -488,7 +579,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               >
                 全部时段重排
               </Button>
-              <Button variant="ghost" size="sm" aria-label="取消" onClick={() => setDraft(null)}>
+              <Button variant="ghost" size="sm" aria-label="取消" onClick={() => closeScope()}>
                 取消
               </Button>
             </DialogFooter>
