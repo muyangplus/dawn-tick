@@ -924,6 +924,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('input[aria-label="第 1 节结束时间"]') !== null,
     '',
   );
+  // 课间参数已从界面移除：时间表卡片里不应再有任何「课间」输入或文案
+  const timetableHeader = view.container.querySelector('button[aria-label^="时间表"]');
+  const timetableCard: Element = timetableHeader?.parentElement ?? view.container;
+  const gapLabels = [...timetableCard.querySelectorAll('input[aria-label]')]
+    .map((item) => item.getAttribute('aria-label') ?? '')
+    .filter((label) => label.includes('课间'));
+  check(
+    '课间输入已移除',
+    gapLabels.length === 0 && !(timetableCard.textContent ?? '').includes('课间'),
+    gapLabels.length > 0
+      ? gapLabels.join(',')
+      : (timetableCard.textContent ?? '').includes('课间')
+        ? '卡片内仍有「课间」文案'
+        : '时间表卡片内没有课间输入与文案',
+  );
 
   const hadAppearance = (view.container.textContent ?? '').includes('主题风格');
   if (clickByAriaPrefix(view.container, '外观')) await flush(8);
@@ -983,17 +998,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('追加一节生效', appended === generated.length + 1, `${generated.length} → ${appended}（原 ${beforePeriods}）`);
 
   // —— 「调整范围」对话框：输入过程中不弹，失焦或回车才弹 ——
-  // 锚点：时间表卡片里第 1/2 节的开始、结束时间输入框，以及第 1 节后的课间输入框
+  // 锚点：时间表卡片里第 1/2 节的开始、结束时间输入框
   const scopeDialog = (): HTMLElement | null =>
     document.querySelector<HTMLElement>('[data-role="scope-dialog"]');
   const scopeDialogCount = (): number => document.querySelectorAll('[data-role="scope-dialog"]').length;
   const scopeText = (): string => (scopeDialog()?.textContent ?? '').trim();
   const clockInput = (period: number, field: '开始' | '结束'): HTMLInputElement | null => {
     const found = view.container.querySelector(`input[aria-label="第 ${period} 节${field}时间"]`);
-    return found instanceof window.HTMLInputElement ? found : null;
-  };
-  const gapInput = (period: number): HTMLInputElement | null => {
-    const found = view.container.querySelector(`input[aria-label="第 ${period} 节后课间分钟"]`);
     return found instanceof window.HTMLInputElement ? found : null;
   };
 
@@ -1052,22 +1063,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，值=${secondStart?.value ?? '?'}（原 ${secondStartBefore}）`,
   );
 
-  // 场景三：课间输入框 → 输入过程中不弹，按回车才弹
-  const firstGap = gapInput(1);
-  if (firstGap !== null) setInputValue(firstGap, '20');
+  // 场景三：改第 1 节的结束时间 → 输入过程中不弹，按回车才弹，且对话框只讲每节时长
+  const firstEnd = clockInput(1, '结束');
+  const firstEndBefore = firstEnd?.value ?? '';
+  if (firstEnd !== null) setInputValue(firstEnd, '09:05');
   await flush(10);
   check(
-    '课间输入过程中不弹窗且已落库',
-    scopeDialog() === null && firstGap?.value === '20',
-    `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，课间=${firstGap?.value ?? '?'}`,
+    '改结束时间输入过程中不弹窗且已落库',
+    scopeDialog() === null && firstEnd?.value === '09:05',
+    `对话框=${scopeDialog() === null ? '未弹出' : '已弹出'}，结束时间=${firstEnd?.value ?? '?'}（原 ${firstEndBefore}）`,
   );
 
-  if (firstGap !== null) pressEnter(firstGap);
+  if (firstEnd !== null) pressEnter(firstEnd);
   await flush(10);
   check(
-    '回车弹出调整范围对话框',
-    scopeDialog() !== null && scopeText().includes('课间 20 分钟'),
-    scopeText().slice(-40),
+    '回车只弹一个调整范围对话框并给出重排时长',
+    scopeDialogCount() === 1 &&
+      scopeText().includes('重排会用每节 55 分钟') &&
+      scopeText().includes('（来自你刚才的修改）') &&
+      !scopeText().includes('课间'),
+    scopeText().slice(-60),
   );
   if (clickByText(document.body, '取消')) await flush(8);
   check('取消关掉对话框', scopeDialogCount() === 0, `对话框 ${scopeDialogCount()} 个`);

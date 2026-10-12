@@ -5,7 +5,6 @@ import {
   deleteTimeSlot,
   generatePeriods,
   listTimeSlots,
-  parseClock,
   regenerateSections,
   replaceTimeSlots,
   sectionOf,
@@ -26,7 +25,13 @@ const SECTION_LABEL = { am: '上午', pm: '下午', night: '晚上' } as const;
 const CLOCK_PATTERN = /^(\d{1,2}):(\d{2})$/;
 const MIN_DURATION = 10;
 const MAX_DURATION = 240;
-const MAX_GAP = 120;
+/**
+ * 内部默认间隔（分钟）：不再对用户暴露。
+ * 「自动生成课次」固定用它；按现有课次推算间隔时（重排、追加）算不出来才回退到它。
+ */
+const DEFAULT_INTERVAL_MINUTES = 10;
+/** 推算出的间隔可用的上限（与 core 接受的范围一致）；超出的值不可用，同样回退到默认间隔。 */
+const MAX_INTERVAL_MINUTES = 120;
 
 export interface PeriodSettingsProps {
   storage: Storage;
@@ -34,7 +39,7 @@ export interface PeriodSettingsProps {
   onChanged: () => void;
 }
 
-/** 刚完成的单节改动，以及这次重排要用的时长与课间。 */
+/** 刚完成的单节改动，以及这次重排要用的时长。 */
 interface RerollDraft {
   /** 被改动的那一节，用于文案定位 */
   periodNo: number;
@@ -42,12 +47,8 @@ interface RerollDraft {
   section: PeriodSection;
   /** 重排使用的每节时长（分钟） */
   durationMinutes: number;
-  /** 重排使用的课间（分钟） */
-  breakMinutes: number;
   /** 时长是否由刚才手改的结束时间推算而来 */
   durationFromEdit: boolean;
-  /** 课间是否由刚才手改的课间输入而来 */
-  breakFromEdit: boolean;
 }
 
 /**
@@ -63,40 +64,53 @@ interface PendingEdit {
   commit: Promise<boolean>;
 }
 
-/** 把 HH:MM 往后推 minutes 分钟，返回 HH:MM。 */
-function addMinutesText(time: string, minutes: number): string {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
-  if (match === null) return time;
-  const total = Number(match[1]) * 60 + Number(match[2]) + Math.max(0, Math.round(minutes));
-  const wrapped = ((total % 1440) + 1440) % 1440;
-  const hours = Math.floor(wrapped / 60);
-  const mins = wrapped % 60;
-  return `${hours < 10 ? '0' : ''}${hours}:${mins < 10 ? '0' : ''}${mins}`;
-}
-
-/** 两节课之间的课间分钟数（前节结束到后节开始）。 */
-function gapMinutes(endTime: string, nextStart: string): number {
-  const parse = (value: string): number | null => {
-    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-    return match === null ? null : Number(match[1]) * 60 + Number(match[2]);
-  };
-  const end = parse(endTime);
-  const start = parse(nextStart);
-  if (end === null || start === null) return 0;
-  return Math.max(0, start - end);
+/** 把 HH:MM 解析成当天的分钟数；不是完整时刻时返回 null。 */
+function clockMinutes(value: string): number | null {
+  const match = CLOCK_PATTERN.exec(value.trim());
+  if (match === null) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
 }
 
 /** 输入框里的 HH:MM 是否已经是完整时刻（过滤掉输入过程中的半成品）。 */
 function isClockText(value: string): boolean {
-  const match = CLOCK_PATTERN.exec(value.trim());
-  return match !== null && Number(match[1]) <= 23 && Number(match[2]) <= 59;
+  return clockMinutes(value) !== null;
 }
 
 /** 由起止时间推算单节时长；无法推算或不为正时返回 null。 */
 function durationBetween(startTime: string, endTime: string): number | null {
-  if (!isClockText(startTime) || !isClockText(endTime)) return null;
-  const minutes = parseClock(endTime) - parseClock(startTime);
+  const start = clockMinutes(startTime);
+  const end = clockMinutes(endTime);
+  if (start === null || end === null) return null;
+  const minutes = end - start;
   return minutes > 0 ? minutes : null;
+}
+
+/**
+ * 从某个时段的现有课次推算节与节之间的间隔（间隔不再由用户设置）：
+ * 取该时段第一节与第二节开始时间之差，减去这次要用的每节时长，
+ * 这样重排后各节的开始时间与原来保持一致。
+ * 不足两节、时刻不完整或算出的值无法使用时，回退到内部默认间隔。
+ */
+function sectionInterval(
+  periods: readonly { startTime: string; section: PeriodSection }[],
+  section: PeriodSection,
+  durationMinutes: number,
+): number {
+  const starts = periods
+    .filter((period) => period.section === section)
+    .map((period) => clockMinutes(period.startTime))
+    .filter((minutes): minutes is number => minutes !== null)
+    .sort((left, right) => left - right);
+  const first = starts[0];
+  const second = starts[1];
+  if (first === undefined || second === undefined) return DEFAULT_INTERVAL_MINUTES;
+  const interval = second - first - Math.round(durationMinutes);
+  if (!Number.isFinite(interval)) return DEFAULT_INTERVAL_MINUTES;
+  if (interval < 0 || interval > MAX_INTERVAL_MINUTES) return DEFAULT_INTERVAL_MINUTES;
+  return interval;
 }
 
 function within(value: number, min: number, max: number): boolean {
@@ -108,15 +122,11 @@ function paramError(draft: RerollDraft): string | null {
   if (!within(draft.durationMinutes, MIN_DURATION, MAX_DURATION)) {
     return `每节时长需在 ${MIN_DURATION}–${MAX_DURATION} 分钟之间，当前是 ${draft.durationMinutes} 分钟`;
   }
-  if (!within(draft.breakMinutes, 0, MAX_GAP)) {
-    return `课间需在 0–${MAX_GAP} 分钟之间，当前是 ${draft.breakMinutes} 分钟`;
-  }
   return null;
 }
 
 export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSettingsProps) {
   const [duration, setDuration] = useState(45);
-  const [gap, setGap] = useState(10);
   const [amStart, setAmStart] = useState('08:00');
   const [amCount, setAmCount] = useState(4);
   const [pmStart, setPmStart] = useState('14:00');
@@ -143,14 +153,11 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
 
   /**
    * 单节改动已经写库生效，接着询问这次改动的范围。
-   * 重排参数以「刚刚手改的那个值」为准，并把界面上的时长/课间同步成同一个值。
+   * 重排参数以「刚刚手改的那个值」为准，并把界面上的时长同步成同一个值。
    */
   function askScope(next: RerollDraft): void {
     if (next.durationFromEdit && within(next.durationMinutes, MIN_DURATION, MAX_DURATION)) {
       setDuration(next.durationMinutes);
-    }
-    if (next.breakFromEdit && within(next.breakMinutes, 0, MAX_GAP)) {
-      setGap(next.breakMinutes);
     }
     setDraft(next);
   }
@@ -187,7 +194,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   }
 
   /**
-   * 时间/课间输入框共用的触发：失焦或回车时才把挂起的改动拿去问范围。
+   * 时间输入框共用的触发：失焦或回车时才把挂起的改动拿去问范围。
    * 输入框里的 onChange 只负责落库，所以连输多位数时不会中途弹窗抢焦点。
    */
   const scopeTriggers = {
@@ -207,7 +214,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     try {
       const periods = generatePeriods({
         durationMinutes: duration,
-        breakMinutes: gap,
+        // 内部默认间隔：不再对用户暴露
+        breakMinutes: DEFAULT_INTERVAL_MINUTES,
         blocks: [
           { section: 'am', startTime: amStart, count: amCount },
           { section: 'pm', startTime: pmStart, count: pmCount },
@@ -215,7 +223,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         ],
       });
       await replaceTimeSlots(storage, semesterId, periods);
-      logInfo('timetable', '生成课次', { periods: periods.length, duration, gap });
+      logInfo('timetable', '生成课次', { periods: periods.length, duration });
       toast.success(`已生成 ${periods.length} 节课次`);
       await reload();
       onChanged();
@@ -230,8 +238,19 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setBusy(true);
     setMessage(null);
     try {
-      const created = await appendTimeSlot(storage, semesterId, duration, gap);
-      logInfo('timetable', '追加课次', { periodNo: created['period_no'], startTime: created['start_time'] });
+      // 追加时同样按最后一节所在时段的真实间隔接上（推算不出时用内部默认间隔）
+      const rows = slots.map((row) => ({
+        startTime: row.start_time,
+        section: row.section ?? sectionOf(row.start_time),
+      }));
+      const section = rows.at(-1)?.section ?? 'am';
+      const interval = sectionInterval(rows, section, duration);
+      const created = await appendTimeSlot(storage, semesterId, duration, interval);
+      logInfo('timetable', '追加课次', {
+        periodNo: created['period_no'],
+        startTime: created['start_time'],
+        interval,
+      });
       toast.success(`已添加第 ${created['period_no']} 节`);
       await reload();
       onChanged();
@@ -269,9 +288,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       periodNo: slot.period_no,
       section: sectionOf(nextStart),
       durationMinutes: editedDuration ?? duration,
-      breakMinutes: gap,
       durationFromEdit: editedDuration !== null,
-      breakFromEdit: false,
     };
   }
 
@@ -283,46 +300,9 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   }
 
   /**
-   * 改某节课后的课间：只挪后一节的开始时间并立即生效（不弹窗）。
-   * 刚输入的课间分钟数就是这次重排要用的课间，作用时段取开始时间被改的那一节。
-   */
-  async function saveGap(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): Promise<boolean> {
-    const startTime = addMinutesText(slot.end_time, minutes);
-    setMessage(null);
-    try {
-      await updateTimeSlot(storage, nextSlot.id, { startTime });
-      logInfo('timetable', '修改课间', { afterPeriodNo: slot.period_no, minutes });
-      await reload();
-      onChanged();
-      return true;
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-      return false;
-    }
-  }
-
-  /** 这次课间改动对应的重排参数。 */
-  function gapDraft(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): RerollDraft {
-    const startTime = addMinutesText(slot.end_time, minutes);
-    return {
-      periodNo: nextSlot.period_no,
-      section: sectionOf(startTime),
-      durationMinutes: duration,
-      breakMinutes: Math.round(minutes),
-      durationFromEdit: false,
-      breakFromEdit: true,
-    };
-  }
-
-  /** 课间输入框：范围内才落库，失焦或回车时才弹「调整范围」。 */
-  function editGap(slot: TimeSlotRow, nextSlot: TimeSlotRow, minutes: number): void {
-    if (!within(minutes, 0, MAX_GAP)) return;
-    markPending(`gap:${slot.id}=${minutes}`, gapDraft(slot, nextSlot, minutes), saveGap(slot, nextSlot, minutes));
-  }
-
-  /**
    * 按选定的范围重排：时段起点与节数取现有课次（各时段第一节的开始时间与节数），
-   * 时长与课间取这次改动带来的新值；范围外的时段原样保留。
+   * 时长取这次改动带来的新值；节与节之间的间隔由该时段现有课次的开始时间推算，
+   * 范围外的时段原样保留。
    */
   async function reroll(scope: 'section' | 'all'): Promise<void> {
     const current = draft;
@@ -345,10 +325,17 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         setMessage('还没有可重排的课次，请先点「自动生成课次」');
         return;
       }
-      const planned = regenerateSections(existing, targets, {
-        durationMinutes: current.durationMinutes,
-        breakMinutes: current.breakMinutes,
-      });
+      // 每个时段各用自己的真实间隔重排一次，互不影响
+      let planned = existing;
+      const intervals = new Map<PeriodSection, number>();
+      for (const target of targets) {
+        const minutes = sectionInterval(existing, target, current.durationMinutes);
+        intervals.set(target, minutes);
+        planned = regenerateSections(planned, [target], {
+          durationMinutes: current.durationMinutes,
+          breakMinutes: minutes,
+        });
+      }
       const labels = new Map(rows.map((row) => [row.period_no, row.label] as const));
       await replaceTimeSlots(
         storage,
@@ -365,11 +352,10 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         scope,
         section: current.section,
         duration: current.durationMinutes,
-        gap: current.breakMinutes,
+        intervals: [...intervals.entries()].map(([key, value]) => `${key}:${value}`).join(','),
       });
-      const reason = current.breakFromEdit ? '课间' : '每节时长';
       const where = scope === 'all' ? '全部时段' : `本时段（${SECTION_LABEL[current.section]}）`;
-      toast.success(`已按新的${reason}重排${where}`);
+      toast.success(`已按新的每节时长重排${where}`);
       await reload();
       onChanged();
     } catch (cause: unknown) {
@@ -403,7 +389,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
 
   return (
     <CollapsibleCard id="timetable" title="时间表" icon={CalendarRange}>
-      <div className="grid gap-2 tablet:grid-cols-2">
+      <div className="grid gap-2">
         <Field label="固定上课时长（分钟）">
           <Input
             type="number"
@@ -411,15 +397,6 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             max={240}
             value={duration}
             onChange={(event) => setDuration(Number(event.target.value))}
-          />
-        </Field>
-        <Field label="课间间隔（分钟）">
-          <Input
-            type="number"
-            min={0}
-            max={120}
-            value={gap}
-            onChange={(event) => setGap(Number(event.target.value))}
           />
         </Field>
       </div>
@@ -495,30 +472,6 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               }}
               {...scopeTriggers}
             />
-            {(() => {
-              const nextSlot = slots.find((item) => item.period_no === slot.period_no + 1);
-              if (nextSlot === undefined) return null;
-              return (
-                <span className="flex items-center gap-1">
-                  <span className="text-xs text-muted">课间</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={120}
-                    className="w-16"
-                    aria-label={`第 ${slot.period_no} 节后课间分钟`}
-                    value={gapMinutes(slot.end_time, nextSlot.start_time)}
-                    onChange={(event) => {
-                      const minutes = Number(event.target.value);
-                      if (Number.isNaN(minutes)) return;
-                      editGap(slot, nextSlot, minutes);
-                    }}
-                    {...scopeTriggers}
-                  />
-                  <span className="text-xs text-muted">分</span>
-                </span>
-              );
-            })()}
             <span className="ml-auto text-xs text-muted">{SECTION_LABEL[slot.section ?? 'am']}</span>
             <Button
               size="icon"
@@ -534,7 +487,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         {slots.length === 0 && <li className="text-xs text-muted">还没有课次，先点「自动生成课次」</li>}
       </ul>
       <span className="text-xs text-muted">
-        每节起止时间可单独修改；「课间」只影响后一节的开始时间。改完会问一次作用范围，可只保留这一节，也可按新的时长与课间重排本时段或全部时段。
+        每节起止时间可单独修改。改完会问一次作用范围，可只保留这一节，也可按新的每节时长重排本时段或全部时段。
       </span>
 
       {draft !== null && (
@@ -552,8 +505,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             <div className="flex flex-col gap-1 text-xs text-muted">
               <span>
                 第 {draft.periodNo} 节（{SECTION_LABEL[draft.section]}）的改动已生效；重排会用每节{' '}
-                {draft.durationMinutes} 分钟、课间 {draft.breakMinutes} 分钟
-                {draft.durationFromEdit || draft.breakFromEdit ? '（来自你刚才的修改）' : '（来自上方设置）'}。
+                {draft.durationMinutes} 分钟
+                {draft.durationFromEdit ? '（来自你刚才的修改）' : '（来自上方设置）'}。
               </span>
               {draftError !== null && <span className="text-danger-strong">{draftError}</span>}
             </div>
