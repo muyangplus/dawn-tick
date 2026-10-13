@@ -21,6 +21,7 @@ import {
 import { App } from '../src/App.tsx';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
+import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
   PRESET_CONTENT_META_KEY,
@@ -1809,6 +1810,16 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   check('悬浮窗样式可选四种', view.container.querySelector('[aria-label="悬浮窗样式"]') !== null, '');
+  check(
+    '手机端小组件清单与引导只在 Android 出现',
+    MOBILE_WIDGETS.length === 4 &&
+      MOBILE_WIDGETS.every((item) => item.size.length > 0 && item.description.length > 0) &&
+      WIDGET_PIN_STEPS.length === 3 &&
+      hasMobileWidgets() === false &&
+      view.container.querySelector('[data-role="mobile-widget-guide"]') === null &&
+      view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
+    `组件 ${MOBILE_WIDGETS.map((item) => item.size).join(' / ')}；Web 平台=${hasMobileWidgets() ? '手机' : '桌面/浏览器'}`,
+  );
   check(
     '日程卡片可显隐排序',
     view.container.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&

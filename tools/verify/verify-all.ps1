@@ -142,6 +142,7 @@ if (-not (Test-Path $apk)) {
             'com/dawntick/app/widget/WidgetRefreshReceiver',
             'com/dawntick/app/widget/WidgetRefresher',
             'com/dawntick/app/widget/WidgetRefreshPlugin',
+            'com/dawntick/app/widget/WidgetPinPlugin',
             'com/dawntick/app/widget/WidgetStore',
             'com/dawntick/app/widget/WidgetRenderer'
         )

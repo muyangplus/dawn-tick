@@ -44,6 +44,7 @@ import {
 import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
+import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget, type PinWidgetResult } from '../widget-pin.ts';
 import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
@@ -276,6 +277,8 @@ export function SettingsView({
   const [exportFormat, setExportFormat] = useState<'json' | 'base64'>('json');
   const [exportText, setExportText] = useState('');
   const [importText, setImportText] = useState('');
+  /** 手机端添加小组件的结果提示 */
+  const [pinNote, setPinNote] = useState<PinWidgetResult | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
@@ -751,6 +754,45 @@ export function SettingsView({
             onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
           />
         </label>
+        {hasMobileWidgets() ? (
+          <div className="flex flex-col gap-2" data-role="mobile-widget-guide">
+            <span className="text-sm text-ink">桌面小组件</span>
+            <span className="text-xs text-muted">
+              长按桌面空白处 → 小组件 → 找到「晓刻 DawnTick」；支持一键添加的启动器可直接点下面的按钮。
+            </span>
+            {MOBILE_WIDGETS.map((widget) => (
+              <div
+                key={widget.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-line bg-surface p-2"
+                data-role="mobile-widget-row"
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-sm text-ink">
+                    {widget.label}
+                    <span className="ml-1 text-xs text-muted">{widget.size}</span>
+                  </span>
+                  <span className="truncate text-xs text-muted">{widget.description}</span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label={`添加小组件到桌面：${widget.label}`}
+                  onClick={() => void pinWidget(widget.id).then((result) => setPinNote(result))}
+                >
+                  添加到桌面
+                </Button>
+              </div>
+            ))}
+            {pinNote !== null && (
+              <span className="text-xs text-muted" data-role="mobile-widget-note">
+                {pinNote.ok && pinNote.supported
+                  ? '已请求添加，请在系统弹窗里确认'
+                  : `一键添加不可用：${pinNote.reason ?? '请在小组件列表里手动添加'}`}
+              </span>
+            )}
+          </div>
+        ) : (
+          <>
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>悬浮窗</span>
@@ -795,6 +837,8 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
+          </>
+        )}
         <Field label="卡片布局">{layoutGroups}</Field>
         {canUseWidget() && (
           <span className="text-xs text-muted">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</span>
