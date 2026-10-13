@@ -13,6 +13,10 @@ export const THEME_PRESETS: readonly ThemePreset[] = ['vivid', 'fresh', 'mono', 
 export const VIEW_DAY_OPTIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 export const WIDGET_BACKGROUNDS: readonly WidgetBackground[] = ['light', 'dark', 'transparent'];
 
+/** 日志级别；dev 渠道默认 trace，其余默认 info。 */
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
+export const LOG_LEVELS: readonly LogLevel[] = ['error', 'warn', 'info', 'debug', 'trace'];
+
 /** 待办排序方式：按开始时间、或按类型。 */
 export type TodoSort = 'start' | 'type';
 export const TODO_SORTS: readonly TodoSort[] = ['start', 'type'];
@@ -50,6 +54,10 @@ export interface AppSettings {
   todoSort: TodoSort;
   /** 开发者特性：dev 渠道默认开启；关掉后按正式版特性运行（更新仍随 dev） */
   devFeatures: boolean;
+  /** 应用诊断日志：是否写 dawn-tick.log */
+  logEnabled: boolean;
+  /** 日志级别：error / warn / info / debug / trace */
+  logLevel: LogLevel;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -72,6 +80,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoCheckUpdate: true,
   todoSort: 'start',
   devFeatures: true,
+  logEnabled: true,
+  logLevel: 'info',
 };
 
 const KEYS = {
@@ -94,6 +104,8 @@ const KEYS = {
   autoCheckUpdate: 'auto_check_update',
   todoSort: 'todo_sort',
   devFeatures: 'dev_features',
+  logEnabled: 'log_enabled',
+  logLevel: 'log_level',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -123,6 +135,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.autoCheckUpdate),
     storage.readMeta(KEYS.todoSort),
     storage.readMeta(KEYS.devFeatures),
+    storage.readMeta(KEYS.logEnabled),
+    storage.readMeta(KEYS.logLevel),
   ]);
   const [
     timeZone,
@@ -144,6 +158,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     autoCheckUpdate,
     todoSort,
     devFeatures,
+    logEnabled,
+    logLevel,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -185,6 +201,11 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
         ? (todoSort as TodoSort)
         : DEFAULT_SETTINGS.todoSort,
     devFeatures: parseBoolean(devFeatures, DEFAULT_SETTINGS.devFeatures),
+    logEnabled: parseBoolean(logEnabled, DEFAULT_SETTINGS.logEnabled),
+    logLevel:
+      logLevel !== undefined && (LOG_LEVELS as readonly string[]).includes(logLevel)
+        ? (logLevel as LogLevel)
+        : DEFAULT_SETTINGS.logLevel,
   };
 }
 
@@ -254,6 +275,15 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.devFeatures !== undefined) {
     await storage.writeMeta(KEYS.devFeatures, patch.devFeatures ? '1' : '0');
+  }
+  if (patch.logEnabled !== undefined) {
+    await storage.writeMeta(KEYS.logEnabled, patch.logEnabled ? '1' : '0');
+  }
+  if (patch.logLevel !== undefined) {
+    if (!(LOG_LEVELS as readonly string[]).includes(patch.logLevel)) {
+      throw new RangeError(`日志级别只能是 ${LOG_LEVELS.join(' / ')}`);
+    }
+    await storage.writeMeta(KEYS.logLevel, patch.logLevel);
   }
 
   return readSettings(storage);

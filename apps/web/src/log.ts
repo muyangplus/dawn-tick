@@ -1,8 +1,11 @@
 import type { Storage } from '@dawn-tick/core';
-import { devFeaturesOn } from './dev-features.ts';
 import { detectPlatform } from './platform-detect.ts';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
+
+/** 日志级别次序：数值越大越详细。 */
+export const LOG_LEVELS: readonly LogLevel[] = ['error', 'warn', 'info', 'debug', 'trace'];
+const LEVEL_RANK: Record<LogLevel, number> = { error: 1, warn: 2, info: 3, debug: 4, trace: 5 };
 
 export interface LogEntry {
   at: number;
@@ -15,9 +18,40 @@ export interface LogEntry {
 declare const __DT_CHANNEL__: string | undefined;
 export const LOG_META_KEY = 'app_log';
 const MAX_ENTRIES = 300;
-/** release 渠道只留 info 及以上；dev 关掉开发者特性时同样不记 debug。 */
-function debugAllowed(): boolean {
-  return (typeof __DT_CHANNEL__ === 'string' ? __DT_CHANNEL__ : 'dev') !== 'release' && devFeaturesOn();
+
+/** dev 渠道默认 trace（最详细），其余渠道默认 info。 */
+export function defaultLogLevel(channel: string): LogLevel {
+  return channel === 'dev' ? 'trace' : 'info';
+}
+
+let currentLevel: LogLevel = defaultLogLevel(typeof __DT_CHANNEL__ === 'string' ? __DT_CHANNEL__ : 'dev');
+let fileEnabled = true;
+
+/** 设置里的「应用诊断日志」：级别门槛 + 是否写 dawn-tick.log（控制台始终输出）。 */
+export function applyLogSettings(options: { level: LogLevel; fileEnabled: boolean }): void {
+  currentLevel = options.level;
+  fileEnabled = options.fileEnabled;
+  void (async () => {
+    if (detectPlatform() !== 'tauri') return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
+    } catch {
+      // 原生日志不可用时只影响内存与本地存储
+    }
+  })();
+}
+
+export function logLevel(): LogLevel {
+  return currentLevel;
+}
+
+export function logFileEnabled(): boolean {
+  return fileEnabled;
+}
+
+function allowed(level: LogLevel): boolean {
+  return LEVEL_RANK[level] <= LEVEL_RANK[currentLevel];
 }
 
 let buffer: LogEntry[] = [];
@@ -78,7 +112,7 @@ export async function loadLogs(): Promise<void> {
 
 function record(level: LogLevel, scope: string, message: string, detail?: Record<string, unknown>): void {
   // release 渠道不记 debug；其余渠道四个等级全部记录，控制台、文件与导出一致
-  if (level === 'debug' && !debugAllowed()) return;
+  if (!allowed(level)) return;
   const entry: LogEntry = { at: Date.now(), level, scope, message, ...(detail === undefined ? {} : { detail }) };
   buffer.push(entry);
   if (buffer.length > MAX_ENTRIES) buffer = buffer.slice(-MAX_ENTRIES);
@@ -86,6 +120,7 @@ function record(level: LogLevel, scope: string, message: string, detail?: Record
   if (level === 'error') console.error(line, detail ?? '');
   else if (level === 'warn') console.warn(line, detail ?? '');
   else if (level === 'debug') console.debug(line, detail ?? '');
+  else if (level === 'trace') console.debug(line, detail ?? '');
   else console.info(line, detail ?? '');
   void writeToNative(entry);
   scheduleFlush();
@@ -116,13 +151,18 @@ export function installLogHandlers(): void {
   });
 }
 
-/** 调试日志：dev / beta 渠道完整记录；release 渠道自动丢弃。 */
+/** 调试日志（第 4 级）。 */
 export function logDebug(scope: string, message: string, detail?: Record<string, unknown>): void {
   record('debug', scope, message, detail);
 }
 
+/** 最详细一级：请求/响应、解析细节等。 */
+export function logTrace(scope: string, message: string, detail?: Record<string, unknown>): void {
+  record('trace', scope, message, detail);
+}
+
 export function debugEnabled(): boolean {
-  return debugAllowed();
+  return allowed('debug');
 }
 
 export function logInfo(scope: string, message: string, detail?: Record<string, unknown>): void {

@@ -1893,6 +1893,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+  // 应用诊断日志：开关 + 级别（dev 默认最详细）
+  const logBlock = view.container.querySelector('[data-role="log-settings"]');
+  const logLevelTrigger = view.container.querySelector('[aria-label="日志级别"]');
+  if (logLevelTrigger instanceof window.HTMLElement) logLevelTrigger.click();
+  await flush(10);
+  const logLevels = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
+  check(
+    '应用诊断日志：开关、级别五档且 dev 默认 trace',
+    logBlock !== null &&
+      view.container.querySelector('[aria-label="启用应用诊断日志"]')?.getAttribute('aria-checked') === 'true' &&
+      view.container.querySelector('[aria-label="打开日志"]') !== null &&
+      logLevels.length === 5 &&
+      logLevels.some((item) => item.startsWith('trace')) &&
+      (logLevelTrigger?.textContent ?? '').trim() === 'trace',
+    `级别候选 ${logLevels.length} 项，当前 ${(logLevelTrigger?.textContent ?? '').trim()}`,
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
   check('课程管理提供复制课程', view.container.querySelector('[aria-label^="复制课程"]') !== null, '');
   // 周视图天数：1–7 天都可选
   const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();

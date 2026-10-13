@@ -15,6 +15,7 @@ import {
   importBackup,
   isValidTimeZone,
   parseBackup,
+  LOG_LEVELS,
   summarizeBackup,
   toBase64Utf8,
   updateSemester,
@@ -29,6 +30,7 @@ import {
   type WidgetBackground,
   type WidgetVariant,
   type TodoSort,
+  type LogLevel,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
@@ -88,6 +90,15 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   light: '浅色',
   dark: '深色',
   transparent: '透明',
+};
+
+/** 日志级别说明（与设置页文案一致）。 */
+const LOG_LEVEL_HINT: Record<LogLevel, string> = {
+  error: '仅严重错误',
+  warn: '错误 + 警告信息',
+  info: '一般操作信息（默认）',
+  debug: '详细信息，包含请求/响应详情',
+  trace: '全部日志，最详细',
 };
 
 /** 时区候选：常用 IANA 时区，默认上海；系统时区不在列表里时会额外补一项。 */
@@ -1077,6 +1088,45 @@ export function SettingsView({
             />
           </label>
         )}
+
+        {/* 应用诊断日志：开关控制 dawn-tick.log，级别决定门槛 */}
+        <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="log-settings">
+          <span className="text-sm font-medium text-ink">应用诊断日志</span>
+          <span className="text-xs text-muted">
+            控制 dawn-tick.log 的输出级别；关闭后不再写文件，控制台仍会输出
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" aria-label="打开日志" onClick={() => void exportLogs()}>
+              打开日志
+            </Button>
+            <span className="text-xs text-muted">导出当前缓冲区；「打开日志文件所在目录」在资源管理器里定位文件</span>
+          </div>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>启用应用诊断日志</span>
+            <Switch
+              checked={settings.logEnabled}
+              aria-label="启用应用诊断日志"
+              onCheckedChange={(checked) => void onPatch({ logEnabled: checked })}
+            />
+          </label>
+          <Field label="日志级别" hint="设置输出的最低日志级别">
+            <Select value={settings.logLevel} onValueChange={(value) => void onPatch({ logLevel: value as LogLevel })}>
+              <SelectTrigger aria-label="日志级别">
+                <span>{settings.logLevel}</span>
+              </SelectTrigger>
+              <SelectContent>
+                {LOG_LEVELS.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {level} · {LOG_LEVEL_HINT[level]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <span className="text-xs text-muted">
+            error 仅严重错误 · warn 错误与警告 · info 一般操作信息（默认） · debug 详细信息 · trace 全部日志，最详细
+          </span>
+        </div>
         <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
           <span>预设仓库</span>
           <ExternalLink

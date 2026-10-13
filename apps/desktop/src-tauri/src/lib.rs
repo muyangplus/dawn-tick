@@ -53,7 +53,7 @@ fn log_dirs() -> Vec<PathBuf> {
 fn log_file_dir() -> Option<PathBuf> {
     let dirs = log_dirs();
     dirs.iter()
-        .find(|dir| dir.join("startup.log").exists())
+        .find(|dir| dir.join(LOG_FILE_NAME).exists() || dir.join("startup.log").exists())
         .cloned()
         .or_else(|| dirs.into_iter().next())
 }
@@ -206,13 +206,54 @@ fn log_prefix() -> String {
     format!("{} ", format_log_timestamp(unix_ms, local_offset_minutes()))
 }
 
+/// 日志文件名（与前端「应用诊断日志」同一份）。
+const LOG_FILE_NAME: &str = "dawn-tick.log";
+/// 日志级别：error < warn < info < debug < trace。0 表示不写文件（控制台仍输出）。
+static LOG_LEVEL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(3);
+static LOG_FILE_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+fn level_rank(level: &str) -> u8 {
+    match level {
+        "error" => 1,
+        "warn" => 2,
+        "info" => 3,
+        "debug" => 4,
+        "trace" => 5,
+        _ => 3,
+    }
+}
+
+/// 前端设置好级别与开关后调用：级别决定写文件的门槛，开关决定是否写文件。
+#[tauri::command]
+fn set_log_settings(level: String, file_enabled: bool) {
+    LOG_LEVEL.store(level_rank(&level), std::sync::atomic::Ordering::Relaxed);
+    LOG_FILE_ENABLED.store(file_enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 判断某行是否该写：从行内 `[level]` 解析等级，低于门槛就丢弃。
+fn should_write(line: &str) -> bool {
+    if !LOG_FILE_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    let level = line
+        .split('[')
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or("info");
+    level_rank(level) <= LOG_LEVEL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn append_log(message: &str) {
     let line = format!("{}{message}", log_prefix());
+    if !should_write(&line) {
+        console_log(&line);
+        return;
+    }
     for dir in log_dirs() {
         if create_dir_all(&dir).is_err() {
             continue;
         }
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir.join(LOG_FILE_NAME)) {
             let _ = writeln!(file, "{line}");
             break;
         }
@@ -1889,6 +1930,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             log_event,
             set_dev_console,
+            set_log_settings,
             save_startup_prefs,
             autostart_status,
             set_autostart,

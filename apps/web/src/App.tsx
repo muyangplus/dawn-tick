@@ -46,6 +46,7 @@ import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
 import { applyDevFeatures } from './dev-features.ts';
+import { applyLogSettings, defaultLogLevel } from './log.ts';
 import { openExternalUrl } from './system-actions.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from './channel.ts';
 import { notifyWidgetWindows, writeWidgetSnapshot } from './widget-snapshot.ts';
@@ -284,6 +285,12 @@ export function App() {
           }
           await opened.writeMeta(TIME_ZONE_ALIGNED_KEY, '1');
         }
+        // 日志级别默认随渠道定：dev 最详细，其余 info（只写一次，之后跟随用户选择）
+        const storedLogLevel = await opened.readMeta('log_level');
+        if (storedLogLevel === undefined || storedLogLevel === null || storedLogLevel === '') {
+          loaded = await writeSettings(opened, { logLevel: defaultLogLevel(CHANNEL) });
+          logInfo('settings', '初始化日志级别', { level: loaded.logLevel, channel: CHANNEL });
+        }
         if (cancelled) return;
         setStorage(opened);
         setSettings(loaded);
@@ -318,7 +325,7 @@ export function App() {
         // 非桌面端没有控制台
       }
     })();
-  }, [settings.devFeatures]);
+  }, [settings.devFeatures, settings.logLevel, settings.logEnabled]);
 
   // 渠道提示：不是初次使用也要弹——只要这条提示没展示过
   useEffect(() => {
