@@ -11,6 +11,9 @@ import { localMinuteOfDay, nowRatio } from '../lib/timeline.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const ROW_HEIGHT = 56;
+/** 行高自适应范围：内容挤不下就整体加高，但不超过上限。 */
+const ROW_HEIGHT_MIN = 56;
+const ROW_HEIGHT_MAX = 96;
 /** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
 const LONG_PRESS_MS = 350;
 /** 长按期间允许的手指/鼠标抖动半径（像素），超过就取消长按。 */
@@ -45,14 +48,21 @@ function isHolidayRunStart(data: AppData, date: string): boolean {
   return !data.holidayLabels.has(addDays(date, -1));
 }
 
-/** 该格里是否已有课。 */
+/**
+ * 该格里是否已有课：连堂与「停课」这类占多节的条目，
+ * 只要落在它覆盖的节次范围内就算被占用（否则点第 2 节会被当成空白格）。
+ */
 function occupied(data: AppData, day: number, period: number): boolean {
-  return (data.grid.get(`${day}:${period}`) ?? []).length > 0;
+  for (let current = period; current >= 1; current -= 1) {
+    const cells = data.grid.get(`${day}:${current}`) ?? [];
+    if (cells.some((cell) => period >= current && period <= Math.max(cell.periodStart, cell.periodEnd))) return true;
+  }
+  return false;
 }
 
 /** 落点所在的节次（按列高度换算，越界夹到首尾节）。 */
-function periodAt(clientY: number, columnTop: number, periodCount: number): number {
-  return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop) / ROW_HEIGHT) + 1));
+function periodAt(clientY: number, columnTop: number, periodCount: number, rowHeightPx: number): number {
+  return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop) / rowHeightPx) + 1));
 }
 
 /** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
@@ -220,6 +230,8 @@ export function WeekView({
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
   const [emptyDragMode, setEmptyDragMode] = useState<EmptyDragMode | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  /** 行高：内容显示不全时整体加高，范围 56–96，避免个别长标题把整页撑开 */
+  const [rowHeight, setRowHeight] = useState(ROW_HEIGHT_MIN);
   const touchStart = useRef<number | null>(null);
   const session = useRef<DragSession | null>(null);
   const suppressNextClick = useRef(false);
@@ -249,6 +261,25 @@ export function WeekView({
   const ratio = nowRatio(slots, localMinuteOfDay(nowTick, data.timeZone));
   const lessons = useMemo(() => lessonsOf(data), [data]);
   const periodCount = slots.length;
+
+  // 内容自适应行高：渲染后量一次卡片是否被裁掉，有就整体加高（上限 ROW_HEIGHT_MAX）
+  useEffect(() => {
+    if (typeof globalThis.requestAnimationFrame !== 'function') return;
+    const handle = globalThis.requestAnimationFrame(() => {
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]'));
+      if (cards.length === 0) return;
+      const clipped = cards.some((card) => card.scrollHeight > card.clientHeight + 2);
+      if (clipped && rowHeight < ROW_HEIGHT_MAX) {
+        setRowHeight((current) => Math.min(ROW_HEIGHT_MAX, current + 8));
+      } else if (!clipped && rowHeight > ROW_HEIGHT_MIN) {
+        // 变宽后不挤了：逐级收回，避免一直停在最大行高
+        setRowHeight((current) => Math.max(ROW_HEIGHT_MIN, current - 4));
+      }
+    });
+    return () => {
+      if (typeof globalThis.cancelAnimationFrame === 'function') globalThis.cancelAnimationFrame(handle);
+    };
+  }, [rowHeight, data, lessons]);
 
   useEffect(
     () => () => {
@@ -418,7 +449,7 @@ export function WeekView({
     const current = emptyRef.current;
     if (current === null) return;
     event.preventDefault();
-    const rows = Math.round((event.clientY - active.startY) / ROW_HEIGHT);
+    const rows = Math.round((event.clientY - active.startY) / rowHeight);
     if (active.mode === 'select') {
       // 按下的那一次若只是轻微抖动，仍算单击选格；真的跨了一节才当拖动
       if (rows !== 0) {
@@ -493,7 +524,7 @@ export function WeekView({
     for (const [day, element] of columns.current) {
       const bounds = element.getBoundingClientRect();
       if (clientX < bounds.left || clientX > bounds.right) continue;
-      return { day, period: periodAt(clientY, bounds.top, periodCount) };
+      return { day, period: periodAt(clientY, bounds.top, periodCount, rowHeight) };
     }
     return null;
   }
@@ -668,7 +699,7 @@ export function WeekView({
             className="relative grid"
             style={{
               gridTemplateColumns: `var(--dt-axis) repeat(${viewDays}, minmax(0, 1fr))`,
-              height: `${periodCount * ROW_HEIGHT}px`,
+              height: `${periodCount * rowHeight}px`,
             }}
           >
             <div className="relative border-r border-line">
@@ -676,7 +707,7 @@ export function WeekView({
                 <div
                   key={slot.periodNo}
                   className="absolute inset-x-0 flex flex-col items-center justify-center gap-0.5 border-b border-line text-[9px] text-muted tablet:text-[11px]"
-                  style={{ top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
+                  style={{ top: `${index * rowHeight}px`, height: `${rowHeight}px` }}
                 >
                   <span className="tabular font-semibold text-ink">{slot.periodNo}</span>
                   <span className="tabular">{slot.startTime}</span>
@@ -726,7 +757,7 @@ export function WeekView({
                     // 长按拖动课程卡时会冒泡到列上，此时不要弹占位块
                     if (session.current !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    const period = periodAt(event.clientY, bounds.top, periodCount);
+                    const period = periodAt(event.clientY, bounds.top, periodCount, rowHeight);
                     // 已占用的格只清掉占位块，不进入拖动
                     if (occupied(data, day, period)) {
                       setEmptyTarget(null);
@@ -747,14 +778,14 @@ export function WeekView({
                     if (target.closest('[data-role="empty-slot"]') !== null) return;
                     if (target.closest('[data-tone]') !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount));
+                    pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount, rowHeight));
                   }}
                 >
                   {Array.from({ length: periodCount }, (_, rowIndex) => (
                     <div
                       key={`line-${day}-${rowIndex}`}
                       className="absolute inset-x-0 border-b border-line"
-                      style={{ top: `${rowIndex * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
+                      style={{ top: `${rowIndex * rowHeight}px`, height: `${rowHeight}px` }}
                     />
                   ))}
 
@@ -763,8 +794,8 @@ export function WeekView({
                       aria-hidden
                       className="pointer-events-none absolute inset-x-1 rounded-sm border-2 border-dashed border-primary-strong bg-primary/15"
                       style={{
-                        top: `${(drag.period - 1) * ROW_HEIGHT + 2}px`,
-                        height: `${(drag.cell.periodEnd - drag.cell.periodStart + 1) * ROW_HEIGHT - 4}px`,
+                        top: `${(drag.period - 1) * rowHeight + 2}px`,
+                        height: `${(drag.cell.periodEnd - drag.cell.periodStart + 1) * rowHeight - 4}px`,
                       }}
                     />
                   )}
@@ -776,8 +807,8 @@ export function WeekView({
                         bodyDragging && 'ring-2 ring-primary-strong',
                       )}
                       style={{
-                        top: `${(placeholder.start - 1) * ROW_HEIGHT + 2}px`,
-                        height: `${Math.max(ROW_HEIGHT - 4, (placeholder.end - placeholder.start + 1) * ROW_HEIGHT - 4)}px`,
+                        top: `${(placeholder.start - 1) * rowHeight + 2}px`,
+                        height: `${Math.max(rowHeight - 4, (placeholder.end - placeholder.start + 1) * rowHeight - 4)}px`,
                         touchAction: 'none',
                       }}
                       data-role="empty-slot"
@@ -877,12 +908,14 @@ export function WeekView({
                     const clockTop = customRow(lesson.customStart, slots, periodCount);
                     const clockBottom = customRow(lesson.customEnd, slots, periodCount);
                     const custom = clockTop !== null && clockBottom !== null;
-                    const top = custom
-                      ? Math.max(0, clockTop * ROW_HEIGHT + 2)
-                      : (lesson.periodStart - 1) * ROW_HEIGHT + 2;
-                    const height = custom
-                      ? Math.max(24, (clockBottom - clockTop) * ROW_HEIGHT - 4)
-                      : (lesson.periodEnd - lesson.periodStart + 1) * ROW_HEIGHT - 4;
+                    const rawTop = custom ? clockTop * rowHeight + 2 : (lesson.periodStart - 1) * rowHeight + 2;
+                    const rawHeight = custom
+                      ? Math.max(24, (clockBottom - clockTop) * rowHeight - 4)
+                      : (lesson.periodEnd - lesson.periodStart + 1) * rowHeight - 4;
+                    // 自定义时间落在节次范围外时，夹进网格内保证可见（卡片本身仍显示真实时间）
+                    const gridBottom = periodCount * rowHeight;
+                    const height = Math.min(rawHeight, gridBottom);
+                    const top = Math.max(0, Math.min(rawTop, gridBottom - height));
                     return (
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}

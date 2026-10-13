@@ -125,6 +125,7 @@ export function CourseCard({
         className={cn(base, toneClass, className)}
         style={style}
         data-tone={resolvedTone}
+        data-role="course-card"
         data-dashed={resolvedTone === 'ghost' ? 'true' : undefined}
       >
         {content}
