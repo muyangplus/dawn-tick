@@ -55,6 +55,24 @@ function push(out: Violation[], store: StoreName, key: string | null, rule: stri
   out.push({ store, key, rule, message });
 }
 
+/** 自定义时间：两个要么都空，要么都是 HH:MM 且结束晚于开始。 */
+function pushClockRange(out: Violation[], store: StoreName, key: string | null, row: Row): void {
+  const start = row['start_time'];
+  const end = row['end_time'];
+  const hasStart = start !== null && start !== undefined;
+  const hasEnd = end !== null && end !== undefined;
+  if (!hasStart && !hasEnd) return;
+  if (!hasStart || !hasEnd) {
+    push(out, store, key, 'start_time', '自定义时间需要同时给出开始与结束');
+    return;
+  }
+  if (!isText(start) || !TIME_RE.test(start)) push(out, store, key, 'start_time', '必须是 HH:MM');
+  if (!isText(end) || !TIME_RE.test(end)) push(out, store, key, 'end_time', '必须是 HH:MM');
+  if (isText(start) && isText(end) && TIME_RE.test(start) && TIME_RE.test(end) && end <= start) {
+    push(out, store, key, 'end_time', '结束时间必须晚于开始时间');
+  }
+}
+
 /** 逐条校验，唯一性通过既有数据比对。规则与 001_init.sql 的约束对齐。 */
 export function validateRow(store: StoreName, row: Row): Violation[] {
   const out: Violation[] = [];
@@ -133,6 +151,7 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
       if (!isInt(row['weeks_mask']) || row['weeks_mask'] <= 0) {
         push(out, store, key, 'weeks_mask', '必须是正整数');
       }
+      pushClockRange(out, store, key, row);
       break;
     }
 
@@ -211,6 +230,7 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
       if (type === 'lab' && row['period_start'] === null) {
         push(out, store, key, 'period_start', '实验必须给出节次');
       }
+      pushClockRange(out, store, key, row);
       if (row['source'] !== null && row['source'] !== undefined && !SOURCES.includes(row['source'] as never)) {
         push(out, store, key, 'source', '必须是 builtin / manual / from_school');
       }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { BookOpen, Pencil, Trash2 } from 'lucide-react';
+import { BookOpen, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
+  createCourse,
+  createSchedule,
   deleteCourse,
   listManagedCourses,
   type ManagedCourse,
@@ -73,6 +75,8 @@ export function CourseManager({
   const [courses, setCourses] = useState<ManagedCourse[]>([]);
   const [editing, setEditing] = useState<ManagedCourse | null>(null);
   const [removing, setRemoving] = useState<ManagedCourse | null>(null);
+  /** 复制课程：先选只复制课程信息，还是连排课一起复制 */
+  const [copying, setCopying] = useState<ManagedCourse | null>(null);
   const [busy, setBusy] = useState(false);
 
   const reload = useCallback(async () => {
@@ -82,6 +86,48 @@ export function CourseManager({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /** 复制课程：可选只复制课程信息，或连同全部排课一起复制。 */
+  async function confirmCopy(withSchedules: boolean): Promise<void> {
+    if (copying === null) return;
+    setBusy(true);
+    try {
+      const source = copying;
+      const created = await createCourse(storage, {
+        semesterId,
+        name: `${source.name} 副本`,
+        shortName: source.shortName,
+        teacher: source.teacher,
+        location: source.location,
+        color: source.color,
+        note: source.note,
+      });
+      const id = String(created['id']);
+      if (withSchedules) {
+        for (const schedule of source.schedules) {
+          await createSchedule(storage, {
+            courseId: id,
+            dayOfWeek: schedule.dayOfWeek,
+            periodStart: schedule.periodStart,
+            periodEnd: schedule.periodEnd,
+            weeks: schedule.weeks,
+            room: schedule.room,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime,
+          });
+        }
+      }
+      logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
+      toast.success(
+        withSchedules ? `已复制「${source.name}」及 ${source.schedules.length} 段排课` : `已复制「${source.name}」`,
+      );
+      setCopying(null);
+      await reload();
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function confirmRemove(): Promise<void> {
     if (removing === null) return;
@@ -124,6 +170,15 @@ export function CourseManager({
               <Button
                 size="icon"
                 variant="ghost"
+                aria-label={`复制课程 ${course.name}`}
+                disabled={busy}
+                onClick={() => setCopying(course)}
+              >
+                <Copy className="size-4" aria-hidden />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
                 aria-label={`编辑课程 ${course.name}`}
                 disabled={busy}
                 onClick={() => setEditing(course)}
@@ -163,6 +218,36 @@ export function CourseManager({
           })();
         }}
       />
+
+      <Dialog
+        open={copying !== null}
+        onOpenChange={(open) => {
+          if (!open) setCopying(null);
+        }}
+      >
+        <DialogContent
+          title="复制课程"
+          description={
+            copying === null
+              ? ''
+              : `「${copying.name}」有 ${copying.schedules.length} 段排课，选择复制范围`
+          }
+        >
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" disabled={busy} onClick={() => void confirmCopy(false)}>
+              只复制课程信息
+            </Button>
+            <Button variant="primary" disabled={busy} onClick={() => void confirmCopy(true)}>
+              连排课一起复制
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCopying(null)}>
+              取消
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={removing !== null}

@@ -261,6 +261,7 @@ function ScheduleTimeline({
   onViewDateChange,
   onChanged,
   tomorrowPreview,
+  onOpenEvent,
 }: ScheduleCardContext) {
   // 时刻每秒走一格：正在上的课、到点自动完成的条目不用等下一次数据加载
   const now = useNowTick(1000);
@@ -327,6 +328,7 @@ function ScheduleTimeline({
                     onToggleDone={toggleDone}
                     onDeleteAdjust={deleteAdjust}
                     onOpenLesson={openLessonDetail}
+                    onOpenEvent={onOpenEvent}
                   />
                 ))}
               </ul>
@@ -345,6 +347,7 @@ function ScheduleTimeline({
                       onToggleDone={toggleDone}
                       onDeleteAdjust={deleteAdjust}
                       onOpenLesson={openLessonDetail}
+                      onOpenEvent={onOpenEvent}
                     />
                   ))}
                 </ul>
@@ -384,6 +387,8 @@ interface TimelineRowProps {
   onDeleteAdjust: (event: EventRow) => void;
   /** 打开课程详情；没有 Provider 时课程行不可点 */
   onOpenLesson: ((target: AdjustTarget) => void) | null;
+  /** 单击日程条目进入详情编辑 */
+  onOpenEvent: (event: EventRow) => void;
 }
 
 /**
@@ -391,7 +396,7 @@ interface TimelineRowProps {
  * 左侧竖排时间列（开始 / – / 结束）+ 颜色竖条 + 右侧两行（标题、地点）。
  * 已完成的条目整行更灰（opacity-40），并去掉勾选框改成「到点自动完成」标记。
  */
-function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: TimelineRowProps) {
+function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenEvent }: TimelineRowProps) {
   const lessonTarget = item.lessonTarget ?? null;
   const marker =
     item.autoDone ? (
@@ -483,7 +488,18 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: Timel
       data-done={item.done ? 'true' : undefined}
       data-running={item.running ? 'true' : undefined}
     >
-      {lessonTarget === null ? (
+      {lessonTarget === null && item.event !== undefined && item.kind !== 'adjust' ? (
+        // 日程条目整行可点：进详情编辑
+        <button
+          type="button"
+          data-role="timeline-event"
+          aria-label={`编辑日程：${item.title}`}
+          className="flex min-w-0 flex-1 items-stretch gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+          onClick={() => onOpenEvent(item.event as EventRow)}
+        >
+          {body}
+        </button>
+      ) : lessonTarget === null ? (
         body
       ) : (
         // 课程行整体可点：进课程详情，调课在详情里操作

@@ -7,6 +7,9 @@ pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/
 /// 002：待办类型扩充与逐条开关（事件表重建）。
 pub const SCHEMA_EVENT_KINDS_SQL: &str =
     include_str!("../../../../packages/core/src/schema/002_event_kinds.sql");
+/// 003：条目自定义时间（不按节次）。
+pub const SCHEMA_CUSTOM_TIME_SQL: &str =
+    include_str!("../../../../packages/core/src/schema/003_custom_time.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
@@ -1885,6 +1888,12 @@ pub fn run() {
                             version: 2,
                             description: "event_kinds",
                             sql: SCHEMA_EVENT_KINDS_SQL,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 3,
+                            description: "custom_time",
+                            sql: SCHEMA_CUSTOM_TIME_SQL,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
                     ],

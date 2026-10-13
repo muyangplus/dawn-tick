@@ -954,6 +954,17 @@ export function SettingsView({
         ) : (
           <span className="text-xs text-muted">开发渠道：只接收 dev 构建，不参与测试版开关</span>
         )}
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>自动检查版本更新</span>
+            <span className="truncate text-xs text-muted">启动后自动查一次，有新版本时提示</span>
+          </span>
+          <Switch
+            checked={settings.autoCheckUpdate}
+            aria-label="自动检查版本更新"
+            onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
+          />
+        </label>
         <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
           <span>预设仓库</span>
           <ExternalLink

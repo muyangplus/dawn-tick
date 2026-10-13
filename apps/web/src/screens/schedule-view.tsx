@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { MapPin } from 'lucide-react';
-import type { Storage } from '@dawn-tick/core';
+import type { EventRow, Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx';
 import { Button } from '../components/ui/button.tsx';
@@ -18,6 +18,8 @@ export interface ScheduleViewProps {
   onChanged: () => void;
   onAddTodo: () => void;
   onAddExam: () => void;
+  /** 单击时间线里的日程：进入详情编辑 */
+  onOpenEvent: (event: EventRow) => void;
   /** 某天没有日程时提示明日预告 */
   tomorrowPreview: boolean;
   /** 显示开学倒计时 */
@@ -36,6 +38,7 @@ export function ScheduleView({
   onChanged,
   onAddTodo,
   onAddExam,
+  onOpenEvent,
   tomorrowPreview,
   semesterCountdown,
   holidayCountdown,
@@ -66,6 +69,7 @@ export function ScheduleView({
     onViewDateChange: setViewDate,
     onAddTodo,
     onAddExam,
+    onOpenEvent,
     onOpenAdjust: (target) => {
       setAdjustTarget(target);
       setAdjustOpen(true);

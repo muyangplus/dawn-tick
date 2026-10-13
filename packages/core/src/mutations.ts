@@ -496,6 +496,9 @@ export interface CreateScheduleInput {
   weeks: number[];
   weeksRaw?: string | null;
   room?: string | null;
+  /** 自定义时间（HH:MM）：非空时按真实时间展示，节次按重叠关系回填 */
+  startTime?: string | null;
+  endTime?: string | null;
 }
 
 export async function createSchedule(
@@ -513,6 +516,8 @@ export async function createSchedule(
     weeks_mask: weeksToMask(input.weeks),
     weeks_raw: input.weeksRaw ?? null,
     room: input.room ?? null,
+    start_time: input.startTime ?? null,
+    end_time: input.endTime ?? null,
     created_at: ctx.now(),
     updated_at: ctx.now(),
     deleted_at: null,
@@ -588,6 +593,9 @@ export interface ManagedSchedule {
   periodEnd: number;
   weeks: number[];
   room: string | null;
+  /** 自定义时间（HH:MM）：非空时按真实时间展示 */
+  startTime: string | null;
+  endTime: string | null;
 }
 
 export interface ManagedCourse {
@@ -630,6 +638,8 @@ export async function listManagedCourses(storage: Storage, semesterId: string): 
         periodEnd: Number(row['period_end']),
         weeks: maskToWeeks(Number(row['weeks_mask'])),
         room: row['room'] === null ? null : String(row['room']),
+        startTime: row['start_time'] === null || row['start_time'] === undefined ? null : String(row['start_time']),
+        endTime: row['end_time'] === null || row['end_time'] === undefined ? null : String(row['end_time']),
       })),
   }));
 }
@@ -662,6 +672,9 @@ export interface CreateEventInput {
   periodEnd?: number | null;
   /** 实验重复周次位图；为空表示只这一次 */
   weeksMask?: number | null;
+  /** 自定义时间（HH:MM）：非空时该条按真实时间展示，不按节次 */
+  startTime?: string | null;
+  endTime?: string | null;
 }
 
 export async function createEvent(
@@ -694,6 +707,8 @@ export async function createEvent(
     period_start: input.periodStart ?? null,
     period_end: input.periodEnd ?? null,
     weeks_mask: input.weeksMask ?? null,
+    start_time: input.startTime ?? null,
+    end_time: input.endTime ?? null,
     ref_schedule_id: null,
     action: null,
     new_date: null,

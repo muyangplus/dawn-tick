@@ -14,7 +14,7 @@ import { PRESETS } from '../design/tokens.ts';
 import { Button } from '../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
@@ -41,6 +41,10 @@ interface ScheduleDraft {
   /** 直接点选的周次集合 */
   weeks: number[];
   room: string;
+  /** 自定义时间：打开后按真实起止时间展示，节次仅作提醒与重叠判定 */
+  customTime: boolean;
+  startTime: string;
+  endTime: string;
 }
 
 let draftSeed = 0;
@@ -59,6 +63,9 @@ function newDraft(
     periodEnd: Math.max(periodStart, periodEnd),
     weeks: weeks === undefined ? allWeeks(totalWeeks) : [...weeks],
     room: '',
+    customTime: false,
+    startTime: '19:00',
+    endTime: '21:00',
   };
 }
 
@@ -201,6 +208,9 @@ export function CourseForm({
               periodEnd: schedule.periodEnd,
               weeks: weeks.length > 0 ? weeks : allWeeks(totalWeeks),
               room: schedule.room ?? '',
+              customTime: schedule.startTime !== null && schedule.endTime !== null,
+              startTime: schedule.startTime ?? '19:00',
+              endTime: schedule.endTime ?? '21:00',
             };
           }),
     );
@@ -229,6 +239,8 @@ export function CourseForm({
         periodEnd: Math.max(draft.periodStart, draft.periodEnd),
         weeks: [...draft.weeks].sort((left, right) => left - right),
         room: draft.room.trim().length > 0 ? draft.room.trim() : null,
+        startTime: draft.customTime ? draft.startTime : null,
+        endTime: draft.customTime ? draft.endTime : null,
       }));
 
       let savedId: string;
@@ -345,6 +357,34 @@ export function CourseForm({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex min-h-tap items-center gap-2 text-xs text-muted">
+                  <Switch
+                    aria-label="自定义时间"
+                    checked={draft.customTime}
+                    onCheckedChange={(checked) => patchDraft(draft.key, { customTime: checked })}
+                  />
+                  自定义时间
+                </label>
+                {draft.customTime && (
+                  <>
+                    <Input
+                      type="time"
+                      className="w-28"
+                      aria-label="开始时间"
+                      value={draft.startTime}
+                      onChange={(event) => patchDraft(draft.key, { startTime: event.target.value })}
+                    />
+                    <Input
+                      type="time"
+                      className="w-28"
+                      aria-label="结束时间"
+                      value={draft.endTime}
+                      onChange={(event) => patchDraft(draft.key, { endTime: event.target.value })}
+                    />
+                  </>
+                )}
               </div>
               <div className="flex flex-col gap-2 rounded-md border border-line p-2">
                 <div className="flex flex-wrap items-end gap-2">

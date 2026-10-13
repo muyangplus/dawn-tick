@@ -1223,7 +1223,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     document.querySelector('[aria-label="关联课程"]') !== null &&
       document.querySelector('[aria-label="待办提前提醒"]') !== null &&
       document.querySelector('[aria-label="开启倒计时"]') !== null &&
-      document.querySelector('[aria-label="需要手动确认完成"]') !== null,
+      document.querySelector('[aria-label="需要手动确认完成"]') !== null &&
+      document.querySelector('[aria-label="自定义时间"]') !== null,
+    '',
+  );
+  // 打开「自定义时间」：给出真实起止时间，不再填节次
+  const customSwitch = document.querySelector<HTMLElement>('[aria-label="自定义时间"]');
+  customSwitch?.click();
+  await flush(8);
+  check(
+    '自定义时间给出起止时间',
+    document.querySelector('[aria-label="开始时间"]') !== null &&
+      document.querySelector('[aria-label="结束时间"]') !== null,
     '',
   );
   if (clickByText(document.body, '取消')) await flush(6);
@@ -1664,6 +1675,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     panelText.includes('导出日志') && panelText.includes('开发版') && !panelText.includes('填充示例数据'),
     '',
   );
+  check(
+    '维护卡带自动检查更新开关',
+    view.container.querySelector('[aria-label="自动检查版本更新"]') !== null &&
+      view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
+    view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
+  );
+  check('课程管理提供复制课程', view.container.querySelector('[aria-label^="复制课程"]') !== null, '');
   // 周视图天数：1–7 天都可选
   const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');
   if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();

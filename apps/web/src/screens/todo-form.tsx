@@ -4,9 +4,12 @@ import {
   dateWallClockToEpoch,
   formatDate,
   setReminder,
+  updateEvent,
   weeksToMask,
+  type EventRow,
   type SemesterRow,
   type Storage,
+  type TimeSlotRow,
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
@@ -55,7 +58,46 @@ export interface TodoFormProps {
   semester?: SemesterRow | null;
   /** 供日程与实验关联课程 */
   courses?: ReadonlyArray<{ id: string; name: string }>;
+  /** 节次表：自定义时间时按重叠关系回填节次 */
+  slots?: readonly TimeSlotRow[];
+  /** 传入即进入详情编辑：字段按该条回填，保存写回同一条 */
+  editing?: EventRow | null;
   onCreated: () => void;
+}
+
+/** 自定义时间窗口覆盖到的节次范围；没有任何重叠时贴到最近的一节。 */
+export function periodsForClock(
+  slots: readonly TimeSlotRow[],
+  start: string,
+  end: string,
+): { periodStart: number; periodEnd: number } | null {
+  if (slots.length === 0) return null;
+  const toMinutes = (clock: string): number => {
+    const [hour, minute] = clock.split(':').map(Number);
+    return (hour ?? 0) * 60 + (minute ?? 0);
+  };
+  const from = toMinutes(start);
+  const to = toMinutes(end);
+  const overlapping = slots.filter((slot) => toMinutes(slot.start_time) < to && toMinutes(slot.end_time) > from);
+  if (overlapping.length > 0) {
+    return {
+      periodStart: Math.min(...overlapping.map((slot) => slot.period_no)),
+      periodEnd: Math.max(...overlapping.map((slot) => slot.period_no)),
+    };
+  }
+  const nearest = slots.reduce((best, slot) =>
+    Math.abs(toMinutes(slot.start_time) - from) < Math.abs(toMinutes(best.start_time) - from) ? slot : best,
+  );
+  return { periodStart: nearest.period_no, periodEnd: nearest.period_no };
+}
+
+/** 分钟数加偏移，返回 HH:MM（用于默认结束时间）。 */
+function plusMinutes(clock: string, minutes: number): string {
+  const [hour, minute] = clock.split(':').map(Number);
+  const total = ((hour ?? 0) * 60 + (minute ?? 0) + minutes) % (24 * 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 export function TodoForm({
@@ -68,6 +110,8 @@ export function TodoForm({
   kind = 'todo',
   semester = null,
   courses = [],
+  slots = [],
+  editing = null,
   onCreated,
 }: TodoFormProps) {
   const [current, setCurrent] = useState<EventFormKind>(kind);
@@ -87,17 +131,41 @@ export function TodoForm({
   const [labPeriodStart, setLabPeriodStart] = useState('1');
   const [labPeriodEnd, setLabPeriodEnd] = useState('2');
   const [labWeeks, setLabWeeks] = useState<number[]>(() => Array.from({ length: 16 }, (_, index) => index + 1));
+  // 自定义时间：不按节次，直接给开始与结束时间
+  const [customTime, setCustomTime] = useState(false);
+  const [startTime, setStartTime] = useState('19:00');
+  const [endTime, setEndTime] = useState('21:00');
 
   const isExam = current === 'exam';
   const isLab = current === 'lab';
   const isHomework = current === 'homework';
 
-  /** 每次打开都回到调用方指定的类型与默认开关，避免沿用上一次的选择。 */
+  /** 每次打开都回到调用方指定的类型与默认开关；编辑时按该条回填，避免沿用上一次的选择。 */
   useEffect(() => {
     if (!open) return;
+    if (editing !== null) {
+      setCurrent(editing.type === 'exam' ? 'exam' : editing.type === 'lab' ? 'lab' : editing.type === 'homework' ? 'homework' : 'todo');
+      setSwitches({ countdown: editing.countdown === 1, manualDone: editing.manual_done === 1 });
+      setTitle(editing.title);
+      setCourseId(editing.subject ?? '');
+      setDueDate(editing.on_date ?? formatDate(editing.start_at ?? editing.due_at ?? Date.now(), timeZone));
+      setLocation(editing.location ?? '');
+      setSeatNo(editing.seat_no ?? '');
+      setNote(editing.note ?? '');
+      setCustomTime(editing.start_time !== null && editing.end_time !== null);
+      setStartTime(editing.start_time ?? '19:00');
+      setEndTime(editing.end_time ?? '21:00');
+      setLabWeekday(editing.as_day_of_week ?? 1);
+      setLabRepeat(editing.weeks_mask !== null);
+      setLabPeriodStart(String(editing.period_start ?? 1));
+      setLabPeriodEnd(String(editing.period_end ?? editing.period_start ?? 2));
+      return;
+    }
     setCurrent(kind);
     setSwitches(defaultSwitches(kind));
-  }, [open, kind]);
+    setCustomTime(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, kind, editing]);
 
   /** 切换类型时把开关恢复成该类型的默认值。 */
   function changeKind(next: EventFormKind): void {
@@ -109,44 +177,74 @@ export function TodoForm({
     if (title.trim().length === 0) return;
     setBusy(true);
     try {
-      const at = dateWallClockToEpoch(dueDate, dueTime, timeZone);
+      const at = customTime
+        ? dateWallClockToEpoch(dueDate, startTime, timeZone)
+        : dateWallClockToEpoch(dueDate, dueTime, timeZone);
+      const endAt = customTime ? dateWallClockToEpoch(dueDate, endTime, timeZone) : null;
       const linked = !isExam && courseId.length > 0;
+      const derived = customTime && isLab ? periodsForClock(slots, startTime, endTime) : null;
+      const common = {
+        title: title.trim(),
+        semesterId,
+        onDate: dueDate,
+        startAt: at,
+        endAt,
+        dueAt: isHomework || linked ? (customTime ? endAt ?? at : at) : null,
+        subject: linked ? courseId : null,
+        location: isExam || isLab ? (location.trim().length > 0 ? location.trim() : null) : null,
+        seatNo: isExam ? (seatNo.trim().length > 0 ? seatNo.trim() : null) : null,
+        note: note.trim().length > 0 ? note.trim() : null,
+        countdown: switches.countdown,
+        manualDone: switches.manualDone,
+        startTime: customTime ? startTime : null,
+        endTime: customTime ? endTime : null,
+      };
+      if (editing !== null) {
+        await updateEvent(storage, editing.id, {
+          ...common,
+          semester_id: semesterId,
+          on_date: dueDate,
+          start_at: at,
+          end_at: endAt,
+          due_at: common.dueAt,
+          subject: common.subject,
+          location: common.location,
+          seat_no: common.seatNo,
+          note: common.note,
+          countdown: switches.countdown ? 1 : 0,
+          manual_done: switches.manualDone ? 1 : 0,
+          start_time: customTime ? startTime : null,
+          end_time: customTime ? endTime : null,
+          period_start: isLab ? (derived?.periodStart ?? Number(labPeriodStart)) : null,
+          period_end: isLab ? (derived?.periodEnd ?? Number(labPeriodEnd)) : null,
+          weeks_mask: isLab && labRepeat ? weeksToMask(labWeeks) : null,
+          as_day_of_week: isLab && labRepeat ? labWeekday : null,
+          nature: isLab ? 'lab' : editing.nature,
+        });
+        toast.success(`已保存${KIND_LABEL[current]}「${title.trim()}」`);
+        onCreated();
+        onOpenChange(false);
+        return;
+      }
       let created: Record<string, unknown>;
       if (isLab) {
-        const start = Number(labPeriodStart);
-        const end = Number(labPeriodEnd);
+        const start = derived?.periodStart ?? Number(labPeriodStart);
+        const end = derived?.periodEnd ?? Number(labPeriodEnd);
         created = await createEvent(storage, {
+          ...common,
           userId,
           type: 'lab',
-          semesterId,
-          title: title.trim(),
-          onDate: dueDate,
-          subject: linked ? courseId : null,
-          location: location.trim().length > 0 ? location.trim() : null,
-          note: note.trim().length > 0 ? note.trim() : null,
           nature: 'lab',
           periodStart: Number.isFinite(start) ? start : 1,
           periodEnd: Number.isFinite(end) ? end : start,
           weeksMask: labRepeat ? weeksToMask(labWeeks) : null,
           asDayOfWeek: labRepeat ? labWeekday : null,
-          countdown: switches.countdown,
-          manualDone: switches.manualDone,
         });
       } else {
         created = await createEvent(storage, {
+          ...common,
           userId,
           type: isExam ? 'exam' : isHomework ? 'homework' : linked ? 'todo' : 'temp',
-          semesterId,
-          title: title.trim(),
-          onDate: dueDate,
-          startAt: at,
-          dueAt: isHomework || linked ? at : null,
-          subject: linked ? courseId : null,
-          location: isExam ? (location.trim().length > 0 ? location.trim() : null) : null,
-          seatNo: isExam ? (seatNo.trim().length > 0 ? seatNo.trim() : null) : null,
-          note: note.trim().length > 0 ? note.trim() : null,
-          countdown: switches.countdown,
-          manualDone: switches.manualDone,
         });
       }
       const minutes = ADVANCE_OPTIONS.find((item) => item.id === advance)?.minutes ?? -1;
@@ -171,11 +269,52 @@ export function TodoForm({
     }
   }
 
+  /** 复制当前这一条：新建一条同名「副本」，其余字段照抄。 */
+  async function copyOne(): Promise<void> {
+    if (editing === null) return;
+    setBusy(true);
+    try {
+      const copyTitle = `${editing.title} 副本`;
+      await createEvent(storage, {
+        userId,
+        type: editing.type,
+        title: copyTitle,
+        semesterId: editing.semester_id,
+        onDate: editing.on_date,
+        startAt: editing.start_at,
+        endAt: editing.end_at,
+        dueAt: editing.due_at,
+        subject: editing.subject,
+        location: editing.location,
+        seatNo: editing.seat_no,
+        note: editing.note,
+        countdown: editing.countdown === 1,
+        manualDone: editing.manual_done === 1,
+        nature: editing.nature,
+        periodStart: editing.period_start,
+        periodEnd: editing.period_end,
+        weeksMask: editing.weeks_mask,
+        asDayOfWeek: editing.as_day_of_week,
+        startTime: editing.start_time,
+        endTime: editing.end_time,
+      });
+      toast.success(`已复制为「${copyTitle}」`);
+      onCreated();
+      onOpenChange(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title="添加待办"
-        description="选类型后填对应字段；作业与考试可显示倒计时，实验会排进课表"
+        title={editing === null ? '添加待办' : '待办详情'}
+        description={
+          editing === null
+            ? '选类型后填对应字段；作业与考试可显示倒计时，实验会排进课表'
+            : '改完点保存写回这一条；「自定义时间」打开后按真实时间显示'
+        }
       >
         <Field label="类型">
           <div className="flex flex-wrap gap-2">
@@ -226,7 +365,7 @@ export function TodoForm({
               onChange={(event) => setDueDate(event.target.value)}
             />
           </Field>
-          {!isLab && (
+          {!isLab && !customTime && (
             <Field label={isExam ? '开考时间' : '时间'}>
               <Input
                 type="time"
@@ -235,6 +374,29 @@ export function TodoForm({
                 onChange={(event) => setDueTime(event.target.value)}
               />
             </Field>
+          )}
+          {customTime && (
+            <>
+              <Field label="开始时间">
+                <Input
+                  type="time"
+                  value={startTime}
+                  aria-label="开始时间"
+                  onChange={(event) => {
+                    setStartTime(event.target.value);
+                    setEndTime((current) => (current <= event.target.value ? plusMinutes(event.target.value, 90) : current));
+                  }}
+                />
+              </Field>
+              <Field label="结束时间">
+                <Input
+                  type="time"
+                  value={endTime}
+                  aria-label="结束时间"
+                  onChange={(event) => setEndTime(event.target.value)}
+                />
+              </Field>
+            </>
           )}
           <Field label="提前提醒">
             <Select value={advance} onValueChange={setAdvance}>
@@ -251,6 +413,17 @@ export function TodoForm({
             </Select>
           </Field>
         </div>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>自定义时间</span>
+            <span className="truncate text-xs text-muted">打开后按真实起止时间显示，不再套节次</span>
+          </span>
+          <Switch
+            aria-label="自定义时间"
+            checked={customTime}
+            onCheckedChange={(checked) => setCustomTime(checked)}
+          />
+        </label>
         {isLab && (
           <div className="flex flex-col gap-2" data-role="lab-fields">
             <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
@@ -304,28 +477,39 @@ export function TodoForm({
               </>
             )}
             <div className="flex flex-wrap gap-3">
-              <Field label="起始节">
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  className="w-24"
-                  aria-label="实验起始节"
-                  value={labPeriodStart}
-                  onChange={(event) => setLabPeriodStart(event.target.value)}
-                />
-              </Field>
-              <Field label="结束节">
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  className="w-24"
-                  aria-label="实验结束节"
-                  value={labPeriodEnd}
-                  onChange={(event) => setLabPeriodEnd(event.target.value)}
-                />
-              </Field>
+              {!customTime && (
+                <>
+                  <Field label="起始节">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={40}
+                      className="w-24"
+                      aria-label="实验起始节"
+                      value={labPeriodStart}
+                      onChange={(event) => setLabPeriodStart(event.target.value)}
+                    />
+                  </Field>
+                  <Field label="结束节">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={40}
+                      className="w-24"
+                      aria-label="实验结束节"
+                      value={labPeriodEnd}
+                      onChange={(event) => setLabPeriodEnd(event.target.value)}
+                    />
+                  </Field>
+                </>
+              )}
+              {customTime && (
+                <span className="self-center text-xs text-muted">
+                  已按起止时间回填节次{periodsForClock(slots, startTime, endTime) === null
+                    ? ''
+                    : `（第 ${periodsForClock(slots, startTime, endTime)?.periodStart}–${periodsForClock(slots, startTime, endTime)?.periodEnd} 节）`}
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -374,6 +558,11 @@ export function TodoForm({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
+          {editing !== null && (
+            <Button variant="secondary" disabled={busy} onClick={() => void copyOne()}>
+              复制一条
+            </Button>
+          )}
           <Button variant="primary" disabled={busy || title.trim().length === 0} onClick={() => void submit()}>
             保存
           </Button>

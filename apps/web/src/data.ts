@@ -57,6 +57,9 @@ export interface LessonCell {
   lab: boolean;
   /** 实验条目对应的行 id（课程格为空） */
   eventId?: string;
+  /** 自定义时间（HH:MM）：非空时该格按真实时间定位，不按节次 */
+  customStart?: string | null;
+  customEnd?: string | null;
 }
 
 export interface AppData {
@@ -219,6 +222,8 @@ export async function loadAppData(
     date: string;
     inWeek: boolean;
     movedIn?: boolean;
+    customStart?: string | null;
+    customEnd?: string | null;
   }): LessonCell => {
     const course = courseById.get(input.courseId);
     const date = input.date;
@@ -240,8 +245,17 @@ export async function loadAppData(
       movedOut: input.inWeek && movedOutKeys.has(`${input.scheduleId}|${date}`),
       movedIn: input.movedIn === true,
       lab: false,
+      customStart: input.customStart ?? null,
+      customEnd: input.customEnd ?? null,
     };
   };
+
+  /** 各排课的自定义时间：按 schedule_id 查，用于按真实时间定位 */
+  const scheduleCustomById = new Map(
+    schedules
+      .filter((row) => row.start_time !== null && row.end_time !== null)
+      .map((row) => [row.id, { start: row.start_time as string, end: row.end_time as string }]),
+  );
 
   for (let day = 1; day <= 7; day += 1) {
     for (const row of await weekView(storage, semester.id, day, viewWeek)) {
@@ -259,6 +273,8 @@ export async function loadAppData(
           day,
           date: dateOfDay(day),
           inWeek: true,
+          customStart: scheduleCustomById.get(row.schedule_id)?.start ?? null,
+          customEnd: scheduleCustomById.get(row.schedule_id)?.end ?? null,
         }),
       );
       grid.set(key, list);
@@ -330,6 +346,8 @@ export async function loadAppData(
       movedIn: false,
       lab: true,
       eventId: lab.id,
+      customStart: lab.start_time ?? null,
+      customEnd: lab.end_time ?? null,
     });
     grid.set(key, list);
   }

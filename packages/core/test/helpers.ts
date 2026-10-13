@@ -36,11 +36,17 @@ export function eventKindsSql(): string {
   return readFileSync(new URL('../src/schema/002_event_kinds.sql', import.meta.url), 'utf8');
 }
 
-/** 与各端一致的迁移集合：001 建表 + 002 扩充事件表。 */
+/** 003：条目自定义时间。 */
+export function customTimeSql(): string {
+  return readFileSync(new URL('../src/schema/003_custom_time.sql', import.meta.url), 'utf8');
+}
+
+/** 与各端一致的迁移集合：001 建表 + 002 扩充事件表 + 003 自定义时间。 */
 export function migrations(): Array<{ id: string; sql: string }> {
   return [
     { id: '001_init', sql: initSql() },
     { id: '002_event_kinds', sql: eventKindsSql() },
+    { id: '003_custom_time', sql: customTimeSql() },
   ];
 }
 
@@ -126,6 +132,8 @@ export function scheduleRow(
     weeks_mask: weeksToMask(weeks),
     weeks_raw: null,
     room: null,
+    start_time: null,
+    end_time: null,
     ...SYNC,
     ...overrides,
   };
@@ -160,6 +168,8 @@ export function eventRow(
     period_start: null,
     period_end: null,
     weeks_mask: null,
+    start_time: null,
+    end_time: null,
     ref_schedule_id: null,
     action: null,
     new_date: null,

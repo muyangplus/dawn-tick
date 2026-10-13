@@ -60,6 +60,9 @@ export interface CourseScheduleRow extends SyncColumns {
   weeks_mask: number;
   weeks_raw: string | null;
   room: string | null;
+  /** 自定义时间（HH:MM）：非空时按真实时间展示，节次按重叠关系回填 */
+  start_time: string | null;
+  end_time: string | null;
 }
 
 export interface EventRow extends SyncColumns {
@@ -91,6 +94,9 @@ export interface EventRow extends SyncColumns {
   period_end: number | null;
   /** 实验重复周次位图（仅 type = 'lab'）；为空表示只这一次，用 on_date */
   weeks_mask: number | null;
+  /** 自定义时间（HH:MM）：非空时该条按真实时间展示，不按节次 */
+  start_time: string | null;
+  end_time: string | null;
   ref_schedule_id: string | null;
   action: EventAction | null;
   new_date: string | null;

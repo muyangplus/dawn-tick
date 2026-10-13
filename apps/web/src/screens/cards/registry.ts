@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Storage } from '@dawn-tick/core';
+import type { EventRow, Storage } from '@dawn-tick/core';
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 
@@ -32,6 +32,8 @@ export interface ScheduleCardContext {
   /** 打开「加日程 / 加考试」表单 */
   onAddTodo: () => void;
   onAddExam: () => void;
+  /** 单击时间线里的日程：进入详情编辑 */
+  onOpenEvent: (event: EventRow) => void;
   /** 打开课程调整弹窗；null 表示不预选某节课 */
   onOpenAdjust: (target: AdjustTarget | null) => void;
   /** 新增调课、调整、节假日后刷新数据 */

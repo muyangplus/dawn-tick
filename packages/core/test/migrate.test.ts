@@ -16,14 +16,14 @@ test('迁移建立全部表并记录版本', async () => {
     'time_slots',
     'users',
   ]);
-  assert.equal(await readSchemaVersion(db), '002_event_kinds');
+  assert.equal(await readSchemaVersion(db), '003_custom_time');
 });
 
 test('迁移可重复执行', async () => {
   const db = openNodeSqlite(':memory:');
   const list = migrations();
-  assert.equal(await migrate(db, list), '002_event_kinds');
-  assert.equal(await migrate(db, list), '002_event_kinds');
+  assert.equal(await migrate(db, list), '003_custom_time');
+  assert.equal(await migrate(db, list), '003_custom_time');
 });
 
 test('002 迁移保留旧库数据并补齐新列', async () => {
@@ -37,7 +37,7 @@ test('002 迁移保留旧库数据并补齐新列', async () => {
     `INSERT INTO events (id, user_id, type, title, done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ['old-exam', 'u1', 'exam', '旧考试', 0, 1, 1],
   );
-  assert.equal(await migrate(db, migrations()), '002_event_kinds');
+  assert.equal(await migrate(db, migrations()), '003_custom_time');
   const row = await db.get<{ countdown: number; manual_done: number; title: string }>(
     "SELECT countdown, manual_done, title FROM events WHERE id = 'old-exam'",
   );
@@ -46,6 +46,35 @@ test('002 迁移保留旧库数据并补齐新列', async () => {
   assert.equal(row?.manual_done, 0);
   const legacy = await db.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%legacy%'");
   assert.deepEqual(legacy, []);
+});
+
+test('003 迁移为自定义时间加列且老数据保留', async () => {
+  const db = openNodeSqlite(':memory:');
+  await migrate(db, [{ id: '001_init', sql: initSql() }]);
+  await db.run(`INSERT INTO users (id, nickname, created_at, updated_at) VALUES (?, ?, ?, ?)`, ['u2', '我', 1, 1]);
+  await db.run(
+    `INSERT INTO semesters (id, user_id, name, start_date, total_weeks, time_zone, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['sem-2', 'u2', '旧学期', '2026-09-07', 20, 'Asia/Shanghai', 1, 1, 1],
+  );
+  await db.run(
+    `INSERT INTO courses (id, semester_id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    ['c-old', 'sem-2', '旧课', '#123456', 1, 1],
+  );
+  await db.run(
+    `INSERT INTO course_schedules (id, course_id, day_of_week, period_start, period_end, weeks_mask, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['s-old', 'c-old', 2, 1, 2, 3, 1, 1],
+  );
+  assert.equal(await migrate(db, migrations()), '003_custom_time');
+  const eventCols = (await db.all<{ name: string }>("PRAGMA table_info(events)")).map((row) => row.name);
+  const scheduleCols = (await db.all<{ name: string }>("PRAGMA table_info(course_schedules)")).map((row) => row.name);
+  assert.ok(eventCols.includes('start_time') && eventCols.includes('end_time'));
+  assert.ok(scheduleCols.includes('start_time') && scheduleCols.includes('end_time'));
+  await db.run(`UPDATE course_schedules SET start_time = ?, end_time = ? WHERE id = 's-old'`, ['19:00', '21:00']);
+  const row = await db.get<{ room: string | null; start_time: string }>(
+    "SELECT room, start_time FROM course_schedules WHERE id = 's-old'",
+  );
+  assert.equal(row?.start_time, '19:00');
+  assert.equal(row?.room, null);
 });
 
 test('外键开关在连接建立时生效', async () => {

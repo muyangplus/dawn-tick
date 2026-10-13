@@ -40,6 +40,8 @@ export interface AppSettings {
   widgetVariant: WidgetVariant;
   /** 是否接收测试版更新；null 表示未设置（beta 渠道默认开，其余默认关） */
   receiveBeta: boolean | null;
+  /** 启动后自动检查一次版本更新 */
+  autoCheckUpdate: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -59,6 +61,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   holidayCountdown: true,
   widgetVariant: 'bar',
   receiveBeta: null,
+  autoCheckUpdate: true,
 };
 
 const KEYS = {
@@ -78,6 +81,7 @@ const KEYS = {
   holidayCountdown: 'holiday_countdown',
   widgetVariant: 'widget_variant',
   receiveBeta: 'receive_beta',
+  autoCheckUpdate: 'auto_check_update',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -104,6 +108,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.holidayCountdown),
     storage.readMeta(KEYS.widgetVariant),
     storage.readMeta(KEYS.receiveBeta),
+    storage.readMeta(KEYS.autoCheckUpdate),
   ]);
   const [
     timeZone,
@@ -122,6 +127,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     holidayCountdown,
     widgetVariant,
     receiveBeta,
+    autoCheckUpdate,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -157,6 +163,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
         : DEFAULT_SETTINGS.widgetVariant,
     receiveBeta:
       receiveBeta === '1' || receiveBeta === 'true' ? true : receiveBeta === '0' || receiveBeta === 'false' ? false : null,
+    autoCheckUpdate: parseBoolean(autoCheckUpdate, DEFAULT_SETTINGS.autoCheckUpdate),
   };
 }
 
@@ -214,6 +221,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.receiveBeta !== undefined && patch.receiveBeta !== null) {
     await storage.writeMeta(KEYS.receiveBeta, patch.receiveBeta ? '1' : '0');
+  }
+  if (patch.autoCheckUpdate !== undefined) {
+    await storage.writeMeta(KEYS.autoCheckUpdate, patch.autoCheckUpdate ? '1' : '0');
   }
 
   return readSettings(storage);

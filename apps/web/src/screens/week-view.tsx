@@ -176,6 +176,36 @@ function lessonsOf(data: AppData): LessonCell[] {
   return out;
 }
 
+/** 墙钟时间映射到「节次行空间」：行内线性，落在一节里就返回小数行号。 */
+function customRow(
+  clock: string | null | undefined,
+  slots: ReadonlyArray<{ periodNo: number; startTime: string; endTime: string }>,
+  periodCount: number,
+): number | null {
+  if (clock === null || clock === undefined || clock === '' || slots.length === 0) return null;
+  const toMinutes = (value: string): number => {
+    const [hour, minute] = value.split(':').map(Number);
+    return (hour ?? 0) * 60 + (minute ?? 0);
+  };
+  const target = toMinutes(clock);
+  for (const slot of slots) {
+    const from = toMinutes(slot.startTime);
+    const to = toMinutes(slot.endTime);
+    if (target >= from && target <= to && to > from) {
+      return slot.periodNo - 1 + (target - from) / (to - from);
+    }
+  }
+  const first = slots[0];
+  const last = slots[slots.length - 1];
+  if (first !== undefined && target < toMinutes(first.startTime)) {
+    return -Math.min(1, (toMinutes(first.startTime) - target) / 60);
+  }
+  if (last !== undefined && target > toMinutes(last.endTime)) {
+    return periodCount + Math.min(1, (target - toMinutes(last.endTime)) / 60);
+  }
+  return null;
+}
+
 export function WeekView({
   data,
   viewDays,
@@ -842,13 +872,25 @@ export function WeekView({
                     </div>
                   )}
 
-                  {dayLessons.map((lesson) => (
+                  {dayLessons.map((lesson) => {
+                    // 自定义时间的条目按真实时间定位：把墙钟时间映射到节次行空间（行内线性）
+                    const clockTop = customRow(lesson.customStart, slots, periodCount);
+                    const clockBottom = customRow(lesson.customEnd, slots, periodCount);
+                    const custom = clockTop !== null && clockBottom !== null;
+                    const top = custom
+                      ? Math.max(0, clockTop * ROW_HEIGHT + 2)
+                      : (lesson.periodStart - 1) * ROW_HEIGHT + 2;
+                    const height = custom
+                      ? Math.max(24, (clockBottom - clockTop) * ROW_HEIGHT - 4)
+                      : (lesson.periodEnd - lesson.periodStart + 1) * ROW_HEIGHT - 4;
+                    return (
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}
                       className={cn('absolute inset-x-1 min-w-0', drag?.cell === lesson && 'opacity-40')}
+                      data-custom-time={custom ? 'true' : undefined}
                       style={{
-                        top: `${(lesson.periodStart - 1) * ROW_HEIGHT + 2}px`,
-                        height: `${(lesson.periodEnd - lesson.periodStart + 1) * ROW_HEIGHT - 4}px`,
+                        top: `${top}px`,
+                        height: `${height}px`,
                         ...(lesson.inWeek ? { touchAction: 'none' as const } : {}),
                       }}
                       onPointerDown={(event) => onLessonPointerDown(event, lesson)}
@@ -861,7 +903,7 @@ export function WeekView({
                         color={lesson.color}
                         room={lesson.room}
                         teacher={lesson.teacher}
-                        meta={`${lesson.startTime}-${lesson.endTime}`}
+                        meta={custom ? `${lesson.customStart}-${lesson.customEnd}` : `${lesson.startTime}-${lesson.endTime}`}
                         // 停课优先于调课，调课优先于放假与非本周
                         tone={
                           lesson.cancelled
@@ -906,7 +948,8 @@ export function WeekView({
                         )}
                       />
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               );
             })}

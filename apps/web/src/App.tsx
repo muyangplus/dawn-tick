@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DEFAULT_SETTINGS,
   addDays,
@@ -11,6 +11,7 @@ import {
   weekStart,
   writeSettings,
   type AppSettings,
+  type EventRow,
   type ManagedCourse,
   type SearchHit,
   type Storage,
@@ -180,6 +181,8 @@ export function App() {
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<ManagedCourse | null>(null);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
+  /** 非空表示正在编辑这一条日程：单击时间线里的日程即可进入 */
+  const [editingEvent, setEditingEvent] = useState<EventRow | null>(null);
   const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam'>('todo');
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
@@ -303,8 +306,11 @@ export function App() {
     void reload(storage, settings, viewWeek);
   }, [reload, storage, settings, viewWeek]);
 
-  // 启动时检查一次更新，只提示不下载
+  // 启动时按设置检查一次更新，只提示不下载；「自动检查版本更新」关闭时跳过
+  const autoChecked = useRef(false);
   useEffect(() => {
+    if (autoChecked.current || !settings.autoCheckUpdate) return;
+    autoChecked.current = true;
     let cancelled = false;
     void (async () => {
       const status = await checkForUpdate({
@@ -318,9 +324,9 @@ export function App() {
     return () => {
       cancelled = true;
     };
-    // 只在启动时检查一次
+    // 设置就绪后只检查一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [settings.autoCheckUpdate]);
 
   // 过了截止时间的日程默认标记为完成（只在确有需要时写一次，避免循环）
   useEffect(() => {
@@ -605,11 +611,17 @@ export function App() {
             storage={storage}
             onChanged={refresh}
             onAddTodo={() => {
+              setEditingEvent(null);
               setEventFormKind('todo');
               setTodoFormOpen(true);
             }}
             onAddExam={() => {
+              setEditingEvent(null);
               setEventFormKind('exam');
+              setTodoFormOpen(true);
+            }}
+            onOpenEvent={(event) => {
+              setEditingEvent(event);
               setTodoFormOpen(true);
             }}
             tomorrowPreview={settings.tomorrowPreview}
@@ -907,13 +919,18 @@ export function App() {
 
       <TodoForm
         open={todoFormOpen}
-        onOpenChange={setTodoFormOpen}
+        onOpenChange={(open) => {
+          setTodoFormOpen(open);
+          if (!open) setEditingEvent(null);
+        }}
         storage={storage}
         userId={USER_ID}
         semesterId={data.semester.id}
         timeZone={data.timeZone}
         kind={eventFormKind}
         courses={data.courses.map((course) => ({ id: course.id, name: course.name }))}
+        slots={data.slots}
+        editing={editingEvent}
         onCreated={refresh}
       />
 
