@@ -59,7 +59,7 @@ Copy-Item $exe (Join-Path $stage 'DawnTick.exe') -Force
 $readme = @(
   "晓刻 DawnTick 便携版（$Channel 渠道 / $buildKind 构建 / v$version）",
   '',
-  '日志：%LOCALAPPDATA%\com.dawntick.app\startup.log（debug 构建含完整调试日志）',
+  '日志：%LOCALAPPDATA%\com.dawntick.app\startup.log（debug 构建含完整调试日志），同时输出到启动它的控制台',
   '导入：搜索学校 → 打开内嵌窗口 → 自行登录进课表页 → 点右下角「导入到晓刻」'
 ) -join "`r`n"
 Set-Content (Join-Path $stage 'README-portable.txt') -Value $readme -Encoding UTF8

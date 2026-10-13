@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BellRing, Trash2 } from 'lucide-react';
 import { deleteReminder, listRemindersFor, setReminder, type Storage } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
+import { Switch } from './ui/controls.tsx';
 import { Input, Label } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
@@ -87,93 +88,101 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
   }
 
   return (
-    <section className="flex flex-col gap-3" aria-label="课前提醒">
+    <section className="flex flex-col gap-3" data-role="reminder-section" aria-labelledby="reminder-section-title">
+      <span id="reminder-section-title" className="text-sm font-medium text-ink">
+        课前提醒
+      </span>
       <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex items-center gap-2">
-          <BellRing className="size-4" aria-hidden />
-          使用全局配置
+        <span className="flex min-w-0 flex-col">
+          <span className="flex items-center gap-2">
+            <BellRing className="size-4" aria-hidden />
+            使用全局配置
+          </span>
+          <span className="text-xs text-muted">
+            {useGlobal ? '按设置里的课前提醒时间生效，本课程未单独设置。' : '本课程单独设置，不再套用全局默认。'}
+          </span>
         </span>
-        <input
-          type="checkbox"
-          className="size-4"
+        <Switch
           aria-label="使用全局配置"
           checked={useGlobal}
-          onChange={(event) => {
-            const next = event.target.checked;
-            setUseGlobal(next);
-            if (next && reminderId !== null) void remove();
+          onCheckedChange={(checked) => {
+            setUseGlobal(checked);
+            if (checked && reminderId !== null) void remove();
           }}
         />
       </label>
-      {useGlobal ? (
-        <span className="text-xs text-muted">按设置里的课前提醒时间生效，本课程未单独设置。</span>
-      ) : (
+      {!useGlobal && (
         <>
-      <div className="flex flex-wrap items-center gap-2">
-        {PRESETS.map((minutes) => (
-          <Button
-            key={minutes}
-            size="sm"
-            variant={!custom && advance === minutes ? 'primary' : 'secondary'}
-            aria-pressed={!custom && advance === minutes}
-            onClick={() => {
-              setCustom(false);
-              setAdvance(minutes);
-            }}
-          >
-            {minutes} 分钟
-          </Button>
-        ))}
-        <Button size="sm" variant={custom ? 'primary' : 'secondary'} aria-pressed={custom} onClick={() => setCustom(true)}>
-          自定义
-        </Button>
-      </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESETS.map((minutes) => (
+              <Button
+                key={minutes}
+                size="sm"
+                variant={!custom && advance === minutes ? 'primary' : 'secondary'}
+                aria-pressed={!custom && advance === minutes}
+                onClick={() => {
+                  setCustom(false);
+                  setAdvance(minutes);
+                }}
+              >
+                {minutes} 分钟
+              </Button>
+            ))}
+            <Button
+              size="sm"
+              variant={custom ? 'primary' : 'secondary'}
+              aria-pressed={custom}
+              onClick={() => setCustom(true)}
+            >
+              自定义
+            </Button>
+          </div>
 
-      {custom && (
-        <div className="flex items-center gap-2">
-          <Label htmlFor="advance-minutes">提前分钟</Label>
-          <Input
-            id="advance-minutes"
-            type="number"
-            min={1}
-            max={1440}
-            className={cn('w-24')}
-            value={advance}
-            onChange={(event) => setAdvance(Number(event.target.value))}
-          />
-        </div>
-      )}
+          {custom && (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="advance-minutes">提前分钟</Label>
+              <Input
+                id="advance-minutes"
+                type="number"
+                min={1}
+                max={1440}
+                className={cn('w-24')}
+                value={advance}
+                onChange={(event) => setAdvance(Number(event.target.value))}
+              />
+            </div>
+          )}
 
-      <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
-        <input
-          type="checkbox"
-          className="size-4"
-          checked={skipHolidays}
-          onChange={(event) => setSkipHolidays(event.target.checked)}
-        />
-        放假当天不提醒
-      </label>
-      <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
-        <input
-          type="checkbox"
-          className="size-4"
-          checked={snooze}
-          onChange={(event) => setSnooze(event.target.checked)}
-        />
-        允许贪睡 5 分钟
-      </label>
+          <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={skipHolidays}
+              onChange={(event) => setSkipHolidays(event.target.checked)}
+            />
+            放假当天不提醒
+          </label>
+          <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={snooze}
+              onChange={(event) => setSnooze(event.target.checked)}
+            />
+            允许贪睡 5 分钟
+          </label>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={busy} onClick={() => void save()}>
-          保存提醒
-        </Button>
-        {reminderId !== null && (
-          <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
-            <Trash2 className="size-4" aria-hidden />
-            删除提醒
-          </Button>
-        )}
-      </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" disabled={busy} onClick={() => void save()}>
+              保存提醒
+            </Button>
+            {reminderId !== null && (
+              <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+                <Trash2 className="size-4" aria-hidden />
+                删除提醒
+              </Button>
+            )}
+          </div>
         </>
       )}
     </section>

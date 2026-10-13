@@ -5,6 +5,7 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
+import { MiniShell } from './shell.tsx';
 import '../styles.css';
 
 installWebviewGuards();
@@ -30,30 +31,6 @@ function countdown(target: number, now: number): string {
 function variantOf(settings: AppSettings | null): WidgetVariant {
   const value = settings?.widgetVariant;
   return value !== undefined && (WIDGET_VARIANTS as readonly string[]).includes(value) ? value : 'bar';
-}
-
-function Shell({
-  variant,
-  onHide,
-  children,
-}: {
-  variant: WidgetVariant;
-  onHide: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <main className={`mini mini-${variant}`} data-tauri-drag-region>
-      <div className="mini-head" data-tauri-drag-region>
-        <span className="mini-label">晓刻 DawnTick</span>
-        <button type="button" className="mini-close" onClick={onHide} title="隐藏">
-          ×
-        </button>
-      </div>
-      <div className="mini-body" data-tauri-drag-region>
-        {children}
-      </div>
-    </main>
-  );
 }
 
 function Mini() {
@@ -93,19 +70,19 @@ function Mini() {
 
   if (variant === 'minimal') {
     return (
-      <Shell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide}>
         <div className="mini-minimal">
           <span className="mini-count-big">{next === undefined ? '--:--' : countdown(next.startAt, now)}</span>
           <span className="mini-minimal-name">{next?.courseName ?? '暂无后续课程'}</span>
         </div>
-      </Shell>
+      </MiniShell>
     );
   }
 
   if (variant === 'today') {
     const lessons = data?.todayLessons ?? [];
     return (
-      <Shell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide}>
         {lessons.length === 0 ? (
           <div className="mini-empty">今天没有课</div>
         ) : (
@@ -127,7 +104,7 @@ function Mini() {
             })}
           </ul>
         )}
-      </Shell>
+      </MiniShell>
     );
   }
 
@@ -137,7 +114,7 @@ function Mini() {
       .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
       .slice(0, 3);
     return (
-      <Shell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide}>
         <div className="mini-combo-top">
           <span className="mini-label">下一节课</span>
           <span className="mini-title">{next?.courseName ?? '暂无后续课程'}</span>
@@ -165,12 +142,12 @@ function Mini() {
             </ul>
           )}
         </div>
-      </Shell>
+      </MiniShell>
     );
   }
 
   return (
-    <Shell variant={variant} onHide={hide}>
+    <MiniShell variant={variant} onHide={hide}>
       {next === undefined ? (
         <div className="mini-empty">{data?.semester === null ? '尚未创建学期' : '暂无后续课程'}</div>
       ) : (
@@ -185,7 +162,7 @@ function Mini() {
           </div>
         </>
       )}
-    </Shell>
+    </MiniShell>
   );
 }
 

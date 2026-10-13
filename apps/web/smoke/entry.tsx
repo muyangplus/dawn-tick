@@ -18,6 +18,7 @@ import {
   writeSettings,
 } from '@dawn-tick/core';
 import { App } from '../src/App.tsx';
+import { MiniShell } from '../src/mini/shell.tsx';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
   PRESET_CONTENT_META_KEY,
@@ -664,7 +665,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
   check(
     '拖动收尾的那次点击不打开详情',
-    tailClick && document.querySelector('[aria-label="课前提醒"]') === null,
+    tailClick && document.querySelector('[data-role="reminder-section"]') === null,
     '',
   );
   // 再拖一次但不补 click（模拟抬手落在卡片外，抑制标记会残留），随后普通单击必须仍能打开详情
@@ -675,10 +676,35 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '点课程卡打开详情',
     tapped &&
-      document.querySelector('[aria-label="课前提醒"]') !== null &&
+      document.querySelector('[data-role="reminder-section"]') !== null &&
       detailText.includes('删除整门课'),
     detailText.slice(-60),
   );
+  // 课前提醒：区块标题 + 「使用全局配置」子项开关（不再是标题态的复选框）
+  const reminderSection = document.querySelector('[data-role="reminder-section"]');
+  const globalSwitch = reminderSection?.querySelector<HTMLElement>('[role="switch"][aria-label="使用全局配置"]');
+  check(
+    '课前提醒为区块标题且全局配置是子项开关',
+    reminderSection !== null &&
+      (reminderSection.textContent ?? '').includes('课前提醒') &&
+      globalSwitch !== null &&
+      globalSwitch.getAttribute('aria-checked') === 'true' &&
+      reminderSection.querySelector('input[type="checkbox"][aria-label="使用全局配置"]') === null &&
+      (reminderSection.textContent ?? '').includes('本课程未单独设置'),
+    `switch=${globalSwitch?.getAttribute('aria-checked') ?? '(无)'}`,
+  );
+  if (globalSwitch !== null) {
+    globalSwitch.click();
+    await flush(8);
+    check(
+      '关掉全局配置后出现本课程单独设置',
+      (reminderSection.textContent ?? '').includes('本课程单独设置') &&
+        (reminderSection.textContent ?? '').includes('保存提醒'),
+      (reminderSection.textContent ?? '').slice(-40),
+    );
+    globalSwitch.click();
+    await flush(8);
+  }
   // 关掉详情面板，避免影响后续断言
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(8);
@@ -729,6 +755,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '点 + 保留占位块节次范围',
     triggerText('起始节') === '第 1 节' && triggerText('结束节') === '第 2 节',
     `${triggerText('起始节')} → ${triggerText('结束节')}`,
+  );
+  // 内容超过屏高的弹窗必须留在视口内，并由正文区滚动
+  const tallDialog = document.querySelector<HTMLElement>('[role="dialog"]');
+  const tallBody = tallDialog?.querySelector<HTMLElement>('[data-role="dialog-body"]');
+  check(
+    '弹窗有高度上限且正文区可滚动',
+    tallDialog !== null &&
+      tallBody !== null &&
+      tallDialog.className.includes('max-h-') &&
+      tallDialog.className.includes('overflow-hidden') &&
+      tallBody.className.includes('overflow-y-auto'),
+    `弹窗=${tallDialog?.className.includes('max-h-') === true ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
   check('取消后占位块消失', view.container.querySelector('[data-role="empty-slot"]') === null, '');
@@ -850,6 +888,62 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     );
   }
   if (clickByText(document.body, '取消')) await flush(6);
+
+  // C2b-4：空白格按下不松手直接拖出范围（第一次按下就要能拖），松手直接进加课弹窗
+  const column = view.container.querySelector(`[data-day="7"]`);
+  if (column instanceof window.HTMLElement) {
+    stubRect(column, 700, 100);
+    const downY = 104;
+    const upY = 100 + 2 * 56 + 4;
+    const cell = [...column.querySelectorAll('div')][0];
+    const target = cell instanceof window.HTMLElement ? cell : column;
+    target.dispatchEvent(pointerEvent('pointerdown', { pointerId: 51, button: 0, clientX: 750, clientY: downY }));
+    await flush(6);
+    check(
+      '空白格按下即出现单节占位块',
+      slotRange(view.container) === '第 1 节' && view.container.querySelector('[data-role="empty-slot"]') !== null,
+      slotRange(view.container),
+    );
+    target.dispatchEvent(pointerEvent('pointermove', { pointerId: 51, clientX: 750, clientY: upY }));
+    await flush(6);
+    check(
+      '不松手继续拖动即可扩成范围',
+      slotRange(view.container) === '第 1–3 节' &&
+        view.container.querySelector('[data-role="empty-drag-label"]') !== null,
+      `${slotRange(view.container)} / 反馈=${view.container.querySelector('[data-role="empty-drag-label"]') === null ? '无' : '有'}`,
+    );
+    target.dispatchEvent(pointerEvent('pointerup', { pointerId: 51, clientX: 750, clientY: upY }));
+    // 真实浏览器里 click 紧跟在 pointerup 之后：这里同样紧邻派发，验证收尾那次点击被抑制
+    target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientY: upY }));
+    await flush(12);
+    check(
+      '第一次按下拖出的范围直接进加课弹窗',
+      (document.body.textContent ?? '').includes('添加课程') &&
+        triggerText('星期') === '周日' &&
+        triggerText('起始节') === '第 1 节' &&
+        triggerText('结束节') === '第 3 节',
+      `${triggerText('星期')} ${triggerText('起始节')} → ${triggerText('结束节')}`,
+    );
+    check(
+      '拖动松手后的那次点击不另起占位块',
+      view.container.querySelector('[data-role="empty-slot"]') === null &&
+        (document.body.textContent ?? '').includes('添加课程'),
+      `占位块=${view.container.querySelector('[data-role="empty-slot"]') === null ? '无' : slotRange(view.container)} / 弹窗=${(document.body.textContent ?? '').includes('添加课程') ? '在' : '不在'}`,
+    );
+  }
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // 只按一下不动（轻微抖动也算单击）：保留单节占位块，不弹加课弹窗
+  clickGridCell(view.container, 7, 5);
+  await flush(8);
+  check(
+    '空白格单击（未拖动）只留单节占位块',
+    slotRange(view.container) === '第 5 节' && document.querySelector('[aria-label="起始节"]') === null,
+    `${slotRange(view.container)}`,
+  );
+  // 清掉占位块，避免影响后面的拖动调课断言
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
 
   // C2c：拖动调课落到已占用的节次：仍然能调，只多一条重叠提醒
   await dragLesson(view.container, '高数', { day: 1, clientY: 216 });
@@ -1331,6 +1425,65 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       decodeURIComponent(requestLink.getAttribute('href') ?? '').includes('清华大学'),
     requestLink?.getAttribute('href') ?? '(没有链接)',
   );
+
+  // 内置链接：点击不在应用内打开，先弹确认框，确认后交默认浏览器或复制链接
+  const openedUrls: string[] = [];
+  const originalOpen = window.open;
+  Object.defineProperty(window, 'open', {
+    configurable: true,
+    writable: true,
+    value: ((...args: unknown[]) => {
+      openedUrls.push(String(args[0] ?? ''));
+      return { closed: false } as unknown as Window;
+    }) as typeof window.open,
+  });
+  const linkUrlBox = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>('[data-role="external-link-url"]');
+  const requestLinkElement = requestLink as unknown as HTMLElement | null;
+  requestLinkElement?.click();
+  await flush(10);
+  check(
+    '内置链接点击先弹确认框而不直接打开',
+    openedUrls.length === 0 &&
+      linkUrlBox() !== null &&
+      (document.body.textContent ?? '').includes('用默认浏览器打开') &&
+      (document.body.textContent ?? '').includes('复制链接'),
+    `已打开 ${openedUrls.length} 次 / 地址框=${linkUrlBox() === null ? '无' : '有'}`,
+  );
+  check(
+    '确认框地址与链接一致',
+    (linkUrlBox()?.value ?? '').includes('template=request-school.yml') &&
+      decodeURIComponent(linkUrlBox()?.value ?? '').includes('清华大学'),
+    linkUrlBox()?.value ?? '(无)',
+  );
+  let copiedLink = '';
+  Object.defineProperty(window.navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async (text: string) => { copiedLink = text; } },
+  });
+  document.querySelector<HTMLElement>('[data-role="external-link-copy"]')?.click();
+  await flush(12);
+  check(
+    '复制链接写入剪贴板并关闭确认框',
+    copiedLink.includes('template=request-school.yml') &&
+      openedUrls.length === 0 &&
+      linkUrlBox() === null &&
+      (document.body.textContent ?? '').includes('已复制链接'),
+    `剪贴板=${copiedLink === '' ? '(空)' : '已写入'} / 已打开 ${openedUrls.length} 次`,
+  );
+  requestLinkElement?.click();
+  await flush(10);
+  document.querySelector<HTMLElement>('[data-role="external-link-open"]')?.click();
+  await flush(12);
+  check(
+    '确认后交给浏览器打开并关闭确认框',
+    openedUrls.length === 1 &&
+      openedUrls[0].includes('template=request-school.yml') &&
+      linkUrlBox() === null &&
+      (document.body.textContent ?? '').includes('已在默认浏览器打开'),
+    `已打开 ${openedUrls.join('、') || '(无)'}`,
+  );
+  Object.defineProperty(window, 'open', { configurable: true, writable: true, value: originalOpen });
 
   const qinghuaBadge = (qinghuaRow?.querySelector('[data-role="school-badge"]')?.textContent ?? '').trim();
   const qinghuaLabel = qinghuaRow?.getAttribute('aria-label') ?? '';
@@ -1885,5 +2038,35 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
   remounted.root.unmount();
+
+  // —— 悬浮窗外壳：整窗作为拖动区（deep），关闭按钮自身仍是可点元素 ——
+  let hidden = 0;
+  const mini = mount(
+    <MiniShell variant="bar" onHide={() => { hidden += 1; }}>
+      <div className="mini-title">高等数学</div>
+      <div className="mini-row">
+        <span className="mini-count">09:55</span>
+      </div>
+    </MiniShell>,
+  );
+  await flush(4);
+  const miniRoot = mini.container.querySelector('main.mini');
+  check(
+    '悬浮窗整窗为拖动区',
+    miniRoot?.getAttribute('data-tauri-drag-region') === 'deep' &&
+      mini.container.querySelector('.mini-title')?.getAttribute('data-tauri-drag-region') === null,
+    `拖动区=${miniRoot?.getAttribute('data-tauri-drag-region') ?? '(无)'}`,
+  );
+  const miniClose = mini.container.querySelector<HTMLElement>('button.mini-close');
+  check(
+    '悬浮窗关闭按钮仍是可点击元素',
+    miniClose !== null && miniClose.tagName === 'BUTTON' && miniClose.getAttribute('data-tauri-drag-region') === null,
+    miniClose?.tagName ?? '(无按钮)',
+  );
+  miniClose?.click();
+  await flush(4);
+  check('悬浮窗关闭按钮触发隐藏', hidden === 1, `隐藏 ${hidden} 次`);
+  mini.root.unmount();
+
   return results;
 }

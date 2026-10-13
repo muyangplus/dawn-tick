@@ -34,6 +34,7 @@ import {
 } from '../screens/school-picker-model.ts';
 import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
+import { ExternalLink } from './ui/external-link.tsx';
 import { Input } from './ui/input.tsx';
 
 /** 地区下拉里「全部地区」的哨兵值：Radix Select 不接受空字符串。 */
@@ -264,17 +265,14 @@ export function SchoolPicker({
                       {badge}
                     </span>
                     {!info.adapted && (
-                      <a
-                        data-role="request-school"
+                      <ExternalLink
+                        dataRole="request-school"
                         href={requestSchoolUrl(school.name)}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`请求适配 ${school.name}`}
+                        ariaLabel={`请求适配 ${school.name}`}
                         className="text-xs text-primary-strong underline-offset-4 hover:underline"
-                        onClick={(event) => event.stopPropagation()}
                       >
                         请求适配
-                      </a>
+                      </ExternalLink>
                     )}
                   </span>
                 </div>
@@ -294,16 +292,14 @@ export function SchoolPicker({
         </span>
         <span className="flex items-center gap-1 text-xs text-muted">
           找不到你的学校？
-          <a
-            data-role="request-school-form"
+          <ExternalLink
+            dataRole="request-school-form"
             href={requestSchoolUrl()}
-            target="_blank"
-            rel="noreferrer"
-            aria-label="提交学校信息"
+            ariaLabel="提交学校信息"
             className="text-primary-strong underline-offset-4 hover:underline"
           >
             提交学校信息
-          </a>
+          </ExternalLink>
         </span>
       </div>
     </div>

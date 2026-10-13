@@ -128,8 +128,8 @@ interface DragSession {
   element: HTMLElement | null;
 }
 
-/** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩。 */
-type EmptyDragMode = 'wheel' | 'body';
+/** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩，空白格按下直接拖出范围。 */
+type EmptyDragMode = 'wheel' | 'body' | 'select';
 
 /**
  * 块本体拖动时哪条边跟着指针走：
@@ -200,6 +200,8 @@ export function WeekView({
   const wheelAt = useRef(0);
   const sectionRef = useRef<HTMLElement | null>(null);
   const emptyDrag = useRef<EmptyDragState | null>(null);
+  /** 是否已显示拖动中的实时反馈：pointermove 里不读 state，避免拿到过期值 */
+  const emptyVisual = useRef(false);
   /** 拖动占位块松手后紧跟着的那次 click：只用来清标记，不再生成占位块 */
   const suppressSlotClick = useRef(false);
   const suppressSlotTimer = useRef(0);
@@ -355,9 +357,30 @@ export function WeekView({
       endPeriod: current.end,
       moved: false,
     };
-    if (mode === 'body') setEmptyDragMode('body');
+    if (mode === 'body') showEmptyVisual('body');
     // 这里刻意不 setPointerCapture：捕获会把后面的兼容鼠标事件也改派到块节点上，
     // 单击「＋」的 click 就落不到按钮上了；移动/抬手改由拖动期间的 window 监听兜住。
+  }
+
+  function showEmptyVisual(mode: EmptyDragMode | null): void {
+    emptyVisual.current = mode !== null;
+    setEmptyDragMode(mode);
+  }
+
+  /**
+   * 空白格按下：记下按下的节次，不松手即可上下拖出范围；
+   * 拖动期间沿用块本体的「两边一起扩」口径，松手直接进加课弹窗。
+   */
+  function beginSlotSelect(event: React.PointerEvent<HTMLElement>, period: number): void {
+    emptyDrag.current = {
+      pointerId: event.pointerId,
+      mode: 'select',
+      edge: 'both',
+      startY: event.clientY,
+      startPeriod: period,
+      endPeriod: period,
+      moved: false,
+    };
   }
 
   function moveEmptyDrag(event: DragPointer): void {
@@ -366,8 +389,16 @@ export function WeekView({
     const current = emptyRef.current;
     if (current === null) return;
     event.preventDefault();
-    if (Math.abs(event.clientY - active.startY) > MOVE_TOLERANCE) active.moved = true;
     const rows = Math.round((event.clientY - active.startY) / ROW_HEIGHT);
+    if (active.mode === 'select') {
+      // 按下的那一次若只是轻微抖动，仍算单击选格；真的跨了一节才当拖动
+      if (rows !== 0) {
+        active.moved = true;
+        if (!emptyVisual.current) showEmptyVisual('select');
+      }
+    } else if (Math.abs(event.clientY - active.startY) > MOVE_TOLERANCE) {
+      active.moved = true;
+    }
     const range = active.mode === 'wheel' ? wheelRangeOf(active, rows) : bodyRangeOf(active, rows);
     setEmptyTarget({ day: current.day, start: range.start, end: range.end });
     warnClash(current.day, range.start, range.end);
@@ -401,7 +432,7 @@ export function WeekView({
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     emptyDrag.current = null;
-    setEmptyDragMode(null);
+    showEmptyVisual(null);
     lastClash.current = '';
     const current = emptyRef.current;
     if (current === null) return;
@@ -425,7 +456,7 @@ export function WeekView({
     const active = emptyDrag.current;
     if (active === null || active.pointerId !== event.pointerId) return;
     emptyDrag.current = null;
-    setEmptyDragMode(null);
+    showEmptyVisual(null);
     lastClash.current = '';
   }
 
@@ -542,6 +573,9 @@ export function WeekView({
     setDrag(null);
     dropRef.current = null;
   }
+
+  /** 占位块本体（含空白格按下直接拖）拖动中：显示实时范围与重叠提示 */
+  const bodyDragging = emptyDragMode === 'body' || emptyDragMode === 'select';
 
   return (
     <section
@@ -662,7 +696,15 @@ export function WeekView({
                     // 长按拖动课程卡时会冒泡到列上，此时不要弹占位块
                     if (session.current !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount));
+                    const period = periodAt(event.clientY, bounds.top, periodCount);
+                    // 已占用的格只清掉占位块，不进入拖动
+                    if (occupied(data, day, period)) {
+                      setEmptyTarget(null);
+                      return;
+                    }
+                    pickEmpty(day, period);
+                    // 空白格按下即进入范围拖动：不松手拖过去就定范围，松手直接开加课弹窗
+                    beginSlotSelect(event, period);
                   }}
                   onClick={(event) => {
                     // 拖动占位块松手后的那一次 click 只用来清标记（此时加课弹窗已经打开）
@@ -701,7 +743,7 @@ export function WeekView({
                     <div
                       className={cn(
                         'absolute inset-x-1 z-10 flex select-none flex-col items-stretch gap-1 overflow-hidden rounded-sm border-2 border-dashed border-primary-strong bg-surface px-1.5 py-1',
-                        emptyDragMode === 'body' && 'ring-2 ring-primary-strong',
+                        bodyDragging && 'ring-2 ring-primary-strong',
                       )}
                       style={{
                         top: `${(placeholder.start - 1) * ROW_HEIGHT + 2}px`,
@@ -709,7 +751,7 @@ export function WeekView({
                         touchAction: 'none',
                       }}
                       data-role="empty-slot"
-                      data-dragging={emptyDragMode === 'body' ? 'true' : undefined}
+                      data-dragging={bodyDragging ? 'true' : undefined}
                       onPointerDown={(event) => beginEmptyDrag(event, 'body')}
                       onPointerMove={moveEmptyDrag}
                       onPointerUp={endEmptyDrag}
@@ -733,7 +775,7 @@ export function WeekView({
                         >
                           <Plus className="size-4" aria-hidden />
                         </button>
-                        {emptyDragMode === 'body' && (
+                        {bodyDragging && (
                           // 拖动中的实时反馈：盖在「＋」上的一层；pointer-events-none 让单击仍落在按钮上
                           <div
                             data-role="empty-drag-label"

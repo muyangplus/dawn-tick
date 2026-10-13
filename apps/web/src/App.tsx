@@ -22,6 +22,7 @@ import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
 import { Button } from './components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
+import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { Field, Input } from './components/ui/input.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
@@ -912,6 +913,7 @@ export function App() {
       />
 
       <Toaster mode={resolvedMode} />
+      <ExternalLinkConfirm />
     </div>
   );
 }

@@ -116,6 +116,8 @@
 
 `powershell -File tools/build-local.ps1` 默认 **dev 渠道 + debug 构建**（`-Channel release` 才出 release），产物在 `out-local/`。
 
+运行日志：`%LOCALAPPDATA%\com.dawntick.app\startup.log`，同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）；dev 与 beta 渠道的设置页提供「打开日志文件所在目录」，在资源管理器中定位该目录。
+
 ## 许可证
 
 Apache-2.0，见 [LICENSE](LICENSE)。

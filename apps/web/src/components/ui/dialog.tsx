@@ -19,8 +19,9 @@ export function DialogContent({
       <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-overlay" />
       <DialogPrimitive.Content
         className={cn(
-          'fixed left-1/2 top-1/2 z-50 flex w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4',
-          'rounded-lg border border-line bg-surface p-4 shadow-lg',
+          // 高度上限按视口算：内容再长也留在屏幕内，由下面的正文区滚动
+          'fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4',
+          'overflow-hidden rounded-lg border border-line bg-surface p-4 shadow-lg',
           className,
         )}
         {...props}
@@ -41,7 +42,12 @@ export function DialogContent({
             <X className="size-4" aria-hidden />
           </DialogPrimitive.Close>
         </div>
-        {children}
+        <div
+          data-role="dialog-body"
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pr-1"
+        >
+          {children}
+        </div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   );

@@ -37,6 +37,76 @@ fn log_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// 日志实际落盘的目录：优先已经存在 startup.log 的那个，否则用第一个候选。
+fn log_file_dir() -> Option<PathBuf> {
+    let dirs = log_dirs();
+    dirs.iter()
+        .find(|dir| dir.join("startup.log").exists())
+        .cloned()
+        .or_else(|| dirs.into_iter().next())
+}
+
+/// 同一条日志写到控制台：有控制台句柄时直接写，否则退回标准输出。
+#[cfg(windows)]
+fn console_log(message: &str) {
+    use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, HANDLE};
+    use windows_sys::Win32::System::Console::{GetStdHandle, WriteConsoleW, STD_OUTPUT_HANDLE};
+    unsafe {
+        let handle: HANDLE = GetStdHandle(STD_OUTPUT_HANDLE);
+        if handle != 0 && handle != INVALID_HANDLE_VALUE {
+            let line: Vec<u16> = message.encode_utf16().chain(std::iter::once(b'\n' as u16)).collect();
+            let mut written: u32 = 0;
+            if WriteConsoleW(
+                handle,
+                line.as_ptr() as *const std::ffi::c_void,
+                line.len() as u32,
+                &mut written,
+                std::ptr::null(),
+            ) != 0
+            {
+                return;
+            }
+        }
+    }
+    let _ = writeln!(std::io::stdout(), "{message}");
+}
+
+#[cfg(not(windows))]
+fn console_log(message: &str) {
+    let _ = writeln!(std::io::stdout(), "{message}");
+}
+
+/// 启动时把日志接到控制台：已挂控制台就不动，否则先附加到父进程控制台；
+/// 提权实例无法附加时新开一个控制台窗口，保证管理员运行也能看到日志。
+#[cfg(windows)]
+fn ensure_console() {
+    use windows_sys::Win32::System::Console::{
+        AllocConsole, AttachConsole, GetConsoleWindow, SetConsoleTitleW, ATTACH_PARENT_PROCESS,
+    };
+    unsafe {
+        if GetConsoleWindow() != 0 {
+            return;
+        }
+        if AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
+            return;
+        }
+        if !is_elevated() {
+            return;
+        }
+        if AllocConsole() != 0 {
+            let title: Vec<u16> = "晓刻 DawnTick 日志"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            SetConsoleTitleW(title.as_ptr());
+            let _ = writeln!(std::io::stdout(), "晓刻 DawnTick 日志已连接到本控制台");
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn ensure_console() {}
+
 fn append_log(message: &str) {
     for dir in log_dirs() {
         if create_dir_all(&dir).is_err() {
@@ -44,10 +114,10 @@ fn append_log(message: &str) {
         }
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
             let _ = writeln!(file, "{message}");
-            return;
+            break;
         }
     }
-    eprintln!("{message}");
+    console_log(message);
 }
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -500,6 +570,70 @@ async fn hide_widget(app: tauri::AppHandle) -> Result<(), String> {
         append_log("已隐藏悬浮窗");
     }
     Ok(())
+}
+
+/// 允许交给外部程序的链接：只有 http 与 https，且不含换行与引号。
+fn external_url_is_allowed(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        return false;
+    }
+    !url.chars().any(|item| item == '\r' || item == '\n' || item == '"')
+}
+
+/// 交给 shell 打开一个目标（链接或目录）。
+#[cfg(windows)]
+fn shell_open(target: &str, what: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
+    let verb = wide("open");
+    let file = wide(target);
+    let result = unsafe {
+        ShellExecuteW(
+            0,
+            verb.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    if (result as isize) <= 32 {
+        return Err(format!("{what}失败（代码 {}）", result as isize));
+    }
+    Ok(())
+}
+
+/// 用系统默认浏览器打开链接；应用自身不加载该页面。
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !external_url_is_allowed(&url) {
+        return Err("只支持 http 与 https 链接".to_string());
+    }
+    #[cfg(windows)]
+    {
+        shell_open(&url, "打开默认浏览器")?;
+        append_log(&format!("已在默认浏览器打开链接: {url}"));
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台不支持".to_string())
+    }
+}
+
+/// 在资源管理器里打开日志目录，返回目录路径。
+#[tauri::command]
+fn open_log_dir() -> Result<String, String> {
+    let dir = log_file_dir().ok_or_else(|| "无法定位日志目录".to_string())?;
+    create_dir_all(&dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
+    #[cfg(windows)]
+    {
+        shell_open(&dir.to_string_lossy(), "打开日志目录")?;
+        append_log(&format!("已打开日志目录: {}", dir.display()));
+    }
+    Ok(dir.to_string_lossy().to_string())
 }
 
 /// 再次启动时的处置方式。
@@ -1589,6 +1723,7 @@ fn remap_skip_reason(geometry: &WindowGeometry, monitors: &[MonitorSnapshot]) ->
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    ensure_console();
     install_panic_logger();
     append_log(&format!("应用启动 v{APP_VERSION}"));
 
@@ -1647,7 +1782,9 @@ pub fn run() {
             submit_page_import,
             show_widget,
             hide_widget,
-            tray_status
+            tray_status,
+            open_external_url,
+            open_log_dir
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1751,6 +1888,17 @@ mod tests {
         assert!(!hidden_for_launch(&autostart, &show));
         assert!(!hidden_for_launch(&manual, &hide));
         assert!(!hidden_for_launch(&manual, &show));
+    }
+
+    #[test]
+    fn external_link_scheme_is_restricted() {
+        assert!(external_url_is_allowed("https://github.com/muyangplus/dawn-tick-presets"));
+        assert!(external_url_is_allowed("HTTP://example.com/issue/new?template=request-school.yml"));
+        assert!(!external_url_is_allowed("file:///C:/Windows/System32"));
+        assert!(!external_url_is_allowed("javascript:alert(1)"));
+        assert!(!external_url_is_allowed("C:\\Windows\\System32\\calc.exe"));
+        assert!(!external_url_is_allowed("https://example.com/\r\ncalc"));
+        assert!(!external_url_is_allowed("https://example.com/\"quoted\""));
     }
 
     #[test]

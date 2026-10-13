@@ -47,6 +47,7 @@ import {
 import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
+import { openLogDirectory } from '../system-actions.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
@@ -55,6 +56,7 @@ import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { ExternalLink } from '../components/ui/external-link.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -354,6 +356,12 @@ export function SettingsView({
     downloadText(`DawnTick-日志-${new Date().toISOString().slice(0, 10)}.txt`, entries === '' ? '暂无日志' : entries);
     setBackupMessage(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
     void clearLogs();
+  }
+
+  /** 桌面端：让资源管理器打开日志目录，便于直接查看 startup.log。 */
+  async function showLogDirectory(): Promise<void> {
+    const dir = await openLogDirectory();
+    setBackupMessage(dir === null ? '当前平台不支持打开日志目录' : `日志目录：${dir}`);
   }
 
   /** 渠道独占：仅 dev 渠道提供，用于快速构造可测试的课表。 */
@@ -864,6 +872,11 @@ export function SettingsView({
               导出日志
             </Button>
           )}
+          {canUseWidget() && featureVisible('diagnostics') && (
+            <Button size="sm" variant="secondary" onClick={() => void showLogDirectory()}>
+              打开日志文件所在目录
+            </Button>
+          )}
           {featureVisible('sampleData') && (
             <Button size="sm" variant="secondary" disabled={busy} onClick={() => void seedSampleData()}>
               填充示例数据
@@ -892,21 +905,22 @@ export function SettingsView({
           版本 {appVersion()} · {CHANNEL_LABEL[CHANNEL]}
         </span>
         <span className="text-xs text-muted">许可证 Apache-2.0</span>
-        <a className="text-xs text-primary-strong underline" href="https://github.com/muyangplus/dawn-tick">
+        <ExternalLink
+          className="text-xs text-primary-strong underline"
+          href="https://github.com/muyangplus/dawn-tick"
+        >
           https://github.com/muyangplus/dawn-tick
-        </a>
+        </ExternalLink>
         <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
           <span>预设仓库</span>
-          <a
-            data-role="preset-repo-link"
+          <ExternalLink
+            dataRole="preset-repo-link"
             className="text-primary-strong underline"
             href="https://github.com/muyangplus/dawn-tick-presets"
-            target="_blank"
-            rel="noreferrer noopener"
-            aria-label="打开预设仓库 dawn-tick-presets（GitHub，新窗口）"
+            ariaLabel="打开预设仓库 dawn-tick-presets（GitHub）"
           >
             https://github.com/muyangplus/dawn-tick-presets
-          </a>
+          </ExternalLink>
           <span data-role="preset-version">
             预设版本：
             {presetSource === null
