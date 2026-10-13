@@ -4,7 +4,7 @@ import { addMinutes, parseClock, sectionOf } from './timetable.ts';
 import { maskToWeeks, weeksToMask } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { assertValid } from './validation.ts';
-import type { EventType, HolidaySource, PeriodSection, ReminderTargetType } from './types.ts';
+import type { EventNature, EventType, HolidaySource, PeriodSection, ReminderTargetType } from './types.ts';
 
 type Row = Record<string, unknown>;
 
@@ -651,6 +651,17 @@ export interface CreateEventInput {
   parentId?: string | null;
   source?: HolidaySource | null;
   asDayOfWeek?: number | null;
+  /** 开启倒计时：在倒计时卡片里显示剩余天数 */
+  countdown?: boolean;
+  /** 需要手动确认完成：不自动完成，过期也留在待办列表 */
+  manualDone?: boolean;
+  /** 性质标签覆盖（课程 / 实验） */
+  nature?: EventNature | null;
+  /** 实验节次（type = 'lab' 时必填） */
+  periodStart?: number | null;
+  periodEnd?: number | null;
+  /** 实验重复周次位图；为空表示只这一次 */
+  weeksMask?: number | null;
 }
 
 export async function createEvent(
@@ -673,10 +684,16 @@ export async function createEvent(
     location: input.location ?? null,
     note: input.note ?? null,
     done: 0,
+    countdown: input.countdown === true ? 1 : 0,
+    manual_done: input.manualDone === true ? 1 : 0,
+    nature: input.nature ?? null,
     priority: input.priority ?? null,
     due_at: input.dueAt ?? null,
     subject: input.subject ?? null,
     seat_no: input.seatNo ?? null,
+    period_start: input.periodStart ?? null,
+    period_end: input.periodEnd ?? null,
+    weeks_mask: input.weeksMask ?? null,
     ref_schedule_id: null,
     action: null,
     new_date: null,

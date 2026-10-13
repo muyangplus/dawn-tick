@@ -6,13 +6,18 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import schemaSql from '@dawn-tick/core/schema/001_init.sql?raw';
+import eventKindsSql from '@dawn-tick/core/schema/002_event_kinds.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 
 export { detectPlatform };
 export type { Platform };
 
-export const MIGRATIONS: Migration[] = [{ id: '001_init', sql: schemaSql }];
+/** 迁移按 id 升序应用；已应用的会跳过，所以每次启动都调用 migrate 是幂等的。 */
+export const MIGRATIONS: Migration[] = [
+  { id: '001_init', sql: schemaSql },
+  { id: '002_event_kinds', sql: eventKindsSql },
+];
 
 async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Storage> {
   const driver =
@@ -20,10 +25,7 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
       ? await (await import('./tauri-driver.ts')).openTauriDriver()
       : await (await import('./capacitor-driver.ts')).openCapacitorDriver();
 
-  const existing = await driver.get(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name='users'",
-  );
-  if (existing === undefined) await migrate(driver, MIGRATIONS);
+  await migrate(driver, MIGRATIONS);
   return sqliteStorage(driver);
 }
 

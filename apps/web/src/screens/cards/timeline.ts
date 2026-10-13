@@ -1,4 +1,4 @@
-import { formatDate, formatTime, type EventRow } from '@dawn-tick/core';
+import { dateWallClockToEpoch, formatDate, formatTime, type EventRow } from '@dawn-tick/core';
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { formatDayCountdown } from '../../lib/format.ts';
@@ -12,7 +12,7 @@ export const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周�
  * - `data.todos` 里 `type === 'exam'` 的考试（没有开考时间，进不了考试倒计时卡）→ 考试
  * - `data.todos` 里 `type === 'todo' | 'temp'` 的待办 → 其他
  */
-export type TimelineNature = '课程' | '调整' | '其他' | '考试';
+export type TimelineNature = '课程' | '调整' | '其他' | '作业' | '考试' | '实验';
 
 export interface TimelineItem {
   key: string;
@@ -22,8 +22,8 @@ export interface TimelineItem {
   minute: number;
   /** 同一天内的先后：课程 → 调课/调休 → 待办 */
   rank: number;
-  /** 渲染用的粗分类；考试单独一种，便于用 data-kind 定位 */
-  kind: 'lesson' | 'adjust' | 'todo' | 'exam';
+  /** 渲染用的粗分类；考试与实验单独一种，便于用 data-kind 定位 */
+  kind: 'lesson' | 'adjust' | 'todo' | 'exam' | 'lab';
   /** 类型标签文案（课程 / 调整 / 其他 / 考试） */
   nature: TimelineNature;
   title: string;
@@ -47,6 +47,8 @@ export interface TimelineItem {
   completed: boolean;
   /** 是否还允许手动勾选：自动完成的条目不再提供勾选框，避免与自动判定互相打架 */
   checkable: boolean;
+  /** 逐条「开启倒计时」打开时的剩余天数文案；null 表示不显示 */
+  countdownText?: string | null;
   /** 该课程/条目的颜色；null 表示用主题主色 */
   color: string | null;
   event?: EventRow;
@@ -66,6 +68,15 @@ function minuteOf(epoch: number | null, timeZone: string): number {
   if (epoch === null) return 0;
   const [hour, minute] = formatTime(epoch, timeZone).split(':').map(Number);
   return (hour ?? 0) * 60 + (minute ?? 0);
+}
+
+/** 日期 + 墙钟 → 时刻；解析失败退回 0，只用于排序。 */
+function clockEpoch(date: string, time: string, timeZone: string): number {
+  try {
+    return dateWallClockToEpoch(date, time, timeZone);
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -138,7 +149,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: minuteOf(startAt, data.timeZone),
       rank: 1,
       kind: 'adjust',
-      nature: '调整',
+      nature: item.nature === 'lab' ? '实验' : '调整',
       title: item.title,
       detail,
       location: item.location ?? item.new_room ?? null,
@@ -162,13 +173,18 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (todoDate !== null && todoDate !== date) continue;
     const linkedCourse = data.courses.find((course) => course.id === todo.subject);
     const isExam = todo.type === 'exam';
+    const isHomework = todo.type === 'homework';
     const done = todo.done === 1;
-    const autoDone = isOverdue(endEpoch, now);
+    // 「需要手动确认完成」的条目不自动完成：过期也留在待办列表
+    const manual = todo.manual_done === 1;
+    const autoDone = manual ? false : isOverdue(endEpoch, now);
+    const overdue = manual && endEpoch !== null && endEpoch <= now && !done;
     const parts: string[] = [];
     if (linkedCourse !== undefined) parts.push(linkedCourse.name);
     if (endEpoch !== null && endEpoch > now) {
       parts.push(formatDayCountdown(endEpoch, now));
     }
+    if (overdue) parts.push('已过期');
     if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
     items.push({
       key: `todo-${todo.id}`,
@@ -176,7 +192,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: minuteOf(endEpoch, data.timeZone),
       rank: 2,
       kind: isExam ? 'exam' : 'todo',
-      nature: isExam ? '考试' : '其他',
+      nature: isExam ? '考试' : isHomework ? '作业' : '其他',
       title: todo.title,
       detail: parts.join(' · '),
       location: todo.location,
@@ -188,8 +204,42 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       running: false,
       completed: done || autoDone,
       checkable: !autoDone,
+      countdownText:
+        todo.countdown === 1 && endEpoch !== null ? formatDayCountdown(endEpoch, now) : null,
       color: linkedCourse?.color ?? null,
       event: todo,
+    });
+  }
+
+  // 实验条目：按节次换算起止时间，标「实验」
+  for (const lab of data.labs) {
+    if (lab.on_date !== date) continue;
+    if (lab.period_start === null) continue;
+    const startSlot = data.slots.find((slot) => slot.period_no === lab.period_start);
+    const endSlot = data.slots.find((slot) => slot.period_no === lab.period_end);
+    const head: number = lab.period_start;
+    const tail: number = lab.period_end ?? lab.period_start;
+    items.push({
+      key: `lab-${lab.id}`,
+      date: lab.on_date,
+      minute: startSlot === undefined ? 0 : minuteOf(clockEpoch(lab.on_date, startSlot.start_time, data.timeZone), data.timeZone),
+      rank: 0,
+      kind: 'lab',
+      nature: '实验',
+      title: lab.title,
+      detail: tail > head ? `第 ${head}–${tail} 节` : `第 ${head} 节`,
+      location: lab.location,
+      startText: startSlot?.start_time ?? null,
+      endText: endSlot?.end_time ?? null,
+      endEpoch: null,
+      done: lab.done === 1,
+      autoDone: false,
+      running: false,
+      completed: lab.done === 1,
+      checkable: true,
+      countdownText: null,
+      color: '#8E7CC3',
+      event: lab,
     });
   }
 

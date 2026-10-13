@@ -602,8 +602,8 @@ export function WeekView({
         />
       )}
 
-      {/* 不横向滚动：列宽按容器等分，窄屏时压缩节次轴与卡片间距 */}
-      <div className="rounded-lg border border-line bg-surface [--dt-axis:2.25rem] tablet:[--dt-axis:3.5rem]">
+      {/* 不横向滚动：列宽按容器等分，窄屏压缩节次轴与卡片间距；节次轴始终显示起止时间 */}
+      <div className="rounded-lg border border-line bg-surface [--dt-axis:2.75rem] tablet:[--dt-axis:3.5rem]">
         <div>
           <div
             className="grid border-b border-line"
@@ -645,12 +645,12 @@ export function WeekView({
               {slots.map((slot, index) => (
                 <div
                   key={slot.periodNo}
-                  className="absolute inset-x-0 flex flex-col items-center justify-center gap-0.5 border-b border-line text-[10px] text-muted tablet:text-[11px]"
+                  className="absolute inset-x-0 flex flex-col items-center justify-center gap-0.5 border-b border-line text-[9px] text-muted tablet:text-[11px]"
                   style={{ top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
                 >
                   <span className="tabular font-semibold text-ink">{slot.periodNo}</span>
                   <span className="tabular">{slot.startTime}</span>
-                  <span className="tabular hidden tablet:inline">{slot.endTime}</span>
+                  <span className="tabular">{slot.endTime}</span>
                 </div>
               ))}
             </div>
@@ -875,7 +875,14 @@ export function WeekView({
                                   : 'ghost'
                         }
                         badge={
-                          lesson.movedIn ? (
+                          lesson.lab ? (
+                            <span
+                              className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-accent-strong"
+                              data-role="lab-label"
+                            >
+                              实验
+                            </span>
+                          ) : lesson.movedIn ? (
                             <span
                               className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
                               data-role="moved-in-label"
@@ -895,7 +902,7 @@ export function WeekView({
                         }}
                         className={cn(
                           'h-full',
-                          lesson.inWeek && !lesson.cancelled && !lesson.movedOut && !lesson.movedIn && 'cursor-grab select-none',
+                          lesson.inWeek && !lesson.cancelled && !lesson.movedOut && !lesson.movedIn && !lesson.lab && 'cursor-grab select-none',
                         )}
                       />
                     </div>

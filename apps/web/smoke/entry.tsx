@@ -984,7 +984,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
-  check('切到日程页', switchedToSchedule && scheduleText.includes('考试倒计时'), scheduleText.slice(0, 60));
+  check('切到日程页', switchedToSchedule && scheduleText.includes('倒计时'), scheduleText.slice(0, 60));
   // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/课程调整收进「＋」，其余收进「⋯」
   check(
     '日程页默认只剩顶部一行与时间线',
@@ -1203,20 +1203,27 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(view.container, '日程')) await flush(12);
 
-  if (clickMenu(view.container, '添加', '加考试')) await flush(12);
+  if (clickMenu(view.container, '添加', '加待办')) await flush(12);
+  const examKindButton = document.querySelector<HTMLElement>('[aria-label="待办类型：考试"]');
+  examKindButton?.click();
+  await flush(8);
   check(
-    '加考试入口打开考试表单',
-    document.body.textContent?.includes('考试倒计时') === true &&
-      document.querySelector('[aria-label="开考时间"]') !== null,
-    '',
+    '加待办入口可选考试类型',
+    document.body.textContent?.includes('添加待办') === true &&
+      examKindButton !== null &&
+      document.querySelector('[aria-label="开考时间"]') !== null &&
+      (document.querySelector('[aria-label="开启倒计时"]')?.getAttribute('aria-checked') ?? '') === 'true',
+    `类型按钮=${examKindButton === null ? '无' : '有'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
-  if (clickMenu(view.container, '添加', '加日程')) await flush(12);
+  if (clickMenu(view.container, '添加', '加待办')) await flush(12);
   check(
-    '加日程可关联课程并带提醒',
+    '加待办可关联课程并带提醒',
     document.querySelector('[aria-label="关联课程"]') !== null &&
-      document.querySelector('[aria-label="日程提前提醒"]') !== null,
+      document.querySelector('[aria-label="待办提前提醒"]') !== null &&
+      document.querySelector('[aria-label="开启倒计时"]') !== null &&
+      document.querySelector('[aria-label="需要手动确认完成"]') !== null,
     '',
   );
   if (clickByText(document.body, '取消')) await flush(6);
@@ -1787,7 +1794,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '日程卡片可显隐排序',
     view.container.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&
-      view.container.querySelector('[aria-label="上移卡片：考试倒计时"]') !== null &&
+      view.container.querySelector('[aria-label="上移卡片：倒计时"]') !== null &&
       view.container.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
       view.container.querySelector('[aria-label="恢复默认布局"]') !== null,
     '',
@@ -1844,7 +1851,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
   );
 
-  if (clickByText(view.container, '导出备份')) await flush(10);
+  if (clickByText(view.container, '导出配置')) await flush(10);
   check(
     '导出可选模块',
     document.body.textContent?.includes('学期与节次') === true &&
@@ -1873,15 +1880,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
-  // 粘贴导入：把刚生成的 Base64 文本贴回去，应能识别出模块
-  if (clickByLabel(view.container, '粘贴备份文本')) await flush(10);
+  // 导入配置：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
+  if (clickByLabel(view.container, '导入配置')) await flush(10);
+  check(
+    '导入配置合并文件与粘贴两种方式',
+    document.querySelector('[data-role="import-text"]') !== null &&
+      document.body.textContent?.includes('选择备份文件') === true,
+    '',
+  );
   const importTextBox = document.querySelector<HTMLTextAreaElement>('[data-role="import-text"]');
   if (importTextBox !== null) setInputValue(importTextBox, base64Text);
   await flush(6);
-  const pasteParsed = clickByText(document.body, '解析');
+  const pasteParsed = clickByText(document.body, '从文本导入');
   await flush(14);
   check(
-    '粘贴 Base64 文本可导入备份',
+    '粘贴 Base64 文本可导入配置',
     pasteParsed &&
       document.body.textContent?.includes('备份内容') === true &&
       document.querySelector('input[aria-label="导入 课程与排课"]') !== null,

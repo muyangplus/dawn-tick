@@ -117,6 +117,7 @@ function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
     cancelled: false,
     movedOut: false,
     movedIn: false,
+    lab: false,
   };
 }
 

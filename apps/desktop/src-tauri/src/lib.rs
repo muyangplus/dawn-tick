@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 /// 与 Web 端、移动端共用的建表 SQL。
 pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/001_init.sql");
+/// 002：待办类型扩充与逐条开关（事件表重建）。
+pub const SCHEMA_EVENT_KINDS_SQL: &str =
+    include_str!("../../../../packages/core/src/schema/002_event_kinds.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
@@ -1871,12 +1874,20 @@ pub fn run() {
             tauri_plugin_sql::Builder::default()
                 .add_migrations(
                     &database_url_string(),
-                    vec![tauri_plugin_sql::Migration {
-                        version: 1,
-                        description: "init",
-                        sql: SCHEMA_SQL,
-                        kind: tauri_plugin_sql::MigrationKind::Up,
-                    }],
+                    vec![
+                        tauri_plugin_sql::Migration {
+                            version: 1,
+                            description: "init",
+                            sql: SCHEMA_SQL,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 2,
+                            description: "event_kinds",
+                            sql: SCHEMA_EVENT_KINDS_SQL,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                    ],
                 )
                 .build(),
         )

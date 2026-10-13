@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   createCourse,
   createEvent,
+  updateEvent,
   createReschedule,
   createSchedule,
   dayOfWeek,
@@ -51,6 +52,8 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
   const [scheduleId, setScheduleId] = useState('');
   const [sourceDate, setSourceDate] = useState(data.today);
   const [cancelOnly, setCancelOnly] = useState(false);
+  /** 调课后的性质标签：课程 / 实验（只改标签，不动排课） */
+  const [nature, setNature] = useState<'course' | 'lab'>('course');
   const [newDate, setNewDate] = useState(data.today);
   const [newStart, setNewStart] = useState('1');
   const [newEnd, setNewEnd] = useState('2');
@@ -118,7 +121,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
     }
     setBusy(true);
     try {
-      await createReschedule(storage, {
+      const created = await createReschedule(storage, {
         userId: USER_ID,
         semesterId: semester.id,
         refScheduleId: schedule.id,
@@ -130,7 +133,11 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
         newPeriodEnd: cancelOnly ? null : periodEnd,
         newRoom: cancelOnly || newRoom.trim().length === 0 ? null : newRoom.trim(),
       });
-      toast.success(cancelOnly ? '已记录停课' : '已记录调课');
+      // 性质只改标签：调成实验或课程，不动底层排课
+      if (created['id'] !== undefined) {
+        await updateEvent(storage, String(created['id']), { nature: nature === 'course' ? 'course' : 'lab' });
+      }
+      toast.success(cancelOnly ? '已记录停课' : `已记录调课（性质：${nature === 'course' ? '课程' : '实验'}）`);
       onChanged();
       onOpenChange(false);
     } finally {
@@ -272,6 +279,26 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                 停课
               </Button>
             </div>
+            <Field label="性质" hint="只改标签：调成课程或实验，不动课表本身">
+              <div className="flex gap-1">
+                <Button
+                  size="sm"
+                  variant={nature === 'course' ? 'primary' : 'secondary'}
+                  aria-label="性质：课程"
+                  onClick={() => setNature('course')}
+                >
+                  课程
+                </Button>
+                <Button
+                  size="sm"
+                  variant={nature === 'lab' ? 'primary' : 'secondary'}
+                  aria-label="性质：实验"
+                  onClick={() => setNature('lab')}
+                >
+                  实验
+                </Button>
+              </div>
+            </Field>
             {!cancelOnly && (
               <>
                 <Field label="改到哪一天">

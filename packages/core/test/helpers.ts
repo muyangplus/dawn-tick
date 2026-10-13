@@ -31,9 +31,22 @@ export function initSql(): string {
   return readFileSync(new URL('../src/schema/001_init.sql', import.meta.url), 'utf8');
 }
 
+/** 002：待办类型扩充与逐条开关（与各端启动时应用的迁移一致）。 */
+export function eventKindsSql(): string {
+  return readFileSync(new URL('../src/schema/002_event_kinds.sql', import.meta.url), 'utf8');
+}
+
+/** 与各端一致的迁移集合：001 建表 + 002 扩充事件表。 */
+export function migrations(): Array<{ id: string; sql: string }> {
+  return [
+    { id: '001_init', sql: initSql() },
+    { id: '002_event_kinds', sql: eventKindsSql() },
+  ];
+}
+
 export async function createSqlite(): Promise<SqlDriver> {
   const db = openNodeSqlite(':memory:');
-  await migrate(db, [{ id: '001_init', sql: initSql() }]);
+  await migrate(db, migrations());
   return db;
 }
 
@@ -137,10 +150,16 @@ export function eventRow(
     location: null,
     note: null,
     done: 0,
+    countdown: 0,
+    manual_done: 0,
+    nature: null,
     priority: null,
     due_at: null,
     subject: null,
     seat_no: null,
+    period_start: null,
+    period_end: null,
+    weeks_mask: null,
     ref_schedule_id: null,
     action: null,
     new_date: null,

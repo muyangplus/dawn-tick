@@ -276,7 +276,7 @@ export function SettingsView({
   const [exportFormat, setExportFormat] = useState<'json' | 'base64'>('json');
   const [exportText, setExportText] = useState('');
   const [importText, setImportText] = useState('');
-  const [pasteOpen, setPasteOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
   const [importModules, setImportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
@@ -371,7 +371,7 @@ export function SettingsView({
 
   async function exportLogs(): Promise<void> {
     const entries = logsText();
-    const name = `DawnTick-日志-${new Date().toISOString().slice(0, 10)}.txt`;
+    const name = `DawnTick-log-${new Date().toISOString().slice(0, 10)}.txt`;
     const saved = await saveText(name, entries === '' ? '暂无日志' : entries, 'txt', '日志文件');
     if (saved) {
       toast.success(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
@@ -407,7 +407,7 @@ export function SettingsView({
         setBackupMessage(`已生成 Base64 文本（${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}）`);
         return;
       }
-      const saved = await saveText(`DawnTick-备份-${day}.json`, json, 'json', 'JSON 备份');
+      const saved = await saveText(`DawnTick-backup-${day}.json`, json, 'json', 'JSON 备份');
       if (!saved) return;
       logInfo('backup', '导出备份', stats);
       setBackupMessage(`已导出 ${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}`);
@@ -421,7 +421,7 @@ export function SettingsView({
   async function saveBase64Backup(): Promise<void> {
     if (exportText === '') return;
     const day = new Date().toISOString().slice(0, 10);
-    if (await saveText(`DawnTick-备份-${day}.base64.txt`, exportText, 'txt', 'Base64 文本')) setExportOpen(false);
+    if (await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', 'Base64 文本')) setExportOpen(false);
   }
 
   /** 导入对话框里粘贴的文本：JSON 与 Base64 都接受。 */
@@ -448,8 +448,8 @@ export function SettingsView({
         .map((item) => item.module);
       setImportModules(new Set(present.length > 0 ? present : BACKUP_MODULES));
       setImportMode('skip');
-      setPasteOpen(false);
-      setBackupMessage('已解析粘贴的备份文本');
+      setImportOpen(false);
+      setBackupMessage('已解析粘贴的配置文本');
     } catch (cause: unknown) {
       setBackupMessage(cause instanceof Error ? cause.message : String(cause));
     }
@@ -464,6 +464,7 @@ export function SettingsView({
         .map((item) => item.module);
       setImportModules(new Set(present.length > 0 ? present : BACKUP_MODULES));
       setImportMode('skip');
+      setImportOpen(false);
     } catch (cause: unknown) {
       setBackupMessage(cause instanceof Error ? cause.message : String(cause));
     }
@@ -876,14 +877,17 @@ export function SettingsView({
         <span className="text-xs text-muted">预设来源：独立仓库 dawn-tick-presets；更新于下次启动生效。</span>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
-            导出备份
+            导出配置
           </Button>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            aria-label="导入配置"
+            onClick={() => setImportOpen(true)}
+          >
             <Upload className="size-4" aria-hidden />
-            选择备份文件
-          </Button>
-          <Button size="sm" variant="secondary" aria-label="粘贴备份文本" onClick={() => setPasteOpen(true)}>
-            粘贴备份文本
+            导入配置
           </Button>
           {featureVisible('diagnostics') && (
             <Button size="sm" variant="secondary" onClick={() => void exportLogs()}>
@@ -1181,7 +1185,7 @@ export function SettingsView({
           }
         }}
       >
-        <DialogContent title="导出备份" description="勾选要导出的模块，并选择导出格式">
+        <DialogContent title="导出配置" description="勾选要导出的模块，并选择导出格式">
           <div className="flex flex-col gap-1">
             {BACKUP_MODULES.map((module) => (
               <label key={module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
@@ -1270,26 +1274,38 @@ export function SettingsView({
       </Dialog>
 
       <Dialog
-        open={pasteOpen}
+        open={importOpen}
         onOpenChange={(open) => {
-          if (!open) setPasteOpen(false);
+          if (!open) setImportOpen(false);
         }}
       >
-        <DialogContent title="粘贴备份文本" description="支持 JSON 原文与 Base64 文本，粘贴后点解析">
+        <DialogContent title="导入配置" description="选择备份文件，或直接粘贴 JSON / Base64 文本">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="选择备份文件"
+              disabled={busy}
+              onClick={() => fileInput.current?.click()}
+            >
+              选择备份文件
+            </Button>
+            <span className="text-xs text-muted">支持晓刻导出的 JSON 与 Base64 文本</span>
+          </div>
           <textarea
             data-role="import-text"
-            aria-label="备份文本"
-            placeholder="在此粘贴 JSON 或 Base64 备份文本"
-            className="h-40 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
+            aria-label="配置文本"
+            placeholder="或在此粘贴 JSON / Base64 配置文本"
+            className="h-32 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
           />
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setPasteOpen(false)}>
+            <Button variant="ghost" onClick={() => setImportOpen(false)}>
               取消
             </Button>
             <Button variant="primary" disabled={importText.trim().length === 0} onClick={parsePastedBackup}>
-              解析
+              从文本导入
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1301,7 +1317,7 @@ export function SettingsView({
           if (!open) setPendingImport(null);
         }}
       >
-        <DialogContent title="导入备份" description="勾选要导入的模块，并选择遇到已有数据时的处理方式">
+        <DialogContent title="导入配置" description="勾选要导入的模块，并选择遇到已有数据时的处理方式">
           <div className="flex flex-col gap-1">
             {summarizeBackup(pendingImport ?? { format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} })
               .filter((item) => item.rows > 0)

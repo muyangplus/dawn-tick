@@ -1,5 +1,7 @@
-export type EventType = 'exam' | 'todo' | 'temp' | 'reschedule' | 'holiday' | 'makeup' | 'workday';
+export type EventType = 'exam' | 'todo' | 'temp' | 'homework' | 'lab' | 'reschedule' | 'holiday' | 'makeup' | 'workday';
 export type EventAction = 'move' | 'cancel' | 'room_change' | 'add';
+/** 条目性质标签：课程 / 实验；为空时按类型推断。 */
+export type EventNature = 'course' | 'lab';
 export type HolidaySource = 'builtin' | 'manual' | 'from_school';
 export type ReminderTargetType = 'course' | 'schedule' | 'event';
 export type PeriodSection = 'am' | 'pm' | 'night';
@@ -74,10 +76,21 @@ export interface EventRow extends SyncColumns {
   location: string | null;
   note: string | null;
   done: number;
+  /** 开启倒计时：为 1 时该条在倒计时卡片里显示剩余天数 */
+  countdown: number;
+  /** 需要手动确认完成：为 1 时不自动完成，过期也留在待办列表 */
+  manual_done: number;
+  /** 条目性质标签覆盖；为空时按类型推断 */
+  nature: EventNature | null;
   priority: number | null;
   due_at: number | null;
   subject: string | null;
   seat_no: string | null;
+  /** 实验节次（仅 type = 'lab'） */
+  period_start: number | null;
+  period_end: number | null;
+  /** 实验重复周次位图（仅 type = 'lab'）；为空表示只这一次，用 on_date */
+  weeks_mask: number | null;
   ref_schedule_id: string | null;
   action: EventAction | null;
   new_date: string | null;

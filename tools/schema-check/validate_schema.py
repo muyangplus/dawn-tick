@@ -1,10 +1,12 @@
-"""跨引擎校验 packages/core/src/schema/001_init.sql。不参与产品运行。"""
+"""跨引擎校验 packages/core/src/schema/001_init.sql 与 002_event_kinds.sql。不参与产品运行。"""
 
 import sqlite3
 import sys
 from pathlib import Path
 
-DDL_PATH = Path(__file__).resolve().parents[2] / "packages" / "core" / "src" / "schema" / "001_init.sql"
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "packages" / "core" / "src" / "schema"
+DDL_PATH = SCHEMA_DIR / "001_init.sql"
+MIGRATION_002_PATH = SCHEMA_DIR / "002_event_kinds.sql"
 NOW = 1759900000000
 U = "u1"
 S1 = "sem-1"
@@ -38,7 +40,9 @@ def mask_of(weeks):
 con = sqlite3.connect(":memory:")
 con.execute("PRAGMA foreign_keys=ON")
 try:
+    # 与各端启动一致：先建表（001），再应用事件表扩充迁移（002）
     con.executescript(DDL_PATH.read_text(encoding="utf-8"))
+    con.executescript(MIGRATION_002_PATH.read_text(encoding="utf-8"))
 except sqlite3.Error as exc:
     print(f"DDL 执行失败: {exc}")
     sys.exit(1)
@@ -139,8 +143,10 @@ def event(event_id, **fields):
     row = {
         "id": event_id, "user_id": U, "semester_id": S1, "type": "temp", "title": "t",
         "on_date": None, "start_at": None, "end_at": None, "all_day": 0, "location": None,
-        "note": None, "done": 0, "priority": None, "due_at": None, "subject": None,
-        "seat_no": None, "parent_id": None, "ref_schedule_id": None, "action": None,
+        "note": None, "done": 0, "countdown": 0, "manual_done": 0, "nature": None,
+        "priority": None, "due_at": None, "subject": None,
+        "seat_no": None, "period_start": None, "period_end": None, "weeks_mask": None,
+        "parent_id": None, "ref_schedule_id": None, "action": None,
         "new_date": None, "new_period_start": None, "new_period_end": None, "new_room": None,
         "as_day_of_week": None, "source": None, "created_at": NOW, "updated_at": NOW,
     }
@@ -219,6 +225,12 @@ expect_reject(
 )
 expect_reject("非待办带 priority", lambda: event("b1", type="temp", priority=1))
 expect_reject("非考试带 subject", lambda: event("b2", type="temp", subject="数学"))
+expect_reject("非实验带节次", lambda: event("b7", type="todo", period_start=1))
+expect_reject("实验缺节次", lambda: event("b8", type="lab", on_date="2026-10-12"))
+expect_reject("实验缺日期", lambda: event("b9", type="lab", period_start=1)) 
+expect_reject("倒计时开关越界", lambda: event("b10", type="todo", countdown=2))
+expect_reject("性质取值非法", lambda: event("b11", type="todo", nature="exam"))
+expect_reject("假期带周次位图", lambda: event("b12", type="holiday", on_date="2026-10-03", weeks_mask=3))
 expect_reject("放假缺 on_date", lambda: event("b3", type="holiday"))
 expect_reject("调休缺 as_day_of_week", lambda: event("b4", type="makeup", on_date="2026-10-11"))
 expect_reject("调课缺 ref_schedule_id", lambda: event("b5", type="reschedule", action="cancel"))
@@ -235,6 +247,77 @@ expect_reject(
 STAMP = 1793000000000
 event("e-exam", type="exam", title="高数期末", subject="高等数学", seat_no="A-12", start_at=STAMP)
 event("e-todo", type="todo", title="交实验报告", priority=3, due_at=STAMP)
+event("e-hw", type="homework", title="作业一", due_at=STAMP, countdown=1, manual_done=1, subject="c-1")
+event(
+    "e-lab",
+    type="lab",
+    title="物理实验",
+    on_date="2026-10-12",
+    period_start=3,
+    period_end=4,
+    weeks_mask=mask_of([3, 5]),
+    countdown=1,
+    nature="lab",
+)
+flags = con.execute("SELECT countdown, manual_done FROM events WHERE id='e-hw'").fetchone()
+if flags == (1, 1):
+    ok("作业与实验条目可写入", f"作业开关={flags}，实验节次与周次位图已接受")
+else:
+    fail("作业开关未写入", str(flags))
+
+# —— 002 迁移：旧结构的库（001 之后、002 之前）重建事件表后数据保留、新类型与开关可用 ——
+con2 = sqlite3.connect(":memory:")
+con2.execute("PRAGMA foreign_keys=ON")
+con2.executescript(DDL_PATH.read_text(encoding="utf-8"))
+con2.execute(
+    "INSERT INTO users (id,nickname,created_at,updated_at) VALUES (?,?,?,?)", (U, "我", NOW, NOW)
+)
+con2.execute(
+    "INSERT INTO semesters (id,user_id,name,start_date,total_weeks,time_zone,is_active,created_at,updated_at)"
+    " VALUES (?,?,?,?,?,?,?,?,?)",
+    (S1, U, "旧学期", "2026-09-07", 20, "Asia/Shanghai", 1, NOW, NOW),
+)
+con2.execute(
+    "INSERT INTO events (id,user_id,semester_id,type,title,on_date,done,priority,due_at,created_at,updated_at)"
+    " VALUES ('old-todo',?,?,'todo','旧待办','2026-10-12',1,2,1793000000000,1,1)",
+    (U, S1),
+)
+con2.execute(
+    "INSERT INTO events (id,user_id,semester_id,type,title,start_at,created_at,updated_at)"
+    " VALUES ('old-exam',?,?,'exam','旧考试',1793000000000,1,1)",
+    (U, S1),
+)
+con2.execute(
+    "INSERT INTO events (id,user_id,semester_id,parent_id,type,title,created_at,updated_at)"
+    " VALUES ('old-child',?,?,'old-todo','todo','旧子项',1,1)",
+    (U, S1),
+)
+con2.executescript(MIGRATION_002_PATH.read_text(encoding="utf-8"))
+kept = con2.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+row = con2.execute(
+    "SELECT done, priority, due_at, countdown, manual_done, nature FROM events WHERE id='old-todo'"
+).fetchone()
+exam_flags = con2.execute("SELECT countdown FROM events WHERE id='old-exam'").fetchone()
+child = con2.execute("SELECT COUNT(*) FROM events WHERE parent_id='old-todo'").fetchone()[0]
+if kept == 3 and row == (1, 2, 1793000000000, 0, 0, None) and child == 1 and exam_flags == (1,):
+    ok("002 迁移保留旧数据", f"行数={kept}，旧字段={row}，旧考试倒计时={exam_flags}，子项={child}")
+else:
+    fail("002 迁移数据丢失", f"行数={kept}，旧字段={row}，旧考试={exam_flags}，子项={child}")
+try:
+    con2.execute(
+        "INSERT INTO events (id,user_id,type,title,on_date,period_start,period_end,weeks_mask,created_at,updated_at)"
+        " VALUES ('new-lab','u1','lab','实验',?,1,2,3,1,1)",
+        ("2026-10-12",),
+    )
+    relaxed = con2.execute(
+        "INSERT INTO events (id,user_id,type,title,subject,created_at,updated_at)"
+        " VALUES ('new-hw','u1','homework','作业','c-1',1,1)"
+    )
+    if relaxed is not None:
+        ok("002 迁移后新类型与旧约束放宽生效", "lab 与带课程的 homework 均可写入")
+except sqlite3.Error as exc:
+    fail("002 迁移后新类型不可写入", str(exc))
+
 event("e-sub", type="todo", title="写实验一", parent_id="e-todo")
 children = con.execute("SELECT COUNT(*) FROM events WHERE parent_id='e-todo'").fetchone()[0]
 if children == 1:

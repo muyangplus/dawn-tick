@@ -188,8 +188,7 @@ function ScheduleActions(ctx: ScheduleCardContext) {
         label="添加"
         icon={Plus}
         items={[
-          { label: '加日程', onSelect: onAddTodo },
-          { label: '加考试', onSelect: onAddExam },
+          { label: '加待办', onSelect: onAddTodo },
           { label: '课程调整', onSelect: () => onOpenAdjust(null) },
         ]}
       />
@@ -367,11 +366,13 @@ function ScheduleTimeline({
   );
 }
 
-/** 条目性质角标配色：课程用主题主色、调整用强调色、考试用危险色、其他用中性色。 */
+/** 条目性质角标配色：课程用主题主色、调整用强调色、考试用危险色、作业与实验各有自己的色。 */
 const NATURE_CLASS: Record<TimelineNature, string> = {
   课程: 'border-primary/40 bg-primary/10 text-primary-strong',
   调整: 'border-accent/40 bg-accent/10 text-accent-strong',
   考试: 'border-danger/40 bg-danger/10 text-danger-strong',
+  作业: 'border-primary/40 bg-primary/5 text-primary-strong',
+  实验: 'border-accent/40 bg-accent/5 text-accent-strong',
   其他: 'border-line bg-surface-muted text-muted',
 };
 
@@ -450,6 +451,11 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: Timel
               进行中
             </span>
           )}
+          {item.countdownText !== undefined && item.countdownText !== null && (
+            <span className="tabular shrink-0 text-[11px] font-semibold text-danger-strong" data-role="countdown-left">
+              {item.countdownText}
+            </span>
+          )}
           {item.date === null && <span className="shrink-0 text-[11px] text-muted">未排期</span>}
         </span>
         {item.location !== null && item.location.length > 0 && (
@@ -512,7 +518,7 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: Timel
 export const examsCard = defineCard({
   id: 'exams',
   scope: 'schedule',
-  title: '考试倒计时',
+  title: '倒计时',
   defaultZone: 'side',
   defaultOrder: 2,
   defaultVisible: true,
@@ -520,37 +526,36 @@ export const examsCard = defineCard({
     if (ctx.scope !== 'schedule') return null;
     const { data, onAddExam } = ctx;
     const now = Date.now();
+    const rows = data.countdowns;
     return (
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-semibold text-ink">考试倒计时</span>
-        {data.exams.length === 0 ? (
+        <span className="text-sm font-semibold text-ink">倒计时</span>
+        {rows.length === 0 ? (
           <EmptyState
             icon={GraduationCap}
-            title="暂无考试安排"
-            description="通过顶部「＋」中的加考试录入考试时间"
+            title="暂无倒计时条目"
+            description="在「加待办」里打开「开启倒计时」，作业与考试会显示剩余天数"
             action={
               <Button size="sm" variant="secondary" onClick={onAddExam}>
-                加考试
+                加待办
               </Button>
             }
           />
         ) : (
           <div className="grid gap-2">
-            {data.exams.map((exam) => (
-              <Card key={exam.id} className="flex items-center justify-between gap-3 p-3">
+            {rows.map((row) => (
+              <Card key={row.id} className="flex items-center justify-between gap-3 p-3">
                 <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-medium text-ink">{exam.title}</span>
+                  <span className="truncate text-sm font-medium text-ink">{row.title}</span>
                   <span className="truncate text-xs text-muted">
-                    {exam.on_date ?? (exam.start_at === null ? '' : formatDate(exam.start_at, data.timeZone))}
-                    {exam.location !== null && ` · ${exam.location}`}
-                    {exam.seat_no !== null && ` · 座位 ${exam.seat_no}`}
+                    {row.on_date ?? (row.start_at === null ? '' : formatDate(row.start_at, data.timeZone))}
+                    {row.location !== null && ` · ${row.location}`}
+                    {row.seat_no !== null && ` · 座位 ${row.seat_no}`}
                   </span>
                 </div>
-                {exam.start_at !== null && (
-                  <span className="tabular shrink-0 text-sm font-semibold text-danger-strong">
-                    {formatDayCountdown(exam.start_at, now)}
-                  </span>
-                )}
+                <span className="tabular shrink-0 text-sm font-semibold text-danger-strong">
+                  {formatDayCountdown(countdownTarget(row), now)}
+                </span>
               </Card>
             ))}
           </div>
@@ -559,6 +564,14 @@ export const examsCard = defineCard({
     );
   },
 });
+
+/** 倒计时条目的目标时刻：开考时间优先，其次截止时间，再退到当天 00:00。 */
+function countdownTarget(row: EventRow): number {
+  if (row.start_at !== null && row.start_at !== undefined) return row.start_at;
+  if (row.due_at !== null && row.due_at !== undefined) return row.due_at;
+  if (row.on_date !== null && row.on_date !== undefined) return Date.parse(`${row.on_date}T00:00:00Z`);
+  return 0;
+}
 
 /** 侧列：开学与假期倒计时 */
 export const countdownsCard = defineCard({

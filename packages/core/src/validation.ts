@@ -1,6 +1,7 @@
 import type { Collection, Storage, StoreName } from './storage.ts';
 
-const EVENT_TYPES = ['exam', 'todo', 'temp', 'reschedule', 'holiday', 'makeup', 'workday'] as const;
+const EVENT_TYPES = ['exam', 'todo', 'temp', 'homework', 'lab', 'reschedule', 'holiday', 'makeup', 'workday'] as const;
+const EVENT_NATURES = ['course', 'lab'] as const;
 const ACTIONS = ['move', 'cancel', 'room_change', 'add'] as const;
 const SOURCES = ['builtin', 'manual', 'from_school'] as const;
 const SECTIONS = ['am', 'pm', 'night'] as const;
@@ -165,14 +166,50 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
         if (type !== 'todo') push(out, store, key, 'priority', '仅待办可设置');
         else if (!inRange(row['priority'], 1, 3)) push(out, store, key, 'priority', '必须在 1..3');
       }
-      if (row['due_at'] !== null && row['due_at'] !== undefined && type !== 'todo') {
-        push(out, store, key, 'due_at', '仅待办可设置');
+      if (row['due_at'] !== null && row['due_at'] !== undefined && !['todo', 'homework'].includes(type as string)) {
+        push(out, store, key, 'due_at', '仅待办与作业可设置');
       }
-      if (row['subject'] !== null && row['subject'] !== undefined && type !== 'exam') {
-        push(out, store, key, 'subject', '仅考试可设置');
+      if (
+        row['subject'] !== null &&
+        row['subject'] !== undefined &&
+        !['exam', 'todo', 'homework', 'lab'].includes(type as string)
+      ) {
+        push(out, store, key, 'subject', '仅考试、待办、作业与实验可设置');
       }
       if (row['seat_no'] !== null && row['seat_no'] !== undefined && type !== 'exam') {
         push(out, store, key, 'seat_no', '仅考试可设置');
+      }
+      for (const flag of ['countdown', 'manual_done']) {
+        if (row[flag] !== undefined && row[flag] !== 0 && row[flag] !== 1) {
+          push(out, store, key, flag, '必须是 0 或 1');
+        }
+      }
+      if (row['nature'] !== null && row['nature'] !== undefined && !EVENT_NATURES.includes(row['nature'] as never)) {
+        push(out, store, key, 'nature', '必须是 course / lab');
+      }
+      for (const field of ['period_start', 'period_end']) {
+        if (row[field] === null || row[field] === undefined) continue;
+        if (type !== 'lab') push(out, store, key, field, '仅实验可设置');
+        else if (!inRange(row[field], 1, 40)) push(out, store, key, field, '必须在 1..40');
+      }
+      if (
+        isInt(row['period_start']) &&
+        isInt(row['period_end']) &&
+        row['period_end'] < row['period_start']
+      ) {
+        push(out, store, key, 'period_end', '必须大于等于 period_start');
+      }
+      if (row['weeks_mask'] !== null && row['weeks_mask'] !== undefined) {
+        if (type !== 'lab') push(out, store, key, 'weeks_mask', '仅实验可设置');
+        else if (!isInt(row['weeks_mask']) || row['weeks_mask'] <= 0) {
+          push(out, store, key, 'weeks_mask', '必须是正整数');
+        }
+      }
+      if (type === 'lab' && (!isText(row['on_date']) || !DATE_RE.test(row['on_date']))) {
+        push(out, store, key, 'on_date', '实验必须给出日期');
+      }
+      if (type === 'lab' && row['period_start'] === null) {
+        push(out, store, key, 'period_start', '实验必须给出节次');
       }
       if (row['source'] !== null && row['source'] !== undefined && !SOURCES.includes(row['source'] as never)) {
         push(out, store, key, 'source', '必须是 builtin / manual / from_school');

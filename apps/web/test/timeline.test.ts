@@ -66,6 +66,8 @@ function makeData(overrides: Partial<AppData> = {}): AppData {
     nextLesson: undefined,
     exams: [],
     todos: [],
+    labs: [],
+    countdowns: [],
     reschedules: [],
     ...overrides,
   };

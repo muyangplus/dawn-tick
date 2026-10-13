@@ -53,6 +53,10 @@ export interface LessonCell {
   movedOut: boolean;
   /** 该格是调课后的落点：正常显示并标「调课」 */
   movedIn: boolean;
+  /** 该格是实验条目（type = 'lab'）：标「实验」且不参与拖动 */
+  lab: boolean;
+  /** 实验条目对应的行 id（课程格为空） */
+  eventId?: string;
 }
 
 export interface AppData {
@@ -82,6 +86,10 @@ export interface AppData {
   nextLesson: Occurrence | undefined;
   exams: EventRow[];
   todos: EventRow[];
+  /** 实验条目（type = 'lab'）：进课表网格与时间线 */
+  labs: EventRow[];
+  /** 开启倒计时的条目：倒计时卡片按时间排序展示 */
+  countdowns: EventRow[];
   reschedules: EventRow[];
 }
 
@@ -130,6 +138,8 @@ export async function loadAppData(
       nextLesson: undefined,
       exams: [],
       todos: [],
+      labs: [],
+      countdowns: [],
       reschedules: [],
     };
   }
@@ -229,6 +239,7 @@ export async function loadAppData(
       cancelled: input.inWeek && cancelledKeys.has(`${input.scheduleId}|${date}`),
       movedOut: input.inWeek && movedOutKeys.has(`${input.scheduleId}|${date}`),
       movedIn: input.movedIn === true,
+      lab: false,
     };
   };
 
@@ -284,6 +295,45 @@ export async function loadAppData(
     grid.set(key, list);
   }
 
+  // 实验条目：按周次位图（没有位图时只落 on_date 那一周）铺进课表网格
+  const labs = semesterEvents
+    .filter((row) => row.type === 'lab')
+    .sort((left, right) => (left.on_date ?? '').localeCompare(right.on_date ?? ''));
+  for (const lab of labs) {
+    const date = lab.on_date;
+    if (date === null || lab.period_start === null) continue;
+    const weekday = lab.as_day_of_week ?? dayOfWeek(date);
+    const weeks =
+      lab.weeks_mask === null || lab.weeks_mask === undefined
+        ? [weekOfDate(date, semester.start_date)]
+        : maskToWeeks(lab.weeks_mask, semester.total_weeks);
+    if (!weeks.includes(viewWeek)) continue;
+    const key = `${weekday}:${lab.period_start}`;
+    const list = grid.get(key) ?? [];
+    if (list.some((cell) => cell.eventId === lab.id)) continue;
+    list.push({
+      scheduleId: lab.id,
+      courseId: lab.subject ?? '',
+      name: lab.title,
+      teacher: null,
+      room: lab.location,
+      color: lab.nature === 'course' ? '#4F8DFD' : '#8E7CC3',
+      dayOfWeek: weekday,
+      periodStart: lab.period_start,
+      periodEnd: lab.period_end ?? lab.period_start,
+      startTime: slotByPeriod.get(lab.period_start)?.start_time ?? '',
+      endTime: slotByPeriod.get(lab.period_end ?? lab.period_start)?.end_time ?? '',
+      inWeek: true,
+      holiday: holidayDates.has(dateOfDay(weekday)),
+      cancelled: false,
+      movedOut: false,
+      movedIn: false,
+      lab: true,
+      eventId: lab.id,
+    });
+    grid.set(key, list);
+  }
+
   // 非本周课程：仍在课表中，但这一周不上，按设置虚线显示
   for (const row of schedules) {
     if (row.deleted_at !== null || !activeIds.has(row.course_id)) continue;
@@ -329,9 +379,16 @@ export async function loadAppData(
   const todos = semesterEvents
     .filter(
       (row) =>
-        row.type === 'temp' || row.type === 'todo' || (row.type === 'exam' && row.start_at === null),
+        row.type === 'temp' ||
+        row.type === 'todo' ||
+        row.type === 'homework' ||
+        (row.type === 'exam' && row.start_at === null),
     )
     .sort((left, right) => scheduleKey(left) - scheduleKey(right));
+  /** 倒计时卡片：逐条开关为 1 的条目，按时间排序 */
+  const countdowns = semesterEvents
+    .filter((row) => row.countdown === 1)
+    .sort((left, right) => countdownKey(left) - countdownKey(right));
   const reschedules = semesterEvents.filter(
     (row) => row.type === 'reschedule' || row.type === 'makeup' || row.type === 'holiday',
   );
@@ -357,8 +414,18 @@ export async function loadAppData(
     nextLesson: nextOccurrence(occurrences, now),
     exams,
     todos,
+    labs,
+    countdowns,
     reschedules,
   };
+}
+
+/** 倒计时条目的时间戳：开考时间优先，其次截止时间，再退到日期。 */
+function countdownKey(row: EventRow): number {
+  if (row.start_at !== null && row.start_at !== undefined) return row.start_at;
+  if (row.due_at !== null && row.due_at !== undefined) return row.due_at;
+  if (row.on_date !== null && row.on_date !== undefined) return Date.parse(`${row.on_date}T00:00:00Z`);
+  return Number.MAX_SAFE_INTEGER;
 }
 
 export async function loadCourseDetail(storage: Storage, courseId: string): Promise<CourseDetail> {
