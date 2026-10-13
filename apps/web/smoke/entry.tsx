@@ -21,6 +21,7 @@ import {
 import { App } from '../src/App.tsx';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
+import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
@@ -2411,6 +2412,23 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '日志时间戳带本地时间与偏移',
     /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}$/.test(sampleTime),
     sampleTime,
+  );
+
+  // —— 悬浮窗：明日课程预告（复用「空日程提示明日预告」设置） ——
+  const nowMs = Date.now();
+  check(
+    '悬浮窗当天没课时切到明日课程预告',
+    shouldShowTomorrow({ enabled: true, todayEnds: [], tomorrowCount: 2, now: nowMs }) === true &&
+      shouldShowTomorrow({ enabled: true, todayEnds: [nowMs - 60_000], tomorrowCount: 2, now: nowMs }) === true &&
+      shouldShowTomorrow({ enabled: false, todayEnds: [], tomorrowCount: 2, now: nowMs }) === false &&
+      shouldShowTomorrow({ enabled: true, todayEnds: [nowMs + 60_000], tomorrowCount: 2, now: nowMs }) === false &&
+      shouldShowTomorrow({ enabled: true, todayEnds: [], tomorrowCount: 0, now: nowMs }) === false,
+    '没课/课上完且开启→预告；关闭或还有课或明天没课→不预告',
+  );
+  check(
+    '明日预告最多列四节',
+    tomorrowPreviewLessons([1, 2, 3, 4, 5, 6]).length === 4,
+    `共 ${tomorrowPreviewLessons([1, 2, 3, 4, 5, 6]).length} 节`,
   );
 
   return results;

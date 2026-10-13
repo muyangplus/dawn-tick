@@ -846,7 +846,7 @@ export function SettingsView({
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>空日程提示明日预告</span>
-            <span className="truncate text-xs text-muted">某天没有安排时，提示明天有多少项</span>
+            <span className="truncate text-xs text-muted">当天没课或课都上完时，日程页与悬浮窗都显示明天的课</span>
           </span>
           <Switch
             checked={settings.tomorrowPreview}

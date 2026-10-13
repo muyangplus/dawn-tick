@@ -122,6 +122,8 @@ export interface AppData {
   slots: TimeSlotRow[];
   grid: Map<string, LessonCell[]>;
   todayLessons: Occurrence[];
+  /** 明天的课：悬浮窗的「明日课程预告」用 */
+  tomorrowLessons: Occurrence[];
   /** 现在正在上的那一节课（无课或停课时为 undefined） */
   currentLesson: Occurrence | undefined;
   nextLesson: Occurrence | undefined;
@@ -175,6 +177,7 @@ export async function loadAppData(
       workdayDates: [],
       lessonsByDate: new Map(),
       todayLessons: [],
+    tomorrowLessons: [],
       currentLesson: undefined,
       nextLesson: undefined,
       exams: [],
@@ -441,6 +444,7 @@ export async function loadAppData(
     lessonsByDate.set(item.date, list);
   }
   const todayLessons = lessonsByDate.get(today) ?? [];
+  const tomorrowLessons = lessonsByDate.get(addDays(today, 1)) ?? [];
   const now = Date.now();
   const currentLesson = currentOccurrence(occurrences, now);
   const exams = semesterEvents
@@ -480,6 +484,7 @@ export async function loadAppData(
     workdayDates: [...workdays].sort(),
     lessonsByDate,
     todayLessons,
+    tomorrowLessons,
     currentLesson,
     nextLesson: nextOccurrence(occurrences, now),
     exams,

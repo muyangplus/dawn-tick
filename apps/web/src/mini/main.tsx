@@ -15,6 +15,7 @@ import { installWebviewGuards } from '../webview-guard.ts';
 import { logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { MiniShell } from './shell.tsx';
+import { shouldShowTomorrow, tomorrowPreviewLessons } from './tomorrow.ts';
 import '../styles.css';
 
 installWebviewGuards();
@@ -68,13 +69,22 @@ function Mini() {
   /** 上一次的数据指纹：只在数据真的变了时写日志，避免轮询把日志刷满 */
   const lastSignature = useRef('');
 
-  /** 重新读一次课表：主窗口数据变更时由事件触发，另有定时兜底。 */
+  // 重新读一次课表与设置：主窗口数据/设置变更时由事件触发，另有定时兜底。
   const reload = useCallback(async (): Promise<void> => {
     const storage = storageRef.current;
     const current = settingsRef.current;
     if (storage === null || current === null) return;
     try {
-      const next = await loadAppData(storage, current);
+      const latest = await readSettings(storage);
+      if (
+        latest.tomorrowPreview !== current.tomorrowPreview ||
+        latest.widgetVariant !== current.widgetVariant ||
+        latest.widgetBackground !== current.widgetBackground
+      ) {
+        settingsRef.current = latest;
+        setSettings(latest);
+      }
+      const next = await loadAppData(storage, latest);
       setData(next);
       setError(null);
       const signature = [
@@ -83,6 +93,8 @@ function Mini() {
         next.currentLesson?.scheduleId ?? '',
         next.nextLesson?.scheduleId ?? '',
         next.todayLessons.length,
+        next.tomorrowLessons.length,
+        latest.tomorrowPreview ? 'tomorrow' : 'today-only',
       ].join('|');
       if (signature !== lastSignature.current) {
         lastSignature.current = signature;
@@ -90,6 +102,7 @@ function Mini() {
           week: next.week,
           current: next.currentLesson?.courseName ?? '',
           next: next.nextLesson?.courseName ?? '',
+          tomorrow: next.tomorrowLessons.length,
         });
       }
     } catch (cause: unknown) {
@@ -159,6 +172,17 @@ function Mini() {
   const background = settings?.widgetBackground ?? 'light';
   const hide = (): void => void hideWindow();
   const headLabel = current === undefined ? '晓刻 DawnTick' : '正在上课';
+  // 明日课程预告：复用设置里的「空日程提示明日预告」，当天没课或当天的课都上完时切过去
+  const todayLessons = data?.todayLessons ?? [];
+  const tomorrowLessons = data?.tomorrowLessons ?? [];
+  const tomorrowEnabled = settings?.tomorrowPreview !== false;
+  const showTomorrow = shouldShowTomorrow({
+    enabled: tomorrowEnabled,
+    todayEnds: todayLessons.map((lesson) => lesson.endAt),
+    tomorrowCount: tomorrowLessons.length,
+    now,
+  });
+  const nextIsTomorrow = next !== undefined && !todayLessons.some((lesson) => lesson.startAt === next.startAt);
 
   if (error !== null) {
     return (
@@ -182,7 +206,11 @@ function Mini() {
                 : countdown(next.startAt, now)}
           </span>
           <span className="mini-minimal-name">
-            {current !== undefined ? current.courseName : next?.courseName ?? '暂无后续课程'}
+            {current !== undefined
+              ? current.courseName
+              : nextIsTomorrow && tomorrowEnabled
+                ? `明日 ${next?.courseName ?? ''}`
+                : next?.courseName ?? '暂无后续课程'}
           </span>
         </div>
       </MiniShell>
@@ -190,9 +218,15 @@ function Mini() {
   }
 
   if (variant === 'today') {
-    const lessons = data?.todayLessons ?? [];
+    // 明日预告最多列 4 节，避免超出悬浮窗高度
+    const lessons = showTomorrow ? tomorrowPreviewLessons(tomorrowLessons) : todayLessons;
     return (
       <MiniShell variant={variant} onHide={hide} background={background}>
+        {showTomorrow && (
+          <div className="mini-label" data-role="mini-tomorrow">
+            明日课程预告
+          </div>
+        )}
         {lessons.length === 0 ? (
           <div className="mini-empty">今天没有课啦</div>
         ) : (
@@ -231,7 +265,9 @@ function Mini() {
     return (
       <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
         <div className="mini-combo-top">
-          <span className="mini-label">{current !== undefined ? '正在上课' : '下一节课'}</span>
+          <span className="mini-label" data-role="mini-top-label">
+            {current !== undefined ? '正在上课' : nextIsTomorrow && tomorrowEnabled ? '明日课程预告' : '下一节课'}
+          </span>
           <span className="mini-title" data-role="mini-title">
             {current !== undefined ? current.courseName : next?.courseName ?? '暂无后续课程'}
           </span>
@@ -294,6 +330,11 @@ function Mini() {
         <div className="mini-empty">{data?.semester === null ? '尚未创建学期' : '暂无后续课程'}</div>
       ) : (
         <>
+          {nextIsTomorrow && tomorrowEnabled && (
+            <div className="mini-label" data-role="mini-tomorrow">
+              明日课程预告
+            </div>
+          )}
           <div className="mini-title" data-role="mini-title">
             {next.courseName}
           </div>
