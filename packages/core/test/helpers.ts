@@ -41,12 +41,18 @@ export function customTimeSql(): string {
   return readFileSync(new URL('../src/schema/003_custom_time.sql', import.meta.url), 'utf8');
 }
 
-/** 与各端一致的迁移集合：001 建表 + 002 扩充事件表 + 003 自定义时间。 */
+/** 004：条目是否显示在课表上。 */
+export function timetableEntriesSql(): string {
+  return readFileSync(new URL('../src/schema/004_timetable_entries.sql', import.meta.url), 'utf8');
+}
+
+/** 与各端一致的迁移集合：001 建表 + 002 事件类型 + 003 自定义时间 + 004 课表条目。 */
 export function migrations(): Array<{ id: string; sql: string }> {
   return [
     { id: '001_init', sql: initSql() },
     { id: '002_event_kinds', sql: eventKindsSql() },
     { id: '003_custom_time', sql: customTimeSql() },
+    { id: '004_timetable_entries', sql: timetableEntriesSql() },
   ];
 }
 
@@ -170,6 +176,7 @@ export function eventRow(
     weeks_mask: null,
     start_time: null,
     end_time: null,
+    show_in_timetable: 0,
     ref_schedule_id: null,
     action: null,
     new_date: null,

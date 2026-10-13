@@ -7,6 +7,17 @@ from pathlib import Path
 SCHEMA_DIR = Path(__file__).resolve().parents[2] / "packages" / "core" / "src" / "schema"
 DDL_PATH = SCHEMA_DIR / "001_init.sql"
 MIGRATION_002_PATH = SCHEMA_DIR / "002_event_kinds.sql"
+MIGRATION_003_PATH = SCHEMA_DIR / "003_custom_time.sql"
+MIGRATION_004_PATH = SCHEMA_DIR / "004_timetable_entries.sql"
+
+
+def apply_migrations(con, include_event_kinds=True):
+    """与各端启动一致：先建表（001），再按顺序应用后续迁移。"""
+    con.executescript(DDL_PATH.read_text(encoding="utf-8"))
+    if include_event_kinds:
+        con.executescript(MIGRATION_002_PATH.read_text(encoding="utf-8"))
+    con.executescript(MIGRATION_003_PATH.read_text(encoding="utf-8"))
+    con.executescript(MIGRATION_004_PATH.read_text(encoding="utf-8"))
 NOW = 1759900000000
 U = "u1"
 S1 = "sem-1"
@@ -40,9 +51,8 @@ def mask_of(weeks):
 con = sqlite3.connect(":memory:")
 con.execute("PRAGMA foreign_keys=ON")
 try:
-    # 与各端启动一致：先建表（001），再应用事件表扩充迁移（002）
-    con.executescript(DDL_PATH.read_text(encoding="utf-8"))
-    con.executescript(MIGRATION_002_PATH.read_text(encoding="utf-8"))
+    # 与各端启动一致：先建表（001），再按顺序应用后续迁移
+    apply_migrations(con)
 except sqlite3.Error as exc:
     print(f"DDL 执行失败: {exc}")
     sys.exit(1)
@@ -303,6 +313,21 @@ if kept == 3 and row == (1, 2, 1793000000000, 0, 0, None) and child == 1 and exa
     ok("002 迁移保留旧数据", f"行数={kept}，旧字段={row}，旧考试倒计时={exam_flags}，子项={child}")
 else:
     fail("002 迁移数据丢失", f"行数={kept}，旧字段={row}，旧考试={exam_flags}，子项={child}")
+
+# —— 003 / 004：自定义时间列 + 课表标记（实验回填为显示，日程默认不占课表） ——
+con2.executescript(MIGRATION_003_PATH.read_text(encoding="utf-8"))
+con2.execute(
+    "INSERT INTO events (id,user_id,semester_id,type,title,on_date,period_start,period_end,created_at,updated_at)"
+    " VALUES ('old-lab',?,?,'lab','旧实验','2026-10-13',3,4,1,1)",
+    (U, S1),
+)
+con2.executescript(MIGRATION_004_PATH.read_text(encoding="utf-8"))
+lab_show = con2.execute("SELECT show_in_timetable FROM events WHERE id='old-lab'").fetchone()
+todo_show = con2.execute("SELECT show_in_timetable FROM events WHERE id='old-todo'").fetchone()
+if lab_show == (1,) and todo_show == (0,):
+    ok("004 迁移：实验显示在课表，日程默认不占课表", f"实验={lab_show}，日程={todo_show}")
+else:
+    fail("004 迁移课表标记不符", f"实验={lab_show}，日程={todo_show}")
 try:
     con2.execute(
         "INSERT INTO events (id,user_id,type,title,on_date,period_start,period_end,weeks_mask,created_at,updated_at)"

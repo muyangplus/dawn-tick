@@ -147,6 +147,17 @@ async function seed(): Promise<SmokeSeed> {
     periodStart: 3,
     periodEnd: 4,
     nature: 'lab',
+    showInTimetable: true,
+  });
+  // 打开「显示在课表上」的日程：应当和实验一样占课表格子
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'todo',
+    title: '组会',
+    onDate: todayText,
+    startAt: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 0).getTime(),
+    showInTimetable: true,
   });
   await createEvent(storage, {
     userId: USER_ID,
@@ -630,6 +641,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     view.container.querySelector('.overflow-x-auto') === null &&
       view.container.querySelector('[class*="min-w-[40rem]"]') === null,
     '',
+  );
+  const timetableLabels = [...view.container.querySelectorAll('[data-role="lab-label"]')].map((node) =>
+    (node.textContent ?? '').trim(),
+  );
+  check(
+    '日程按开关显示在课表上，实验默认显示',
+    timetableLabels.includes('实验') && timetableLabels.includes('日程'),
+    timetableLabels.join(' / ') || '(无课表条目)',
   );
 
   // ③ 放假优先于非本周：周一既放假、又只在第 1-2 周上的「概率论」必须按放假渲染
@@ -1237,7 +1256,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('[aria-label="待办提前提醒"]') !== null &&
       document.querySelector('[aria-label="开启倒计时"]') !== null &&
       document.querySelector('[aria-label="需要手动确认完成"]') !== null &&
-      document.querySelector('[aria-label="自定义时间"]') !== null,
+      document.querySelector('[aria-label="自定义时间"]') !== null &&
+      document.querySelector('[aria-label="显示在课表上"]') !== null,
     '',
   );
   // 打开「自定义时间」：给出真实起止时间，不再填节次

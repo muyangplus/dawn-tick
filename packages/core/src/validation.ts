@@ -198,7 +198,7 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
       if (row['seat_no'] !== null && row['seat_no'] !== undefined && type !== 'exam') {
         push(out, store, key, 'seat_no', '仅考试可设置');
       }
-      for (const flag of ['countdown', 'manual_done']) {
+      for (const flag of ['countdown', 'manual_done', 'show_in_timetable']) {
         if (row[flag] !== undefined && row[flag] !== 0 && row[flag] !== 1) {
           push(out, store, key, flag, '必须是 0 或 1');
         }

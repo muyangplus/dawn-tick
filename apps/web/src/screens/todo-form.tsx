@@ -144,6 +144,8 @@ export function TodoForm({
   const [customTime, setCustomTime] = useState(false);
   const [startTime, setStartTime] = useState('19:00');
   const [endTime, setEndTime] = useState('21:00');
+  /** 显示在课表上：实验默认开，日程/作业/考试默认关 */
+  const [showInTimetable, setShowInTimetable] = useState(false);
 
   const isExam = current === 'exam';
   const isLab = current === 'lab';
@@ -173,11 +175,13 @@ export function TodoForm({
       );
       setLabPeriodStart(String(editing.period_start ?? 1));
       setLabPeriodEnd(String(editing.period_end ?? editing.period_start ?? 2));
+      setShowInTimetable(editing.show_in_timetable === 1);
       return;
     }
     setCurrent(kind);
     setSwitches(defaultSwitches(kind));
     setCustomTime(false);
+    setShowInTimetable(kind === 'lab');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, kind, editing]);
 
@@ -199,6 +203,7 @@ export function TodoForm({
       const derived = customTime && isLab ? periodsForClock(slots, startTime, endTime) : null;
       // 节次只写数字：自定义时间算不出重叠节次、或输入不是数字时，退回该条原有节次
       const fallbackPeriod = editing?.period_start ?? 1;
+      const timetable = isLab || showInTimetable;
       const periodStart = isLab
         ? (derived?.periodStart ?? toPeriod(labPeriodStart, fallbackPeriod))
         : null;
@@ -240,6 +245,7 @@ export function TodoForm({
           weeks_mask: isLab && labRepeat ? weeksToMask(labWeeks) : null,
           as_day_of_week: isLab && labRepeat ? labWeekday : null,
           nature: isLab ? 'lab' : editing.nature,
+          show_in_timetable: timetable ? 1 : 0,
         });
         logInfo('todo', `已保存${KIND_LABEL[current]}`, { id: editing.id, title: title.trim() });
         toast.success(`已保存${KIND_LABEL[current]}「${title.trim()}」`);
@@ -269,6 +275,7 @@ export function TodoForm({
           periodEnd,
           weeksMask: labRepeat ? weeksToMask(labWeeks) : null,
           asDayOfWeek: labRepeat ? labWeekday : null,
+          showInTimetable: timetable,
         });
       } else {
         created = await createEvent(storage, {
@@ -288,6 +295,7 @@ export function TodoForm({
           manualDone: switches.manualDone,
           startTime: customTime ? startTime : null,
           endTime: customTime ? endTime : null,
+          showInTimetable: timetable,
         });
       }
       const minutes = ADVANCE_OPTIONS.find((item) => item.id === advance)?.minutes ?? -1;
@@ -346,6 +354,7 @@ export function TodoForm({
         asDayOfWeek: editing.as_day_of_week,
         startTime: editing.start_time,
         endTime: editing.end_time,
+        showInTimetable: editing.show_in_timetable === 1,
       });
       toast.success(`已复制为「${copyTitle}」`);
       onCreated();
@@ -587,6 +596,17 @@ export function TodoForm({
             aria-label="开启倒计时"
             checked={switches.countdown}
             onCheckedChange={(checked) => setSwitches((current) => ({ ...current, countdown: checked }))}
+          />
+        </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>显示在课表上</span>
+            <span className="truncate text-xs text-muted">打开后这条会占课表格子，位置按日期与时间落格</span>
+          </span>
+          <Switch
+            aria-label="显示在课表上"
+            checked={showInTimetable}
+            onCheckedChange={(checked) => setShowInTimetable(checked)}
           />
         </label>
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">

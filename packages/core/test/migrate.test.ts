@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openNodeSqlite } from '../src/drivers/node-sqlite.ts';
 import { migrate, readMeta, readSchemaVersion, writeMeta } from '../src/migrate.ts';
-import { createSqlite, initSql, migrations, tableNames } from './helpers.ts';
+import { createSqlite, eventKindsSql, initSql, migrations, tableNames } from './helpers.ts';
 
 test('迁移建立全部表并记录版本', async () => {
   const db = await createSqlite();
@@ -16,14 +16,14 @@ test('迁移建立全部表并记录版本', async () => {
     'time_slots',
     'users',
   ]);
-  assert.equal(await readSchemaVersion(db), '003_custom_time');
+  assert.equal(await readSchemaVersion(db), '004_timetable_entries');
 });
 
 test('迁移可重复执行', async () => {
   const db = openNodeSqlite(':memory:');
   const list = migrations();
-  assert.equal(await migrate(db, list), '003_custom_time');
-  assert.equal(await migrate(db, list), '003_custom_time');
+  assert.equal(await migrate(db, list), '004_timetable_entries');
+  assert.equal(await migrate(db, list), '004_timetable_entries');
 });
 
 test('002 迁移保留旧库数据并补齐新列', async () => {
@@ -37,7 +37,7 @@ test('002 迁移保留旧库数据并补齐新列', async () => {
     `INSERT INTO events (id, user_id, type, title, done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ['old-exam', 'u1', 'exam', '旧考试', 0, 1, 1],
   );
-  assert.equal(await migrate(db, migrations()), '003_custom_time');
+  assert.equal(await migrate(db, migrations()), '004_timetable_entries');
   const row = await db.get<{ countdown: number; manual_done: number; title: string }>(
     "SELECT countdown, manual_done, title FROM events WHERE id = 'old-exam'",
   );
@@ -64,7 +64,7 @@ test('003 迁移为自定义时间加列且老数据保留', async () => {
     `INSERT INTO course_schedules (id, course_id, day_of_week, period_start, period_end, weeks_mask, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ['s-old', 'c-old', 2, 1, 2, 3, 1, 1],
   );
-  assert.equal(await migrate(db, migrations()), '003_custom_time');
+  assert.equal(await migrate(db, migrations()), '004_timetable_entries');
   const eventCols = (await db.all<{ name: string }>("PRAGMA table_info(events)")).map((row) => row.name);
   const scheduleCols = (await db.all<{ name: string }>("PRAGMA table_info(course_schedules)")).map((row) => row.name);
   assert.ok(eventCols.includes('start_time') && eventCols.includes('end_time'));
@@ -75,6 +75,28 @@ test('003 迁移为自定义时间加列且老数据保留', async () => {
   );
   assert.equal(row?.start_time, '19:00');
   assert.equal(row?.room, null);
+});
+
+test('004 迁移默认不占课表并把实验回填为显示', async () => {
+  const db = openNodeSqlite(':memory:');
+  await migrate(db, [
+    { id: '001_init', sql: initSql() },
+    { id: '002_event_kinds', sql: eventKindsSql() },
+  ]);
+  await db.run(`INSERT INTO users (id, nickname, created_at, updated_at) VALUES (?, ?, ?, ?)`, ['u3', '我', 1, 1]);
+  await db.run(
+    `INSERT INTO events (id, user_id, type, title, on_date, period_start, period_end, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['e-lab', 'u3', 'lab', '物理实验', '2026-10-13', 3, 4, 1, 1],
+  );
+  await db.run(
+    `INSERT INTO events (id, user_id, type, title, on_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ['e-todo', 'u3', 'todo', '交作业', '2026-10-13', 1, 1],
+  );
+  assert.equal(await migrate(db, migrations()), '004_timetable_entries');
+  const lab = await db.get<{ show_in_timetable: number }>("SELECT show_in_timetable FROM events WHERE id = 'e-lab'");
+  const todo = await db.get<{ show_in_timetable: number }>("SELECT show_in_timetable FROM events WHERE id = 'e-todo'");
+  assert.equal(lab?.show_in_timetable, 1);
+  assert.equal(todo?.show_in_timetable, 0);
 });
 
 test('外键开关在连接建立时生效', async () => {

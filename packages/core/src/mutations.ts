@@ -675,6 +675,8 @@ export interface CreateEventInput {
   /** 自定义时间（HH:MM）：非空时该条按真实时间展示，不按节次 */
   startTime?: string | null;
   endTime?: string | null;
+  /** 是否显示在课表上：日程/作业/考试用开关控制，实验默认显示 */
+  showInTimetable?: boolean;
 }
 
 export async function createEvent(
@@ -709,6 +711,7 @@ export async function createEvent(
     weeks_mask: input.weeksMask ?? null,
     start_time: input.startTime ?? null,
     end_time: input.endTime ?? null,
+    show_in_timetable: input.showInTimetable === true ? 1 : 0,
     ref_schedule_id: null,
     action: null,
     new_date: null,

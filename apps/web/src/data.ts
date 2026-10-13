@@ -9,6 +9,7 @@ import {
   expand,
   currentOccurrence,
   formatDate,
+  formatTime,
   listManagedCourses,
   listSemesters,
   listTimeSlots,
@@ -30,6 +31,41 @@ import {
   type Storage,
   type TimeSlotRow,
 } from '@dawn-tick/core';
+
+/** 课表里条目的角标文案。 */
+const EVENT_LABEL: Record<string, string> = {
+  lab: '实验',
+  homework: '作业',
+  exam: '考试',
+  todo: '日程',
+  temp: '日程',
+};
+
+/** 墙钟时间落到重叠的节次上；没有重叠时贴最近的一节。 */
+function periodAtClock(
+  clock: string | null,
+  slots: ReadonlyArray<{ period_no: number; start_time: string; end_time: string }>,
+): number | null {
+  if (clock === null || clock === '' || slots.length === 0) return null;
+  const toMinutes = (value: string): number => {
+    const [hour, minute] = value.split(':').map(Number);
+    return (hour ?? 0) * 60 + (minute ?? 0);
+  };
+  const target = toMinutes(clock);
+  const inside = slots.find((slot) => toMinutes(slot.start_time) <= target && toMinutes(slot.end_time) > target);
+  if (inside !== undefined) return inside.period_no;
+  const nearest = slots.reduce((best, slot) =>
+    Math.abs(toMinutes(slot.start_time) - target) < Math.abs(toMinutes(best.start_time) - target) ? slot : best,
+  );
+  return nearest.period_no;
+}
+
+/** HH:MM 加分钟，用于缺结束时间时按一节时长估计。 */
+function plusMinutesText(clock: string, minutes: number): string {
+  const [hour, minute] = clock.split(':').map(Number);
+  const total = ((hour ?? 0) * 60 + (minute ?? 0) + minutes) % (24 * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
 
 export interface LessonCell {
   scheduleId: string;
@@ -55,6 +91,8 @@ export interface LessonCell {
   movedIn: boolean;
   /** 该格是实验条目（type = 'lab'）：标「实验」且不参与拖动 */
   lab: boolean;
+  /** 条目标签（实验 / 作业 / 考试 / 日程）；课程格为空 */
+  eventLabel?: string;
   /** 实验条目对应的行 id（课程格为空） */
   eventId?: string;
   /** 自定义时间（HH:MM）：非空时该格按真实时间定位，不按节次 */
@@ -312,42 +350,56 @@ export async function loadAppData(
   }
 
   // 实验条目：按周次位图（没有位图时只落 on_date 那一周）铺进课表网格
+  // 课表条目：实验默认显示，日程/作业/考试按「显示在课表上」开关决定
   const labs = semesterEvents
-    .filter((row) => row.type === 'lab')
+    .filter((row) => row.show_in_timetable === 1 && row.on_date !== null)
     .sort((left, right) => (left.on_date ?? '').localeCompare(right.on_date ?? ''));
-  for (const lab of labs) {
-    const date = lab.on_date;
-    if (date === null || lab.period_start === null) continue;
-    const weekday = lab.as_day_of_week ?? dayOfWeek(date);
+  for (const entry of labs) {
+    const date = entry.on_date;
+    if (date === null) continue;
+    // 节次：实验直接存了节次；日程/作业/考试按开始时间落到重叠的节次上
+    const clockStart = entry.start_time ?? (entry.start_at === null ? null : formatTime(entry.start_at, timeZone));
+    const clockEnd =
+      entry.end_time ??
+      (entry.end_at !== null && entry.end_at !== undefined
+        ? formatTime(entry.end_at, timeZone)
+        : clockStart === null
+          ? null
+          : plusMinutesText(clockStart, 45));
+    const periodStart = entry.period_start ?? periodAtClock(clockStart, slots);
+    if (periodStart === null) continue;
+    const periodEnd = Math.max(periodStart, entry.period_end ?? periodAtClock(clockEnd, slots) ?? periodStart);
+    const weekday = entry.as_day_of_week ?? dayOfWeek(date);
     const weeks =
-      lab.weeks_mask === null || lab.weeks_mask === undefined
+      entry.weeks_mask === null || entry.weeks_mask === undefined
         ? [weekOfDate(date, semester.start_date)]
-        : maskToWeeks(lab.weeks_mask, semester.total_weeks);
+        : maskToWeeks(entry.weeks_mask, semester.total_weeks);
     if (!weeks.includes(viewWeek)) continue;
-    const key = `${weekday}:${lab.period_start}`;
+    const key = `${weekday}:${periodStart}`;
     const list = grid.get(key) ?? [];
-    if (list.some((cell) => cell.eventId === lab.id)) continue;
+    if (list.some((cell) => cell.eventId === entry.id)) continue;
     list.push({
-      scheduleId: lab.id,
-      courseId: lab.subject ?? '',
-      name: lab.title,
+      scheduleId: entry.id,
+      courseId: entry.subject ?? '',
+      name: entry.title,
       teacher: null,
-      room: lab.location,
-      color: lab.nature === 'course' ? '#4F8DFD' : '#8E7CC3',
+      room: entry.location,
+      color: entry.type === 'lab' ? (entry.nature === 'course' ? '#4F8DFD' : '#8E7CC3') : '#E08A3C',
       dayOfWeek: weekday,
-      periodStart: lab.period_start,
-      periodEnd: lab.period_end ?? lab.period_start,
-      startTime: slotByPeriod.get(lab.period_start)?.start_time ?? '',
-      endTime: slotByPeriod.get(lab.period_end ?? lab.period_start)?.end_time ?? '',
+      periodStart,
+      periodEnd,
+      startTime: slotByPeriod.get(periodStart)?.start_time ?? '',
+      endTime: slotByPeriod.get(periodEnd)?.end_time ?? '',
       inWeek: true,
       holiday: holidayDates.has(dateOfDay(weekday)),
       cancelled: false,
       movedOut: false,
       movedIn: false,
       lab: true,
-      eventId: lab.id,
-      customStart: lab.start_time ?? null,
-      customEnd: lab.end_time ?? null,
+      eventLabel: EVENT_LABEL[entry.type] ?? '日程',
+      eventId: entry.id,
+      customStart: clockStart,
+      customEnd: clockEnd,
     });
     grid.set(key, list);
   }

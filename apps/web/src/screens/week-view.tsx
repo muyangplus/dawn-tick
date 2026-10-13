@@ -922,7 +922,7 @@ export function WeekView({
                               className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-accent-strong"
                               data-role="lab-label"
                             >
-                              实验
+                              {lesson.eventLabel ?? '日程'}
                             </span>
                           ) : lesson.movedIn ? (
                             <span

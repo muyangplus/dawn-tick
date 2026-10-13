@@ -10,6 +10,9 @@ pub const SCHEMA_EVENT_KINDS_SQL: &str =
 /// 003：条目自定义时间（不按节次）。
 pub const SCHEMA_CUSTOM_TIME_SQL: &str =
     include_str!("../../../../packages/core/src/schema/003_custom_time.sql");
+/// 004：条目是否显示在课表上。
+pub const SCHEMA_TIMETABLE_ENTRIES_SQL: &str =
+    include_str!("../../../../packages/core/src/schema/004_timetable_entries.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
@@ -1894,6 +1897,12 @@ pub fn run() {
                             version: 3,
                             description: "custom_time",
                             sql: SCHEMA_CUSTOM_TIME_SQL,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 4,
+                            description: "timetable_entries",
+                            sql: SCHEMA_TIMETABLE_ENTRIES_SQL,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
                     ],

@@ -97,6 +97,8 @@ export interface EventRow extends SyncColumns {
   /** 自定义时间（HH:MM）：非空时该条按真实时间展示，不按节次 */
   start_time: string | null;
   end_time: string | null;
+  /** 是否显示在课表上：日程/作业/考试由开关决定，实验默认显示 */
+  show_in_timetable: number;
   ref_schedule_id: string | null;
   action: EventAction | null;
   new_date: string | null;
