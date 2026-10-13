@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { logInfo } from '../log.ts';
+import { logError, logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -243,12 +243,21 @@ export function CourseForm({
         endTime: draft.customTime ? draft.endTime : null,
       }));
 
+      logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
+        name: payload.name,
+        schedules: schedules.map((item) => ({
+          day: item.dayOfWeek,
+          periods: `${item.periodStart}-${item.periodEnd}`,
+          weeks: item.weeks.length,
+          time: item.startTime === null ? null : `${item.startTime}-${item.endTime}`,
+        })),
+      });
       let savedId: string;
       if (course === null) {
         const created = await createCourse(storage, { semesterId, ...payload });
         savedId = String(created['id']);
         await setSchedules(storage, savedId, schedules);
-        logInfo('course', '新建课程', { name: payload.name, schedules: schedules.length });
+        logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
         toast.success('已添加课程');
       } else {
         savedId = course.id;
@@ -265,7 +274,11 @@ export function CourseForm({
       onCreated();
       onOpenChange(false);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      // 保存失败同时写日志与界面提示，避免只留一句「无反应」
+      const message = cause instanceof Error ? cause.message : String(cause);
+      logError('course', '保存课程失败', { message, id: course?.id ?? null });
+      setError(message);
+      toast.error(`保存课程失败：${message}`);
     } finally {
       setBusy(false);
     }

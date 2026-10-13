@@ -12,12 +12,13 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { MiniShell } from './shell.tsx';
 import '../styles.css';
 
 installWebviewGuards();
+installLogHandlers();
 
 /** 兜底轮询间隔：主窗口的数据变更会主动通知，这里只防窗口漏掉通知。 */
 const REFRESH_MS = 15_000;

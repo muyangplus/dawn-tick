@@ -3,6 +3,7 @@ import {
   createEvent,
   dateWallClockToEpoch,
   formatDate,
+  maskToWeeks,
   setReminder,
   updateEvent,
   weeksToMask,
@@ -11,6 +12,7 @@ import {
   type Storage,
   type TimeSlotRow,
 } from '@dawn-tick/core';
+import { logDebug, logError, logInfo } from '../log.ts';
 import { Button } from '../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input, Textarea } from '../components/ui/input.tsx';
@@ -91,6 +93,13 @@ export function periodsForClock(
   return { periodStart: nearest.period_no, periodEnd: nearest.period_no };
 }
 
+/** 节次输入取整到 1..40，非法时用兜底值。 */
+function toPeriod(value: string, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(40, Math.max(1, Math.round(parsed)));
+}
+
 /** 分钟数加偏移，返回 HH:MM（用于默认结束时间）。 */
 function plusMinutes(clock: string, minutes: number): string {
   const [hour, minute] = clock.split(':').map(Number);
@@ -157,6 +166,11 @@ export function TodoForm({
       setEndTime(editing.end_time ?? '21:00');
       setLabWeekday(editing.as_day_of_week ?? 1);
       setLabRepeat(editing.weeks_mask !== null);
+      setLabWeeks(
+        editing.weeks_mask === null
+          ? Array.from({ length: semester?.total_weeks ?? 16 }, (_, index) => index + 1)
+          : maskToWeeks(editing.weeks_mask, semester?.total_weeks ?? 20),
+      );
       setLabPeriodStart(String(editing.period_start ?? 1));
       setLabPeriodEnd(String(editing.period_end ?? editing.period_start ?? 2));
       return;
@@ -183,44 +197,51 @@ export function TodoForm({
       const endAt = customTime ? dateWallClockToEpoch(dueDate, endTime, timeZone) : null;
       const linked = !isExam && courseId.length > 0;
       const derived = customTime && isLab ? periodsForClock(slots, startTime, endTime) : null;
-      const common = {
+      // 节次只写数字：自定义时间算不出重叠节次、或输入不是数字时，退回该条原有节次
+      const fallbackPeriod = editing?.period_start ?? 1;
+      const periodStart = isLab
+        ? (derived?.periodStart ?? toPeriod(labPeriodStart, fallbackPeriod))
+        : null;
+      const periodEnd = isLab
+        ? Math.max(periodStart ?? 1, derived?.periodEnd ?? toPeriod(labPeriodEnd, periodStart ?? 1))
+        : null;
+      logDebug('todo', editing === null ? '保存待办：开始' : '保存待办修改：开始', {
+        type: current,
         title: title.trim(),
-        semesterId,
-        onDate: dueDate,
-        startAt: at,
-        endAt,
-        dueAt: isHomework || linked ? (customTime ? endAt ?? at : at) : null,
-        subject: linked ? courseId : null,
-        location: isExam || isLab ? (location.trim().length > 0 ? location.trim() : null) : null,
-        seatNo: isExam ? (seatNo.trim().length > 0 ? seatNo.trim() : null) : null,
-        note: note.trim().length > 0 ? note.trim() : null,
+        date: dueDate,
+        time: customTime ? `${startTime}-${endTime}` : dueTime,
+        customTime,
+        linked,
         countdown: switches.countdown,
         manualDone: switches.manualDone,
-        startTime: customTime ? startTime : null,
-        endTime: customTime ? endTime : null,
-      };
+        periodStart,
+        periodEnd,
+        repeat: isLab && labRepeat ? labWeeks.length : 0,
+      });
       if (editing !== null) {
+        // 只写列名（snake_case），避免 camelCase 与列名同时出现把行写脏
         await updateEvent(storage, editing.id, {
-          ...common,
+          title: title.trim(),
           semester_id: semesterId,
           on_date: dueDate,
           start_at: at,
           end_at: endAt,
-          due_at: common.dueAt,
-          subject: common.subject,
-          location: common.location,
-          seat_no: common.seatNo,
-          note: common.note,
+          due_at: isHomework || linked ? (customTime ? endAt ?? at : at) : null,
+          subject: linked ? courseId : null,
+          location: isExam || isLab ? (location.trim().length > 0 ? location.trim() : null) : null,
+          seat_no: isExam ? (seatNo.trim().length > 0 ? seatNo.trim() : null) : null,
+          note: note.trim().length > 0 ? note.trim() : null,
           countdown: switches.countdown ? 1 : 0,
           manual_done: switches.manualDone ? 1 : 0,
           start_time: customTime ? startTime : null,
           end_time: customTime ? endTime : null,
-          period_start: isLab ? (derived?.periodStart ?? Number(labPeriodStart)) : null,
-          period_end: isLab ? (derived?.periodEnd ?? Number(labPeriodEnd)) : null,
+          period_start: periodStart,
+          period_end: periodEnd,
           weeks_mask: isLab && labRepeat ? weeksToMask(labWeeks) : null,
           as_day_of_week: isLab && labRepeat ? labWeekday : null,
           nature: isLab ? 'lab' : editing.nature,
         });
+        logInfo('todo', `已保存${KIND_LABEL[current]}`, { id: editing.id, title: title.trim() });
         toast.success(`已保存${KIND_LABEL[current]}「${title.trim()}」`);
         onCreated();
         onOpenChange(false);
@@ -228,23 +249,45 @@ export function TodoForm({
       }
       let created: Record<string, unknown>;
       if (isLab) {
-        const start = derived?.periodStart ?? Number(labPeriodStart);
-        const end = derived?.periodEnd ?? Number(labPeriodEnd);
         created = await createEvent(storage, {
-          ...common,
           userId,
           type: 'lab',
+          title: title.trim(),
+          semesterId,
+          onDate: dueDate,
+          startAt: at,
+          endAt,
           nature: 'lab',
-          periodStart: Number.isFinite(start) ? start : 1,
-          periodEnd: Number.isFinite(end) ? end : start,
+          subject: linked ? courseId : null,
+          location: location.trim().length > 0 ? location.trim() : null,
+          note: note.trim().length > 0 ? note.trim() : null,
+          countdown: switches.countdown,
+          manualDone: switches.manualDone,
+          startTime: customTime ? startTime : null,
+          endTime: customTime ? endTime : null,
+          periodStart,
+          periodEnd,
           weeksMask: labRepeat ? weeksToMask(labWeeks) : null,
           asDayOfWeek: labRepeat ? labWeekday : null,
         });
       } else {
         created = await createEvent(storage, {
-          ...common,
           userId,
           type: isExam ? 'exam' : isHomework ? 'homework' : linked ? 'todo' : 'temp',
+          title: title.trim(),
+          semesterId,
+          onDate: dueDate,
+          startAt: at,
+          endAt,
+          dueAt: isHomework || linked ? (customTime ? endAt ?? at : at) : null,
+          subject: linked ? courseId : null,
+          location: isExam ? (location.trim().length > 0 ? location.trim() : null) : null,
+          seatNo: isExam ? (seatNo.trim().length > 0 ? seatNo.trim() : null) : null,
+          note: note.trim().length > 0 ? note.trim() : null,
+          countdown: switches.countdown,
+          manualDone: switches.manualDone,
+          startTime: customTime ? startTime : null,
+          endTime: customTime ? endTime : null,
         });
       }
       const minutes = ADVANCE_OPTIONS.find((item) => item.id === advance)?.minutes ?? -1;
@@ -257,6 +300,7 @@ export function TodoForm({
           skipHolidays: true,
         });
       }
+      logInfo('todo', `已添加${KIND_LABEL[current]}`, { id: String(created['id'] ?? ''), title: title.trim() });
       toast.success(`已添加${KIND_LABEL[current]}「${title.trim()}」`);
       setTitle('');
       setNote('');
@@ -264,6 +308,11 @@ export function TodoForm({
       setSeatNo('');
       onCreated();
       onOpenChange(false);
+    } catch (cause: unknown) {
+      // 保存失败要看得见：写日志 + 弹提示，不再静默
+      const message = cause instanceof Error ? cause.message : String(cause);
+      logError('todo', '保存失败', { message, type: current, editing: editing?.id ?? null });
+      toast.error(`保存失败：${message}`);
     } finally {
       setBusy(false);
     }

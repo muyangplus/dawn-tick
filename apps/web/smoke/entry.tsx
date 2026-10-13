@@ -136,6 +136,18 @@ async function seed(): Promise<SmokeSeed> {
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayOffset);
   const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
   const mondayText = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+  const todayText = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  // 实验条目：覆盖「改实验 → 保存 → 写回」这条链路（曾经静默失败、没有日志）
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'lab',
+    title: '物理实验',
+    onDate: todayText,
+    periodStart: 3,
+    periodEnd: 4,
+    nature: 'lab',
+  });
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
@@ -1240,6 +1252,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
   check('日程与作业合并为一个入口', !scheduleText.includes('加作业/汇报'), '');
+
+  // 改实验：单击时间线里的实验进详情，改名保存后必须写回
+  const labRow = [...view.container.querySelectorAll('[data-role="timeline-row"]')].find((row) =>
+    (row.textContent ?? '').includes('物理实验'),
+  );
+  const labOpen = labRow?.querySelector('[data-role="timeline-event"]');
+  if (labOpen instanceof window.HTMLElement) labOpen.click();
+  await flush(14);
+  const labTitleInput = document.querySelector('[aria-label="实验名称"]');
+  if (labTitleInput instanceof window.HTMLInputElement) setInputValue(labTitleInput, '物理实验（改）');
+  await flush(6);
+  const labSaved = clickByText(document.body, '保存');
+  await flush(24);
+  check(
+    '改实验保存后写回时间线',
+    labOpen !== null &&
+      labSaved &&
+      (view.container.textContent ?? '').includes('物理实验（改）'),
+    `入口=${labOpen === null ? '无' : '有'}；保存=${labSaved ? '已点' : '未找到'}`,
+  );
 
   check(
     '日程可切换日期与设置假日',

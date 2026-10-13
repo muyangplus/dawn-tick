@@ -10,6 +10,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
+import { logError, logInfo } from '../log.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { Field, Input } from './ui/input.tsx';
@@ -138,8 +139,19 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
         await updateEvent(storage, String(created['id']), { nature: nature === 'course' ? 'course' : 'lab' });
       }
       toast.success(cancelOnly ? '已记录停课' : `已记录调课（性质：${nature === 'course' ? '课程' : '实验'}）`);
+      logInfo('adjust', cancelOnly ? '已记录停课' : '已记录调课', {
+        scheduleId: schedule.id,
+        date: sourceDate,
+        newDate: cancelOnly ? null : newDate,
+        periods: `${periodStart}-${periodEnd}`,
+        nature,
+      });
       onChanged();
       onOpenChange(false);
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      logError('adjust', '调课保存失败', { message, scheduleId: schedule.id });
+      toast.error(`保存失败：${message}`);
     } finally {
       setBusy(false);
     }

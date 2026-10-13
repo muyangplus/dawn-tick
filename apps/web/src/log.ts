@@ -11,10 +11,11 @@ export interface LogEntry {
   detail?: Record<string, unknown>;
 }
 
+declare const __DT_CHANNEL__: string | undefined;
 export const LOG_META_KEY = 'app_log';
 const MAX_ENTRIES = 300;
 /** dev / beta 渠道记录 debug 级日志；release 只留 info 及以上。 */
-const DEBUG_ENABLED = __DT_CHANNEL__ !== 'release';
+const DEBUG_ENABLED = (typeof __DT_CHANNEL__ === 'string' ? __DT_CHANNEL__ : 'dev') !== 'release';
 
 let buffer: LogEntry[] = [];
 let storage: Storage | null = null;
@@ -72,17 +73,43 @@ export async function loadLogs(): Promise<void> {
 }
 
 function record(level: LogLevel, scope: string, message: string, detail?: Record<string, unknown>): void {
+  // release 渠道不记 debug；其余渠道四个等级全部记录，控制台、文件与导出一致
   if (level === 'debug' && !DEBUG_ENABLED) return;
   const entry: LogEntry = { at: Date.now(), level, scope, message, ...(detail === undefined ? {} : { detail }) };
   buffer.push(entry);
   if (buffer.length > MAX_ENTRIES) buffer = buffer.slice(-MAX_ENTRIES);
-  const line = `[${platformLabel()}] ${scope}: ${message}`;
+  const line = `${formatLogTimestamp(entry.at)} [${level}] [${platformLabel()}] ${scope}: ${message}`;
   if (level === 'error') console.error(line, detail ?? '');
   else if (level === 'warn') console.warn(line, detail ?? '');
   else if (level === 'debug') console.debug(line, detail ?? '');
   else console.info(line, detail ?? '');
   void writeToNative(entry);
   scheduleFlush();
+}
+
+/**
+ * 未捕获的异常与未处理的 Promise 也写进日志：
+ * 之前保存失败这类问题会因为异常被吞掉而既不提示也不留痕。
+ */
+export function installLogHandlers(): void {
+  const target = globalThis as {
+    addEventListener?: (type: string, listener: (event: unknown) => void) => void;
+  };
+  if (typeof target.addEventListener !== 'function') return;
+  target.addEventListener('error', (event) => {
+    const detail = event as { message?: string; filename?: string; lineno?: number; error?: { stack?: string } };
+    logError('runtime', detail.message ?? '脚本错误', {
+      file: detail.filename ?? '',
+      line: detail.lineno ?? 0,
+      stack: detail.error?.stack ?? '',
+    });
+  });
+  target.addEventListener('unhandledrejection', (event) => {
+    const reason = (event as { reason?: unknown }).reason;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? (reason.stack ?? '') : '';
+    logError('runtime', `未处理的失败：${message}`, { stack });
+  });
 }
 
 /** 调试日志：dev / beta 渠道完整记录；release 渠道自动丢弃。 */

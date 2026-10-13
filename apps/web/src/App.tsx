@@ -358,6 +358,17 @@ export function App() {
 
   async function openLesson(cell: LessonCell): Promise<void> {
     if (storage === null) return;
+    // 实验格没有课程行：直接进这条实验的详情编辑，而不是去找不存在的课程
+    if (cell.eventId !== undefined) {
+      const lab = data?.labs.find((row) => row.id === cell.eventId);
+      if (lab !== undefined) {
+        logInfo('timetable', '打开实验详情', { id: lab.id, title: lab.title });
+        setEditingEvent(lab);
+        setTodoFormOpen(true);
+        return;
+      }
+      logWarn('timetable', '实验条目不存在', { id: cell.eventId });
+    }
     const loaded = await loadCourseDetail(storage, cell.courseId);
     setDetail({ cell, detail: loaded, date: lessonDateOf(cell) });
   }
