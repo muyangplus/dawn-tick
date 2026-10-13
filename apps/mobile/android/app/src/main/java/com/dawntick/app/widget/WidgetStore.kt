@@ -19,6 +19,8 @@ data class WidgetGridLesson(
     val dayOfWeek: Int,
     val periodStart: Int,
     val periodEnd: Int,
+    /** 该课所在日期是否被停课。 */
+    val cancelled: Boolean,
 )
 
 data class WidgetExam(
@@ -32,6 +34,8 @@ data class WidgetSnapshot(
     val updatedAt: Long,
     val background: String,
     val next: WidgetLesson?,
+    /** 当前正在进行中的课程，没有进行中的课程时为 null。 */
+    val current: WidgetLesson?,
     val today: List<WidgetLesson>,
     val grid: List<WidgetGridLesson>,
     val exams: List<WidgetExam>,
@@ -72,6 +76,7 @@ object WidgetStore {
                             dayOfWeek = item.optInt("dayOfWeek", 1),
                             periodStart = item.optInt("periodStart", 1),
                             periodEnd = item.optInt("periodEnd", 1),
+                            cancelled = item.optBoolean("cancelled", false),
                         ),
                     )
                 }
@@ -96,6 +101,7 @@ object WidgetStore {
                 updatedAt = root.optLong("updatedAt", 0L),
                 background = root.optString("background", "light"),
                 next = root.optJSONObject("next")?.let { parseLesson(it) },
+                current = root.optJSONObject("current")?.let { parseLesson(it) },
                 today = today,
                 grid = grid,
                 exams = exams,

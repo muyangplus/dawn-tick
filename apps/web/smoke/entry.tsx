@@ -1152,6 +1152,36 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `课程=${courseNature} 调整=${adjustNature} 其他=${otherNature} 考试=${examNature}`,
   );
 
+  // ④ 停课：日程里默认已完成（进已完成分组、不计入未完成），课表里灰显并标注「停课」
+  const cancelDate = addDays(seededMonday, 2);
+  await setViewDate(cancelDate);
+  if (clickMenu(view.container, '更多操作', '当天全部停课')) await flush(18);
+  const cancelledRow = rowIn('timeline-completed', '往期课');
+  check(
+    '日程时间线：停课默认已完成并进已完成分组',
+    cancelledRow !== undefined &&
+      cancelledRow.getAttribute('data-done') === 'true' &&
+      cancelledRow.getAttribute('data-completed') === 'true' &&
+      !rowsText('timeline-main').includes('往期课'),
+    `已完成=${rowsText('timeline-completed').slice(0, 40)} / 主=${rowsText('timeline-main').slice(0, 40)}`,
+  );
+  check(
+    '日程时间线：停课条目写明停课',
+    (cancelledRow?.textContent ?? '').includes('停课'),
+    cancelledRow?.textContent?.trim() ?? '(无)',
+  );
+  if (clickByText(view.container, '课表')) await flush(16);
+  const cancelledCard = view.container.querySelector('[data-tone="cancelled"]');
+  check(
+    '停课的课次在课表里灰显并标注',
+    cancelledCard !== null &&
+      (cancelledCard.querySelector('[data-role="cancelled-label"]')?.textContent ?? '').trim() === '停课' &&
+      cancelledCard.className.includes('opacity-45') &&
+      (cancelledCard.textContent ?? '').includes('往期'),
+    cancelledCard?.textContent?.trim() ?? '(无)',
+  );
+  if (clickByText(view.container, '日程')) await flush(12);
+
   if (clickMenu(view.container, '添加', '加考试')) await flush(12);
   check(
     '加考试入口打开考试表单',
@@ -1633,16 +1663,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `时长=${durationInput?.value}（${durationInput?.min}-${durationInput?.max}）课间=${breakInput?.value}（${breakInput?.min}-${breakInput?.max}）`,
   );
 
-  // 作息预设：默认选中内置默认作息，下拉里列的是 BUILTIN_TIMETABLES
+  // 作息预设：默认选中内置默认作息，下拉是可搜索的列表（输入即筛选）
   const defaultPreset = findTimetable(DEFAULT_TIMETABLE_ID);
+  const presetInput = view.container.querySelector<HTMLInputElement>('input[aria-label="作息预设"]');
   check(
     '作息预设默认选中内置默认作息',
     defaultPreset !== undefined &&
       defaultPreset.periods.length > 0 &&
-      triggerText('作息预设') === defaultPreset.name &&
+      presetInput !== null &&
+      presetInput.placeholder === defaultPreset.name &&
       BUILTIN_TIMETABLES.length >= 1 &&
       BUILTIN_TIMETABLES.some((preset) => preset.periods.length >= 10),
-    `选中=${triggerText('作息预设')} / 内置 ${BUILTIN_TIMETABLES.length} 套`,
+    `占位=${presetInput?.placeholder ?? '(无)'} / 内置 ${BUILTIN_TIMETABLES.length} 套`,
   );
 
   // 套用苏科大作息：时间表照抄预设课次，时长/课间同步成预设里最常见的 45 / 10
@@ -1652,15 +1684,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (durationInput !== null) setInputValue(durationInput, '50');
   if (breakInput !== null) setInputValue(breakInput, '5');
   await flush(8);
-  const presetTrigger = view.container.querySelector('[aria-label="作息预设"]');
+  const presetOptionTexts = (): string[] =>
+    [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
   let presetPicked = false;
-  if (presetTrigger instanceof window.HTMLElement) {
-    presetTrigger.click();
+  if (presetInput !== null) {
+    // 搜索框聚焦即展开候选；先按关键词收敛，再点中那一行
+    presetInput.focus();
+    setInputValue(presetInput, '苏州');
     await flush(8);
-    const option = [...document.querySelectorAll('[role="option"]')].find((item) =>
+    const filtered = presetOptionTexts();
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
       (item.textContent ?? '').includes('苏州科技大学'),
     );
-    if (option instanceof window.HTMLElement) {
+    check(
+      '作息预设可按关键词搜索',
+      filtered.length > 0 && filtered.every((item) => item.includes('苏州')) && option !== undefined,
+      filtered.join(' / ') || '(无候选)',
+    );
+    if (option !== undefined) {
       option.click();
       presetPicked = true;
     }
@@ -1715,21 +1756,56 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="恢复默认布局"]') !== null,
     '',
   );
-  // 关于卡片：预设仓库必须是一个可点击的外部入口，且与预设版本信息并列
+  // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
   const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
   const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';
   const presetRepoOpensOutside =
     presetRepoLink instanceof window.HTMLAnchorElement &&
     presetRepoLink.target === '_blank' &&
     /\bnoopener\b/.test(presetRepoLink.rel);
+  const releaseLink = view.container.querySelector('[data-role="release-page-link"]');
   check(
-    '关于卡片提供预设仓库外部链接（与预设版本并列）',
+    '更新与维护卡片：预设仓库外部链接与预设版本并列',
     presetRepoHref.includes('muyangplus/dawn-tick-presets') &&
       presetRepoOpensOutside &&
       presetRepoLink.parentElement?.querySelector('[data-role="preset-version"]') !== null,
     `${presetRepoHref} target=${presetRepoLink?.getAttribute('target') ?? '(无)'} rel=${presetRepoLink?.getAttribute('rel') ?? '(无)'}`,
   );
-  // 关于卡片默认收起，更新入口的文案由 update 单元测试覆盖，这里不重复断言
+  check(
+    '更新与维护卡片：检查更新与发布页入口',
+    view.container.querySelector('button[aria-label="检查更新"]') !== null &&
+      releaseLink instanceof window.HTMLAnchorElement &&
+      releaseLink.href.includes('muyangplus/dawn-tick/releases'),
+    releaseLink?.getAttribute('href') ?? '(无)',
+  );
+
+  // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
+  const helpBlock = view.container.querySelector('[data-role="about-help"]');
+  const appBlock = view.container.querySelector('[data-role="about-app"]');
+  const creditsBlock = view.container.querySelector('[data-role="about-credits"]');
+  check(
+    '关于卡片：帮助与反馈置顶并给出仓库入口',
+    helpBlock !== null &&
+      (helpBlock.textContent ?? '').includes('帮助与反馈') &&
+      (helpBlock.textContent ?? '').includes('快捷键') &&
+      view.container.querySelector('[data-role="issues-link"]') !== null &&
+      (view.container.querySelector('[data-role="readme-link"]')?.getAttribute('href') ?? '').includes('#readme') &&
+      (appBlock === null ||
+        (helpBlock.compareDocumentPosition(appBlock) & window.Node.DOCUMENT_POSITION_FOLLOWING) !== 0),
+    (helpBlock?.textContent ?? '').slice(0, 60),
+  );
+  const creditItems = [...(creditsBlock?.querySelectorAll('li') ?? [])].map((item) => item.textContent ?? '');
+  check(
+    '关于卡片：应用与版本 + 致谢与第三方声明',
+    appBlock !== null &&
+      (appBlock.textContent ?? '').includes('版本') &&
+      (appBlock.textContent ?? '').includes('Apache-2.0') &&
+      creditsBlock !== null &&
+      creditItems.length >= 10 &&
+      creditItems.some((item) => item.includes('React') && item.includes('MIT')) &&
+      creditItems.some((item) => item.includes('Tauri')),
+    `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
+  );
 
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(
@@ -2013,6 +2089,25 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
 
+  // 上次选的学校：卡片上给一键套用入口，选择器里置顶成「最近使用」一组
+  const recentApply = remounted.container.querySelector<HTMLElement>('[data-role="recent-school-apply"]');
+  check(
+    '作息设置记住上次选的学校并可一键套用',
+    recentApply !== null && (recentApply.textContent ?? '').includes('苏州科技大学'),
+    recentApply?.textContent?.trim() ?? '(无)',
+  );
+  applySchoolButton()?.click();
+  await flush(16);
+  const pinnedGroup = [...document.querySelectorAll('[data-role="school-group"]')].find(
+    (group) => group.getAttribute('data-province') === '最近使用',
+  );
+  check(
+    '学校选择器把上次选的学校置顶',
+    pinnedGroup !== undefined && (pinnedGroup.textContent ?? '').includes('苏州科技大学'),
+    pinnedGroup?.textContent?.trim().slice(0, 40) ?? '(无)',
+  );
+  if (clickByText(document.body, '取消')) await flush(10);
+
   check('学期设置显示编辑与删除入口', clickByLabel(remounted.container, '编辑学期'), '');
   await flush(6);
   const editDialogText = document.body.textContent ?? '';
@@ -2036,6 +2131,39 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(24);
   }
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
+
+  // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——
+  const onboardSearch = remounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索学校"]');
+  check(
+    '引导页提供选校入口',
+    onboardSearch !== null && remounted.container.querySelector('[data-role="onboarding-school"]') !== null,
+    '',
+  );
+  if (onboardSearch !== null) setInputValue(onboardSearch, '苏州');
+  await flush(14);
+  const onboardRow = [...remounted.container.querySelectorAll<HTMLElement>('[data-role="school-row"]')].find(
+    (item) => (item.textContent ?? '').includes('苏州科技大学'),
+  );
+  onboardRow?.click();
+  await flush(12);
+  check(
+    '引导页选校后给出已选提示',
+    (remounted.container.querySelector('[data-role="onboarding-school-picked"]')?.textContent ?? '').includes(
+      '苏州科技大学',
+    ),
+    remounted.container.querySelector('[data-role="onboarding-school-picked"]')?.textContent?.trim() ?? '(无)',
+  );
+  if (clickByText(remounted.container, '创建并开始')) await flush(30);
+  if (clickByText(remounted.container, '设置')) await flush(16);
+  const onboardClock = (period: number, field: '开始' | '结束'): string =>
+    remounted.container.querySelector<HTMLInputElement>(`input[aria-label="第 ${period} 节${field}时间"]`)?.value ?? '';
+  check(
+    '引导页所选学校在创建学期时套用为该校作息',
+    startInputs(remounted.container).length === 14 &&
+      onboardClock(3, '开始') === '09:55' &&
+      onboardClock(3, '结束') === '10:40',
+    `共 ${startInputs(remounted.container).length} 节，第 3 节 ${onboardClock(3, '开始') || '?'}–${onboardClock(3, '结束') || '?'}`,
+  );
 
   remounted.root.unmount();
 

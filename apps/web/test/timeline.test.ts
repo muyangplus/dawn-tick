@@ -7,7 +7,69 @@ import {
   slotRangeRatio,
   timelineBounds,
 } from '../src/lib/timeline.ts';
-import { formatCountdown, formatDayCountdown, formatShortCountdown } from '../src/lib/format.ts';
+import { formatCountdown, formatDayCountdown, formatRemaining, formatShortCountdown } from '../src/lib/format.ts';
+import { buildTimeline, splitTimeline } from '../src/screens/cards/timeline.ts';
+import type { AppData } from '../src/data.ts';
+import type { EventRow, Occurrence } from '@dawn-tick/core';
+
+const LESSON: Occurrence = {
+  date: '2026-10-13',
+  semesterId: 'sem-1',
+  scheduleId: 'sch-1',
+  courseId: 'c-1',
+  courseName: '高等数学',
+  shortName: '高数',
+  color: '#4F8DFD',
+  periodStart: 1,
+  periodEnd: 2,
+  startAt: Date.UTC(2026, 9, 13, 0, 0, 0),
+  endAt: Date.UTC(2026, 9, 13, 1, 40, 0),
+  room: '教三-201',
+  cancelled: false,
+};
+
+const CANCEL_EVENT = {
+  id: 'e-cancel',
+  type: 'reschedule',
+  title: '停课：高等数学',
+  on_date: '2026-10-13',
+  action: 'cancel',
+  done: 0,
+  start_at: null,
+  end_at: null,
+  new_date: null,
+  new_period_start: null,
+  new_period_end: null,
+  new_room: null,
+  location: null,
+} as unknown as EventRow;
+
+function makeData(overrides: Partial<AppData> = {}): AppData {
+  return {
+    timeZone: 'Asia/Shanghai',
+    today: '2026-10-13',
+    todayOfWeek: 2,
+    week: 6,
+    viewWeek: 6,
+    weekStartDate: '2026-10-12',
+    hasLessons: true,
+    courses: [],
+    lessonsByDate: new Map([['2026-10-13', [LESSON]]]),
+    holidayLabels: new Map(),
+    workdayDates: [],
+    semester: null,
+    semesters: [],
+    slots: [],
+    grid: new Map(),
+    todayLessons: [LESSON],
+    currentLesson: undefined,
+    nextLesson: undefined,
+    exams: [],
+    todos: [],
+    reschedules: [],
+    ...overrides,
+  };
+}
 
 const SLOTS = [
   { periodNo: 1, startTime: '08:00', endTime: '08:45' },
@@ -60,4 +122,40 @@ test('倒计时格式', () => {
   assert.equal(formatShortCountdown(5_400_000), '1 小时 30 分');
   assert.equal(formatDayCountdown(1_000_000 + 86_400_000 * 2, 1_000_000), '2 天');
   assert.equal(formatDayCountdown(500, 1_000_000), '今天');
+});
+
+test('剩余时间格式', () => {
+  const base = 1_000_000;
+  assert.equal(formatRemaining(base + 65_000, base), '01:05');
+  assert.equal(formatRemaining(base + 3_665_000, base), '1:01:05');
+  assert.equal(formatRemaining(base, base), '00:00');
+  assert.equal(formatRemaining(base - 5_000, base), '00:00');
+});
+
+test('时间线：进行中的课带 running 标记，到点后进已完成', () => {
+  const data = makeData();
+  const during = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0));
+  assert.equal(during.length, 1);
+  assert.equal(during[0]?.running, true);
+  assert.equal(during[0]?.completed, false);
+  assert.equal(splitTimeline(during).main.length, 1);
+
+  const after = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 2, 0, 0));
+  assert.equal(after[0]?.running, false);
+  assert.equal(after[0]?.completed, true);
+  assert.equal(splitTimeline(after).completed.length, 1);
+});
+
+test('时间线：停课记录默认已完成，不计入未完成安排', () => {
+  const data = makeData({ reschedules: [CANCEL_EVENT] });
+  const items = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0));
+  const cancel = items.find((item) => item.key === 'adjust-e-cancel');
+  assert.ok(cancel !== undefined);
+  assert.equal(cancel.detail, '停课');
+  assert.equal(cancel.done, true);
+  assert.equal(cancel.completed, true);
+  assert.equal(cancel.checkable, false);
+  const { main, completed } = splitTimeline(items);
+  assert.equal(completed.filter((item) => item.key === 'adjust-e-cancel').length, 1);
+  assert.equal(main.filter((item) => item.key === 'adjust-e-cancel').length, 0);
 });

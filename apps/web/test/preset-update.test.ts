@@ -6,8 +6,10 @@ import { MemoryStorage, type Storage } from '@dawn-tick/core';
 import {
   BUILTIN_PRESET_VERSION,
   PRESET_SCHEMA_VERSION,
+  PRESET_SNAPSHOT_API_URL,
   PRESET_SNAPSHOT_META_KEY,
   PRESET_SNAPSHOT_URL,
+  PRESET_VERSION_API_URL,
   PRESET_VERSION_URL,
   canonicalPresetJson,
   checkPresetUpdate,
@@ -31,6 +33,22 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
     status,
     json: async () => body,
   } as unknown as Response;
+}
+
+/** raw 直连（raw.githubusercontent.com）还是 api contents（api.github.com）。 */
+function isRaw(input: unknown): boolean {
+  return String(input).startsWith('https://raw.githubusercontent.com/');
+}
+
+/**
+ * contents 接口的响应体：`content` 是内层文件的 base64。
+ * GitHub 会把 base64 每 60 字符断行，这里照做，顺便覆盖「解码前去掉换行」。
+ */
+function contentsResponse(value: unknown): Response {
+  const content = Buffer.from(JSON.stringify(value), 'utf8')
+    .toString('base64')
+    .replace(/(.{60})/g, '$1\n');
+  return jsonResponse({ name: 'x', path: 'x', encoding: 'base64', content });
 }
 
 /** 用同一套规范化口径给快照签名，用于构造「结构合法」的测试数据。 */
@@ -212,6 +230,15 @@ test('预设源地址与内置版本号是常量，且与预设仓库 0.1.0 对�
     PRESET_SNAPSHOT_URL('0.1.0'),
     'https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/snapshot/presets-0.1.0.json',
   );
+  // 回退取源（api.github.com 的 contents 接口）：地址是常量，便于核对
+  assert.equal(
+    PRESET_VERSION_API_URL,
+    'https://api.github.com/repos/muyangplus/dawn-tick-presets/contents/version.json',
+  );
+  assert.equal(
+    PRESET_SNAPSHOT_API_URL('0.1.0'),
+    'https://api.github.com/repos/muyangplus/dawn-tick-presets/contents/snapshot/presets-0.1.0.json',
+  );
   // 索引没有独立地址了：它就在快照里（旧的 presets/index.json 已被预设仓库删除）
   assert.equal(PRESET_SNAPSHOT_META_KEY, 'presets_snapshot_v1');
   assert.equal(PRESET_SCHEMA_VERSION, 1);
@@ -360,6 +387,100 @@ test('checkPresetUpdate：远端格式比本版新时提示升级而不是当成
   assert.match(String(status.error), /schemaVersion 99/);
 });
 
+// —— 取源顺序：raw 直连 → api contents（大陆网络实测 raw 不通、api 可达） ——
+
+test('checkPresetUpdate：raw 直连成功时不再请求 api', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async (input, init) => {
+      seen.push(String(input));
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.['accept'],
+        'application/json',
+        'raw 直连沿用 application/json',
+      );
+      return jsonResponse({ version: '1.1.0', schemaVersion: 1 });
+    },
+  });
+  assert.deepEqual(seen, [PRESET_VERSION_URL]);
+  assert.equal(status.available, true);
+  assert.equal(status.version, '1.1.0');
+  assert.equal(status.error, null);
+  assert.equal(status.source, 'raw');
+});
+
+test('checkPresetUpdate：raw 失败后回退 api contents（base64）', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async (input, init) => {
+      const url = String(input);
+      seen.push(url);
+      if (isRaw(url)) throw new Error('fetch failed');
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.['accept'],
+        'application/vnd.github+json',
+        'api 分支用 GitHub 的 accept',
+      );
+      return contentsResponse({ version: '1.2.0', schemaVersion: 1 });
+    },
+  });
+  assert.deepEqual(seen, [PRESET_VERSION_URL, PRESET_VERSION_API_URL]);
+  assert.equal(status.available, true);
+  assert.equal(status.version, '1.2.0');
+  assert.equal(status.error, null);
+  assert.equal(status.source, 'api');
+});
+
+test('checkPresetUpdate：raw 返回 404 也回退 api', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async (input) => {
+      const url = String(input);
+      seen.push(url);
+      return isRaw(url) ? jsonResponse({}, false, 404) : contentsResponse({ version: '1.3.0' });
+    },
+  });
+  assert.equal(seen.length, 2);
+  assert.equal(status.version, '1.3.0');
+  assert.equal(status.source, 'api');
+});
+
+test('checkPresetUpdate：两个来源都失败时给可读文案（最后一条失败原因）', async () => {
+  const network = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async () => {
+      throw new Error('fetch failed');
+    },
+  });
+  assert.equal(network.available, false);
+  assert.equal(network.version, null);
+  assert.equal(network.source, undefined);
+  assert.match(String(network.error), /^无法连接预设源（.*fetch failed.*）$/);
+
+  const notFound = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async () => jsonResponse({}, false, 404),
+  });
+  assert.equal(notFound.error, '预设源返回 404', '保留旧文案口径，调用方不必改');
+
+  const undecodable = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async (input) =>
+      isRaw(input) ? jsonResponse({}, false, 404) : jsonResponse({ encoding: 'base64', content: '!!!' }),
+  });
+  assert.match(String(undecodable.error), /base64/);
+
+  const wrongEncoding = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    fetchImpl: async (input) =>
+      isRaw(input) ? jsonResponse({}, false, 404) : jsonResponse({ encoding: 'none', content: '' }),
+  });
+  assert.equal(wrongEncoding.error, '预设源返回的 contents 编码不受支持：none');
+});
+
 test('fetchSnapshot：正常下载并通过哈希校验', async () => {
   const seen: string[] = [];
   const snapshot = await fetchSnapshot('1.1.0', async (input) => {
@@ -392,6 +513,38 @@ test('fetchSnapshot：哈希不符、结构不对、HTTP 失败、版本号非�
     /无法连接预设源/,
   );
   await assert.rejects(() => fetchSnapshot('../evil', async () => jsonResponse(DEMO_SNAPSHOT)), /版本号不合法/);
+});
+
+test('fetchSnapshot：raw 失败后回退 api contents（base64，含中文）并通过哈希校验', async () => {
+  const seen: string[] = [];
+  const snapshot = await fetchSnapshot('0.1.0', async (input) => {
+    const url = String(input);
+    seen.push(url);
+    if (isRaw(url)) throw new Error('fetch failed');
+    return contentsResponse(REAL_PRESET_SNAPSHOT_0_1_0);
+  });
+  assert.deepEqual(seen, [PRESET_SNAPSHOT_URL('0.1.0'), PRESET_SNAPSHOT_API_URL('0.1.0')]);
+  assert.equal(snapshot.version, '0.1.0');
+  assert.equal(snapshot.hash, REAL_PRESET_SNAPSHOT_0_1_0.hash, '外部基准的哈希仍须成立');
+  assert.equal(snapshot.index?.schools[1]?.name, '苏州科技大学', 'base64 按 UTF-8 解码');
+});
+
+test('fetchSnapshot：两个来源都失败时给出可读错误', async () => {
+  await assert.rejects(
+    () =>
+      fetchSnapshot('1.1.0', async (input) => {
+        if (isRaw(input)) throw new Error('fetch failed');
+        return jsonResponse({}, false, 500);
+      }),
+    /预设快照下载失败：预设源返回 500/,
+  );
+  await assert.rejects(
+    () =>
+      fetchSnapshot('1.1.0', async () => {
+        throw new Error('fetch failed');
+      }),
+    /预设快照下载失败：无法连接预设源（fetch failed）/,
+  );
 });
 
 test('缓存：写回后能读回，缺失时返回 null', async () => {

@@ -66,6 +66,11 @@ import { readLayout } from './cards/layout-store.ts';
 import { resolveCards, type LayoutConfig } from './cards/registry.ts';
 import { SETTINGS_SECTIONS, settingsSection } from './cards/settings-cards.tsx';
 
+/** 预设来源的可读文案：raw 直连还是 GitHub contents 兜底。 */
+function sourceLabel(source: 'raw' | 'api'): string {
+  return source === 'api' ? 'GitHub contents 接口' : 'raw.githubusercontent.com';
+}
+
 const PERMISSION_LABEL: Record<ReminderView['permission'], string> = {
   unsupported: '当前环境不支持通知',
   default: '未申请',
@@ -92,6 +97,31 @@ const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
   minimal: '极简数字：只显示大号倒计时',
   combo: '组合卡：下一节课 + 待办作业',
 };
+
+/** 关于卡片列出的运行时依赖与许可证；名称与许可类型取自各端清单，此处为静态副本。 */
+const RUNTIME_CREDITS: readonly { name: string; license: string }[] = [
+  { name: 'React', license: 'MIT' },
+  { name: 'React DOM', license: 'MIT' },
+  { name: 'Tailwind CSS', license: 'MIT' },
+  { name: 'Radix UI 原语', license: 'MIT' },
+  { name: 'lucide 图标', license: 'ISC' },
+  { name: 'vaul', license: 'MIT' },
+  { name: 'sonner', license: 'MIT' },
+  { name: 'class-variance-authority', license: 'Apache-2.0' },
+  { name: 'clsx', license: 'MIT' },
+  { name: 'tailwind-merge', license: 'MIT' },
+  { name: 'idb', license: 'ISC' },
+  { name: 'ExcelJS', license: 'MIT' },
+  { name: 'Tauri', license: 'Apache-2.0 OR MIT' },
+  { name: 'tauri-plugin-sql', license: 'Apache-2.0 OR MIT' },
+  { name: 'tauri-plugin-notification', license: 'Apache-2.0 OR MIT' },
+  { name: 'sqlx', license: 'MIT OR Apache-2.0' },
+  { name: 'serde / serde_json', license: 'MIT OR Apache-2.0' },
+  { name: 'windows-sys', license: 'MIT OR Apache-2.0' },
+  { name: 'Capacitor', license: 'MIT' },
+  { name: '@capacitor-community/sqlite', license: 'MIT' },
+  { name: '@capacitor/local-notifications', license: 'MIT' },
+];
 
 export interface SettingsViewProps {
   storage: Storage;
@@ -235,8 +265,10 @@ export function SettingsView({
         return;
       }
       if (!status.available || status.version === null) {
-        setPresetResult(`预设已是最新（${currentVersion}）`);
-        logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version });
+        setPresetResult(
+          `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${sourceLabel(status.source)}`}`,
+        );
+        logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version, source: status.source });
         return;
       }
       const snapshot = await fetchSnapshot(status.version);
@@ -898,19 +930,45 @@ export function SettingsView({
       </>
     ),
 
-    about: (
+    maintenance: (
       <>
-        <span className="text-xs text-muted">晓刻 DawnTick · 课表与日程提醒工具</span>
-        <span className="tabular text-xs text-muted">
-          版本 {appVersion()} · {CHANNEL_LABEL[CHANNEL]}
-        </span>
-        <span className="text-xs text-muted">许可证 Apache-2.0</span>
-        <ExternalLink
-          className="text-xs text-primary-strong underline"
-          href="https://github.com/muyangplus/dawn-tick"
-        >
-          https://github.com/muyangplus/dawn-tick
-        </ExternalLink>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="检查更新"
+            disabled={updateBusy}
+            onClick={() => void runUpdateCheck()}
+          >
+            检查更新
+          </Button>
+          <ExternalLink
+            dataRole="release-page-link"
+            className="text-xs text-primary-strong underline"
+            href="https://github.com/muyangplus/dawn-tick/releases"
+            ariaLabel="打开发布页（GitHub）"
+          >
+            打开发布页
+          </ExternalLink>
+          {updateResult !== null && <span className="text-xs text-muted" data-role="update-result">{updateResult}</span>}
+        </div>
+        {CHANNEL !== 'dev' ? (
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span className="flex min-w-0 flex-col">
+              <span>接收测试版更新</span>
+              <span className="truncate text-xs text-muted">
+                {CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后才会收到 beta 版'}
+              </span>
+            </span>
+            <Switch
+              checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
+              aria-label="接收测试版更新"
+              onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
+            />
+          </label>
+        ) : (
+          <span className="text-xs text-muted">开发渠道：只接收 dev 构建，不参与测试版开关</span>
+        )}
         <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
           <span>预设仓库</span>
           <ExternalLink
@@ -944,18 +1002,6 @@ export function SettingsView({
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            aria-label="检查更新"
-            disabled={updateBusy}
-            onClick={() => void runUpdateCheck()}
-          >
-            检查更新
-          </Button>
-          {updateResult !== null && <span className="text-xs text-muted">{updateResult}</span>}
-        </div>
         {canUseWidget() && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted">
@@ -972,24 +1018,78 @@ export function SettingsView({
             </Button>
           </div>
         )}
-        {CHANNEL !== 'dev' && (
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span className="flex min-w-0 flex-col">
-              <span>接收测试版更新</span>
-              <span className="truncate text-xs text-muted">
-                {CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后才会收到 beta 版'}
-              </span>
-            </span>
-            <Switch
-              checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-              aria-label="接收测试版更新"
-              onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
-            />
-          </label>
-        )}
-        {CHANNEL === 'dev' && (
-          <span className="text-xs text-muted">开发渠道：只接收 dev 构建，不参与测试版开关</span>
-        )}
+        <span className="text-xs text-muted">应用内只检查版本与说明；下载与安装到发布页完成。</span>
+      </>
+    ),
+
+    about: (
+      <>
+        <div className="flex flex-col gap-1" data-role="about-help">
+          <span className="text-sm font-medium text-ink">帮助与反馈</span>
+          <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
+            <span>问题与建议</span>
+            <ExternalLink
+              dataRole="issues-link"
+              className="text-primary-strong underline"
+              href="https://github.com/muyangplus/dawn-tick/issues"
+              ariaLabel="打开发布仓库的 Issues（GitHub）"
+            >
+              Issues
+            </ExternalLink>
+            <span>使用说明</span>
+            <ExternalLink
+              dataRole="readme-link"
+              className="text-primary-strong underline"
+              href="https://github.com/muyangplus/dawn-tick#readme"
+              ariaLabel="打开使用说明（GitHub）"
+            >
+              README
+            </ExternalLink>
+          </span>
+          <span className="text-xs text-muted">
+            快捷键：/ 搜索 · ← → 切换周 · T 回到本周 · Esc 关闭弹窗与占位块
+          </span>
+          <span className="text-xs text-muted">
+            学校适配与作息在独立仓库 dawn-tick-presets 维护，缺适配时可提交学校信息。
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-1" data-role="about-app">
+          <span className="text-sm font-medium text-ink">应用与版本</span>
+          <span className="text-xs text-muted">晓刻 DawnTick · 课表与日程提醒工具</span>
+          <span className="tabular text-xs text-muted">
+            版本 {appVersion()} · {CHANNEL_LABEL[CHANNEL]}
+          </span>
+          <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
+            <span>许可证 Apache-2.0</span>
+            <ExternalLink
+              dataRole="license-link"
+              className="text-primary-strong underline"
+              href="https://github.com/muyangplus/dawn-tick/blob/main/LICENSE"
+              ariaLabel="打开许可证原文（GitHub）"
+            >
+              许可证原文
+            </ExternalLink>
+          </span>
+          <ExternalLink
+            className="text-xs text-primary-strong underline"
+            href="https://github.com/muyangplus/dawn-tick"
+          >
+            https://github.com/muyangplus/dawn-tick
+          </ExternalLink>
+        </div>
+
+        <div className="flex flex-col gap-1" data-role="about-credits">
+          <span className="text-sm font-medium text-ink">致谢与第三方声明</span>
+          <span className="text-xs text-muted">运行时依赖及其许可证：</span>
+          <ul className="flex flex-col gap-0.5 text-xs text-muted">
+            {RUNTIME_CREDITS.map((item) => (
+              <li key={item.name}>
+                {item.name} · {item.license}
+              </li>
+            ))}
+          </ul>
+        </div>
       </>
     ),
   };

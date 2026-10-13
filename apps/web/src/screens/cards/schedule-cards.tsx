@@ -30,6 +30,7 @@ import { Field, Input } from '../../components/ui/input.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { cn } from '../../lib/cn.ts';
 import { formatDayCountdown } from '../../lib/format.ts';
+import { useNowTick } from '../../lib/use-now.ts';
 import { ActionMenu } from './card-actions.tsx';
 import { defineCard, type ScheduleCardContext } from './registry.ts';
 import { buildTimeline, dateLabel, groupTimeline, splitTimeline, type TimelineItem, type TimelineNature } from './timeline.ts';
@@ -262,7 +263,8 @@ function ScheduleTimeline({
   onChanged,
   tomorrowPreview,
 }: ScheduleCardContext) {
-  const now = Date.now();
+  // 时刻每秒走一格：正在上的课、到点自动完成的条目不用等下一次数据加载
+  const now = useNowTick(1000);
   const timeline = buildTimeline(data, viewDate, now);
   // 已完成（手动勾选 或 到点自动完成）的条目从主时间线移出，单独成组置顶
   const { main, completed } = splitTimeline(timeline);
@@ -440,6 +442,14 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: Timel
           <span className={cn('truncate text-base font-medium text-ink', item.completed && 'line-through')}>
             {item.title}
           </span>
+          {item.running && (
+            <span
+              className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[11px] leading-none text-on-primary"
+              data-role="timeline-running"
+            >
+              进行中
+            </span>
+          )}
           {item.date === null && <span className="shrink-0 text-[11px] text-muted">未排期</span>}
         </span>
         {item.location !== null && item.location.length > 0 && (
@@ -465,6 +475,7 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson }: Timel
       data-completed={item.completed ? 'true' : undefined}
       data-auto={item.autoDone ? 'true' : undefined}
       data-done={item.done ? 'true' : undefined}
+      data-running={item.running ? 'true' : undefined}
     >
       {lessonTarget === null ? (
         body

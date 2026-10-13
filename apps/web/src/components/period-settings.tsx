@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { CalendarRange, Plus, Trash2, Wand2 } from 'lucide-react';
 import {
   appendTimeSlot,
-  BUILTIN_TIMETABLES,
   DEFAULT_TIMETABLE_ID,
   deleteTimeSlot,
+  effectiveTimetables,
   findTimetable,
   generatePeriods,
   listTimeSlots,
@@ -18,7 +18,7 @@ import {
 } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
 import { CollapsibleCard } from './ui/collapsible-card.tsx';
-import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
+import { Combobox } from './ui/combobox.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { Field, Input } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
@@ -176,6 +176,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const [breakMinutes, setBreakMinutes] = useState(DEFAULT_BREAK);
   /** 选中的内置作息 */
   const [presetId, setPresetId] = useState(DEFAULT_TIMETABLE_ID);
+  /** 作息预设搜索框里的关键词；空串时下拉列出全部预设 */
+  const [presetQuery, setPresetQuery] = useState('');
   /** 已经套用过的作息，用于在界面上说明时间表来自哪里 */
   const [appliedPreset, setAppliedPreset] = useState<AppliedPreset | null>(null);
   const [amStart, setAmStart] = useState('08:00');
@@ -205,6 +207,19 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             ? ` · ${selectedPreset.source}`
             : ''
         }`;
+
+  /** 可套用的作息：内置 + 启动时套用的缓存快照（含各校作息），按关键词过滤。 */
+  const presetOptions = useMemo(() => {
+    const all = effectiveTimetables();
+    const keyword = presetQuery.trim().toLowerCase();
+    if (keyword === '') return all;
+    return all.filter(
+      (preset) =>
+        preset.name.toLowerCase().includes(keyword) ||
+        preset.id.toLowerCase().includes(keyword) ||
+        (preset.source ?? '').toLowerCase().includes(keyword),
+    );
+  }, [presetQuery]);
 
   const reload = useCallback(async () => {
     setSlots(await listTimeSlots(storage, semesterId));
@@ -517,16 +532,28 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
 
       <div className="flex flex-col gap-2">
         <Field label="作息预设" hint={presetHint}>
-          <Select value={presetId} onValueChange={setPresetId}>
-            <SelectTrigger aria-label="作息预设">{selectedPreset?.name ?? '选择作息'}</SelectTrigger>
-            <SelectContent>
-              {BUILTIN_TIMETABLES.map((preset) => (
-                <SelectItem key={preset.id} value={preset.id}>
-                  {preset.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Combobox
+            items={presetOptions}
+            keyOf={(preset) => preset.id}
+            value={presetQuery}
+            onValueChange={setPresetQuery}
+            onSelect={(preset) => {
+              setPresetId(preset.id);
+              setPresetQuery(preset.name);
+            }}
+            renderItem={(preset) => (
+              <span className="flex min-w-0 flex-col">
+                <span className="truncate">{preset.name}</span>
+                <span className="truncate text-xs text-muted">
+                  {preset.periods.length} 节
+                  {preset.source !== undefined && preset.source.length > 0 ? ` · ${preset.source}` : ''}
+                </span>
+              </span>
+            )}
+            placeholder={selectedPreset?.name ?? '输入学校或作息名搜索'}
+            ariaLabel="作息预设"
+            emptyText="没有匹配的作息"
+          />
         </Field>
         <div className="flex flex-wrap items-center gap-2">
           <Button

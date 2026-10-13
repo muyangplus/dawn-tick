@@ -24,7 +24,16 @@
  *   - 「已失效」：需要索引记录该校解析脚本的最近校验时间或失败原因。
  *   两者字段齐备后只改 `adapterInfo` 一处，界面已按「徽标 + 说明」结构渲染。
  */
-import { BUILTIN_PRESET_SNAPSHOT, findTimetable, matchSchools, type SchoolEntry, type Storage } from '@dawn-tick/core';
+import {
+  BUILTIN_PRESET_SNAPSHOT,
+  DEFAULT_TIMETABLE_ID,
+  findTimetable,
+  matchSchools,
+  presetToTimeSlots,
+  replaceTimeSlots,
+  type SchoolEntry,
+  type Storage,
+} from '@dawn-tick/core';
 import {
   SCHOOL_TAGS,
   listProvinces,
@@ -388,6 +397,47 @@ export function resolveSchoolTimetable(context: PresetContext | null, school: Sc
     periods: preset.periods.map((period) => ({ ...period })),
     sourcePath: source.path,
     reason: '',
+  };
+}
+
+// —— 按学校套用作息（作息卡片与首次引导共用）——
+
+/** 套用结果：`exclusive` 为假表示该校没有专属作息，套的是内置通用作息。 */
+export interface SchoolTimetableApplyResult {
+  timetableId: string;
+  timetableName: string;
+  periods: number;
+  exclusive: boolean;
+  source: string | null;
+  /** 一句可直接显示的结果说明 */
+  message: string;
+}
+
+/**
+ * 按学校套用整张时间表：专属作息优先，否则回退内置通用作息。
+ * `loadPresetContext` 与 `resolveSchoolTimetable` 都收敛异常，这里只在写库失败时抛出。
+ */
+export async function applySchoolTimetable(
+  storage: Storage,
+  semesterId: string,
+  school: School,
+): Promise<SchoolTimetableApplyResult> {
+  const context = await loadPresetContext(storage);
+  const resolution = resolveSchoolTimetable(context, school);
+  const exclusive = resolution.found ? findTimetable(resolution.timetableId ?? '') : undefined;
+  const chosen = exclusive ?? findTimetable(DEFAULT_TIMETABLE_ID);
+  if (chosen === undefined) throw new Error('内置通用作息不可用');
+  await replaceTimeSlots(storage, semesterId, presetToTimeSlots(chosen));
+  const found = exclusive !== undefined;
+  return {
+    timetableId: chosen.id,
+    timetableName: chosen.name,
+    periods: chosen.periods.length,
+    exclusive: found,
+    source: found ? (resolution.sourcePath ?? chosen.source ?? null) : (chosen.source ?? null),
+    message: found
+      ? `已套用 ${school.name} 的作息（${chosen.periods.length} 节）`
+      : '该校暂无专属作息，已套用通用作息',
   };
 }
 

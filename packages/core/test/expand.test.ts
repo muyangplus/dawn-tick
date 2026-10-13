@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { expand, nextOccurrence, resolveDayKind, type ExpandDayKind, type ExpandInput } from '../src/expand.ts';
+import { currentOccurrence, expand, nextOccurrence, resolveDayKind, type ExpandDayKind, type ExpandInput } from '../src/expand.ts';
 import { loadExpandInput } from '../src/repository.ts';
 import type { Storage } from '../src/storage.ts';
 import { SEMESTER_ID, createStorage, eventRow, seedStorage } from './helpers.ts';
@@ -126,6 +126,43 @@ test('下一节课取当前时刻之后的最近一次', async () => {
   assert.ok(next !== undefined);
   assert.equal(next.date, '2026-09-25');
   assert.equal(next.courseName, '大学英语');
+});
+
+test('正在上的课取开始已到、结束未到的那一节', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const items = expand(await buildInput(storage, '2026-09-14', '2026-10-30'));
+
+  // 周一 08:00–09:40（Asia/Shanghai）＝ UTC 00:00–01:40
+  const during = currentOccurrence(items, Date.UTC(2026, 8, 21, 0, 30, 0));
+  assert.equal(during?.courseName, '高等数学');
+  assert.equal(during?.date, '2026-09-21');
+
+  // 开始时刻算「已在课上」
+  assert.equal(currentOccurrence(items, Date.UTC(2026, 8, 21, 0, 0, 0))?.courseName, '高等数学');
+  // 结束时刻算「已下课」
+  assert.equal(currentOccurrence(items, Date.UTC(2026, 8, 21, 1, 40, 0)), undefined);
+  // 课间没有课
+  assert.equal(currentOccurrence(items, Date.UTC(2026, 8, 21, 3, 0, 0)), undefined);
+});
+
+test('停课的课次不算正在上的课', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await storage
+    .collection('events')
+    .put(
+      eventRow('e-cancel', 'reschedule', {
+        on_date: '2026-09-21',
+        ref_schedule_id: 's-1',
+        action: 'cancel',
+      }),
+    );
+  const items = expand({
+    ...(await buildInput(storage, '2026-09-21', '2026-09-21')),
+    includeCancelled: true,
+  });
+  assert.equal(currentOccurrence(items, Date.UTC(2026, 8, 21, 0, 30, 0)), undefined);
 });
 
 test('同一天多来源按优先级取一条', () => {

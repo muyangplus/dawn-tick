@@ -18,6 +18,8 @@ export interface WidgetGridLesson {
   dayOfWeek: number;
   periodStart: number;
   periodEnd: number;
+  /** 该课所在日期被停课：小组件在课名后标注 */
+  cancelled: boolean;
 }
 
 export interface WidgetExam {
@@ -31,6 +33,8 @@ export interface WidgetSnapshot {
   week: number;
   timeZone: string;
   background: AppSettings['widgetBackground'];
+  /** 正在上的那一节课：有它时前端显示剩余时间，没有时看 next */
+  current: WidgetLesson | null;
   next: WidgetLesson | null;
   today: WidgetLesson[];
   grid: WidgetGridLesson[];
@@ -60,6 +64,7 @@ export function buildWidgetSnapshot(
         dayOfWeek: lesson.dayOfWeek,
         periodStart: lesson.periodStart,
         periodEnd: lesson.periodEnd,
+        cancelled: lesson.cancelled,
       });
     }
   }
@@ -69,6 +74,7 @@ export function buildWidgetSnapshot(
     week: data.week,
     timeZone: data.timeZone,
     background: settings.widgetBackground,
+    current: data.currentLesson === undefined ? null : toLesson(data.currentLesson),
     next: data.nextLesson === undefined ? null : toLesson(data.nextLesson),
     today: data.todayLessons.map(toLesson),
     grid,
@@ -93,5 +99,22 @@ export async function writeWidgetSnapshot(
     await plugin.refresh();
   } catch {
     // 插件未注册时跳过，快照仍会在系统周期刷新时生效
+  }
+}
+
+/** 主窗口数据变更后广播给悬浮窗的事件名。 */
+export const WIDGET_DATA_CHANGED_EVENT = 'widget-data-changed';
+
+/**
+ * 通知悬浮窗重新读课表：主窗口每次数据加载完成（新建/编辑/删除课程、排课与日程）后调用，
+ * 悬浮窗据此立即刷新，不再等自己的轮询间隔。
+ */
+export async function notifyWidgetWindows(): Promise<void> {
+  if (detectPlatform() !== 'tauri') return;
+  try {
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit(WIDGET_DATA_CHANGED_EVENT);
+  } catch {
+    // 事件不可用时，悬浮窗仍会按轮询间隔刷新
   }
 }

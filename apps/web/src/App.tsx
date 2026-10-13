@@ -45,7 +45,7 @@ import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta } from './update.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from './channel.ts';
-import { writeWidgetSnapshot } from './widget-snapshot.ts';
+import { notifyWidgetWindows, writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
 
 const USER_ID = 'u1';
@@ -114,6 +114,7 @@ function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
     endTime: endSlotOf(periodEnd),
     inWeek: true,
     holiday: data.holidayLabels.has(target.date),
+    cancelled: false,
   };
 }
 
@@ -203,6 +204,7 @@ export function App() {
         exams: next.exams.length,
       });
       await writeWidgetSnapshot(target, next, current);
+      await notifyWidgetWindows();
     },
     [],
   );
@@ -308,7 +310,7 @@ export function App() {
         currentVersion: appVersion(),
       });
       if (cancelled || !status.available) return;
-      toast.success(`发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在设置 → 关于里查看`);
+      toast.success(`发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在设置 → 更新与维护里查看`);
     })();
     return () => {
       cancelled = true;

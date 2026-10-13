@@ -274,6 +274,13 @@
     max-width: 40%;
   }
 
+  /* 今日课表里正在上的那一节：右侧剩余时间 */
+  .mini-item-remain {
+    color: var(--dt-primary-strong);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
   .mini-item-task {
     justify-content: space-between;
   }

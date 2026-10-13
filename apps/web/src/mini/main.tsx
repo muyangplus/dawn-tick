@@ -1,31 +1,55 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { WIDGET_VARIANTS, formatTime, readSettings, type AppSettings, type WidgetVariant } from '@dawn-tick/core';
+import {
+  WIDGET_VARIANTS,
+  formatTime,
+  readSettings,
+  type AppSettings,
+  type Storage,
+  type WidgetVariant,
+} from '@dawn-tick/core';
 import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
+import { logInfo, logWarn } from '../log.ts';
+import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { MiniShell } from './shell.tsx';
 import '../styles.css';
 
 installWebviewGuards();
 
-const REFRESH_MS = 60_000;
+/** 兜底轮询间隔：主窗口的数据变更会主动通知，这里只防窗口漏掉通知。 */
+const REFRESH_MS = 15_000;
 
 async function hideWindow(): Promise<void> {
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().hide();
 }
 
-function countdown(target: number, now: number): string {
-  const diff = target - now;
-  if (diff <= 0) return '即将开始';
-  const totalSeconds = Math.floor(diff / 1000);
+/** 时间差格式化：超过一小时带小时位。 */
+function span(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
+}
+
+/** 距下一节开始：已是开始时刻时给「即将开始」。 */
+function countdown(target: number, now: number): string {
+  const diff = target - now;
+  if (diff <= 0) return '即将开始';
+  return span(Math.floor(diff / 1000));
+}
+
+/** 距本节结束：已经到点给 00:00。 */
+function remaining(endAt: number, now: number): string {
+  return span(Math.max(0, Math.floor((endAt - now) / 1000)));
+}
+
+function describe(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function variantOf(settings: AppSettings | null): WidgetVariant {
@@ -36,28 +60,91 @@ function variantOf(settings: AppSettings | null): WidgetVariant {
 function Mini() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [data, setData] = useState<AppData | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const storageRef = useRef<Storage | null>(null);
+  const settingsRef = useRef<AppSettings | null>(null);
+  /** 上一次的数据指纹：只在数据真的变了时写日志，避免轮询把日志刷满 */
+  const lastSignature = useRef('');
+
+  /** 重新读一次课表：主窗口数据变更时由事件触发，另有定时兜底。 */
+  const reload = useCallback(async (): Promise<void> => {
+    const storage = storageRef.current;
+    const current = settingsRef.current;
+    if (storage === null || current === null) return;
+    try {
+      const next = await loadAppData(storage, current);
+      setData(next);
+      setError(null);
+      const signature = [
+        next.week,
+        next.viewWeek,
+        next.currentLesson?.scheduleId ?? '',
+        next.nextLesson?.scheduleId ?? '',
+        next.todayLessons.length,
+      ].join('|');
+      if (signature !== lastSignature.current) {
+        lastSignature.current = signature;
+        logInfo('mini', '悬浮窗数据已更新', {
+          week: next.week,
+          current: next.currentLesson?.courseName ?? '',
+          next: next.nextLesson?.courseName ?? '',
+        });
+      }
+    } catch (cause: unknown) {
+      const message = describe(cause);
+      setError(message);
+      logWarn('mini', '悬浮窗数据加载失败', { message });
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const storage = await openStorage();
-      const loaded = await readSettings(storage);
-      if (cancelled) return;
-      setSettings(loaded);
-      applyTheme(loaded.themePreset, loaded.theme);
-      const refresh = async (): Promise<void> => {
-        const next = await loadAppData(storage, loaded);
-        if (!cancelled) setData(next);
-      };
-      await refresh();
-      const timer = setInterval(() => void refresh(), REFRESH_MS);
-      return () => clearInterval(timer);
+      try {
+        const storage = await openStorage();
+        const loaded = await readSettings(storage);
+        if (cancelled) return;
+        storageRef.current = storage;
+        settingsRef.current = loaded;
+        setSettings(loaded);
+        applyTheme(loaded.themePreset, loaded.theme);
+        await reload();
+      } catch (cause: unknown) {
+        const message = describe(cause);
+        if (!cancelled) setError(message);
+        logWarn('mini', '悬浮窗初始化失败', { message });
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reload]);
+
+  // 主窗口改完数据会广播 WIDGET_DATA_CHANGED_EVENT：立即重读，不等轮询
+  useEffect(() => {
+    let disposed = false;
+    let stop: (() => void) | null = null;
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const off = await listen(WIDGET_DATA_CHANGED_EVENT, () => void reload());
+        if (disposed) off();
+        else stop = off;
+      } catch (cause: unknown) {
+        logWarn('mini', '订阅数据变更失败', { message: describe(cause) });
+      }
+    })();
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [reload]);
+
+  useEffect(() => {
+    const timer = setInterval(() => void reload(), REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [reload]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -65,15 +152,36 @@ function Mini() {
   }, []);
 
   const variant = variantOf(settings);
+  const current = data?.currentLesson;
   const next = data?.nextLesson;
+  const zone = data?.timeZone ?? 'UTC';
   const hide = (): void => void hideWindow();
+  const headLabel = current === undefined ? '晓刻 DawnTick' : '正在上课';
+
+  if (error !== null) {
+    return (
+      <MiniShell variant={variant} onHide={hide}>
+        <div className="mini-empty" data-role="mini-error">
+          课表读取失败：{error}
+        </div>
+      </MiniShell>
+    );
+  }
 
   if (variant === 'minimal') {
     return (
-      <MiniShell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide} label={headLabel}>
         <div className="mini-minimal">
-          <span className="mini-count-big">{next === undefined ? '--:--' : countdown(next.startAt, now)}</span>
-          <span className="mini-minimal-name">{next?.courseName ?? '暂无后续课程'}</span>
+          <span className="mini-count-big" data-role="mini-count">
+            {current !== undefined
+              ? remaining(current.endAt, now)
+              : next === undefined
+                ? '--:--'
+                : countdown(next.startAt, now)}
+          </span>
+          <span className="mini-minimal-name">
+            {current !== undefined ? current.courseName : next?.courseName ?? '暂无后续课程'}
+          </span>
         </div>
       </MiniShell>
     );
@@ -96,8 +204,13 @@ function Mini() {
                   className={`mini-item${running ? ' mini-item-now' : ''}${finished ? ' mini-item-done' : ''}`}
                   style={{ borderLeftColor: lesson.color }}
                 >
-                  <span className="tabular mini-item-time">{formatTime(lesson.startAt, data?.timeZone ?? 'UTC')}</span>
+                  <span className="tabular mini-item-time">{formatTime(lesson.startAt, zone)}</span>
                   <span className="mini-item-name">{lesson.courseName}</span>
+                  {running && (
+                    <span className="tabular mini-item-remain" data-role="mini-running-left">
+                      余 {remaining(lesson.endAt, now)}
+                    </span>
+                  )}
                   {lesson.room !== null && <span className="mini-item-room">{lesson.room}</span>}
                 </li>
               );
@@ -114,14 +227,26 @@ function Mini() {
       .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
       .slice(0, 3);
     return (
-      <MiniShell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide} label={headLabel}>
         <div className="mini-combo-top">
-          <span className="mini-label">下一节课</span>
-          <span className="mini-title">{next?.courseName ?? '暂无后续课程'}</span>
+          <span className="mini-label">{current !== undefined ? '正在上课' : '下一节课'}</span>
+          <span className="mini-title" data-role="mini-title">
+            {current !== undefined ? current.courseName : next?.courseName ?? '暂无后续课程'}
+          </span>
           <div className="mini-row">
-            <span className="mini-count">{next === undefined ? '--:--' : countdown(next.startAt, now)}</span>
+            <span className="mini-count" data-role="mini-count">
+              {current !== undefined
+                ? remaining(current.endAt, now)
+                : next === undefined
+                  ? '--:--'
+                  : countdown(next.startAt, now)}
+            </span>
             <span className="mini-meta">
-              {next === undefined ? '' : `${formatTime(next.startAt, data?.timeZone ?? 'UTC')}${next.room === null ? '' : ` · ${next.room}`}`}
+              {current !== undefined
+                ? `${formatTime(current.startAt, zone)}–${formatTime(current.endAt, zone)}${current.room === null ? '' : ` · ${current.room}`}`
+                : next === undefined
+                  ? ''
+                  : `${formatTime(next.startAt, zone)}${next.room === null ? '' : ` · ${next.room}`}`}
             </span>
           </div>
         </div>
@@ -135,7 +260,7 @@ function Mini() {
                 <li key={task.id} className="mini-item mini-item-task">
                   <span className="mini-item-name">{task.title}</span>
                   <span className="tabular mini-item-time">
-                    {task.due_at === null || task.due_at === undefined ? '' : formatTime(task.due_at, data?.timeZone ?? 'UTC')}
+                    {task.due_at === null || task.due_at === undefined ? '' : formatTime(task.due_at, zone)}
                   </span>
                 </li>
               ))}
@@ -147,16 +272,35 @@ function Mini() {
   }
 
   return (
-    <MiniShell variant={variant} onHide={hide}>
-      {next === undefined ? (
+    <MiniShell variant={variant} onHide={hide} label={headLabel}>
+      {current !== undefined ? (
+        <>
+          <div className="mini-title" data-role="mini-title">
+            {current.courseName}
+          </div>
+          <div className="mini-row">
+            <span className="mini-count" data-role="mini-count">
+              {remaining(current.endAt, now)}
+            </span>
+            <span className="mini-meta">
+              {formatTime(current.startAt, zone)}–{formatTime(current.endAt, zone)}
+              {current.room === null ? '' : ` · ${current.room}`}
+            </span>
+          </div>
+        </>
+      ) : next === undefined ? (
         <div className="mini-empty">{data?.semester === null ? '尚未创建学期' : '暂无后续课程'}</div>
       ) : (
         <>
-          <div className="mini-title">{next.courseName}</div>
+          <div className="mini-title" data-role="mini-title">
+            {next.courseName}
+          </div>
           <div className="mini-row">
-            <span className="mini-count">{countdown(next.startAt, now)}</span>
+            <span className="mini-count" data-role="mini-count">
+              {countdown(next.startAt, now)}
+            </span>
             <span className="mini-meta">
-              {data === null ? '' : formatTime(next.startAt, data.timeZone)}
+              {formatTime(next.startAt, zone)}
               {next.room !== null ? ` · ${next.room}` : ''}
             </span>
           </div>

@@ -7,6 +7,7 @@ import {
   builtinWorkdays,
   dayOfWeek,
   expand,
+  currentOccurrence,
   formatDate,
   listManagedCourses,
   listSemesters,
@@ -46,6 +47,8 @@ export interface LessonCell {
   inWeek: boolean;
   /** 该课所在日期是否放假，放假则灰显 */
   holiday: boolean;
+  /** 该课所在日期被「停课」：课表里灰显并标注，不参与拖动 */
+  cancelled: boolean;
 }
 
 export interface AppData {
@@ -70,6 +73,8 @@ export interface AppData {
   slots: TimeSlotRow[];
   grid: Map<string, LessonCell[]>;
   todayLessons: Occurrence[];
+  /** 现在正在上的那一节课（无课或停课时为 undefined） */
+  currentLesson: Occurrence | undefined;
   nextLesson: Occurrence | undefined;
   exams: EventRow[];
   todos: EventRow[];
@@ -117,6 +122,7 @@ export async function loadAppData(
       workdayDates: [],
       lessonsByDate: new Map(),
       todayLessons: [],
+      currentLesson: undefined,
       nextLesson: undefined,
       exams: [],
       todos: [],
@@ -151,6 +157,14 @@ export async function loadAppData(
     }
   }
   const holidayDates = new Set(holidayLabels.keys());
+  // 停课：按「排课 + 那天」记录，同一天同一节只认一条
+  const cancelledKeys = new Set<string>();
+  for (const row of semesterEvents) {
+    if (row.type !== 'reschedule' || row.action !== 'cancel') continue;
+    const date = row.on_date;
+    if (typeof date !== 'string' || row.ref_schedule_id === null) continue;
+    cancelledKeys.add(`${row.ref_schedule_id}|${date}`);
+  }
   const viewWeekStart = weekDateOf(semester, viewWeek, 1);
   const dateOfDay = (day: number): string => addDays(viewWeekStart, day - 1);
 
@@ -167,6 +181,7 @@ export async function loadAppData(
     inWeek: boolean;
   }): LessonCell => {
     const course = courseById.get(input.courseId);
+    const date = dateOfDay(input.day);
     return {
       scheduleId: input.scheduleId,
       courseId: input.courseId,
@@ -180,7 +195,8 @@ export async function loadAppData(
       startTime: slotByPeriod.get(input.periodStart)?.start_time ?? '',
       endTime: slotByPeriod.get(input.periodEnd)?.end_time ?? '',
       inWeek: input.inWeek,
-      holiday: holidayDates.has(dateOfDay(input.day)),
+      holiday: holidayDates.has(date),
+      cancelled: input.inWeek && cancelledKeys.has(`${input.scheduleId}|${date}`),
     };
   };
 
@@ -242,7 +258,8 @@ export async function loadAppData(
     lessonsByDate.set(item.date, list);
   }
   const todayLessons = lessonsByDate.get(today) ?? [];
-
+  const now = Date.now();
+  const currentLesson = currentOccurrence(occurrences, now);
   const exams = semesterEvents
     .filter((row) => row.type === 'exam' && row.start_at !== null)
     .sort((left, right) => (left.start_at ?? 0) - (right.start_at ?? 0));
@@ -273,7 +290,8 @@ export async function loadAppData(
     workdayDates: [...workdays].sort(),
     lessonsByDate,
     todayLessons,
-    nextLesson: nextOccurrence(occurrences, Date.now()),
+    currentLesson,
+    nextLesson: nextOccurrence(occurrences, now),
     exams,
     todos,
     reschedules,

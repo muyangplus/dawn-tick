@@ -4,6 +4,8 @@ import type { AppData } from '../data.ts';
 import { Countdown } from '../components/countdown.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { cn } from '../lib/cn.ts';
+import { formatRemaining } from '../lib/format.ts';
+import { useNowTick } from '../lib/use-now.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -14,6 +16,8 @@ function dateLabel(date: string, timeZone: string): string {
 }
 
 export function TodayView({ data }: { data: AppData }) {
+  const now = useNowTick(1000);
+  const current = data.currentLesson;
   const next = data.nextLesson;
   const nextIsToday = next !== undefined && data.todayLessons.some((item) => item.startAt === next.startAt);
 
@@ -26,7 +30,29 @@ export function TodayView({ data }: { data: AppData }) {
         </span>
       </div>
 
-      {nextIsToday && next !== undefined && (
+      {current !== undefined && (
+        <div
+          className="flex flex-col gap-1 rounded-lg border border-primary-strong bg-surface p-4 shadow-sm"
+          data-role="today-current"
+        >
+          <span className="flex items-center gap-2 text-xs text-muted">
+            <Timer className="size-3" aria-hidden />
+            正在上课
+          </span>
+          <span className="text-base font-semibold text-ink">{current.courseName}</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="tabular text-xl text-primary-strong" data-role="today-current-remaining">
+              剩余 {formatRemaining(current.endAt, now)}
+            </span>
+            <span className="tabular text-xs text-muted">
+              {formatTime(current.startAt, data.timeZone)}–{formatTime(current.endAt, data.timeZone)}
+              {current.room !== null && ` · ${current.room}`}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {nextIsToday && next !== undefined && current === undefined && (
         <div className="flex flex-col gap-1 rounded-lg border border-line bg-surface p-4 shadow-sm">
           <span className="flex items-center gap-2 text-xs text-muted">
             <Timer className="size-3" aria-hidden />
@@ -49,13 +75,14 @@ export function TodayView({ data }: { data: AppData }) {
         <ul className="flex flex-col gap-2">
           {data.todayLessons.map((lesson) => {
             const isNext = nextIsToday && next !== undefined && next.startAt === lesson.startAt;
-            const finished = lesson.endAt < Date.now();
+            const running = lesson.startAt <= now && lesson.endAt > now;
+            const finished = lesson.endAt <= now;
             return (
               <li
                 key={`${lesson.scheduleId}-${lesson.startAt}`}
                 className={cn(
                   'flex items-center gap-3 rounded-lg border bg-surface p-3',
-                  isNext ? 'border-primary-strong shadow-sm' : 'border-line',
+                  isNext || running ? 'border-primary-strong shadow-sm' : 'border-line',
                   finished && 'opacity-60',
                 )}
                 style={{ borderLeft: `4px solid ${lesson.color}` }}
@@ -77,7 +104,13 @@ export function TodayView({ data }: { data: AppData }) {
                     )}
                   </span>
                 </div>
-                {isNext && <Countdown target={lesson.startAt} short className="text-sm text-primary-strong" />}
+                {running ? (
+                  <span className="tabular text-sm text-primary-strong" data-role="today-running-remaining">
+                    剩余 {formatRemaining(lesson.endAt, now)}
+                  </span>
+                ) : (
+                  isNext && <Countdown target={lesson.startAt} short className="text-sm text-primary-strong" />
+                )}
               </li>
             );
           })}

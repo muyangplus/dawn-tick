@@ -42,6 +42,8 @@ const ALL_PROVINCES = '__all__';
 
 /** 我自己保存的教务条目所在一组的组名。 */
 const SAVED_SCHOOLS_GROUP = '我已保存的学校';
+/** 上次选过的学校置顶成这一组。 */
+const RECENT_SCHOOL_GROUP = '最近使用';
 
 export interface SchoolPickerProps {
   /** 预设上下文（决定徽标与版本号）；null 表示还在读取中 */
@@ -50,6 +52,8 @@ export interface SchoolPickerProps {
   onPick: (school: School) => void;
   /** 已选学校 id：用于高亮与「已选」标记 */
   selectedId?: string | null;
+  /** 上次选的学校：不就关键词搜索时置顶成「最近使用」一组 */
+  pinned?: School | null;
   /** 内置 + 用户保存的教务条目：命中的会补一组「我已保存的学校」 */
   entries?: readonly SchoolEntry[];
   /** 搜索框的 `aria-label`（导入页沿用「搜索学校」，便于既有断言与无障碍一致性） */
@@ -64,6 +68,7 @@ export function SchoolPicker({
   context,
   onPick,
   selectedId = null,
+  pinned = null,
   entries,
   searchLabel = '搜索学校',
   placeholder = '输入校名、简称或拼音，如 清华 / 苏科大 / beida',
@@ -83,6 +88,8 @@ export function SchoolPicker({
   /** 展平后的行顺序就是键盘 ↑↓ 的顺序；`start` 让分组直接切片，避免每行 indexOf。 */
   const { flat, groups, hidden } = useMemo(() => {
     const shown = limitSchools(results);
+    // 置顶只在没搜索、没筛选时出现：一旦开始收敛结果，最近使用就不该占位置
+    const pinnedRow = pinned !== null && query.trim() === '' && tag === null && province === null ? pinned : null;
     const built: Array<{ province: string; schools: School[]; start: number }> = [];
     const list: School[] = [];
     const push = (groupProvince: string, schools: School[]): void => {
@@ -90,10 +97,16 @@ export function SchoolPicker({
       built.push({ province: groupProvince, schools, start: list.length });
       list.push(...schools);
     };
+    push(RECENT_SCHOOL_GROUP, pinnedRow === null ? [] : [pinnedRow]);
     push(SAVED_SCHOOLS_GROUP, matchingEntrySchools(entries ?? [], query, results));
-    for (const group of groupSchoolsByProvince(shown)) push(group.province, group.schools);
+    for (const group of groupSchoolsByProvince(shown)) {
+      // 置顶那一行已经在「最近使用」里出现过，省份分组不再重复
+      const schools =
+        pinnedRow === null ? group.schools : group.schools.filter((school) => school.id !== pinnedRow.id);
+      push(group.province, schools);
+    }
     return { flat: list, groups: built, hidden: results.length - shown.length };
-  }, [entries, query, results]);
+  }, [entries, pinned, province, query, results, tag]);
 
   // 换了关键词或筛选条件就回到第一行，免得高亮停在一个已经不在列表里的下标上
   useEffect(() => {

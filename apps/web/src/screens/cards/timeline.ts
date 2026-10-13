@@ -41,6 +41,8 @@ export interface TimelineItem {
   done: boolean;
   /** 到点自动完成：有结束/截止时间且已经过去；纯展示层判定，不写数据库 */
   autoDone: boolean;
+  /** 正在进行：课程已经开始、还没结束；纯展示层判定 */
+  running: boolean;
   /** 已完成 = 手动勾选 或 到点自动完成 */
   completed: boolean;
   /** 是否还允许手动勾选：自动完成的条目不再提供勾选框，避免与自动判定互相打架 */
@@ -81,6 +83,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
   for (const lesson of data.lessonsByDate.get(date) ?? []) {
     const endEpoch = lesson.endAt;
     const autoDone = isOverdue(endEpoch, now);
+    const running = lesson.startAt <= now && lesson.endAt > now;
     items.push({
       key: `lesson-${lesson.scheduleId}-${lesson.startAt}`,
       date: lesson.date,
@@ -97,6 +100,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       endEpoch,
       done: false,
       autoDone,
+      running,
       completed: autoDone,
       checkable: false,
       color: lesson.color,
@@ -114,17 +118,19 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
   for (const item of data.reschedules) {
     const itemDate = item.on_date ?? null;
     if (itemDate !== null && itemDate !== date) continue;
+    // 停课只说明这节课不上了，不是待办：默认已完成，直接进「已完成」分组，不计入未完成安排
+    const cancelled = item.action === 'cancel';
     const detail =
       item.type === 'makeup'
         ? '调休'
-        : item.action === 'cancel'
+        : cancelled
           ? '停课'
           : item.new_date !== null
             ? `改至 ${item.new_date} 第 ${item.new_period_start ?? ''}-${item.new_period_end ?? ''} 节`
             : '调课';
     const startAt = item.start_at ?? null;
     const endEpoch = item.end_at ?? null;
-    const done = item.done === 1;
+    const done = item.done === 1 || cancelled;
     const autoDone = isOverdue(endEpoch, now);
     items.push({
       key: `adjust-${item.id}`,
@@ -141,6 +147,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       endEpoch,
       done,
       autoDone,
+      running: false,
       completed: done || autoDone,
       checkable: false,
       color: null,
@@ -178,6 +185,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       endEpoch,
       done,
       autoDone,
+      running: false,
       completed: done || autoDone,
       checkable: !autoDone,
       color: linkedCourse?.color ?? null,

@@ -11,9 +11,9 @@ export interface CourseCardProps {
   badge?: ReactNode;
   /**
    * solid：本周正常课；ghost：非本周课程（虚线框 + 更浅底色）；
-   * holiday：放假日课（灰显）。
+   * holiday：放假日课（灰显）；cancelled：当天停课（灰显 + 「停课」标签）。
    */
-  tone?: 'solid' | 'ghost' | 'holiday';
+  tone?: 'solid' | 'ghost' | 'holiday' | 'cancelled';
   /** tone="holiday" 时卡片标签上的文案，默认「放假」；多天假期第一天传节次 */
   holidayLabel?: string;
   /** 兼容旧调用：等价于 tone="ghost" */
@@ -44,6 +44,13 @@ export function CourseCard({
     badge ??
     (resolvedTone === 'ghost' ? (
       <span className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted">非本周</span>
+    ) : resolvedTone === 'cancelled' ? (
+      <span
+        className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted"
+        data-role="cancelled-label"
+      >
+        停课
+      </span>
     ) : resolvedTone === 'holiday' ? (
       // 假期名称可能较长（如「国庆节」），限制宽度并省略，避免挤掉课程名
       <span
@@ -80,9 +87,9 @@ export function CourseCard({
   );
 
   const style = {
-    borderLeftColor: resolvedTone === 'holiday' ? 'var(--dt-muted)' : color,
+    borderLeftColor: resolvedTone === 'holiday' || resolvedTone === 'cancelled' ? 'var(--dt-muted)' : color,
     backgroundColor:
-      resolvedTone === 'holiday'
+      resolvedTone === 'holiday' || resolvedTone === 'cancelled'
         ? 'color-mix(in srgb, var(--dt-surface) 94%, var(--dt-muted))'
         : resolvedTone === 'ghost'
           ? `color-mix(in srgb, var(--dt-surface) 97%, ${color})`
@@ -97,7 +104,7 @@ export function CourseCard({
   const toneClass =
     resolvedTone === 'ghost'
       ? 'border-line-strong text-muted opacity-55'
-      : resolvedTone === 'holiday'
+      : resolvedTone === 'holiday' || resolvedTone === 'cancelled'
         ? 'opacity-45'
         : '';
 

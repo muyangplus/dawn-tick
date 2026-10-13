@@ -12,22 +12,20 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarClock } from 'lucide-react';
-import {
-  DEFAULT_TIMETABLE_ID,
-  findTimetable,
-  listTimeSlots,
-  presetToTimeSlots,
-  replaceTimeSlots,
-  type Storage,
-  type TimeSlotRow,
-} from '@dawn-tick/core';
+import { listTimeSlots, type Storage, type TimeSlotRow } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { logInfo } from '../log.ts';
-import { loadPresetContext, resolveSchoolTimetable, type PresetContext, type School } from './school-picker-model.ts';
+import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
+import {
+  applySchoolTimetable,
+  loadPresetContext,
+  type PresetContext,
+  type School,
+} from './school-picker-model.ts';
 
 export interface SchoolTimetableCardProps {
   storage: Storage;
@@ -50,6 +48,8 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
   const [context, setContext] = useState<PresetContext | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedId, setPickedId] = useState<string | null>(null);
+  /** 上次选过的学校：置顶显示并支持一键再套用 */
+  const [recent, setRecent] = useState<School | null>(null);
   const [slots, setSlots] = useState<readonly TimeSlotRow[]>([]);
   const [applied, setApplied] = useState<AppliedSchoolTimetable | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -67,7 +67,18 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
     void reloadSlots();
   }, [reloadSlots]);
 
-  /** 打开选择器时重新读一次预设：用户可能刚在「同步与数据」里下载了新版本。 */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await readRecentSchool(storage);
+      if (!cancelled) setRecent(stored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
+
+  /** 打开选择器时重新读一次预设：用户可能刚在「同步与更新」里下载了新版本。 */
   async function openPicker(): Promise<void> {
     setMessage(null);
     setContext(await loadPresetContext(storage));
@@ -83,40 +94,29 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
     if (busy) return;
     setBusy(true);
     try {
-      const resolution = context === null ? null : resolveSchoolTimetable(context, school);
-      const exclusive = resolution?.found === true ? findTimetable(resolution.timetableId ?? '') : undefined;
-      const fallback = findTimetable(DEFAULT_TIMETABLE_ID);
-      const chosen = exclusive ?? fallback;
-      if (chosen === undefined) {
-        setMessage('内置通用作息不可用，没能套用');
-        return;
-      }
-
-      await replaceTimeSlots(storage, semesterId, presetToTimeSlots(chosen));
+      const result = await applySchoolTimetable(storage, semesterId, school);
       setPickedId(school.id);
+      setRecent(school);
+      await writeRecentSchool(storage, school);
       setApplied({
         school: school.name,
-        timetable: chosen.name,
-        periods: chosen.periods.length,
-        exclusive: exclusive !== undefined,
-        source: exclusive !== undefined ? (resolution?.sourcePath ?? chosen.source ?? null) : (chosen.source ?? null),
+        timetable: result.timetableName,
+        periods: result.periods,
+        exclusive: result.exclusive,
+        source: result.source,
       });
-      setMessage(
-        exclusive === undefined
-          ? '该校暂无专属作息，已套用通用作息'
-          : `已套用 ${school.name} 的作息（${chosen.periods.length} 节）`,
-      );
+      setMessage(result.message);
       logInfo('timetable', '按学校套用作息', {
         school: school.name,
-        timetable: chosen.id,
-        exclusive: exclusive !== undefined,
-        periods: chosen.periods.length,
-        source: resolution?.sourcePath ?? null,
+        timetable: result.timetableId,
+        exclusive: result.exclusive,
+        periods: result.periods,
+        source: result.source,
       });
       toast.success(
-        exclusive === undefined
-          ? `该校暂无专属作息，已套用通用作息（${chosen.periods.length} 节）`
-          : `已套用「${school.name}」作息（${chosen.periods.length} 节）`,
+        result.exclusive
+          ? `已套用「${school.name}」作息（${result.periods} 节）`
+          : `该校暂无专属作息，已套用通用作息（${result.periods} 节）`,
       );
       setPickerOpen(false);
       await reloadSlots();
@@ -150,6 +150,18 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
         >
           选择学校
         </Button>
+        {recent !== null && (
+          <Button
+            size="sm"
+            variant="primary"
+            aria-label={`一键套用 ${recent.name} 的作息`}
+            disabled={busy || semesterId === ''}
+            data-role="recent-school-apply"
+            onClick={() => void applyForSchool(recent)}
+          >
+            一键套用：{recent.name}
+          </Button>
+        )}
         <span className="text-xs text-muted" data-role="school-timetable-status">
           {slots.length === 0 ? '当前没有课次' : `当前 ${slots.length} 节课次`}
           {applied === null
@@ -177,7 +189,8 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
         >
           <SchoolPicker
             context={context}
-            selectedId={pickedId}
+            selectedId={pickedId ?? recent?.id ?? null}
+            pinned={recent}
             onPick={(school) => void applyForSchool(school)}
             listClassName="max-h-64"
           />

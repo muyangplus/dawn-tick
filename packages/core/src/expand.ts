@@ -175,3 +175,17 @@ export function expand(input: ExpandInput): Occurrence[] {
 export function nextOccurrence(occurrences: readonly Occurrence[], nowMs: number): Occurrence | undefined {
   return occurrences.find((item) => !item.cancelled && item.startAt > nowMs);
 }
+
+/**
+ * 此刻正在上的那一节课：开始时间已到、结束时间未到，且没有被停课。
+ * 同一时刻多节重叠时取开始时间最晚的一节（更贴近「当前正在上」）。
+ */
+export function currentOccurrence(occurrences: readonly Occurrence[], nowMs: number): Occurrence | undefined {
+  let found: Occurrence | undefined;
+  for (const item of occurrences) {
+    if (item.cancelled) continue;
+    if (item.startAt > nowMs || item.endAt <= nowMs) continue;
+    if (found === undefined || item.startAt > found.startAt) found = item;
+  }
+  return found;
+}

@@ -63,19 +63,34 @@ object WidgetRenderer {
             primaryIds = intArrayOf(R.id.widget_title),
             mutedIds = intArrayOf(R.id.widget_label, R.id.widget_meta),
         )
-        val next = snapshot?.next
-        if (next == null) {
-            views.setTextViewText(R.id.widget_title, context.getString(R.string.widget_no_lesson))
-            views.setTextViewText(R.id.widget_count, "")
-            views.setTextViewText(R.id.widget_meta, "")
-        } else {
-            views.setTextViewText(R.id.widget_title, next.title)
-            views.setTextViewText(R.id.widget_count, countdown(next.startsAt))
+        val current = snapshot?.current
+        if (current != null) {
+            views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_in_class))
+            views.setTextViewText(R.id.widget_title, current.title)
+            views.setTextViewText(R.id.widget_count, remaining(current.endsAt))
             val meta = buildString {
-                append(timeFormat.format(Date(next.startsAt)))
-                if (!next.room.isNullOrEmpty()) append(" · ").append(next.room)
+                append(timeFormat.format(Date(current.startsAt)))
+                append('–')
+                append(timeFormat.format(Date(current.endsAt)))
+                if (!current.room.isNullOrEmpty()) append(" · ").append(current.room)
             }
             views.setTextViewText(R.id.widget_meta, meta)
+        } else {
+            views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_next_label))
+            val next = snapshot?.next
+            if (next == null) {
+                views.setTextViewText(R.id.widget_title, context.getString(R.string.widget_no_lesson))
+                views.setTextViewText(R.id.widget_count, "")
+                views.setTextViewText(R.id.widget_meta, "")
+            } else {
+                views.setTextViewText(R.id.widget_title, next.title)
+                views.setTextViewText(R.id.widget_count, countdown(next.startsAt))
+                val meta = buildString {
+                    append(timeFormat.format(Date(next.startsAt)))
+                    if (!next.room.isNullOrEmpty()) append(" · ").append(next.room)
+                }
+                views.setTextViewText(R.id.widget_meta, meta)
+            }
         }
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views
@@ -143,7 +158,10 @@ object WidgetRenderer {
             if (lessons.isEmpty()) {
                 views.setTextViewText(rowId, context.getString(R.string.widget_week_empty_row, weekdays[index]))
             } else {
-                val text = lessons.take(3).joinToString(" · ") { "${it.periodStart} ${it.title}" }
+                val text = lessons.take(3).joinToString(" · ") { lesson ->
+                    val title = if (lesson.cancelled) "${lesson.title}（停课）" else lesson.title
+                    "${lesson.periodStart} $title"
+                }
                 views.setTextViewText(rowId, "${weekdays[index]}  $text")
             }
         }
@@ -192,6 +210,21 @@ object WidgetRenderer {
     private fun countdown(startsAt: Long): String {
         val diff = startsAt - System.currentTimeMillis()
         if (diff <= 0) return "即将开始"
+        val totalSeconds = diff / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) {
+            String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+        }
+    }
+
+    /** 距课程结束的剩余时间，格式与倒计时一致；课程已结束时返回 00:00。 */
+    private fun remaining(endsAt: Long): String {
+        val diff = endsAt - System.currentTimeMillis()
+        if (diff <= 0) return "00:00"
         val totalSeconds = diff / 1000
         val hours = totalSeconds / 3600
         val minutes = (totalSeconds % 3600) / 60

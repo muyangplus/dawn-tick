@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BACKUP_MODULE_LABEL,
   addDays,
@@ -13,7 +13,10 @@ import {
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
+import { SchoolPicker } from '../components/school-picker.tsx';
 import { toast } from '../components/ui/toaster.tsx';
+import { applySchoolTimetable, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
+import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 
 export interface OnboardingProps {
   storage: Storage;
@@ -31,6 +34,23 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<BackupPayload | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  /** 首次使用时选的学校：创建学期后按该校作息排课次，之后在作息设置里可一键再套用 */
+  const [school, setSchool] = useState<School | null>(null);
+  const [context, setContext] = useState<PresetContext | null>(null);
+  const [recent, setRecent] = useState<School | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [presetContext, stored] = await Promise.all([loadPresetContext(storage), readRecentSchool(storage)]);
+      if (cancelled) return;
+      setContext(presetContext);
+      setRecent(stored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
 
   async function pickFile(file: File): Promise<void> {
     setError(null);
@@ -65,14 +85,26 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     setBusy(true);
     setError(null);
     try {
-      await createSemester(storage, {
+      const semester = await createSemester(storage, {
         userId,
         name: name.trim().length > 0 ? name.trim() : '我的学期',
         startDate,
         totalWeeks,
         timeZone,
       });
-      toast.success('学期已创建');
+      if (school !== null) {
+        // 记录这次选择：作息设置里据此置顶「一键套用」
+        await writeRecentSchool(storage, school);
+        try {
+          const result = await applySchoolTimetable(storage, String(semester['id']), school);
+          toast.success(`已按 ${school.name} 排好课次（${result.periods} 节）`);
+        } catch (cause: unknown) {
+          // 套用作息失败不影响学期创建，用户可在作息设置里重来
+          setError(`学期已创建，但套用作息失败：${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      } else {
+        toast.success('学期已创建');
+      }
       onDone();
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -119,6 +151,30 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             >
               下周一开学
             </Button>
+          </div>
+
+          <div className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-school">
+            <span className="text-xs font-semibold text-ink">学校（可选）</span>
+            <span className="text-xs text-muted">
+              选一所学校：创建学期时按该校作息排好课次；以后在「设置 → 学期设置」里可一键再套用。
+            </span>
+            {school !== null && (
+              <span className="text-xs text-muted" data-role="onboarding-school-picked">
+                已选：{school.name}
+              </span>
+            )}
+            <SchoolPicker
+              context={context}
+              selectedId={school?.id ?? recent?.id ?? null}
+              pinned={recent}
+              onPick={(picked) => setSchool(picked)}
+              listClassName="max-h-56"
+            />
+            {school !== null && (
+              <Button variant="ghost" size="sm" onClick={() => setSchool(null)}>
+                取消选择
+              </Button>
+            )}
           </div>
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">

@@ -1,4 +1,4 @@
-import { BadgeCheck, Bell, Database, Info, Palette, type LucideIcon } from 'lucide-react';
+import { BadgeCheck, Bell, Database, Info, Palette, RefreshCw, type LucideIcon } from 'lucide-react';
 import { defineCard, type CardZone } from './registry.ts';
 
 export interface SettingsSectionCardDef {
@@ -11,7 +11,7 @@ export interface SettingsSectionCardDef {
 }
 
 /**
- * 设置页的 5 张卡片：显隐、顺序与区域交给注册表，
+ * 设置页的 6 张卡片：显隐、顺序与区域交给注册表，
  * 具体内容由 settings-view 按相同 id 填进 CollapsibleCard。
  */
 export const SETTINGS_SECTIONS: readonly SettingsSectionCardDef[] = [
@@ -19,7 +19,8 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionCardDef[] = [
   { id: 'reminders', title: '提醒设置', icon: Bell, order: 1, defaultZone: 'main' },
   { id: 'appearance', title: '外观', icon: Palette, order: 2, defaultZone: 'main' },
   { id: 'data', title: '同步与数据', icon: Database, order: 3, defaultZone: 'main' },
-  { id: 'about', title: '关于', icon: Info, order: 4, defaultZone: 'main' },
+  { id: 'maintenance', title: '更新与维护', icon: RefreshCw, order: 4, defaultZone: 'main' },
+  { id: 'about', title: '关于', icon: Info, order: 5, defaultZone: 'main' },
 ];
 
 export function settingsSection(id: string): SettingsSectionCardDef | undefined {

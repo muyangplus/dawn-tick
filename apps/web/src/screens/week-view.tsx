@@ -484,11 +484,11 @@ export function WeekView({
     }
   }
 
-  /** 长按 350ms 后进入拖动；未达时长前抬手仍是单击（打开课程详情）。 */
+  /** 长按 350ms 后进入拖动；未达时长前抬手仍是单击（打开课程详情）。停课的课次不参与拖动。 */
   function onLessonPointerDown(event: React.PointerEvent<HTMLDivElement>, lesson: LessonCell): void {
     // 每次按下都先复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次单击
     suppressNextClick.current = false;
-    if (event.button !== 0 || !lesson.inWeek) return;
+    if (event.button !== 0 || !lesson.inWeek || lesson.cancelled) return;
     clearSession();
     const active: DragSession = {
       pointerId: event.pointerId,
@@ -862,7 +862,16 @@ export function WeekView({
                         room={lesson.room}
                         teacher={lesson.teacher}
                         meta={`${lesson.startTime}-${lesson.endTime}`}
-                        tone={lesson.holiday ? 'holiday' : lesson.inWeek ? 'solid' : 'ghost'}
+                        // 停课优先于放假与非本周：当天不再上课，只灰显并标注
+                        tone={
+                          lesson.cancelled
+                            ? 'cancelled'
+                            : lesson.holiday
+                              ? 'holiday'
+                              : lesson.inWeek
+                                ? 'solid'
+                                : 'ghost'
+                        }
                         holidayLabel={lesson.holiday && holidayFirstDay ? holidayName ?? '放假' : '放假'}
                         onClick={() => {
                           // 拖动收尾的那一次 click 只用来清标记，不打开详情
@@ -872,7 +881,7 @@ export function WeekView({
                           }
                           onSelectLesson(lesson);
                         }}
-                        className={cn('h-full', lesson.inWeek && 'cursor-grab select-none')}
+                        className={cn('h-full', lesson.inWeek && !lesson.cancelled && 'cursor-grab select-none')}
                       />
                     </div>
                   ))}

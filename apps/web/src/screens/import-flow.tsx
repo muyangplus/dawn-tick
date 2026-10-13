@@ -33,6 +33,7 @@ import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import { adapterInfo, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
+import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 import {
   canOpenImportWindow,
   closeImportWindow,
@@ -158,6 +159,19 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   /** 内置学校与本地保存的学校合并：SchoolPicker 用来补「我已保存的学校」那一组 */
   const allSchools = mergeSchools(BUILTIN_SCHOOLS, customSchools);
 
+  /** 上次在这台设备选过的学校：挂在选择器顶部 */
+  const [recentSchool, setRecentSchool] = useState<School | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await readRecentSchool(storage);
+      if (!cancelled) setRecentSchool(stored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [storage]);
+
   /**
    * 选中一所学校：
    *   - 内置/自定义教务条目里有同名条目且有地址 → 直接按既有 `entryUrlFor` 生成入口；
@@ -169,6 +183,8 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     setSchoolName(school.name);
     setPickedSchoolId(school.id);
     setSchoolId(school.id);
+    // 导入页与作息页共用「上次选的学校」：下次打开选择器置顶
+    void writeRecentSchool(storage, school);
     const entry = allSchools.find(
       (item) => item.name === school.name || (item.aliases ?? []).includes(school.name),
     );
@@ -390,6 +406,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               context={presetContext}
               entries={allSchools}
               selectedId={pickedSchoolId}
+              pinned={recentSchool}
               onPick={pickSchool}
             />
             <span className="text-xs text-muted" data-role="school-picked">

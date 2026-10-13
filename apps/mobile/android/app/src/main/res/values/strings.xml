@@ -5,6 +5,7 @@
     <string name="package_name">com.dawntick.app</string>
     <string name="custom_url_scheme">com.dawntick.app</string>
     <string name="widget_next_label">下一节课</string>
+    <string name="widget_in_class">正在上课</string>
     <string name="widget_today_label">今日课表</string>
     <string name="widget_no_lesson">暂无后续课程</string>
     <string name="widget_no_data">尚未同步数据</string>

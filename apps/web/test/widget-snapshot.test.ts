@@ -17,6 +17,7 @@ function appData(overrides: Partial<AppData> = {}): AppData {
     slots: [],
     grid: new Map(),
     todayLessons: [],
+    currentLesson: undefined,
     nextLesson: undefined,
     exams: [],
     todos: [],
@@ -51,6 +52,9 @@ const cell: LessonCell = {
   periodEnd: 2,
   startTime: '08:00',
   endTime: '09:40',
+  inWeek: true,
+  holiday: false,
+  cancelled: false,
 };
 
 test('无课时的快照', () => {
@@ -59,10 +63,22 @@ test('无课时的快照', () => {
   assert.equal(snapshot.week, 3);
   assert.equal(snapshot.timeZone, 'Asia/Shanghai');
   assert.equal(snapshot.background, 'light');
+  assert.equal(snapshot.current, null);
   assert.equal(snapshot.next, null);
   assert.deepEqual(snapshot.today, []);
   assert.deepEqual(snapshot.grid, []);
   assert.deepEqual(snapshot.exams, []);
+});
+
+test('正在上课时快照给出 current 与剩余时间', () => {
+  const snapshot = buildWidgetSnapshot(
+    appData({ currentLesson: lesson, nextLesson: { ...lesson, courseName: '大学物理' } }),
+    DEFAULT_SETTINGS,
+    9,
+  );
+  assert.equal(snapshot.current?.title, '高等数学');
+  assert.equal(snapshot.current?.endsAt, lesson.endAt);
+  assert.equal(snapshot.next?.title, '大学物理');
 });
 
 test('有课时快照包含下一节、今日列表与周网格', () => {
@@ -82,6 +98,7 @@ test('有课时快照包含下一节、今日列表与周网格', () => {
   assert.equal(snapshot.grid.length, 1);
   assert.equal(snapshot.grid[0]?.title, '高数');
   assert.equal(snapshot.grid[0]?.periodEnd, 2);
+  assert.equal(snapshot.grid[0]?.cancelled, false);
 });
 
 test('考试写入快照', () => {

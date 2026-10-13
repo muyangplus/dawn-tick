@@ -47,6 +47,24 @@ export const PRESET_VERSION_URL =
 export const PRESET_SNAPSHOT_URL = (version: string): string =>
   `https://raw.githubusercontent.com/muyangplus/dawn-tick-presets/main/snapshot/presets-${version}.json`;
 
+/**
+ * 预设仓库的 GitHub contents 接口（回退取源）：raw 直连失败时改走这里，
+ * 响应为 JSON，正文在 `content` 字段里以 base64 返回。
+ * 只访问 raw.githubusercontent.com 与 api.github.com，不使用第三方镜像与代理，也不带 token。
+ */
+export const PRESET_VERSION_API_URL =
+  'https://api.github.com/repos/muyangplus/dawn-tick-presets/contents/version.json';
+
+/** 指定版本的快照在上述 contents 接口下的地址。 */
+export const PRESET_SNAPSHOT_API_URL = (version: string): string =>
+  `https://api.github.com/repos/muyangplus/dawn-tick-presets/contents/snapshot/presets-${version}.json`;
+
+/** 预设数据的实际来源：`raw` 为 raw.githubusercontent.com 直连，`api` 为 api.github.com 回退。 */
+export type PresetRemoteSource = 'raw' | 'api';
+
+/** GitHub 接口的 accept（raw 直连沿用 application/json）。 */
+const GITHUB_API_ACCEPT = 'application/vnd.github+json';
+
 /** 内置预设的版本号：来自 core 的 `preset-version.json`（当前 = 预设仓库 0.1.0）。 */
 export const BUILTIN_PRESET_VERSION: string = CORE_BUILTIN_PRESET_VERSION;
 
@@ -81,6 +99,8 @@ export interface PresetUpdateStatus {
   available: boolean;
   version: string | null;
   error: string | null;
+  /** 实际取到数据的来源；失败时为 undefined（原有字段的含义与类型不变） */
+  source?: PresetRemoteSource;
 }
 
 /** 当前应当使用的预设来源。 */
@@ -185,9 +205,83 @@ function requireJsonVersion(value: unknown): string | null {
   return version.trim();
 }
 
+// —— 取源：[raw 直连, api contents] 依次尝试 ——
+//
+// 两条路拿到的东西形状不同：raw 直接就是 JSON 文本，contents 接口返回
+// `{ encoding: 'base64', content: '<base64>' }`。这里把「取 + 解 + 解析」收成一次尝试，
+// 任一来源成功即返回；两个都失败时抛出**最后一次**失败原因（网络类错误已由
+// `describeFetchError` 包成「无法连接预设源（…）」），调用方据此给可读文案。
+
+interface PresetFetchSource {
+  kind: PresetRemoteSource;
+  url: string;
+}
+
+interface PresetFetchResult {
+  value: unknown;
+  source: PresetRemoteSource;
+}
+
+/** base64 → UTF-8 文本。优先 `atob`（浏览器与 Node 24 都有），没有时退回 Node 的 Buffer。 */
+function base64ToText(base64: string): string {
+  const compact = base64.replace(/\s+/g, '');
+  const decode = (globalThis as { atob?: (input: string) => string }).atob;
+  try {
+    if (typeof decode === 'function') {
+      const binary = decode(compact);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return new TextDecoder().decode(bytes);
+    }
+    const buffer = (
+      globalThis as { Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } } }
+    ).Buffer;
+    if (buffer === undefined) throw new Error('当前环境不支持 base64 解码');
+    return buffer.from(compact, 'base64').toString('utf8');
+  } catch (cause: unknown) {
+    throw new Error(`预设源返回的 base64 内容无法解码：${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
+
+/** contents 接口的响应体 → 内层 JSON。编码不是 base64 或缺 `content` 都算这条来源失败。 */
+function parseContentsPayload(payload: unknown): unknown {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('预设源返回的 contents 响应不是对象');
+  }
+  const record = payload as Record<string, unknown>;
+  if (record['encoding'] !== 'base64') {
+    throw new Error(`预设源返回的 contents 编码不受支持：${String(record['encoding'])}`);
+  }
+  const content = record['content'];
+  if (typeof content !== 'string') throw new Error('预设源返回的 contents 缺少 content');
+  return JSON.parse(base64ToText(content)) as unknown;
+}
+
+/** 依次尝试各来源：HTTP 失败、网络异常、base64/JSON 解析失败都算这条来源失败，继续下一条。 */
+async function readPresetJson(
+  sources: readonly PresetFetchSource[],
+  doFetch: typeof fetch,
+): Promise<PresetFetchResult> {
+  let lastError: string | null = null;
+  for (const source of sources) {
+    try {
+      const response = await doFetch(source.url, {
+        headers: { accept: source.kind === 'api' ? GITHUB_API_ACCEPT : 'application/json' },
+      });
+      if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
+      const payload: unknown = await response.json();
+      const value = source.kind === 'api' ? parseContentsPayload(payload) : payload;
+      return { value, source: source.kind };
+    } catch (cause: unknown) {
+      lastError = describeFetchError(cause);
+    }
+  }
+  throw new Error(lastError ?? '无法连接预设源');
+}
+
 /**
  * 检查有没有更新的预设版本。
- * 任何异常（离线、404、JSON 非法、格式不认识）都收敛为可读的 `error`，不向界面抛出。
+ * 取源顺序：raw 直连 → api contents；都失败时收敛为可读的 `error`，不向界面抛出。
  * 成功时 `version` 为远端最新版本号（不一定比本地新），失败时为 null。
  */
 export async function checkPresetUpdate(options: {
@@ -198,32 +292,42 @@ export async function checkPresetUpdate(options: {
   if (typeof doFetch !== 'function') {
     return { available: false, version: null, error: '当前环境无法联网检查预设更新' };
   }
+  let result: PresetFetchResult;
   try {
-    const response = await doFetch(PRESET_VERSION_URL, { headers: { accept: 'application/json' } });
-    if (!response.ok) return { available: false, version: null, error: `预设源返回 ${response.status}` };
-    const parsed: unknown = await response.json();
-    const latest = requireJsonVersion(parsed);
-    if (latest === null) return { available: false, version: null, error: '预设版本清单格式不正确' };
-    const schemaVersion = (parsed as Record<string, unknown>)['schemaVersion'];
-    if (typeof schemaVersion === 'number' && Number.isInteger(schemaVersion) && schemaVersion > PRESET_SCHEMA_VERSION) {
-      return {
-        available: false,
-        version: latest,
-        error: `预设源使用了更新的格式（schemaVersion ${schemaVersion}），请升级应用`,
-      };
-    }
-    return {
-      available: comparePresetVersions(latest, options.cachedVersion) > 0,
-      version: latest,
-      error: null,
-    };
+    result = await readPresetJson(
+      [
+        { kind: 'raw', url: PRESET_VERSION_URL },
+        { kind: 'api', url: PRESET_VERSION_API_URL },
+      ],
+      doFetch,
+    );
   } catch (cause: unknown) {
-    return { available: false, version: null, error: describeFetchError(cause) };
+    // 文案已是可读句子（最后一条来源的原因，网络类已包成「无法连接预设源（…）」），不再二次包装
+    return { available: false, version: null, error: cause instanceof Error ? cause.message : String(cause) };
   }
+
+  const parsed = result.value;
+  const latest = requireJsonVersion(parsed);
+  if (latest === null) return { available: false, version: null, error: '预设版本清单格式不正确' };
+  const schemaVersion = (parsed as Record<string, unknown>)['schemaVersion'];
+  if (typeof schemaVersion === 'number' && Number.isInteger(schemaVersion) && schemaVersion > PRESET_SCHEMA_VERSION) {
+    return {
+      available: false,
+      version: latest,
+      error: `预设源使用了更新的格式（schemaVersion ${schemaVersion}），请升级应用`,
+    };
+  }
+  return {
+    available: comparePresetVersions(latest, options.cachedVersion) > 0,
+    version: latest,
+    error: null,
+    source: result.source,
+  };
 }
 
 /**
  * 下载并校验指定版本的快照。
+ * 取源顺序与版本清单一致（raw 直连 → api contents）。
  * 结构不对、HTTP 失败或哈希不符都会抛出可读错误——调用方负责回退内置预设。
  */
 export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): Promise<PresetSnapshot> {
@@ -233,15 +337,19 @@ export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): 
   const doFetch = fetchImpl ?? globalThis.fetch;
   if (typeof doFetch !== 'function') throw new Error('当前环境无法联网下载预设快照');
 
+  const trimmed = version.trim();
   let parsed: unknown;
   try {
-    const response = await doFetch(PRESET_SNAPSHOT_URL(version.trim()), {
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
-    parsed = await response.json();
+    const result = await readPresetJson(
+      [
+        { kind: 'raw', url: PRESET_SNAPSHOT_URL(trimmed) },
+        { kind: 'api', url: PRESET_SNAPSHOT_API_URL(trimmed) },
+      ],
+      doFetch,
+    );
+    parsed = result.value;
   } catch (cause: unknown) {
-    throw new Error(`预设快照下载失败：${describeFetchError(cause)}`);
+    throw new Error(`预设快照下载失败：${cause instanceof Error ? cause.message : String(cause)}`);
   }
 
   const problem = describeSnapshotProblem(parsed);
