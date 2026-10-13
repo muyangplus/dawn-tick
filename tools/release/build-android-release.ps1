@@ -1,6 +1,8 @@
 ﻿# 打 Android 签名包（dev 渠道为 debug 变体，但同样用正式密钥签名，保证能覆盖安装）
 # 用法：powershell -File tools/release/build-android-release.ps1 [-Channel dev|beta|release]
-# 密钥来自 keystore.properties（优先）或现有环境变量；两者都没有则明确报错。
+# 密钥来自属性文件（优先）或现有环境变量；两者都没有则明确报错。
+# 属性文件候选：apps/mobile/android/keystore.properties 与 <仓库根>/keys/keystore.properties；
+# 键名两种写法都认：storeFile/storePassword/keyAlias/keyPassword 或 ANDROID_KEYSTORE_PATH/...
 
 param(
   [ValidateSet('dev', 'beta', 'release')]
@@ -11,8 +13,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $root
 
-$props = Join-Path $root 'apps/mobile/android/keystore.properties'
-if (Test-Path $props) {
+foreach ($props in @(
+  (Join-Path $root 'apps/mobile/android/keystore.properties'),
+  (Join-Path $root 'keys/keystore.properties')
+)) {
+  if (-not (Test-Path $props)) { continue }
   foreach ($line in Get-Content $props -Encoding UTF8) {
     if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
     $name, $value = $line.Split('=', 2)
@@ -21,12 +26,16 @@ if (Test-Path $props) {
       'storePassword' { $env:ANDROID_KEYSTORE_PASSWORD = $value.Trim() }
       'keyAlias' { $env:ANDROID_KEY_ALIAS = $value.Trim() }
       'keyPassword' { $env:ANDROID_KEY_PASSWORD = $value.Trim() }
+      'ANDROID_KEYSTORE_PATH' { $env:ANDROID_KEYSTORE_PATH = $value.Trim() }
+      'ANDROID_KEYSTORE_PASSWORD' { $env:ANDROID_KEYSTORE_PASSWORD = $value.Trim() }
+      'ANDROID_KEY_ALIAS' { $env:ANDROID_KEY_ALIAS = $value.Trim() }
+      'ANDROID_KEY_PASSWORD' { $env:ANDROID_KEY_PASSWORD = $value.Trim() }
     }
   }
 }
 
 if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_PATH)) {
-  throw '没有签名材料：请先运行 tools/release/make-android-keystore.ps1，或设置 ANDROID_KEYSTORE_* 环境变量，或写 apps/mobile/android/keystore.properties'
+  throw '没有签名材料：请先运行 tools/release/make-android-keystore.ps1，或设置 ANDROID_KEYSTORE_* 环境变量，或写 keys/keystore.properties'
 }
 if (-not (Test-Path $env:ANDROID_KEYSTORE_PATH)) {
   throw "密钥库不存在：$($env:ANDROID_KEYSTORE_PATH)"

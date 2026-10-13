@@ -2,17 +2,27 @@ apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
 // 签名材料只从环境变量读取，不入库：ANDROID_KEYSTORE_PATH / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
-// 本地也可放 apps/mobile/android/keystore.properties（已 gitignore）：storeFile / storePassword / keyAlias / keyPassword
+// 本地也可放属性文件（都已 gitignore）：
+//   apps/mobile/android/keystore.properties
+//   <仓库根>/keys/keystore.properties
+// 键名两种写法都认：storeFile/storePassword/keyAlias/keyPassword 或 ANDROID_KEYSTORE_PATH/... 
 def keystoreProps = new Properties()
-def keystorePropsFile = rootProject.file('keystore.properties')
-if (keystorePropsFile.exists()) {
-    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+for (String candidate : ['keystore.properties', '../../../../keys/keystore.properties']) {
+    def propsFile = rootProject.file(candidate)
+    if (propsFile.exists()) {
+        propsFile.withInputStream { keystoreProps.load(it) }
+    }
 }
-def signingValue = { String envName, String propName ->
-    def fromEnv = System.getenv(envName)
-    if (fromEnv != null && !fromEnv.trim().isEmpty()) return fromEnv.trim()
-    def fromProps = keystoreProps.getProperty(propName)
-    return fromProps == null || fromProps.trim().isEmpty() ? null : fromProps.trim()
+def signingValue = { String... names ->
+    for (String name : names) {
+        def fromEnv = System.getenv(name)
+        if (fromEnv != null && !fromEnv.trim().isEmpty()) return fromEnv.trim()
+    }
+    for (String name : names) {
+        def fromProps = keystoreProps.getProperty(name)
+        if (fromProps != null && !fromProps.trim().isEmpty()) return fromProps.trim()
+    }
+    return null
 }
 def keystorePath = signingValue('ANDROID_KEYSTORE_PATH', 'storeFile')
 def keystorePassword = signingValue('ANDROID_KEYSTORE_PASSWORD', 'storePassword')
