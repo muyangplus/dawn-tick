@@ -160,6 +160,7 @@ async function seed(): Promise<SmokeSeed> {
     startAt: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 0).getTime(),
     showInTimetable: true,
     countdown: true,
+    subject: String(probabilityCourse['id']),
   });
   await createEvent(storage, {
     userId: USER_ID,
@@ -660,6 +661,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '日程按开关显示在课表上，实验默认显示',
     timetableLabels.includes('实验') && timetableLabels.includes('日程'),
     timetableLabels.join(' / ') || '(无课表条目)',
+  );
+  // 课表里的待办条目要显示所属课程
+  const eventCell = [...view.container.querySelectorAll('[data-role="lab-label"]')]
+    .map((node) => node.closest('div[data-tone]') ?? node.parentElement?.parentElement ?? null)
+    .find((node) => (node?.textContent ?? '').includes('组会'));
+  check(
+    '课表里的待办显示所属课程',
+    (eventCell?.textContent ?? '').includes('概率论'),
+    (eventCell?.textContent ?? '(未找到条目)').slice(0, 40),
   );
 
   // ③ 放假优先于非本周：周一既放假、又只在第 1-2 周上的「概率论」必须按放假渲染
@@ -1304,6 +1314,16 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `入口=${labOpen === null ? '无' : '有'}；保存=${labSaved ? '已点' : '未找到'}`,
   );
 
+  // 倒计时卡片：显示类型与所属课程
+  check(
+    '倒计时条目显示类型与所属课程',
+    (view.container.querySelector('[data-role="countdown-type"]')?.textContent ?? '').trim() === '日程' &&
+      (view.container.querySelector('[data-role="countdown-course"]')?.textContent ?? '').includes('概率论'),
+    `${view.container.querySelector('[data-role="countdown-type"]')?.textContent ?? '(无类型)'} / ${
+      view.container.querySelector('[data-role="countdown-course"]')?.textContent ?? '(无课程)'
+    }`,
+  );
+
   // 倒计时卡片：可以直接勾完成，也可以点进详情
   const countdownDone = [...view.container.querySelectorAll('input[type="checkbox"]')].find(
     (box) => box.getAttribute('aria-label') === '标记完成：组会',
@@ -1538,16 +1558,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('搜索弹窗渲染', (document.body.textContent ?? '').includes('输入关键词开始搜索'), '');
   check('回到课表', switchedToTimeline, '');
 
-  // 导入已并入设置：导航里不再有「导入」，设置页底部有导入区
+  // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理卡片里能展开
   clickByText(view.container, '设置');
+  await flush(12);
+  const courseImport = view.container.querySelector('[data-role="course-import"]');
+  const importSummary = view.container.querySelector('[aria-label="导入课表"]');
+  if (importSummary instanceof window.HTMLElement) importSummary.click();
   await flush(12);
   const importText = view.container.textContent ?? '';
   check(
-    '导入并入设置页',
-    view.container.querySelector('[data-role="settings-import"]') !== null &&
-      importText.includes('导入课表') &&
-      importText.includes('网页课表'),
-    view.container.querySelector('[data-role="settings-import"]') === null ? '未找到导入区' : '导入区在设置里',
+    '导入作为课程管理的子项',
+    courseImport !== null && importText.includes('导入课表') && importText.includes('网页课表'),
+    courseImport === null ? '未找到导入子项' : '导入子项在课程管理里',
   );
   check('已移除程序代登录入口', !importText.includes('正方教务') && !importText.includes('程序代登录'), '');
   check(

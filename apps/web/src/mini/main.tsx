@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   WIDGET_VARIANTS,
+  formatDate,
   formatTime,
   readSettings,
   type AppSettings,
@@ -183,7 +184,19 @@ function Mini() {
     tomorrowCount: tomorrowLessons.length,
     now,
   });
-  const nextIsTomorrow = next !== undefined && !todayLessons.some((lesson) => lesson.startAt === next.startAt);
+  const nextIsTomorrow =
+    next !== undefined &&
+    !todayLessons.some((lesson) => lesson.startAt === next.startAt) &&
+    (data === null ? false : formatDate(next.startAt, zone) === formatDate(Date.parse(`${data.today}T00:00:00Z`) + 86_400_000, 'UTC'));
+  /** 下一节课的实际日期（跨天时用来标明是明天还是更晚） */
+  const nextDayLabel = ((): string => {
+    if (next === undefined || data === null) return '';
+    const nextDate = formatDate(next.startAt, zone);
+    if (nextDate === data.today) return '';
+    const dayAfter = formatDate(Date.parse(`${data.today}T00:00:00Z`) + 2 * 86_400_000, 'UTC');
+    if (nextDate === dayAfter) return '后天';
+    return nextDate;
+  })();
 
   if (error !== null) {
     return (
@@ -339,6 +352,7 @@ function Mini() {
               {countdown(next.startAt, now)}
             </span>
             <span className="mini-meta">
+              {nextDayLabel === '' ? '' : `${nextDayLabel} `}
               {formatTime(next.startAt, zone)}
               {next.room !== null ? ` · ${next.room}` : ''}
             </span>

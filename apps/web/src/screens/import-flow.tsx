@@ -58,7 +58,8 @@ const METHODS: Array<{ id: Method; label: string; icon: typeof Bookmark; hint: s
 export interface ImportFlowProps {
   storage: Storage;
   semesterId: string;
-  onManual: () => void;
+  /** 手动添加课程：由宿主页面决定怎么打开课程表单 */
+  onManual?: (() => void) | undefined;
   onDone: () => void;
   onClose: () => void;
 }
@@ -334,6 +335,9 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       });
       toast.success(`新增课程 ${applied.createdCourses} · 排课 ${applied.createdSchedules} · 跳过重复 ${applied.skippedSchedules}`);
       setStep(4);
+      // 导入完成就关掉内嵌教务窗口，避免用户还要自己关
+      await closeImportWindow();
+      logInfo('import', '导入完成并关闭内嵌窗口', { courses: applied.createdCourses });
       onDone();
     } finally {
       setBusy(false);
@@ -360,6 +364,21 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         })}
       </ol>
 
+      {/* 上一步：预览与上传页都能退回上一步，不用重新开始 */}
+      {step > 1 && step < 4 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="上一步"
+            onClick={() => setStep((current) => (current > 1 ? ((current - 1) as Step) : current))}
+          >
+            上一步
+          </Button>
+          <span className="text-xs text-muted">当前第 {step} 步 / 共 4 步</span>
+        </div>
+      )}
+
       {step === 1 && (
         <div className="grid gap-2 tablet:grid-cols-2">
           {METHODS.map((item) => {
@@ -371,8 +390,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                 onClick={() => {
                   setMethod(item.id);
                   if (item.id === 'manual') {
-                    onManual();
-                    onClose();
+                    onManual?.();
                     return;
                   }
                   setStep(2);

@@ -592,13 +592,26 @@ export const examsCard = defineCard({
                   onClick={() => onOpenEvent(row)}
                 >
                   <span className="flex min-w-0 flex-col">
-                    <span className={cn('truncate text-sm font-medium text-ink', row.done === 1 && 'line-through opacity-60')}>
-                      {row.title}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="shrink-0 rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[10px] leading-none text-muted"
+                        data-role="countdown-type"
+                      >
+                        {COUNTDOWN_TYPE_LABEL[row.type] ?? '日程'}
+                      </span>
+                      <span className={cn('truncate text-sm font-medium text-ink', row.done === 1 && 'line-through opacity-60')}>
+                        {row.title}
+                      </span>
                     </span>
-                    <span className="truncate text-xs text-muted">
-                      {row.on_date ?? (row.start_at === null ? '' : formatDate(row.start_at, data.timeZone))}
-                      {row.location !== null && ` · ${row.location}`}
-                      {row.seat_no !== null && ` · 座位 ${row.seat_no}`}
+                    <span className="truncate text-xs text-muted" data-role="countdown-course">
+                      {[
+                        row.subject === null ? null : courseNameOf(data, row.subject),
+                        row.on_date ?? (row.start_at === null ? null : formatDate(row.start_at, data.timeZone)),
+                        row.location,
+                        row.seat_no === null ? null : `座位 ${row.seat_no}`,
+                      ]
+                        .filter((item) => item !== null && item !== undefined && item !== '')
+                        .join(' · ')}
                     </span>
                   </span>
                   <span className="tabular shrink-0 text-sm font-semibold text-danger-strong">
@@ -626,6 +639,20 @@ export const examsCard = defineCard({
     );
   },
 });
+
+/** 倒计时条目的类型文案。 */
+const COUNTDOWN_TYPE_LABEL: Record<string, string> = {
+  homework: '作业',
+  exam: '考试',
+  lab: '实验',
+  todo: '日程',
+  temp: '日程',
+};
+
+/** 条目关联的课程名。 */
+function courseNameOf(data: ScheduleCardContext['data'], courseId: string): string | null {
+  return data.courses.find((course) => course.id === courseId)?.name ?? null;
+}
 
 /** 倒计时条目勾完成：写回同一条并刷新。 */
 async function toggleCountdownDone(

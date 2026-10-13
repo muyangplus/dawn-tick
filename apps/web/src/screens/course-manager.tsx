@@ -15,6 +15,7 @@ import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { CourseForm } from './course-form.tsx';
+import { ImportFlow } from './import-flow.tsx';
 import { logInfo } from '../log.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -78,6 +79,8 @@ export function CourseManager({
   /** 复制课程：先选只复制课程信息，还是连排课一起复制 */
   const [copying, setCopying] = useState<ManagedCourse | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 新建课程：导入子项里的「手动添加」也会用它打开表单 */
+  const [creating, setCreating] = useState(false);
 
   const reload = useCallback(async () => {
     setCourses(await listManagedCourses(storage, semesterId));
@@ -199,10 +202,35 @@ export function CourseManager({
         </ul>
       )}
 
+      {/* 导入课表是课程管理的子项：展开后走同一套导入流程 */}
+      <details className="rounded-md border border-line bg-surface p-2" data-role="course-import">
+        <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm font-medium text-ink" aria-label="导入课表">
+          导入课表
+          <span className="text-xs text-muted">网页课表 / 教务窗口 / ICS / CSV / Excel</span>
+        </summary>
+        <div className="pt-3">
+          <ImportFlow
+            storage={storage}
+            semesterId={semesterId}
+            onManual={() => setCreating(true)}
+            onDone={() => {
+              void (async () => {
+                await reload();
+                onChanged();
+              })();
+            }}
+            onClose={() => undefined}
+          />
+        </div>
+      </details>
+
       <CourseForm
-        open={editing !== null}
+        open={editing !== null || creating}
         onOpenChange={(open) => {
-          if (!open) setEditing(null);
+          if (!open) {
+            setEditing(null);
+            setCreating(false);
+          }
         }}
         storage={storage}
         semesterId={semesterId}

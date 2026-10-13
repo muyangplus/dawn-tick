@@ -33,7 +33,6 @@ import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type Le
 import { openStorage } from './db/platform.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
-import { ImportFlow } from './screens/import-flow.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
 import { ScheduleView } from './screens/schedule-view.tsx';
 import { SettingsView } from './screens/settings-view.tsx';
@@ -741,36 +740,21 @@ export function App() {
         </LessonDetailOpener.Provider>
       )}
       {view === 'settings' && (
-        <>
-          <SettingsView
-            storage={storage}
-            userId={USER_ID}
-            settings={settings}
-            semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
-            activeSemesterId={data.semester.id}
-            activeStartDate={data.semester.start_date}
-            totalWeeks={data.semester.total_weeks}
-            slots={data.slots}
-            persistent={persistent}
-            reminders={reminders}
-            storageKind={STORAGE_LABEL[storage.kind]}
-            onPatch={patch}
-            onChanged={refresh}
-          />
-          {/* 导入已并入设置：入口与其余设置同页 */}
-          <section className="flex flex-col gap-3" aria-label="导入课表" data-role="settings-import">
-            <h2 className="text-sm font-semibold text-ink">导入课表</h2>
-            <ImportFlow
-              storage={storage}
-              semesterId={data.semester.id}
-              onManual={() => {
-                setCourseFormOpen(true);
-              }}
-              onDone={refresh}
-              onClose={refresh}
-            />
-          </section>
-        </>
+        <SettingsView
+          storage={storage}
+          userId={USER_ID}
+          settings={settings}
+          semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
+          activeSemesterId={data.semester.id}
+          activeStartDate={data.semester.start_date}
+          totalWeeks={data.semester.total_weeks}
+          slots={data.slots}
+          persistent={persistent}
+          reminders={reminders}
+          storageKind={STORAGE_LABEL[storage.kind]}
+          onPatch={patch}
+          onChanged={refresh}
+        />
       )}
       {view === 'mine' && (
         <section className="flex flex-col items-center justify-center gap-2 py-16" aria-label="我的">

@@ -94,6 +94,8 @@ export interface LessonCell {
   lab: boolean;
   /** 条目标签（实验 / 作业 / 考试 / 日程）；课程格为空 */
   eventLabel?: string;
+  /** 课表条目所属课程名（未关联课程时为空） */
+  courseLabel?: string | null;
   /** 实验条目对应的行 id（课程格为空） */
   eventId?: string;
   /** 自定义时间（HH:MM）：非空时该格按真实时间定位，不按节次 */
@@ -404,6 +406,7 @@ export async function loadAppData(
       movedIn: false,
       lab: true,
       eventLabel: EVENT_LABEL[entry.type] ?? '日程',
+      courseLabel: entry.subject === null ? null : courseById.get(entry.subject)?.name ?? null,
       eventId: entry.id,
       customStart: clockStart,
       customEnd: clockEnd,

@@ -903,7 +903,15 @@ export function WeekView({
                         color={lesson.color}
                         room={lesson.room}
                         teacher={lesson.teacher}
-                        meta={custom ? `${lesson.customStart}-${lesson.customEnd}` : `${lesson.startTime}-${lesson.endTime}`}
+                        meta={
+                          lesson.lab
+                            ? [lesson.courseLabel, custom ? `${lesson.customStart}-${lesson.customEnd}` : `${lesson.startTime}-${lesson.endTime}`]
+                                .filter((item) => item !== null && item !== undefined && item !== '')
+                                .join(' · ')
+                            : custom
+                              ? `${lesson.customStart}-${lesson.customEnd}`
+                              : `${lesson.startTime}-${lesson.endTime}`
+                        }
                         // 停课优先于调课，调课优先于放假与非本周
                         tone={
                           lesson.cancelled
