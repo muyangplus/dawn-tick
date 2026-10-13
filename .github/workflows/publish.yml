@@ -28,6 +28,9 @@ jobs:
     outputs:
       channel: ${{ steps.compute.outputs.channel }}
       version: ${{ steps.compute.outputs.version }}
+      appVersion: ${{ steps.compute.outputs.appVersion }}
+      stamp: ${{ steps.compute.outputs.stamp }}
+      versionCode: ${{ steps.compute.outputs.versionCode }}
       tag: ${{ steps.compute.outputs.tag }}
       buildRef: ${{ steps.compute.outputs.buildRef }}
       rolling: ${{ steps.compute.outputs.rolling }}
@@ -56,6 +59,7 @@ jobs:
       - name: 渠道摘要
         run: |
           echo "渠道 ${{ steps.compute.outputs.channel }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "版本 ${{ steps.compute.outputs.appVersion }}（构建时间戳 ${{ steps.compute.outputs.stamp }}）" >> "$GITHUB_STEP_SUMMARY"
           echo "标签 ${{ steps.compute.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
           echo "构建自 ${{ steps.compute.outputs.buildRef }}" >> "$GITHUB_STEP_SUMMARY"
 
@@ -82,7 +86,8 @@ jobs:
     runs-on: windows-latest
     env:
       DT_CHANNEL: ${{ needs.plan.outputs.channel }}
-      DT_VERSION: ${{ needs.plan.outputs.version }}
+      DT_VERSION: ${{ needs.plan.outputs.appVersion }}
+      DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -126,7 +131,8 @@ jobs:
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       DT_CHANNEL: ${{ needs.plan.outputs.channel }}
-      DT_VERSION: ${{ needs.plan.outputs.version }}
+      DT_VERSION: ${{ needs.plan.outputs.appVersion }}
+      DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -181,7 +187,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DT_CHANNEL: ${{ needs.plan.outputs.channel }}
-      DT_VERSION: ${{ needs.plan.outputs.version }}
+      DT_VERSION: ${{ needs.plan.outputs.appVersion }}
+      DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -206,7 +213,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
-      VERSION: ${{ needs.plan.outputs.version }}
+      VERSION: ${{ needs.plan.outputs.appVersion }}
       TAG: ${{ needs.plan.outputs.tag }}
       ROLLING: ${{ needs.plan.outputs.rolling }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}

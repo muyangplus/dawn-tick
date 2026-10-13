@@ -12,12 +12,17 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$version = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
-if ([string]::IsNullOrWhiteSpace($version)) { throw '根 package.json 缺少 version' }
+$baseVersion = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
+if ([string]::IsNullOrWhiteSpace($baseVersion)) { throw '根 package.json 缺少 version' }
+
+# dev 构建带构建时间戳：产物名与关于页能区分是哪一次构建
+$stampInfo = (node tools/release/build-stamp.mjs --channel $Channel $baseVersion) | ConvertFrom-Json
+$version = $stampInfo.version
 
 $env:DT_CHANNEL = $Channel
 $env:DT_VERSION = $version
-Write-Output "本地打包：渠道 $Channel，版本 $version"
+$env:DT_VERSION_CODE = [string]$stampInfo.versionCode
+Write-Output "本地打包：渠道 $Channel，版本 $version（构建时间戳 $($stampInfo.stamp)）"
 
 # 本地默认 debug 构建：日志更详细，便于排查
 $buildArgs = @('exec', 'tauri', 'build')

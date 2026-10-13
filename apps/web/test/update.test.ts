@@ -61,6 +61,13 @@ test('版本比较遵循语义化规则', () => {
   assert.ok(compareVersions('v0.1.1', '0.1.0') > 0, '允许 v 前缀');
 });
 
+test('dev 构建时间戳不参与版本比较', () => {
+  assert.equal(compareVersions('0.1.0.202610132203', '0.1.0'), 0, '同一基础版本视为相同');
+  assert.equal(compareVersions('0.1.0', '0.1.0.202610132203'), 0);
+  assert.ok(compareVersions('0.2.0', '0.1.0.202610132203') > 0, '更高基础版本仍是更新');
+  assert.ok(compareVersions('0.1.0.202610132203', '0.1.9') < 0);
+});
+
 test('dev 渠道永远只查 dev 源', () => {
   assert.equal(resolveFeed('dev', true), 'dev');
   assert.equal(resolveFeed('dev', false), 'dev');

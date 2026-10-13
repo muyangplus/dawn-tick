@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildStamp, stampVersion, versionCodeOf } from './build-stamp.mjs';
 
 export const CHANNELS = ['release', 'beta', 'dev'];
 export const DEV_ROLLING_TAG = 'dev-latest';
@@ -67,9 +68,16 @@ export function planRelease({
     buildRef = isTagPush ? tag : 'main';
   }
 
+  // dev 每次构建都带构建时间戳：产物名与关于页能区分是哪一次构建
+  const stamp = buildStamp();
+  const appVersion = stampVersion(version, channel, new Date());
+
   return {
     channel,
     version,
+    appVersion,
+    stamp,
+    versionCode: versionCodeOf(),
     tag,
     buildRef,
     rolling: channel === 'dev',
@@ -100,7 +108,18 @@ if (invokedDirectly) {
   });
 
   if (args.has('github-output')) {
-    const lines = ['channel', 'version', 'tag', 'buildRef', 'rolling', 'prerelease', 'title']
+    const lines = [
+      'channel',
+      'version',
+      'appVersion',
+      'stamp',
+      'versionCode',
+      'tag',
+      'buildRef',
+      'rolling',
+      'prerelease',
+      'title',
+    ]
       .map((key) => `${key}=${String(plan[key])}`)
       .join('\n');
     process.stdout.write(`${lines}\n`);

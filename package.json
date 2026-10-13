@@ -9,12 +9,14 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "pnpm -r --if-present test && node --test tools/release/plan.test.mjs tools/release/ci-gate.test.mjs tools/design/check-a11y.test.mjs",
+    "test": "pnpm -r --if-present test && node --test tools/release/plan.test.mjs tools/release/build-stamp.test.mjs tools/release/ci-gate.test.mjs tools/design/check-a11y.test.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "version:current": "node tools/release/version.mjs --current",
     "version:set": "node tools/release/version.mjs",
     "version:check": "node tools/release/version.mjs --check",
-    "ui:smoke": "node tools/verify/smoke-ui.mjs"
+    "ui:smoke": "node tools/verify/smoke-ui.mjs",
+    "android:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/build-android-release.ps1 -Channel dev",
+    "android:release": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/build-android-release.ps1 -Channel release"
   },
   "devDependencies": {
     "jsdom": "^30.1.2"
