@@ -604,6 +604,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const overdueTodoId = seeded.overdueTodoId;
   const view = mount(<App />);
   await flush(20);
+  // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
+  check(
+    'dev 构建首次提示开发版可能频繁更新',
+    (document.body.textContent ?? '').includes('开发版提示') &&
+      (document.body.textContent ?? '').includes('建议切换到测试版或正式版'),
+    (document.body.textContent ?? '').slice(0, 60),
+  );
+  if (clickByText(document.body, '知道了')) await flush(10);
+  check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
   const text = view.container.textContent ?? '';
   check('课表渲染课程', text.includes('高数'), text.slice(0, 80));
   check('工具栏渲染周次', /第\s*\d+\s*周/.test(text), '');
@@ -1813,6 +1822,29 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     view.container.querySelector('[aria-label="自动检查版本更新"]') !== null &&
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
+  );
+  // 开发者特性：dev 默认开，关掉后诊断入口隐藏、debug 日志停记
+  const devSwitch = view.container.querySelector('[aria-label="开发者特性"]');
+  check(
+    'dev 构建有开发者特性开关且默认开启',
+    devSwitch !== null && devSwitch.getAttribute('aria-checked') === 'true',
+    devSwitch === null ? '(无开关)' : String(devSwitch.getAttribute('aria-checked')),
+  );
+  if (devSwitch instanceof window.HTMLElement) devSwitch.click();
+  await flush(12);
+  check(
+    '关掉开发者特性后诊断入口隐藏',
+    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
+      !(view.container.textContent ?? '').includes('导出日志'),
+    '',
+  );
+  const devSwitchBack = view.container.querySelector('[aria-label="开发者特性"]');
+  if (devSwitchBack instanceof window.HTMLElement) devSwitchBack.click();
+  await flush(12);
+  check(
+    '重新打开开发者特性后诊断入口恢复',
+    (view.container.textContent ?? '').includes('导出日志'),
+    '',
   );
   // 时区与待办排序都是选择列表
   const zoneTrigger = view.container.querySelector('[aria-label="时区"]');

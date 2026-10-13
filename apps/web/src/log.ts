@@ -1,4 +1,5 @@
 import type { Storage } from '@dawn-tick/core';
+import { devFeaturesOn } from './dev-features.ts';
 import { detectPlatform } from './platform-detect.ts';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -14,8 +15,10 @@ export interface LogEntry {
 declare const __DT_CHANNEL__: string | undefined;
 export const LOG_META_KEY = 'app_log';
 const MAX_ENTRIES = 300;
-/** dev / beta 渠道记录 debug 级日志；release 只留 info 及以上。 */
-const DEBUG_ENABLED = (typeof __DT_CHANNEL__ === 'string' ? __DT_CHANNEL__ : 'dev') !== 'release';
+/** release 渠道只留 info 及以上；dev 关掉开发者特性时同样不记 debug。 */
+function debugAllowed(): boolean {
+  return (typeof __DT_CHANNEL__ === 'string' ? __DT_CHANNEL__ : 'dev') !== 'release' && devFeaturesOn();
+}
 
 let buffer: LogEntry[] = [];
 let storage: Storage | null = null;
@@ -75,7 +78,7 @@ export async function loadLogs(): Promise<void> {
 
 function record(level: LogLevel, scope: string, message: string, detail?: Record<string, unknown>): void {
   // release 渠道不记 debug；其余渠道四个等级全部记录，控制台、文件与导出一致
-  if (level === 'debug' && !DEBUG_ENABLED) return;
+  if (level === 'debug' && !debugAllowed()) return;
   const entry: LogEntry = { at: Date.now(), level, scope, message, ...(detail === undefined ? {} : { detail }) };
   buffer.push(entry);
   if (buffer.length > MAX_ENTRIES) buffer = buffer.slice(-MAX_ENTRIES);
@@ -119,7 +122,7 @@ export function logDebug(scope: string, message: string, detail?: Record<string,
 }
 
 export function debugEnabled(): boolean {
-  return DEBUG_ENABLED;
+  return debugAllowed();
 }
 
 export function logInfo(scope: string, message: string, detail?: Record<string, unknown>): void {

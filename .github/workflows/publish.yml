@@ -31,6 +31,7 @@ jobs:
       appVersion: ${{ steps.compute.outputs.appVersion }}
       stamp: ${{ steps.compute.outputs.stamp }}
       versionCode: ${{ steps.compute.outputs.versionCode }}
+      skip: ${{ steps.skipcheck.outputs.skip }}
       tag: ${{ steps.compute.outputs.tag }}
       buildRef: ${{ steps.compute.outputs.buildRef }}
       rolling: ${{ steps.compute.outputs.rolling }}
@@ -56,6 +57,27 @@ jobs:
             --channel="$INPUT_CHANNEL" \
             --existing-tags="$TAGS" \
             --github-output >> "$GITHUB_OUTPUT"
+      - name: 判断是否需要构建
+        id: skipcheck
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          CHANNEL="${{ steps.compute.outputs.channel }}"
+          if [ "$CHANNEL" != "dev" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 滚动渠道：dev-latest 记录的提交与本次相同就不重复构建（定时任务尤其省事）
+          body=$(gh release view dev-latest --json body --jq .body 2>/dev/null || true)
+          last=$(printf '%s' "$body" | sed -n 's/.*提交 \([0-9a-f]\{7,40\}\).*/\1/p' | head -n 1)
+          if [ -n "$last" ] && [ "$last" = "$GITHUB_SHA" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "dev-latest 已是提交 $last，跳过本次构建" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "将构建：dev-latest 记录 ${last:-无}，本次 $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: 渠道摘要
         run: |
           echo "渠道 ${{ steps.compute.outputs.channel }}" >> "$GITHUB_STEP_SUMMARY"
@@ -66,6 +88,7 @@ jobs:
   gate:
     name: 等待 CI 通过
     needs: plan
+    if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v7
@@ -83,6 +106,7 @@ jobs:
   windows:
     name: Windows 安装包
     needs: [plan, gate]
+    if: needs.plan.outputs.skip != 'true'
     runs-on: windows-latest
     env:
       DT_CHANNEL: ${{ needs.plan.outputs.channel }}
@@ -124,6 +148,7 @@ jobs:
   android:
     name: Android APK
     needs: [plan, gate]
+    if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
     env:
       KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -184,6 +209,7 @@ jobs:
   web:
     name: Web 静态包
     needs: [plan, gate]
+    if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
     env:
       DT_CHANNEL: ${{ needs.plan.outputs.channel }}
@@ -209,6 +235,7 @@ jobs:
   publish:
     name: 发布
     needs: [plan, gate, windows, android, web]
+    if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

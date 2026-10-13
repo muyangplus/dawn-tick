@@ -119,6 +119,26 @@ fn ensure_console() {
 #[cfg(not(windows))]
 fn ensure_console() {}
 
+/// 关掉开发者特性时释放日志控制台，让 dev 构建表现与正式版一致。
+#[tauri::command]
+fn set_dev_console(enabled: bool) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Console::FreeConsole;
+        if enabled {
+            ensure_console();
+        } else {
+            unsafe {
+                FreeConsole();
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = enabled;
+    }
+}
+
 /// 日志统一格式：`2026-10-13 18:01:34.123 +08:00 [info] scope: 消息`。
 /// 时间戳口径为本地时间 + 与 UTC 的偏移，文件与控制台用同一行。
 
@@ -1868,6 +1888,7 @@ pub fn run() {
     let builder = builder
         .invoke_handler(tauri::generate_handler![
             log_event,
+            set_dev_console,
             save_startup_prefs,
             autostart_status,
             set_autostart,

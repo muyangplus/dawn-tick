@@ -318,6 +318,8 @@ export function SettingsView({
   const [removing, setRemoving] = useState<SemesterRow | null>(null);
   const [layout, setLayout] = useState<LayoutConfig>({});
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
+  /** 诊断入口：dev/beta 可见；dev 关掉开发者特性后与正式版一致地隐藏 */
+  const diagnosticsVisible = featureVisible('diagnostics') && (CHANNEL !== 'dev' || settings.devFeatures);
   const next = reminders.upcoming[0];
 
   useEffect(() => {
@@ -984,12 +986,12 @@ export function SettingsView({
             <Upload className="size-4" aria-hidden />
             导入配置
           </Button>
-          {featureVisible('diagnostics') && (
+          {diagnosticsVisible && (
             <Button size="sm" variant="secondary" onClick={() => void exportLogs()}>
               导出日志
             </Button>
           )}
-          {canUseWidget() && featureVisible('diagnostics') && (
+          {canUseWidget() && diagnosticsVisible && (
             <Button size="sm" variant="secondary" onClick={() => void showLogDirectory()}>
               打开日志文件所在目录
             </Button>
@@ -1052,7 +1054,7 @@ export function SettingsView({
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>自动检查版本更新</span>
-            <span className="truncate text-xs text-muted">启动后自动查一次，有新版本时提示</span>
+            <span className="truncate text-xs text-muted">启动后自动查一次，有新版本时弹出更新信息</span>
           </span>
           <Switch
             checked={settings.autoCheckUpdate}
@@ -1060,6 +1062,21 @@ export function SettingsView({
             onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
           />
         </label>
+        {CHANNEL === 'dev' && (
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span className="flex min-w-0 flex-col">
+              <span>开发者特性</span>
+              <span className="truncate text-xs text-muted">
+                关闭后按正式版特性运行：不记 debug 日志、禁用右键菜单、不显示日志控制台；更新仍随 dev
+              </span>
+            </span>
+            <Switch
+              checked={settings.devFeatures}
+              aria-label="开发者特性"
+              onCheckedChange={(checked) => void onPatch({ devFeatures: checked })}
+            />
+          </label>
+        )}
         <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
           <span>预设仓库</span>
           <ExternalLink

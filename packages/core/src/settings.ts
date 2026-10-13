@@ -48,6 +48,8 @@ export interface AppSettings {
   autoCheckUpdate: boolean;
   /** 待办排序：按开始时间 / 按类型 */
   todoSort: TodoSort;
+  /** 开发者特性：dev 渠道默认开启；关掉后按正式版特性运行（更新仍随 dev） */
+  devFeatures: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -69,6 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   receiveBeta: null,
   autoCheckUpdate: true,
   todoSort: 'start',
+  devFeatures: true,
 };
 
 const KEYS = {
@@ -90,6 +93,7 @@ const KEYS = {
   receiveBeta: 'receive_beta',
   autoCheckUpdate: 'auto_check_update',
   todoSort: 'todo_sort',
+  devFeatures: 'dev_features',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -118,6 +122,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.receiveBeta),
     storage.readMeta(KEYS.autoCheckUpdate),
     storage.readMeta(KEYS.todoSort),
+    storage.readMeta(KEYS.devFeatures),
   ]);
   const [
     timeZone,
@@ -138,6 +143,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     receiveBeta,
     autoCheckUpdate,
     todoSort,
+    devFeatures,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -178,6 +184,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       todoSort !== undefined && (TODO_SORTS as readonly string[]).includes(todoSort)
         ? (todoSort as TodoSort)
         : DEFAULT_SETTINGS.todoSort,
+    devFeatures: parseBoolean(devFeatures, DEFAULT_SETTINGS.devFeatures),
   };
 }
 
@@ -244,6 +251,9 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
       throw new RangeError(`待办排序只能是 ${TODO_SORTS.join(' / ')}`);
     }
     await storage.writeMeta(KEYS.todoSort, patch.todoSort);
+  }
+  if (patch.devFeatures !== undefined) {
+    await storage.writeMeta(KEYS.devFeatures, patch.devFeatures ? '1' : '0');
   }
 
   return readSettings(storage);

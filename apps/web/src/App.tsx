@@ -45,7 +45,9 @@ import { attachLogStorage, loadLogs, logDebug, logError, logInfo, logWarn } from
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
-import { checkForUpdate, resolveReceiveBeta } from './update.ts';
+import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
+import { applyDevFeatures } from './dev-features.ts';
+import { openExternalUrl } from './system-actions.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from './channel.ts';
 import { notifyWidgetWindows, writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
@@ -165,6 +167,28 @@ async function withToast(action: () => Promise<void>, ok: string, fail: string):
 
 /** 首次启动系统时区对齐的标记：只做一次，之后跟随用户选择。 */
 const TIME_ZONE_ALIGNED_KEY = 'time_zone_aligned';
+/** 渠道提示的已读标记：存 id 数组，新增提示对老用户同样会弹一次。 */
+const SEEN_NOTICES_KEY = 'seen_notices';
+const NOTICE_DEV = 'dev-frequent-updates';
+const NOTICE_BETA = 'beta-unstable';
+const RELEASES_URL = 'https://github.com/muyangplus/dawn-tick/releases';
+
+async function readSeenNotices(storage: Storage): Promise<string[]> {
+  try {
+    const raw = await storage.readMeta(SEEN_NOTICES_KEY);
+    if (raw === null || raw === undefined || raw === '') return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function markNoticeSeen(storage: Storage, id: string): Promise<void> {
+  const seen = await readSeenNotices(storage);
+  if (seen.includes(id)) return;
+  await storage.writeMeta(SEEN_NOTICES_KEY, JSON.stringify([...seen, id]));
+}
 
 export function App() {
   const [storage, setStorage] = useState<Storage | null>(null);
@@ -192,6 +216,12 @@ export function App() {
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
   const [error, setError] = useState<string | null>(null);
+  /** 待展示的渠道提示（开发版频繁更新 / 测试版不稳定），按 id 记录已提示过 */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** 发现新版本时的更新信息弹窗 */
+  const [updateInfo, setUpdateInfo] = useState<UpdateStatus | null>(null);
+  /** 递增触发一次额外的自动检查（切到测试版后） */
+  const [checkTick, setCheckTick] = useState(0);
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
   const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
@@ -278,6 +308,31 @@ export function App() {
     };
   }, [reload]);
 
+  // 开发者特性开关：影响 debug 日志、右键菜单与控制台；更新渠道不变
+  useEffect(() => {
+    applyDevFeatures(settings.devFeatures);
+    void (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_dev_console', { enabled: settings.devFeatures });
+      } catch {
+        // 非桌面端没有控制台
+      }
+    })();
+  }, [settings.devFeatures]);
+
+  // 渠道提示：不是初次使用也要弹——只要这条提示没展示过
+  useEffect(() => {
+    const storageReady = storage;
+    if (storageReady === null) return;
+    const noticeId = CHANNEL === 'dev' ? NOTICE_DEV : CHANNEL === 'beta' ? NOTICE_BETA : null;
+    if (noticeId === null) return;
+    void (async () => {
+      const seen = await readSeenNotices(storageReady);
+      if (!seen.includes(noticeId)) setNotice(noticeId);
+    })();
+  }, [storage]);
+
   useEffect(() => {
     setResolvedMode(applyTheme(settings.themePreset, settings.theme));
     if (settings.theme !== 'system' || typeof globalThis.matchMedia !== 'function') return;
@@ -351,7 +406,8 @@ export function App() {
   // 启动时按设置检查一次更新，只提示不下载；「自动检查版本更新」关闭时跳过
   const autoChecked = useRef(false);
   useEffect(() => {
-    if (autoChecked.current || !settings.autoCheckUpdate) return;
+    if (!settings.autoCheckUpdate) return;
+    if (autoChecked.current && checkTick === 0) return;
     autoChecked.current = true;
     let cancelled = false;
     void (async () => {
@@ -361,14 +417,15 @@ export function App() {
         currentVersion: appVersion(),
       });
       if (cancelled || !status.available) return;
-      toast.success(`发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在设置 → 更新与维护里查看`);
+      // 检查到新版本：弹窗显示版本、渠道与发布说明
+      setUpdateInfo(status);
     })();
     return () => {
       cancelled = true;
     };
-    // 设置就绪后只检查一次
+    // 设置就绪后只检查一次；切到测试版会递增 checkTick 再查一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.autoCheckUpdate]);
+  }, [settings.autoCheckUpdate, checkTick]);
 
   // 过了截止时间的日程默认标记为完成（只在确有需要时写一次，避免循环）
   useEffect(() => {
@@ -1000,6 +1057,82 @@ export function App() {
         editing={editingEvent}
         onCreated={refresh}
       />
+
+      {/* 渠道提示：开发版可能频繁更新、测试版可能不稳定；每条只弹一次，新增提示对老用户也会弹 */}
+      <Dialog
+        open={notice !== null}
+        onOpenChange={(open) => {
+          if (open || storage === null || notice === null) return;
+          void markNoticeSeen(storage, notice);
+          const wasBetaNotice = notice === NOTICE_BETA;
+          setNotice(null);
+          // 切到测试版后自动检查一次更新
+          if (wasBetaNotice && settings.autoCheckUpdate) {
+            autoChecked.current = false;
+            setCheckTick((tick) => tick + 1);
+          }
+        }}
+      >
+        <DialogContent
+          title={notice === NOTICE_BETA ? '测试版提示' : '开发版提示'}
+          description={
+            notice === NOTICE_BETA
+              ? '测试版可能不稳定，功能与数据格式都可能调整；遇到问题请附日志反馈。'
+              : '开发版随 dev 分支滚动更新，可能频繁变化；日常使用建议切换到测试版或正式版。'
+          }
+        >
+          <DialogFooter>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (storage === null || notice === null) return;
+                void markNoticeSeen(storage, notice);
+                setNotice(null);
+                openExternalUrl(RELEASES_URL);
+              }}
+            >
+              查看发布页
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (storage === null || notice === null) return;
+                void markNoticeSeen(storage, notice);
+                setNotice(null);
+              }}
+            >
+              知道了
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 发现新版本：显示版本、渠道与发布说明 */}
+      <Dialog
+        open={updateInfo !== null}
+        onOpenChange={(open) => {
+          if (!open) setUpdateInfo(null);
+        }}
+      >
+        <DialogContent
+          title={`发现新版本 ${updateInfo?.latest ?? ''}`}
+          description={`当前 ${appVersion()} · 渠道 ${CHANNEL_LABEL[updateInfo?.feed ?? CHANNEL]}`}
+        >
+          {updateInfo?.manifest?.notes !== undefined && updateInfo.manifest.notes.trim().length > 0 && (
+            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-muted p-2 text-xs text-ink">
+              {updateInfo.manifest.notes}
+            </pre>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setUpdateInfo(null)}>
+              稍后
+            </Button>
+            <Button variant="primary" onClick={() => openExternalUrl(RELEASES_URL)}>
+              去发布页下载
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Toaster mode={resolvedMode} />
       <ExternalLinkConfirm />
