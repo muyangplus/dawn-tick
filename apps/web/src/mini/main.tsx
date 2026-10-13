@@ -171,7 +171,8 @@ function Mini() {
   const zone = data?.timeZone ?? 'UTC';
   const background = settings?.widgetBackground ?? 'light';
   const hide = (): void => void hideWindow();
-  const headLabel = current === undefined ? '晓刻 DawnTick' : '正在上课';
+  // 明天有课时把标题栏文案换掉，不再往内容区里塞一行标签（那行会把课程名挤出可视区）
+  const headLabel = current !== undefined ? '正在上课' : undefined;
   // 明日课程预告：复用设置里的「空日程提示明日预告」，当天没课或当天的课都上完时切过去
   const todayLessons = data?.todayLessons ?? [];
   const tomorrowLessons = data?.tomorrowLessons ?? [];
@@ -218,15 +219,15 @@ function Mini() {
   }
 
   if (variant === 'today') {
-    // 明日预告最多列 4 节，避免超出悬浮窗高度
-    const lessons = showTomorrow ? tomorrowPreviewLessons(tomorrowLessons) : todayLessons;
+    // 明日预告最多列 3 节，且不再插入独立标签行，避免把课程名挤出悬浮窗
+    const lessons = showTomorrow ? tomorrowPreviewLessons(tomorrowLessons).slice(0, 3) : todayLessons;
     return (
-      <MiniShell variant={variant} onHide={hide} background={background}>
-        {showTomorrow && (
-          <div className="mini-label" data-role="mini-tomorrow">
-            明日课程预告
-          </div>
-        )}
+      <MiniShell
+        variant={variant}
+        onHide={hide}
+        background={background}
+        label={showTomorrow ? '明日课程预告' : undefined}
+      >
         {lessons.length === 0 ? (
           <div className="mini-empty">今天没有课啦</div>
         ) : (
@@ -330,13 +331,8 @@ function Mini() {
         <div className="mini-empty">{data?.semester === null ? '尚未创建学期' : '暂无后续课程'}</div>
       ) : (
         <>
-          {nextIsTomorrow && tomorrowEnabled && (
-            <div className="mini-label" data-role="mini-tomorrow">
-              明日课程预告
-            </div>
-          )}
           <div className="mini-title" data-role="mini-title">
-            {next.courseName}
+            {nextIsTomorrow && tomorrowEnabled ? `明日 ${next.courseName}` : next.courseName}
           </div>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">

@@ -1295,6 +1295,31 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `入口=${labOpen === null ? '无' : '有'}；保存=${labSaved ? '已点' : '未找到'}`,
   );
 
+  // 倒计时卡片：可以直接勾完成，也可以点进详情
+  const countdownDone = [...view.container.querySelectorAll('input[type="checkbox"]')].find(
+    (box) => box.getAttribute('aria-label') === '标记完成：组会',
+  );
+  if (countdownDone instanceof window.HTMLInputElement) {
+    countdownDone.click();
+    await flush(18);
+  }
+  check(
+    '倒计时条目可直接勾选完成',
+    countdownDone !== undefined &&
+      [...view.container.querySelectorAll('[data-role="countdown-row"]')].some(
+        (node) => (node.textContent ?? '').includes('组会') && node.querySelector('.line-through') !== null,
+      ),
+    countdownDone === undefined ? '倒计时里没有勾选框' : '已勾选',
+  );
+  // 勾回来，后面的「已完成待办」用例仍从「未完成」开始
+  const countdownUndo = [...view.container.querySelectorAll('input[type="checkbox"]')].find(
+    (box) => box.getAttribute('aria-label') === '标记完成：组会',
+  );
+  if (countdownUndo instanceof window.HTMLInputElement) {
+    countdownUndo.click();
+    await flush(18);
+  }
+
   // 倒计时卡片：点条目进同一条待办的详情编辑
   const countdownRow = view.container.querySelector('[data-role="countdown-row"]');
   if (countdownRow instanceof window.HTMLElement) countdownRow.click();
@@ -1504,15 +1529,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('搜索弹窗渲染', (document.body.textContent ?? '').includes('输入关键词开始搜索'), '');
   check('回到课表', switchedToTimeline, '');
 
-  clickByText(view.container, '导入');
-  await flush(10);
+  // 导入已并入设置：导航里不再有「导入」，设置页底部有导入区
+  clickByText(view.container, '设置');
+  await flush(12);
   const importText = view.container.textContent ?? '';
-  check('导入页提供网页课表方式', importText.includes('网页课表') && importText.includes('自己登录后粘贴'), '');
   check(
-    '已移除程序代登录入口',
-    !importText.includes('正方教务') && !importText.includes('程序代登录') && !importText.includes('学号'),
+    '导入并入设置页',
+    view.container.querySelector('[data-role="settings-import"]') !== null &&
+      importText.includes('导入课表') &&
+      importText.includes('网页课表'),
+    view.container.querySelector('[data-role="settings-import"]') === null ? '未找到导入区' : '导入区在设置里',
+  );
+  check('已移除程序代登录入口', !importText.includes('正方教务') && !importText.includes('程序代登录'), '');
+  check(
+    '新增「我的」页面且显示建设中',
+    [...view.container.querySelectorAll('button')].some((node) => (node.textContent ?? '').trim() === '我的'),
     '',
   );
+  if (clickByText(view.container, '我的')) await flush(10);
+  check('「我的」页面为建设中占位', (view.container.textContent ?? '').includes('建设中'), '');
+  if (clickByText(view.container, '设置')) await flush(10);
 
   if (clickByTextStart(view.container, '网页课表')) await flush(10);
   check(
@@ -1778,10 +1814,34 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
   );
+  // 时区与待办排序都是选择列表
+  const zoneTrigger = view.container.querySelector('[aria-label="时区"]');
+  if (zoneTrigger instanceof window.HTMLElement) zoneTrigger.click();
+  await flush(10);
+  const zoneOptions = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
+  check(
+    '时区改为选择列表且默认上海',
+    zoneTrigger !== null && zoneOptions.includes('Asia/Shanghai') && zoneOptions.includes('UTC'),
+    `候选 ${zoneOptions.length} 项`,
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
+  const sortTrigger = view.container.querySelector('[aria-label="待办排序"]');
+  if (sortTrigger instanceof window.HTMLElement) sortTrigger.click();
+  await flush(10);
+  const sortOptions = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
+  check(
+    '待办排序可选按开始时间与按类型',
+    sortTrigger !== null &&
+      sortOptions.some((item) => item.includes('按开始时间')) &&
+      sortOptions.some((item) => item.includes('按类型')),
+    sortOptions.join(' / ') || '(无候选)',
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
   check('课程管理提供复制课程', view.container.querySelector('[aria-label^="复制课程"]') !== null, '');
   // 周视图天数：1–7 天都可选
-  const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');
-  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();
+  const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();
   await flush(10);
   const dayOptions = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
   const dayOptionSet = new Set(dayOptions.filter((item) => item.endsWith(' 天')));

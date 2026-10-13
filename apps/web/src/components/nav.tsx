@@ -1,8 +1,8 @@
-import { CalendarDays, ListChecks, Settings, Sun, Upload } from 'lucide-react';
+import { CalendarDays, ListChecks, Settings, Sun, UserRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 
-export type NavId = 'timetable' | 'schedule' | 'import' | 'settings';
+export type NavId = 'timetable' | 'schedule' | 'settings' | 'mine';
 
 export interface NavItem {
   id: NavId;
@@ -10,11 +10,12 @@ export interface NavItem {
   icon: LucideIcon;
 }
 
+/** 导入已并入设置；「我的」排在设置后面。 */
 export const DESKTOP_NAV: readonly NavItem[] = [
   { id: 'timetable', label: '课表', icon: CalendarDays },
   { id: 'schedule', label: '日程', icon: ListChecks },
-  { id: 'import', label: '导入', icon: Upload },
   { id: 'settings', label: '设置', icon: Settings },
+  { id: 'mine', label: '我的', icon: UserRound },
 ];
 
 export const MOBILE_NAV: readonly NavItem[] = DESKTOP_NAV;

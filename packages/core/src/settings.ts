@@ -13,6 +13,10 @@ export const THEME_PRESETS: readonly ThemePreset[] = ['vivid', 'fresh', 'mono', 
 export const VIEW_DAY_OPTIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 export const WIDGET_BACKGROUNDS: readonly WidgetBackground[] = ['light', 'dark', 'transparent'];
 
+/** 待办排序方式：按开始时间、或按类型。 */
+export type TodoSort = 'start' | 'type';
+export const TODO_SORTS: readonly TodoSort[] = ['start', 'type'];
+
 export interface AppSettings {
   timeZone: string;
   autoTimeZone: boolean;
@@ -42,6 +46,8 @@ export interface AppSettings {
   receiveBeta: boolean | null;
   /** 启动后自动检查一次版本更新 */
   autoCheckUpdate: boolean;
+  /** 待办排序：按开始时间 / 按类型 */
+  todoSort: TodoSort;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -62,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   widgetVariant: 'bar',
   receiveBeta: null,
   autoCheckUpdate: true,
+  todoSort: 'start',
 };
 
 const KEYS = {
@@ -82,6 +89,7 @@ const KEYS = {
   widgetVariant: 'widget_variant',
   receiveBeta: 'receive_beta',
   autoCheckUpdate: 'auto_check_update',
+  todoSort: 'todo_sort',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -109,6 +117,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.widgetVariant),
     storage.readMeta(KEYS.receiveBeta),
     storage.readMeta(KEYS.autoCheckUpdate),
+    storage.readMeta(KEYS.todoSort),
   ]);
   const [
     timeZone,
@@ -128,6 +137,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     widgetVariant,
     receiveBeta,
     autoCheckUpdate,
+    todoSort,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -164,6 +174,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     receiveBeta:
       receiveBeta === '1' || receiveBeta === 'true' ? true : receiveBeta === '0' || receiveBeta === 'false' ? false : null,
     autoCheckUpdate: parseBoolean(autoCheckUpdate, DEFAULT_SETTINGS.autoCheckUpdate),
+    todoSort:
+      todoSort !== undefined && (TODO_SORTS as readonly string[]).includes(todoSort)
+        ? (todoSort as TodoSort)
+        : DEFAULT_SETTINGS.todoSort,
   };
 }
 
@@ -224,6 +238,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.autoCheckUpdate !== undefined) {
     await storage.writeMeta(KEYS.autoCheckUpdate, patch.autoCheckUpdate ? '1' : '0');
+  }
+  if (patch.todoSort !== undefined) {
+    if (!(TODO_SORTS as readonly string[]).includes(patch.todoSort)) {
+      throw new RangeError(`待办排序只能是 ${TODO_SORTS.join(' / ')}`);
+    }
+    await storage.writeMeta(KEYS.todoSort, patch.todoSort);
   }
 
   return readSettings(storage);

@@ -5,6 +5,7 @@ import {
   createReschedule,
   dayOfWeek as nextDayOfWeek,
   readSettings,
+  isValidTimeZone,
   updateSchedule,
   updateSemester,
   weekOfDate,
@@ -162,6 +163,9 @@ async function withToast(action: () => Promise<void>, ok: string, fail: string):
   }
 }
 
+/** 首次启动系统时区对齐的标记：只做一次，之后跟随用户选择。 */
+const TIME_ZONE_ALIGNED_KEY = 'time_zone_aligned';
+
 export function App() {
   const [storage, setStorage] = useState<Storage | null>(null);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -237,7 +241,20 @@ export function App() {
           const message = cause instanceof Error ? cause.message : String(cause);
           logWarn('preset', '启动套用预设失败，继续使用内置预设', { message });
         }
-        const loaded = await readSettings(opened);
+        // 首次启动按系统时区对齐一次；之后完全以用户选择为准（默认上海）
+        const aligned = await opened.readMeta(TIME_ZONE_ALIGNED_KEY);
+        let loaded = await readSettings(opened);
+        if (aligned === undefined || aligned === null || aligned === '') {
+          const systemZone =
+            typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
+              ? Intl.DateTimeFormat().resolvedOptions().timeZone
+              : '';
+          if (systemZone.length > 0 && isValidTimeZone(systemZone) && systemZone !== loaded.timeZone) {
+            loaded = await writeSettings(opened, { timeZone: systemZone });
+            logInfo('settings', '首次启动按系统时区对齐', { from: DEFAULT_SETTINGS.timeZone, to: systemZone });
+          }
+          await opened.writeMeta(TIME_ZONE_ALIGNED_KEY, '1');
+        }
         if (cancelled) return;
         setStorage(opened);
         setSettings(loaded);
@@ -666,34 +683,43 @@ export function App() {
           />
         </LessonDetailOpener.Provider>
       )}
-      {view === 'import' && (
-        <ImportFlow
-          storage={storage}
-          semesterId={data.semester.id}
-          onManual={() => {
-            setView('timetable');
-            setCourseFormOpen(true);
-          }}
-          onDone={refresh}
-          onClose={() => setView('timetable')}
-        />
-      )}
       {view === 'settings' && (
-        <SettingsView
-          storage={storage}
-          userId={USER_ID}
-          settings={settings}
-          semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
-          activeSemesterId={data.semester.id}
-          activeStartDate={data.semester.start_date}
-          totalWeeks={data.semester.total_weeks}
-          slots={data.slots}
-          persistent={persistent}
-          reminders={reminders}
-          storageKind={STORAGE_LABEL[storage.kind]}
-          onPatch={patch}
-          onChanged={refresh}
-        />
+        <>
+          <SettingsView
+            storage={storage}
+            userId={USER_ID}
+            settings={settings}
+            semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
+            activeSemesterId={data.semester.id}
+            activeStartDate={data.semester.start_date}
+            totalWeeks={data.semester.total_weeks}
+            slots={data.slots}
+            persistent={persistent}
+            reminders={reminders}
+            storageKind={STORAGE_LABEL[storage.kind]}
+            onPatch={patch}
+            onChanged={refresh}
+          />
+          {/* 导入已并入设置：入口与其余设置同页 */}
+          <section className="flex flex-col gap-3" aria-label="导入课表" data-role="settings-import">
+            <h2 className="text-sm font-semibold text-ink">导入课表</h2>
+            <ImportFlow
+              storage={storage}
+              semesterId={data.semester.id}
+              onManual={() => {
+                setCourseFormOpen(true);
+              }}
+              onDone={refresh}
+              onClose={refresh}
+            />
+          </section>
+        </>
+      )}
+      {view === 'mine' && (
+        <section className="flex flex-col items-center justify-center gap-2 py-16" aria-label="我的">
+          <span className="text-base font-semibold text-ink">我的</span>
+          <span className="text-sm text-muted">建设中</span>
+        </section>
       )}
     </>
   );

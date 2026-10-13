@@ -13,6 +13,9 @@ pub const SCHEMA_CUSTOM_TIME_SQL: &str =
 /// 004：条目是否显示在课表上。
 pub const SCHEMA_TIMETABLE_ENTRIES_SQL: &str =
     include_str!("../../../../packages/core/src/schema/004_timetable_entries.sql");
+/// 005：截止时刻对所有条目类型开放。
+pub const SCHEMA_DUE_AT_ANY_SQL: &str =
+    include_str!("../../../../packages/core/src/schema/005_due_at_any.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 
@@ -1908,6 +1911,12 @@ pub fn run() {
                             version: 4,
                             description: "timetable_entries",
                             sql: SCHEMA_TIMETABLE_ENTRIES_SQL,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 5,
+                            description: "due_at_any",
+                            sql: SCHEMA_DUE_AT_ANY_SQL,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
                     ],

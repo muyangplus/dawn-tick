@@ -46,7 +46,6 @@ const badCases: BadCase[] = [
   { name: '放假缺日期', store: 'events', row: asRow(eventRow('x-holiday', 'holiday')), rule: 'on_date', sqlite: true },
   { name: '调休缺星期', store: 'events', row: asRow(eventRow('x-makeup', 'makeup', { on_date: '2026-10-11' })), rule: 'as_day_of_week', sqlite: true },
   { name: '临时日程带优先级', store: 'events', row: asRow(eventRow('x-prio', 'temp', { priority: 1 })), rule: 'priority', sqlite: true },
-  { name: '考试带截止时间', store: 'events', row: asRow(eventRow('x-due', 'exam', { due_at: NOW })), rule: 'due_at', sqlite: true },
   { name: '调课缺关联排课', store: 'events', row: asRow(eventRow('x-resch', 'reschedule', { action: 'cancel' })), rule: 'ref_schedule_id', sqlite: true },
   { name: '改期缺新日期', store: 'events', row: asRow(eventRow('x-move', 'reschedule', { ref_schedule_id: 's-1', action: 'move' })), rule: 'new_date', sqlite: true },
   { name: '调课新节次倒置', store: 'events', row: asRow(eventRow('x-newrange', 'reschedule', { ref_schedule_id: 's-1', action: 'move', new_date: '2026-09-22', new_period_start: 5, new_period_end: 3 })), rule: 'new_period_end', sqlite: true },
@@ -125,7 +124,18 @@ test('合法数据通过校验', async () => {
   await storage
     .collection('events')
     .put(eventRow('e-mv', 'reschedule', { ref_schedule_id: 's-1', action: 'move', new_date: '2026-09-22' }));
-  assert.equal((await storage.collection('events').getAll()).length, 3);
+  // 截止时刻对所有类型开放：实验与考试带 due_at 也要能写入
+  await storage.collection('events').put(
+    eventRow('e-lab-due', 'lab', {
+      on_date: '2026-11-05',
+      period_start: 7,
+      period_end: 7,
+      due_at: NOW,
+      subject: 'c-1',
+    }),
+  );
+  await storage.collection('events').put(eventRow('e-exam-due', 'exam', { due_at: NOW }));
+  assert.equal((await storage.collection('events').getAll()).length, 5);
 });
 
 test('非法数据在写入前被拒', async () => {

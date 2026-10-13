@@ -185,9 +185,7 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
         if (type !== 'todo') push(out, store, key, 'priority', '仅待办可设置');
         else if (!inRange(row['priority'], 1, 3)) push(out, store, key, 'priority', '必须在 1..3');
       }
-      if (row['due_at'] !== null && row['due_at'] !== undefined && !['todo', 'homework'].includes(type as string)) {
-        push(out, store, key, 'due_at', '仅待办与作业可设置');
-      }
+      // due_at（截止时刻）对所有类型开放：实验/考试/日程关联课程后也会带截止时间
       if (
         row['subject'] !== null &&
         row['subject'] !== undefined &&

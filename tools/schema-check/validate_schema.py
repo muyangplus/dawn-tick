@@ -9,6 +9,7 @@ DDL_PATH = SCHEMA_DIR / "001_init.sql"
 MIGRATION_002_PATH = SCHEMA_DIR / "002_event_kinds.sql"
 MIGRATION_003_PATH = SCHEMA_DIR / "003_custom_time.sql"
 MIGRATION_004_PATH = SCHEMA_DIR / "004_timetable_entries.sql"
+MIGRATION_005_PATH = SCHEMA_DIR / "005_due_at_any.sql"
 
 
 def apply_migrations(con, include_event_kinds=True):
@@ -18,6 +19,7 @@ def apply_migrations(con, include_event_kinds=True):
         con.executescript(MIGRATION_002_PATH.read_text(encoding="utf-8"))
     con.executescript(MIGRATION_003_PATH.read_text(encoding="utf-8"))
     con.executescript(MIGRATION_004_PATH.read_text(encoding="utf-8"))
+    con.executescript(MIGRATION_005_PATH.read_text(encoding="utf-8"))
 NOW = 1759900000000
 U = "u1"
 S1 = "sem-1"
@@ -274,6 +276,24 @@ if flags == (1, 1):
     ok("作业与实验条目可写入", f"作业开关={flags}，实验节次与周次位图已接受")
 else:
     fail("作业开关未写入", str(flags))
+
+# 005：截止时刻对所有类型开放（实验/考试也能带 due_at）
+event(
+    "e-lab-due",
+    type="lab",
+    title="带截止的实验",
+    on_date="2026-11-05",
+    period_start=7,
+    period_end=7,
+    due_at=STAMP,
+    subject="c-1",
+)
+event("e-exam-due", type="exam", title="带截止的考试", start_at=STAMP, due_at=STAMP)
+due_rows = con.execute("SELECT COUNT(*) FROM events WHERE due_at IS NOT NULL").fetchone()[0]
+if due_rows == 4:
+    ok("005 迁移后截止时刻对所有类型开放", f"带 due_at 的条目 {due_rows} 条（待办/作业/实验/考试各一条）")
+else:
+    fail("截止时刻未放开", f"带 due_at 的条目 {due_rows} 条")
 
 # —— 002 迁移：旧结构的库（001 之后、002 之前）重建事件表后数据保留、新类型与开关可用 ——
 con2 = sqlite3.connect(":memory:")

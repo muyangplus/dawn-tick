@@ -62,6 +62,7 @@ function makeData(overrides: Partial<AppData> = {}): AppData {
     slots: [],
     grid: new Map(),
     todayLessons: [LESSON],
+    todoSort: 'start',
     currentLesson: undefined,
     nextLesson: undefined,
     exams: [],
@@ -132,6 +133,41 @@ test('剩余时间格式', () => {
   assert.equal(formatRemaining(base + 3_665_000, base), '1:01:05');
   assert.equal(formatRemaining(base, base), '00:00');
   assert.equal(formatRemaining(base - 5_000, base), '00:00');
+});
+
+test('待办排序：按类型时作业排在日程前，按开始时间时以时间先后为准', () => {
+  const todo = (id: string, type: EventRow['type'], title: string, startAt: number): EventRow =>
+    ({
+      id,
+      type,
+      title,
+      on_date: '2026-10-13',
+      start_at: startAt,
+      due_at: null,
+      end_at: null,
+      done: 0,
+      countdown: 0,
+      manual_done: 0,
+      subject: null,
+      location: null,
+      note: null,
+      period_start: null,
+      period_end: null,
+      weeks_mask: null,
+      start_time: null,
+      end_time: null,
+      show_in_timetable: 0,
+      nature: null,
+      as_day_of_week: null,
+    }) as unknown as EventRow;
+  const at = (hour: number): number => Date.UTC(2026, 9, 13, hour, 0, 0);
+  const todos = [todo('t-1', 'temp', '组会', at(1)), todo('t-2', 'homework', '交作业', at(6))];
+  const byStart = buildTimeline(makeData({ todos }), '2026-10-13', at(0));
+  const byType = buildTimeline(makeData({ todos, todoSort: 'type' }), '2026-10-13', at(0));
+  const titles = (items: ReturnType<typeof buildTimeline>): string[] =>
+    items.filter((item) => item.kind === 'todo').map((item) => item.title);
+  assert.deepEqual(titles(byStart), ['组会', '交作业']);
+  assert.deepEqual(titles(byType), ['交作业', '组会']);
 });
 
 test('时间线：进行中的课带 running 标记，到点后进已完成', () => {

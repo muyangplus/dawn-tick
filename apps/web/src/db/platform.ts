@@ -9,6 +9,7 @@ import schemaSql from '@dawn-tick/core/schema/001_init.sql?raw';
 import eventKindsSql from '@dawn-tick/core/schema/002_event_kinds.sql?raw';
 import customTimeSql from '@dawn-tick/core/schema/003_custom_time.sql?raw';
 import timetableEntriesSql from '@dawn-tick/core/schema/004_timetable_entries.sql?raw';
+import dueAtAnySql from '@dawn-tick/core/schema/005_due_at_any.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 
@@ -21,6 +22,7 @@ export const MIGRATIONS: Migration[] = [
   { id: '002_event_kinds', sql: eventKindsSql },
   { id: '003_custom_time', sql: customTimeSql },
   { id: '004_timetable_entries', sql: timetableEntriesSql },
+  { id: '005_due_at_any', sql: dueAtAnySql },
 ];
 
 async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Storage> {

@@ -46,13 +46,19 @@ export function timetableEntriesSql(): string {
   return readFileSync(new URL('../src/schema/004_timetable_entries.sql', import.meta.url), 'utf8');
 }
 
-/** 与各端一致的迁移集合：001 建表 + 002 事件类型 + 003 自定义时间 + 004 课表条目。 */
+/** 005：截止时刻对所有条目类型开放。 */
+export function dueAtAnySql(): string {
+  return readFileSync(new URL('../src/schema/005_due_at_any.sql', import.meta.url), 'utf8');
+}
+
+/** 与各端一致的迁移集合：001 建表 + 002 事件类型 + 003 自定义时间 + 004 课表条目 + 005 截止时刻。 */
 export function migrations(): Array<{ id: string; sql: string }> {
   return [
     { id: '001_init', sql: initSql() },
     { id: '002_event_kinds', sql: eventKindsSql() },
     { id: '003_custom_time', sql: customTimeSql() },
     { id: '004_timetable_entries', sql: timetableEntriesSql() },
+    { id: '005_due_at_any', sql: dueAtAnySql() },
   ];
 }
 

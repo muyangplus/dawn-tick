@@ -30,6 +30,7 @@ import {
   type SemesterRow,
   type Storage,
   type TimeSlotRow,
+  type TodoSort,
 } from '@dawn-tick/core';
 
 /** 课表里条目的角标文案。 */
@@ -122,6 +123,8 @@ export interface AppData {
   slots: TimeSlotRow[];
   grid: Map<string, LessonCell[]>;
   todayLessons: Occurrence[];
+  /** 待办排序方式：按开始时间 / 按类型 */
+  todoSort: TodoSort;
   /** 明天的课：悬浮窗的「明日课程预告」用 */
   tomorrowLessons: Occurrence[];
   /** 现在正在上的那一节课（无课或停课时为 undefined） */
@@ -177,6 +180,7 @@ export async function loadAppData(
       workdayDates: [],
       lessonsByDate: new Map(),
       todayLessons: [],
+    todoSort: 'start',
     tomorrowLessons: [],
       currentLesson: undefined,
       nextLesson: undefined,
@@ -484,6 +488,7 @@ export async function loadAppData(
     workdayDates: [...workdays].sort(),
     lessonsByDate,
     todayLessons,
+    todoSort: settings.todoSort,
     tomorrowLessons,
     currentLesson,
     nextLesson: nextOccurrence(occurrences, now),

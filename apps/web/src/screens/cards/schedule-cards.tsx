@@ -22,6 +22,7 @@ import {
   type EventRow,
 } from '@dawn-tick/core';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
+import { logInfo } from '../../log.ts';
 import { Card } from '../../components/ui/card.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
@@ -591,7 +592,9 @@ export const examsCard = defineCard({
                   onClick={() => onOpenEvent(row)}
                 >
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-sm font-medium text-ink">{row.title}</span>
+                    <span className={cn('truncate text-sm font-medium text-ink', row.done === 1 && 'line-through opacity-60')}>
+                      {row.title}
+                    </span>
                     <span className="truncate text-xs text-muted">
                       {row.on_date ?? (row.start_at === null ? '' : formatDate(row.start_at, data.timeZone))}
                       {row.location !== null && ` · ${row.location}`}
@@ -602,6 +605,19 @@ export const examsCard = defineCard({
                     {formatDayCountdown(countdownTarget(row), now)}
                   </span>
                 </button>
+                {/* 倒计时条目也能直接勾完成，不必进详情 */}
+                <span className="flex shrink-0 items-center pr-3">
+                  <input
+                    type="checkbox"
+                    className="size-4"
+                    checked={row.done === 1}
+                    aria-label={`标记完成：${row.title}`}
+                    onChange={(event) => {
+                      event.stopPropagation();
+                      void toggleCountdownDone(ctx, row, event.target.checked);
+                    }}
+                  />
+                </span>
               </Card>
             ))}
           </div>
@@ -610,6 +626,17 @@ export const examsCard = defineCard({
     );
   },
 });
+
+/** 倒计时条目勾完成：写回同一条并刷新。 */
+async function toggleCountdownDone(
+  ctx: Extract<ScheduleCardContext, { scope: 'schedule' }>,
+  row: EventRow,
+  done: boolean,
+): Promise<void> {
+  await updateEvent(ctx.storage, row.id, { done: done ? 1 : 0 });
+  logInfo('schedule', done ? '倒计时条目标记完成' : '倒计时条目取消完成', { id: row.id, title: row.title });
+  ctx.onChanged();
+}
 
 /** 倒计时条目的目标时刻：开考时间优先，其次截止时间，再退到当天 00:00。 */
 function countdownTarget(row: EventRow): number {

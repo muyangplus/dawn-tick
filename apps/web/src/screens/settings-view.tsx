@@ -28,6 +28,7 @@ import {
   type TimeSlotRow,
   type WidgetBackground,
   type WidgetVariant,
+  type TodoSort,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
@@ -88,6 +89,31 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   dark: '深色',
   transparent: '透明',
 };
+
+/** 时区候选：常用 IANA 时区，默认上海；系统时区不在列表里时会额外补一项。 */
+export const TIME_ZONE_OPTIONS: readonly string[] = [
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Taipei',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Asia/Singapore',
+  'Asia/Bangkok',
+  'Asia/Kolkata',
+  'Asia/Dubai',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Moscow',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Sao_Paulo',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'UTC',
+];
 
 const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
   bar: '紧凑条：下一节课 + 倒计时',
@@ -892,8 +918,22 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="时区">
-          <Input value={settings.timeZone} onChange={(event) => void onPatch({ timeZone: event.target.value })} />
+        <Field label="时区" hint="默认上海；首次启动会按系统时区对齐一次">
+          <Select value={settings.timeZone} onValueChange={(value) => void onPatch({ timeZone: value })}>
+            <SelectTrigger aria-label="时区">
+              <span>{settings.timeZone}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {TIME_ZONE_OPTIONS.map((zone) => (
+                <SelectItem key={zone} value={zone}>
+                  {zone}
+                </SelectItem>
+              ))}
+              {!TIME_ZONE_OPTIONS.includes(settings.timeZone) && (
+                <SelectItem value={settings.timeZone}>{settings.timeZone}</SelectItem>
+              )}
+            </SelectContent>
+          </Select>
         </Field>
         {zoneInvalid && <span className="text-xs text-danger-strong">时区名无效</span>}
         <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
@@ -905,6 +945,17 @@ export function SettingsView({
           />
           时区跟随设备
         </label>
+        <Field label="待办排序">
+          <Select value={settings.todoSort} onValueChange={(value) => void onPatch({ todoSort: value as TodoSort })}>
+            <SelectTrigger aria-label="待办排序">
+              <span>{settings.todoSort === 'type' ? '按类型' : '按开始时间'}</span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="start">按开始时间</SelectItem>
+              <SelectItem value="type">按类型（作业 → 考试 → 实验 → 日程）</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
         <StartupSettings supported={isAutoStartSupported()} settings={settings} onPatch={onPatch} />
       </>
     ),

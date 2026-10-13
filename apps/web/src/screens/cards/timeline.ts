@@ -64,6 +64,14 @@ export function dateLabel(date: string | null, timeZone: string): string {
   return `${month} 月 ${day} 日 ${weekday}`;
 }
 
+/** 待办排序用的时间键：开始时刻优先，其次截止时刻，再退到日期。 */
+function scheduleKeyOf(row: EventRow): number {
+  if (row.start_at !== null && row.start_at !== undefined) return row.start_at;
+  if (row.due_at !== null && row.due_at !== undefined) return row.due_at;
+  if (row.on_date !== null && row.on_date !== undefined) return Date.parse(`${row.on_date}T00:00:00Z`);
+  return Number.MAX_SAFE_INTEGER;
+}
+
 function minuteOf(epoch: number | null, timeZone: string): number {
   if (epoch === null) return 0;
   const [hour, minute] = formatTime(epoch, timeZone).split(':').map(Number);
@@ -166,7 +174,17 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     });
   }
 
-  for (const todo of data.todos) {
+  // 待办排序：按类型（作业→考试→实验→日程）或按开始时间；同类型内仍按时间
+  const todoTypeRank: Record<string, number> = { homework: 0, exam: 1, lab: 2, todo: 3, temp: 4 };
+  const orderedTodos = [...data.todos].sort((left, right) => {
+    if (data.todoSort === 'type') {
+      const rankDiff = (todoTypeRank[left.type] ?? 9) - (todoTypeRank[right.type] ?? 9);
+      if (rankDiff !== 0) return rankDiff;
+    }
+    return scheduleKeyOf(left) - scheduleKeyOf(right);
+  });
+
+  for (const [todoIndex, todo] of orderedTodos.entries()) {
     const endEpoch = todo.due_at ?? todo.end_at ?? null;
     const todoDate = todo.on_date ?? (endEpoch === null ? null : formatDate(endEpoch, data.timeZone));
     // 选中日期的日程：当天条目 + 未排期条目
@@ -189,7 +207,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     items.push({
       key: `todo-${todo.id}`,
       date: todoDate,
-      minute: minuteOf(endEpoch, data.timeZone),
+      minute: data.todoSort === 'type' ? todoIndex : minuteOf(endEpoch, data.timeZone),
       rank: 2,
       kind: isExam ? 'exam' : 'todo',
       nature: isExam ? '考试' : isHomework ? '作业' : '其他',

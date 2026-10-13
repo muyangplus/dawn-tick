@@ -5,7 +5,7 @@ export interface MiniShellProps {
   variant: WidgetVariant;
   onHide: () => void;
   /** 顶部左侧文案，默认应用名；上课中传「正在上课」 */
-  label?: string;
+  label?: string | undefined;
   /** 小组件背景设置：浅色 / 深色 / 透明 */
   background?: WidgetBackground;
   children: ReactNode;
@@ -23,8 +23,7 @@ export function MiniShell({
   label = '晓刻 DawnTick',
   background = 'light',
   children,
-}: MiniShellProps) {
-  return (
+}: MiniShellProps) {  return (
     <main
       className={`mini mini-${variant} mini-bg-${background}`}
       data-tauri-drag-region="deep"
