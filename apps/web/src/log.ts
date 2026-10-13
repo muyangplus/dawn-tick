@@ -33,6 +33,7 @@ async function writeToNative(entry: LogEntry): Promise<void> {
       level: entry.level,
       scope: entry.scope,
       message: entry.message,
+      detail: entry.detail === undefined ? null : JSON.stringify(entry.detail),
     });
   } catch {
     // 原生日志不可用时仅保留内存与本地存储

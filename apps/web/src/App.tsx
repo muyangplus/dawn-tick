@@ -306,6 +306,31 @@ export function App() {
     void reload(storage, settings, viewWeek);
   }, [reload, storage, settings, viewWeek]);
 
+  // 窗口改尺寸后记录一次视口与滚动区高度：滑不动时日志里能看出是哪一层算错
+  useEffect(() => {
+    if (typeof globalThis.addEventListener !== 'function') return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const report = (): void => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const main = document.querySelector('[data-role="app-main"]');
+        const shell = document.querySelector('[data-role="app-shell"]');
+        logDebug('layout', '视口变化', {
+          viewport: `${globalThis.innerWidth}x${globalThis.innerHeight}`,
+          shell: shell === null ? null : Math.round(shell.getBoundingClientRect().height),
+          main: main === null ? null : Math.round(main.getBoundingClientRect().height),
+          mainScroll: main === null ? null : `${main.scrollTop}/${main.scrollHeight}`,
+        });
+      }, 200);
+    };
+    globalThis.addEventListener('resize', report);
+    report();
+    return () => {
+      globalThis.removeEventListener('resize', report);
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, []);
+
   // 启动时按设置检查一次更新，只提示不下载；「自动检查版本更新」关闭时跳过
   const autoChecked = useRef(false);
   useEffect(() => {
@@ -697,7 +722,9 @@ export function App() {
     );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-page text-ink">
+    // 外壳钉在视口上：窗口改尺寸后高度立即跟随，不依赖 dvh 的重新计算，
+    // 主区自己滚动，避免「内容比窗口高却滑不到底」。
+    <div className="fixed inset-0 flex overflow-hidden bg-page text-ink" data-role="app-shell">
       {isDesktop && (
         <AppSidebar
           current={view}
@@ -727,7 +754,10 @@ export function App() {
         }}
           compact={!isDesktop}
         />
-        <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-24 tablet:p-4 desktop:pb-4">
+        <main
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-24 tablet:p-4 desktop:pb-4"
+          data-role="app-main"
+        >
           {content}
         </main>
       </div>

@@ -474,6 +474,10 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
     </>
   );
 
+  /** 日程条目：整行（含已完成）都能点开编辑；勾选框与删除按钮各自处理，不冒泡 */
+  const openEvent = (): void => {
+    if (item.event !== undefined && item.kind !== 'adjust') onOpenEvent(item.event as EventRow);
+  };
   return (
     <li
       className={cn(
@@ -487,6 +491,14 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
       data-auto={item.autoDone ? 'true' : undefined}
       data-done={item.done ? 'true' : undefined}
       data-running={item.running ? 'true' : undefined}
+      onClick={openEvent}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        openEvent();
+      }}
+      role={item.event !== undefined && item.kind !== 'adjust' && lessonTarget === null ? 'button' : undefined}
+      tabIndex={item.event !== undefined && item.kind !== 'adjust' && lessonTarget === null ? 0 : undefined}
     >
       {lessonTarget === null && item.event !== undefined && item.kind !== 'adjust' ? (
         // 日程条目整行可点：进详情编辑
@@ -495,7 +507,10 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
           data-role="timeline-event"
           aria-label={`编辑日程：${item.title}`}
           className="flex min-w-0 flex-1 items-stretch gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
-          onClick={() => onOpenEvent(item.event as EventRow)}
+          onClick={(event) => {
+            event.stopPropagation();
+            openEvent();
+          }}
         >
           {body}
         </button>
@@ -513,14 +528,21 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
           {body}
         </button>
       )}
-      {marker}
+      {marker !== null && <span onClick={(event) => event.stopPropagation()}>{marker}</span>}
       {item.kind === 'adjust' && item.event !== undefined && (
-        <span className="flex shrink-0 items-center">
+        <span
+          className="flex shrink-0 items-center"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <Button
             size="sm"
             variant="ghost"
             aria-label={`删除调整：${item.title}`}
-            onClick={() => onDeleteAdjust(item.event as EventRow)}
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteAdjust(item.event as EventRow);
+            }}
           >
             删除
           </Button>
@@ -540,7 +562,7 @@ export const examsCard = defineCard({
   defaultVisible: true,
   render: (ctx) => {
     if (ctx.scope !== 'schedule') return null;
-    const { data, onAddExam } = ctx;
+    const { data, onAddExam, onOpenEvent } = ctx;
     const now = Date.now();
     const rows = data.countdowns;
     return (
@@ -560,18 +582,26 @@ export const examsCard = defineCard({
         ) : (
           <div className="grid gap-2">
             {rows.map((row) => (
-              <Card key={row.id} className="flex items-center justify-between gap-3 p-3">
-                <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-medium text-ink">{row.title}</span>
-                  <span className="truncate text-xs text-muted">
-                    {row.on_date ?? (row.start_at === null ? '' : formatDate(row.start_at, data.timeZone))}
-                    {row.location !== null && ` · ${row.location}`}
-                    {row.seat_no !== null && ` · 座位 ${row.seat_no}`}
+              <Card key={row.id} className="flex items-center justify-between gap-3 p-0">
+                <button
+                  type="button"
+                  data-role="countdown-row"
+                  aria-label={`编辑日程：${row.title}`}
+                  className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md p-3 text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+                  onClick={() => onOpenEvent(row)}
+                >
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium text-ink">{row.title}</span>
+                    <span className="truncate text-xs text-muted">
+                      {row.on_date ?? (row.start_at === null ? '' : formatDate(row.start_at, data.timeZone))}
+                      {row.location !== null && ` · ${row.location}`}
+                      {row.seat_no !== null && ` · 座位 ${row.seat_no}`}
+                    </span>
                   </span>
-                </div>
-                <span className="tabular shrink-0 text-sm font-semibold text-danger-strong">
-                  {formatDayCountdown(countdownTarget(row), now)}
-                </span>
+                  <span className="tabular shrink-0 text-sm font-semibold text-danger-strong">
+                    {formatDayCountdown(countdownTarget(row), now)}
+                  </span>
+                </button>
               </Card>
             ))}
           </div>

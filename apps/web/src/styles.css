@@ -95,6 +95,15 @@
     color-scheme: dark;
   }
 
+  /* 视口高度交给外壳自己的 fixed inset-0，这里只保证根节点不撑出滚动条 */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   body {
     margin: 0;
     font-family: var(--font-sans);

@@ -158,6 +158,7 @@ async function seed(): Promise<SmokeSeed> {
     onDate: todayText,
     startAt: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 0).getTime(),
     showInTimetable: true,
+    countdown: true,
   });
   await createEvent(storage, {
     userId: USER_ID,
@@ -1292,6 +1293,48 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (view.container.textContent ?? '').includes('物理实验（改）'),
     `入口=${labOpen === null ? '无' : '有'}；保存=${labSaved ? '已点' : '未找到'}`,
   );
+
+  // 倒计时卡片：点条目进同一条待办的详情编辑
+  const countdownRow = view.container.querySelector('[data-role="countdown-row"]');
+  if (countdownRow instanceof window.HTMLElement) countdownRow.click();
+  await flush(14);
+  check(
+    '倒计时条目单击可编辑',
+    countdownRow !== null &&
+      (document.body.textContent ?? '').includes('待办详情') &&
+      (document.querySelector('[aria-label="标题"]') as HTMLInputElement | null)?.value === '组会',
+    `卡片=${countdownRow === null ? '无' : '有'}；详情=${(document.body.textContent ?? '').includes('待办详情') ? '已开' : '未开'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
+
+  // 已完成的待办：勾掉之后展开已完成分组，点整行仍要能编辑
+  const meetingCheckbox = [...view.container.querySelectorAll('input[type="checkbox"]')].find(
+    (box) => box.getAttribute('aria-label') === '标记完成：组会',
+  );
+  if (meetingCheckbox instanceof window.HTMLInputElement) {
+    meetingCheckbox.click();
+    await flush(18);
+  }
+  const completedToggle = [...view.container.querySelectorAll('button')].find((node) =>
+    (node.textContent ?? '').includes('已完成'),
+  );
+  if (completedToggle instanceof window.HTMLElement && completedToggle.getAttribute('aria-expanded') !== 'true') {
+    completedToggle.click();
+    await flush(12);
+  }
+  const completedRow = [...view.container.querySelectorAll('[data-role="timeline-completed-list"] [data-role="timeline-row"]')].find(
+    (row) => (row.textContent ?? '').includes('组会'),
+  );
+  if (completedRow instanceof window.HTMLElement) completedRow.click();
+  await flush(14);
+  check(
+    '已完成的待办点击也能编辑',
+    completedRow !== undefined &&
+      (document.body.textContent ?? '').includes('待办详情') &&
+      (document.querySelector('[aria-label="标题"]') as HTMLInputElement | null)?.value === '组会',
+    `已完成行=${completedRow === undefined ? '未找到' : '已点击'}；详情=${(document.body.textContent ?? '').includes('待办详情') ? '已开' : '未开'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
 
   check(
     '日程可切换日期与设置假日',

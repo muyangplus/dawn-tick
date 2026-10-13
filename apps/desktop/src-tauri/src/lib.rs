@@ -982,8 +982,13 @@ fn tray_status() -> serde_json::Value {
 
 /// 前端日志落盘：与 panic、启动错误写入同一文件。
 #[tauri::command]
-fn log_event(level: String, scope: String, message: String) {
-    append_log(&format!("[{level}] {scope}: {message}"));
+fn log_event(level: String, scope: String, message: String, detail: Option<String>) {
+    // detail 为前端附带的 JSON 明细；为空时省略，保证日志行格式稳定
+    let tail = match detail {
+        Some(text) if !text.is_empty() && text != "null" => format!(" {text}"),
+        _ => String::new(),
+    };
+    append_log(&format!("[{level}] {scope}: {message}{tail}"));
 }
 
 #[tauri::command]
