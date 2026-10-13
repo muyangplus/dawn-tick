@@ -1,0 +1,56 @@
+// 由 tools/legal/collect-licenses.mjs 生成，请勿手改。
+export interface RuntimeCredit {
+  component: string;
+  name: string;
+  version: string;
+  license: string;
+}
+
+export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
+  { component: 'Web', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
+  { component: 'Web', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
+  { component: 'Web', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-checkbox', version: '1.3.12', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-collapsible', version: '1.1.21', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-dialog', version: '1.2.0', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-dropdown-menu', version: '2.1.25', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-label', version: '2.1.16', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-popover', version: '1.2.0', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-radio-group', version: '1.4.8', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-scroll-area', version: '1.3.0', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-select', version: '2.3.8', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-separator', version: '1.1.16', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-slot', version: '1.4.0', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-switch', version: '1.3.8', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-tabs', version: '1.1.22', license: 'MIT' },
+  { component: 'Web', name: '@radix-ui/react-tooltip', version: '1.3.0', license: 'MIT' },
+  { component: 'Web', name: '@tailwindcss/vite', version: '4.3.3', license: 'MIT' },
+  { component: 'Web', name: '@tauri-apps/api', version: '2.12.2', license: 'Apache-2.0 OR MIT' },
+  { component: 'Web', name: '@tauri-apps/plugin-dialog', version: '2.8.2', license: 'MIT OR Apache-2.0' },
+  { component: 'Web', name: '@tauri-apps/plugin-notification', version: '2.5.1', license: 'MIT OR Apache-2.0' },
+  { component: 'Web', name: '@tauri-apps/plugin-sql', version: '2.5.0', license: 'MIT OR Apache-2.0' },
+  { component: 'Web', name: 'class-variance-authority', version: '0.7.1', license: 'Apache-2.0' },
+  { component: 'Web', name: 'clsx', version: '2.1.1', license: 'MIT' },
+  { component: 'Web', name: 'exceljs', version: '4.4.0', license: 'MIT' },
+  { component: 'Web', name: 'idb', version: '8.0.4', license: 'ISC' },
+  { component: 'Web', name: 'lucide-react', version: '1.54.0', license: 'ISC' },
+  { component: 'Web', name: 'react', version: '19.3.0', license: 'MIT' },
+  { component: 'Web', name: 'react-dom', version: '19.3.0', license: 'MIT' },
+  { component: 'Web', name: 'sonner', version: '2.0.8', license: 'MIT' },
+  { component: 'Web', name: 'tailwind-merge', version: '3.7.0', license: 'MIT' },
+  { component: 'Web', name: 'tailwindcss', version: '4.3.3', license: 'MIT' },
+  { component: 'Web', name: 'vaul', version: '1.1.2', license: 'MIT' },
+  { component: 'Android', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
+  { component: 'Android', name: '@capacitor/android', version: '8.5.3', license: 'MIT' },
+  { component: 'Android', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
+  { component: 'Android', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
+  { component: 'Windows', name: 'serde', version: '1.0.229', license: 'MIT OR Apache-2.0' },
+  { component: 'Windows', name: 'serde_json', version: '1.0.151', license: 'MIT OR Apache-2.0' },
+  { component: 'Windows', name: 'sqlx', version: '0.8.6', license: 'MIT OR Apache-2.0' },
+  { component: 'Windows', name: 'tauri', version: '2.12.2', license: 'Apache-2.0 OR MIT' },
+  { component: 'Windows', name: 'tauri-build', version: '2.7.1', license: 'Apache-2.0 OR MIT' },
+  { component: 'Windows', name: 'tauri-plugin-dialog', version: '2.8.2', license: 'Apache-2.0 OR MIT' },
+  { component: 'Windows', name: 'tauri-plugin-notification', version: '2.5.1', license: 'Apache-2.0 OR MIT' },
+  { component: 'Windows', name: 'tauri-plugin-sql', version: '2.5.0', license: 'Apache-2.0 OR MIT' },
+  { component: 'Windows', name: 'windows-sys', version: '0.52.0', license: 'MIT OR Apache-2.0' },
+];

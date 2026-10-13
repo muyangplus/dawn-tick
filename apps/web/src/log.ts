@@ -110,12 +110,27 @@ export function logEntries(): readonly LogEntry[] {
   return buffer;
 }
 
+/**
+ * 日志时间戳：`2026-10-13 18:01:34.123 +08:00`。
+ * 与原生侧 `startup.log` 同一口径（本地时间 + 与 UTC 的偏移，毫秒精度）。
+ */
+export function formatLogTimestamp(at: number): string {
+  const date = new Date(at);
+  const pad = (value: number, width = 2): string => String(Math.abs(value)).padStart(width, '0');
+  const offset = -date.getTimezoneOffset();
+  const sign = offset < 0 ? '-' : '+';
+  return (
+    `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)} ` +
+    `${sign}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`
+  );
+}
+
 export function logsText(): string {
   return buffer
     .map((entry) => {
-      const time = new Date(entry.at).toISOString();
       const detail = entry.detail === undefined ? '' : ` ${JSON.stringify(entry.detail)}`;
-      return `${time} [${entry.level}] ${entry.scope}: ${entry.message}${detail}`;
+      return `${formatLogTimestamp(entry.at)} [${entry.level}] ${entry.scope}: ${entry.message}${detail}`;
     })
     .join('\n');
 }

@@ -7,20 +7,17 @@ import {
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
   WIDGET_VARIANTS,
-  createCourse,
-  createEvent,
   createSemester,
   deleteSemesterDeep,
   exportBackup,
-  formatDate,
   formatDateTime,
+  fromBase64Utf8,
   importBackup,
   isValidTimeZone,
   parseBackup,
-  setSchedules,
   summarizeBackup,
+  toBase64Utf8,
   updateSemester,
-  weekStart,
   type AppSettings,
   type BackupModule,
   type BackupPayload,
@@ -47,7 +44,7 @@ import {
 import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
-import { openLogDirectory } from '../system-actions.ts';
+import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
@@ -98,30 +95,8 @@ const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
   combo: '组合卡：下一节课 + 待办作业',
 };
 
-/** 关于卡片列出的运行时依赖与许可证；名称与许可类型取自各端清单，此处为静态副本。 */
-const RUNTIME_CREDITS: readonly { name: string; license: string }[] = [
-  { name: 'React', license: 'MIT' },
-  { name: 'React DOM', license: 'MIT' },
-  { name: 'Tailwind CSS', license: 'MIT' },
-  { name: 'Radix UI 原语', license: 'MIT' },
-  { name: 'lucide 图标', license: 'ISC' },
-  { name: 'vaul', license: 'MIT' },
-  { name: 'sonner', license: 'MIT' },
-  { name: 'class-variance-authority', license: 'Apache-2.0' },
-  { name: 'clsx', license: 'MIT' },
-  { name: 'tailwind-merge', license: 'MIT' },
-  { name: 'idb', license: 'ISC' },
-  { name: 'ExcelJS', license: 'MIT' },
-  { name: 'Tauri', license: 'Apache-2.0 OR MIT' },
-  { name: 'tauri-plugin-sql', license: 'Apache-2.0 OR MIT' },
-  { name: 'tauri-plugin-notification', license: 'Apache-2.0 OR MIT' },
-  { name: 'sqlx', license: 'MIT OR Apache-2.0' },
-  { name: 'serde / serde_json', license: 'MIT OR Apache-2.0' },
-  { name: 'windows-sys', license: 'MIT OR Apache-2.0' },
-  { name: 'Capacitor', license: 'MIT' },
-  { name: '@capacitor-community/sqlite', license: 'MIT' },
-  { name: '@capacitor/local-notifications', license: 'MIT' },
-];
+/** 关于卡片列出的运行时依赖与许可证：由 tools/legal/collect-licenses.mjs 生成。 */
+import { RUNTIME_CREDITS } from '../legal/credits.generated.ts';
 
 export interface SettingsViewProps {
   storage: Storage;
@@ -297,6 +272,11 @@ export function SettingsView({
   }
   const [busy, setBusy] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  /** 导出格式：JSON 文件，或 Base64 文本（文本框展示 + 复制） */
+  const [exportFormat, setExportFormat] = useState<'json' | 'base64'>('json');
+  const [exportText, setExportText] = useState('');
+  const [importText, setImportText] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
   const [importModules, setImportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
@@ -374,78 +354,35 @@ export function SettingsView({
     }
   }
 
-  function downloadText(name: string, content: string, type = 'text/plain'): void {
-    const url = URL.createObjectURL(new Blob([content], { type: `${type};charset=utf-8` }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = name;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  /** 保存文本：桌面端弹系统保存对话框，浏览器与移动端退回下载。 */
+  async function saveText(name: string, content: string, extension: string, filterName: string): Promise<boolean> {
+    const result = await saveTextFile(name, content, { extension, filterName });
+    if (result.cancelled) {
+      setBackupMessage('已取消保存');
+      return false;
+    }
+    if (!result.ok) {
+      setBackupMessage(`保存失败：${result.error ?? '未知原因'}`);
+      return false;
+    }
+    setBackupMessage(result.path === null ? `已下载 ${name}` : `已保存到 ${result.path}`);
+    return true;
   }
 
-  function exportLogs(): void {
+  async function exportLogs(): Promise<void> {
     const entries = logsText();
-    downloadText(`DawnTick-日志-${new Date().toISOString().slice(0, 10)}.txt`, entries === '' ? '暂无日志' : entries);
-    setBackupMessage(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
-    void clearLogs();
+    const name = `DawnTick-日志-${new Date().toISOString().slice(0, 10)}.txt`;
+    const saved = await saveText(name, entries === '' ? '暂无日志' : entries, 'txt', '日志文件');
+    if (saved) {
+      toast.success(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
+      void clearLogs();
+    }
   }
 
   /** 桌面端：让资源管理器打开日志目录，便于直接查看 startup.log。 */
   async function showLogDirectory(): Promise<void> {
     const dir = await openLogDirectory();
     setBackupMessage(dir === null ? '当前平台不支持打开日志目录' : `日志目录：${dir}`);
-  }
-
-  /** 渠道独占：仅 dev 渠道提供，用于快速构造可测试的课表。 */
-  async function seedSampleData(): Promise<void> {
-    setBusy(true);
-    try {
-      const palette = PRESETS[settings.themePreset].courses;
-      const today = formatDate(Date.now(), settings.timeZone);
-      const semester = await createSemester(storage, {
-        userId,
-        name: '示例学期',
-        startDate: weekStart(today),
-        totalWeeks: 20,
-        timeZone: settings.timeZone,
-      });
-      const demo = [
-        { name: '高等数学', teacher: '张老师', location: '教三-201', slots: [[1, 1, 2], [3, 3, 4]] },
-        { name: '大学物理', teacher: '李老师', location: '理科楼-105', slots: [[2, 5, 6]] },
-        { name: '程序设计', teacher: '王老师', location: '信息楼-302', slots: [[4, 7, 8]] },
-      ];
-      for (const [index, item] of demo.entries()) {
-        const course = await createCourse(storage, {
-          semesterId: String(semester['id']),
-          name: item.name,
-          teacher: item.teacher,
-          location: item.location,
-          color: palette[index % palette.length] ?? '#4F8DFD',
-        });
-        await setSchedules(
-          storage,
-          String(course['id']),
-          item.slots.map(([day, start, end]) => ({
-            dayOfWeek: day as number,
-            periodStart: start as number,
-            periodEnd: end as number,
-            weeks: Array.from({ length: 16 }, (_, week) => week + 1),
-          })),
-        );
-      }
-      await createEvent(storage, {
-        userId,
-        type: 'temp',
-        semesterId: String(semester['id']),
-        title: '交作业',
-        onDate: formatDate(Date.now() + 3 * 86_400_000, settings.timeZone),
-      });
-      logInfo('sample', '生成示例数据', { courses: demo.length });
-      toast.success('已生成示例学期与 3 门课程');
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function downloadBackup(): Promise<void> {
@@ -457,20 +394,64 @@ export function SettingsView({
         return;
       }
       const payload = await exportBackup(storage, { modules });
-      downloadText(
-        `DawnTick-备份-${new Date().toISOString().slice(0, 10)}.json`,
-        JSON.stringify(payload, null, 2),
-        'application/json',
-      );
-      logInfo('backup', '导出备份', {
+      const json = JSON.stringify(payload, null, 2);
+      const day = new Date().toISOString().slice(0, 10);
+      const stats = {
         modules,
         stores: Object.keys(payload.stores).length,
         rows: Object.values(payload.stores).reduce((total, rows) => total + (Array.isArray(rows) ? rows.length : 0), 0),
-      });
+      };
+      if (exportFormat === 'base64') {
+        setExportText(toBase64Utf8(json));
+        logInfo('backup', '生成 Base64 备份文本', stats);
+        setBackupMessage(`已生成 Base64 文本（${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}）`);
+        return;
+      }
+      const saved = await saveText(`DawnTick-备份-${day}.json`, json, 'json', 'JSON 备份');
+      if (!saved) return;
+      logInfo('backup', '导出备份', stats);
       setBackupMessage(`已导出 ${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}`);
       setExportOpen(false);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** 导出 Base64 文本到文件：内容与文本框一致。 */
+  async function saveBase64Backup(): Promise<void> {
+    if (exportText === '') return;
+    const day = new Date().toISOString().slice(0, 10);
+    if (await saveText(`DawnTick-备份-${day}.base64.txt`, exportText, 'txt', 'Base64 文本')) setExportOpen(false);
+  }
+
+  /** 导入对话框里粘贴的文本：JSON 与 Base64 都接受。 */
+  function parsePastedBackup(): void {
+    const text = importText.trim();
+    if (text === '') {
+      setBackupMessage('请先粘贴备份文本');
+      return;
+    }
+    let json = text;
+    if (!text.startsWith('{')) {
+      try {
+        json = fromBase64Utf8(text);
+      } catch (cause: unknown) {
+        setBackupMessage(`Base64 解析失败：${cause instanceof Error ? cause.message : String(cause)}`);
+        return;
+      }
+    }
+    try {
+      const payload = parseBackup(json);
+      setPendingImport(payload);
+      const present = summarizeBackup(payload)
+        .filter((item) => item.rows > 0)
+        .map((item) => item.module);
+      setImportModules(new Set(present.length > 0 ? present : BACKUP_MODULES));
+      setImportMode('skip');
+      setPasteOpen(false);
+      setBackupMessage('已解析粘贴的备份文本');
+    } catch (cause: unknown) {
+      setBackupMessage(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -744,7 +725,7 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="周视图天数">
+        <Field label="周视图天数" hint="1–7 天任意一天；窄屏会按列宽压缩，不需要左右滑动">
           <Select value={String(settings.viewDays)} onValueChange={(value) => void onPatch({ viewDays: Number(value) })}>
             <SelectTrigger aria-label="周视图天数">
               <span>{settings.viewDays} 天</span>
@@ -889,7 +870,9 @@ export function SettingsView({
         <span className="text-xs text-muted">
           浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
         </span>
-        <span className="text-xs text-muted">本期无服务端，同步协议已就绪但未启用；跨设备迁移请用 JSON 备份。</span>
+        <span className="text-xs text-muted">
+          本期无服务端，同步协议已就绪但未启用；跨设备迁移用 JSON 或 Base64 备份。
+        </span>
         <span className="text-xs text-muted">预设来源：独立仓库 dawn-tick-presets；更新于下次启动生效。</span>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
@@ -897,21 +880,19 @@ export function SettingsView({
           </Button>
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => fileInput.current?.click()}>
             <Upload className="size-4" aria-hidden />
-            导入备份
+            选择备份文件
+          </Button>
+          <Button size="sm" variant="secondary" aria-label="粘贴备份文本" onClick={() => setPasteOpen(true)}>
+            粘贴备份文本
           </Button>
           {featureVisible('diagnostics') && (
-            <Button size="sm" variant="secondary" onClick={exportLogs}>
+            <Button size="sm" variant="secondary" onClick={() => void exportLogs()}>
               导出日志
             </Button>
           )}
           {canUseWidget() && featureVisible('diagnostics') && (
             <Button size="sm" variant="secondary" onClick={() => void showLogDirectory()}>
               打开日志文件所在目录
-            </Button>
-          )}
-          {featureVisible('sampleData') && (
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => void seedSampleData()}>
-              填充示例数据
             </Button>
           )}
           <input
@@ -1081,14 +1062,29 @@ export function SettingsView({
 
         <div className="flex flex-col gap-1" data-role="about-credits">
           <span className="text-sm font-medium text-ink">致谢与第三方声明</span>
-          <span className="text-xs text-muted">运行时依赖及其许可证：</span>
-          <ul className="flex flex-col gap-0.5 text-xs text-muted">
-            {RUNTIME_CREDITS.map((item) => (
-              <li key={item.name}>
-                {item.name} · {item.license}
-              </li>
-            ))}
-          </ul>
+          <span className="text-xs text-muted">
+            运行时依赖共 {RUNTIME_CREDITS.length} 项；许可证全文见仓库根目录 THIRD-PARTY-LICENSES.md。
+          </span>
+          <ExternalLink
+            dataRole="licenses-link"
+            className="text-xs text-primary-strong underline"
+            href="https://github.com/muyangplus/dawn-tick/blob/main/THIRD-PARTY-LICENSES.md"
+            ariaLabel="打开第三方许可证声明（GitHub）"
+          >
+            第三方许可证声明
+          </ExternalLink>
+          <details className="flex flex-col gap-1">
+            <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-xs text-ink">
+              展开依赖与许可证（{RUNTIME_CREDITS.length} 项）
+            </summary>
+            <ul className="flex flex-col gap-0.5 pt-1 text-xs text-muted">
+              {RUNTIME_CREDITS.map((item) => (
+                <li key={`${item.component}-${item.name}`} data-role="credit-row">
+                  {item.component} · {item.name} {item.version} · {item.license}
+                </li>
+              ))}
+            </ul>
+          </details>
         </div>
       </>
     ),
@@ -1179,10 +1175,13 @@ export function SettingsView({
       <Dialog
         open={exportOpen}
         onOpenChange={(open) => {
-          if (!open) setExportOpen(false);
+          if (!open) {
+            setExportOpen(false);
+            setExportText('');
+          }
         }}
       >
-        <DialogContent title="导出备份" description="勾选要导出的模块">
+        <DialogContent title="导出备份" description="勾选要导出的模块，并选择导出格式">
           <div className="flex flex-col gap-1">
             {BACKUP_MODULES.map((module) => (
               <label key={module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
@@ -1212,12 +1211,85 @@ export function SettingsView({
               清空
             </Button>
           </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={exportFormat === 'json' ? 'primary' : 'secondary'}
+              aria-label="导出为 JSON 文件"
+              onClick={() => setExportFormat('json')}
+            >
+              JSON 文件
+            </Button>
+            <Button
+              size="sm"
+              variant={exportFormat === 'base64' ? 'primary' : 'secondary'}
+              aria-label="导出为 Base64 文本"
+              onClick={() => setExportFormat('base64')}
+            >
+              Base64 文本
+            </Button>
+          </div>
+          {exportFormat === 'base64' && exportText !== '' && (
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-muted">复制下面这段文本，或保存成文件后传输。</span>
+              <textarea
+                readOnly
+                data-role="export-base64"
+                aria-label="Base64 备份文本"
+                className="h-32 w-full rounded-md border border-line bg-surface-muted p-2 text-[11px] text-muted"
+                value={exportText}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    void copyText(exportText).then((ok) => {
+                      setBackupMessage(ok ? '已复制 Base64 文本' : '复制失败，请手动选中复制');
+                    });
+                  }}
+                >
+                  复制文本
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => void saveBase64Backup()}>
+                  保存为文件
+                </Button>
+              </div>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setExportOpen(false)}>
               取消
             </Button>
             <Button variant="primary" disabled={busy || exportModules.size === 0} onClick={() => void downloadBackup()}>
-              导出
+              {exportFormat === 'base64' ? '生成文本' : '导出'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pasteOpen}
+        onOpenChange={(open) => {
+          if (!open) setPasteOpen(false);
+        }}
+      >
+        <DialogContent title="粘贴备份文本" description="支持 JSON 原文与 Base64 文本，粘贴后点解析">
+          <textarea
+            data-role="import-text"
+            aria-label="备份文本"
+            placeholder="在此粘贴 JSON 或 Base64 备份文本"
+            className="h-40 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
+            value={importText}
+            onChange={(event) => setImportText(event.target.value)}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPasteOpen(false)}>
+              取消
+            </Button>
+            <Button variant="primary" disabled={importText.trim().length === 0} onClick={parsePastedBackup}>
+              解析
             </Button>
           </DialogFooter>
         </DialogContent>

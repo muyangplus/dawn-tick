@@ -13,10 +13,8 @@ test('诊断入口在正式版隐藏', () => {
   assert.equal(featureVisible('diagnostics', 'release'), false);
 });
 
-test('示例数据仅开发版可见', () => {
-  assert.equal(featureVisible('sampleData', 'dev'), true);
-  assert.equal(featureVisible('sampleData', 'beta'), false);
-  assert.equal(featureVisible('sampleData', 'release'), false);
+test('功能表只保留诊断入口', () => {
+  assert.deepEqual(Object.keys(FEATURES), ['diagnostics']);
 });
 
 test('功能表的渠道取值都在渠道集合内', () => {

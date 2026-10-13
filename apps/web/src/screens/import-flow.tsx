@@ -210,33 +210,37 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     }
   }
 
-  /** 内嵌教务窗口回传的页面内容，直接走识别。 */
+  /** 教务窗口回传的页面内容，直接走识别。桌面端走事件，移动端由打开调用直接返回。 */
+  function handleImportPayload(payload: string): void {
+    setPageText(payload);
+    setError(null);
+    const result = extractTimetableFromHtml(payload);
+    if (result.schedules.length === 0) {
+      setWindowNote(result.warnings.join('；'));
+      logError('import-window', '回传内容未识别到课表', { shape: result.shape, tables: result.tables });
+      return;
+    }
+    logInfo('import-window', '教务窗口回传并识别', {
+      shape: result.shape,
+      tables: result.tables,
+      schedules: result.schedules.length,
+    });
+    setWindowNote(`已从教务窗口识别到 ${result.schedules.length} 条排课，请核对后导入`);
+    toast.success(`已从教务窗口识别到 ${result.schedules.length} 条排课`);
+    accept(result.schedules, result.warnings);
+  }
+
   useEffect(() => {
     if (!canOpenImportWindow()) return;
     let dispose: (() => void) | null = null;
-    void listenImportPayload((payload) => {
-      setPageText(payload);
-      setError(null);
-      const result = extractTimetableFromHtml(payload);
-      if (result.schedules.length === 0) {
-        setWindowNote(result.warnings.join('；'));
-        logError('import-window', '回传内容未识别到课表', { shape: result.shape, tables: result.tables });
-        return;
-      }
-      logInfo('import-window', '教务窗口回传并识别', {
-        shape: result.shape,
-        tables: result.tables,
-        schedules: result.schedules.length,
-      });
-      setWindowNote(`已从教务窗口识别到 ${result.schedules.length} 条排课，请核对后导入`);
-      toast.success(`已从教务窗口识别到 ${result.schedules.length} 条排课`);
-      accept(result.schedules, result.warnings);
-    }).then((unlisten) => {
+    void listenImportPayload(handleImportPayload).then((unlisten) => {
       dispose = unlisten;
     });
     return () => {
       dispose?.();
     };
+    // 事件监听只建一次；回调只依赖 setState 与纯函数
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** 通用网页导入：识别粘贴进来的课表页面，不绑定具体学校。 */
@@ -488,7 +492,17 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                   onClick={() => {
                     void (async () => {
                       const result = await openImportWindow(importUrl.trim());
-                      setWindowNote(result.ok ? '窗口已打开：登录后用窗口右下角「导入到晓刻」' : (result.error ?? '打开失败'));
+                      if (!result.ok) {
+                        setWindowNote(result.error ?? '打开失败');
+                        return;
+                      }
+                      if (result.payload !== undefined) {
+                        // 移动端：窗口关闭时已经把页面内容带回来
+                        if (result.payload === '') setWindowNote('已关闭教务窗口，没有带回页面内容');
+                        else handleImportPayload(result.payload);
+                        return;
+                      }
+                      setWindowNote('窗口已打开：登录后用窗口右下角「导入到晓刻」');
                     })();
                   }}
                 >

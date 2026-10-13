@@ -155,12 +155,13 @@ function Mini() {
   const current = data?.currentLesson;
   const next = data?.nextLesson;
   const zone = data?.timeZone ?? 'UTC';
+  const background = settings?.widgetBackground ?? 'light';
   const hide = (): void => void hideWindow();
   const headLabel = current === undefined ? '晓刻 DawnTick' : '正在上课';
 
   if (error !== null) {
     return (
-      <MiniShell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide} background={background}>
         <div className="mini-empty" data-role="mini-error">
           课表读取失败：{error}
         </div>
@@ -170,7 +171,7 @@ function Mini() {
 
   if (variant === 'minimal') {
     return (
-      <MiniShell variant={variant} onHide={hide} label={headLabel}>
+      <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
         <div className="mini-minimal">
           <span className="mini-count-big" data-role="mini-count">
             {current !== undefined
@@ -190,9 +191,9 @@ function Mini() {
   if (variant === 'today') {
     const lessons = data?.todayLessons ?? [];
     return (
-      <MiniShell variant={variant} onHide={hide}>
+      <MiniShell variant={variant} onHide={hide} background={background}>
         {lessons.length === 0 ? (
-          <div className="mini-empty">今天没有课</div>
+          <div className="mini-empty">今天没有课啦</div>
         ) : (
           <ul className="mini-list">
             {lessons.map((lesson) => {
@@ -227,7 +228,7 @@ function Mini() {
       .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
       .slice(0, 3);
     return (
-      <MiniShell variant={variant} onHide={hide} label={headLabel}>
+      <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
         <div className="mini-combo-top">
           <span className="mini-label">{current !== undefined ? '正在上课' : '下一节课'}</span>
           <span className="mini-title" data-role="mini-title">
@@ -272,7 +273,7 @@ function Mini() {
   }
 
   return (
-    <MiniShell variant={variant} onHide={hide} label={headLabel}>
+    <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
       {current !== undefined ? (
         <>
           <div className="mini-title" data-role="mini-title">

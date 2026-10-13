@@ -11,7 +11,6 @@ import { localMinuteOfDay, nowRatio } from '../lib/timeline.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const ROW_HEIGHT = 56;
-const AXIS_WIDTH = '3.5rem';
 /** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
 const LONG_PRESS_MS = 350;
 /** 长按期间允许的手指/鼠标抖动半径（像素），超过就取消长按。 */
@@ -488,7 +487,7 @@ export function WeekView({
   function onLessonPointerDown(event: React.PointerEvent<HTMLDivElement>, lesson: LessonCell): void {
     // 每次按下都先复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次单击
     suppressNextClick.current = false;
-    if (event.button !== 0 || !lesson.inWeek || lesson.cancelled) return;
+    if (event.button !== 0 || !lesson.inWeek || lesson.cancelled || lesson.movedOut || lesson.movedIn) return;
     clearSession();
     const active: DragSession = {
       pointerId: event.pointerId,
@@ -603,11 +602,12 @@ export function WeekView({
         />
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
-        <div className="min-w-[40rem]">
+      {/* 不横向滚动：列宽按容器等分，窄屏时压缩节次轴与卡片间距 */}
+      <div className="rounded-lg border border-line bg-surface [--dt-axis:2.25rem] tablet:[--dt-axis:3.5rem]">
+        <div>
           <div
             className="grid border-b border-line"
-            style={{ gridTemplateColumns: `${AXIS_WIDTH} repeat(${viewDays}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: `var(--dt-axis) repeat(${viewDays}, minmax(0, 1fr))` }}
           >
             <div className="px-2 py-2 text-center text-xs text-muted">节次</div>
             {WEEKDAYS.slice(0, viewDays).map((label, index) => {
@@ -619,15 +619,15 @@ export function WeekView({
                 <div
                   key={label}
                   className={cn(
-                    'px-2 py-2 text-center text-xs',
+                    'px-1 py-2 text-center text-[10px] tablet:px-2 tablet:text-xs',
                     isToday ? 'font-semibold text-primary-strong' : isHoliday ? 'text-muted' : 'text-ink',
                   )}
                 >
                   <span className="flex flex-col items-center gap-0.5">
-                    <span>{label}</span>
-                    <span className="tabular text-[10px] text-muted">{formatMonthDay(date)}</span>
-                    {isToday && <span className="text-[10px] text-muted">今天</span>}
-                    {isHoliday && <span className="text-[10px] text-muted">放假</span>}
+                    <span className="truncate">{label}</span>
+                    <span className="tabular text-[9px] text-muted tablet:text-[10px]">{formatMonthDay(date)}</span>
+                    {isToday && <span className="text-[9px] text-muted tablet:text-[10px]">今天</span>}
+                    {isHoliday && <span className="text-[9px] text-muted tablet:text-[10px]">放假</span>}
                   </span>
                 </div>
               );
@@ -637,7 +637,7 @@ export function WeekView({
           <div
             className="relative grid"
             style={{
-              gridTemplateColumns: `${AXIS_WIDTH} repeat(${viewDays}, minmax(0, 1fr))`,
+              gridTemplateColumns: `var(--dt-axis) repeat(${viewDays}, minmax(0, 1fr))`,
               height: `${periodCount * ROW_HEIGHT}px`,
             }}
           >
@@ -645,12 +645,12 @@ export function WeekView({
               {slots.map((slot, index) => (
                 <div
                   key={slot.periodNo}
-                  className="absolute inset-x-0 flex flex-col items-center justify-center gap-0.5 border-b border-line text-[11px] text-muted"
+                  className="absolute inset-x-0 flex flex-col items-center justify-center gap-0.5 border-b border-line text-[10px] text-muted tablet:text-[11px]"
                   style={{ top: `${index * ROW_HEIGHT}px`, height: `${ROW_HEIGHT}px` }}
                 >
                   <span className="tabular font-semibold text-ink">{slot.periodNo}</span>
                   <span className="tabular">{slot.startTime}</span>
-                  <span className="tabular">{slot.endTime}</span>
+                  <span className="tabular hidden tablet:inline">{slot.endTime}</span>
                 </div>
               ))}
             </div>
@@ -862,15 +862,27 @@ export function WeekView({
                         room={lesson.room}
                         teacher={lesson.teacher}
                         meta={`${lesson.startTime}-${lesson.endTime}`}
-                        // 停课优先于放假与非本周：当天不再上课，只灰显并标注
+                        // 停课优先于调课，调课优先于放假与非本周
                         tone={
                           lesson.cancelled
                             ? 'cancelled'
-                            : lesson.holiday
-                              ? 'holiday'
-                              : lesson.inWeek
-                                ? 'solid'
-                                : 'ghost'
+                            : lesson.movedOut
+                              ? 'movedOut'
+                              : lesson.holiday
+                                ? 'holiday'
+                                : lesson.inWeek
+                                  ? 'solid'
+                                  : 'ghost'
+                        }
+                        badge={
+                          lesson.movedIn ? (
+                            <span
+                              className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
+                              data-role="moved-in-label"
+                            >
+                              调课
+                            </span>
+                          ) : undefined
                         }
                         holidayLabel={lesson.holiday && holidayFirstDay ? holidayName ?? '放假' : '放假'}
                         onClick={() => {
@@ -881,7 +893,10 @@ export function WeekView({
                           }
                           onSelectLesson(lesson);
                         }}
-                        className={cn('h-full', lesson.inWeek && !lesson.cancelled && 'cursor-grab select-none')}
+                        className={cn(
+                          'h-full',
+                          lesson.inWeek && !lesson.cancelled && !lesson.movedOut && !lesson.movedIn && 'cursor-grab select-none',
+                        )}
                       />
                     </div>
                   ))}
@@ -890,7 +905,7 @@ export function WeekView({
             })}
 
             {ratio !== null && data.viewWeek === data.week && (
-              <NowIndicator ratio={ratio} className="left-14" />
+              <NowIndicator ratio={ratio} className="left-[var(--dt-axis)]" />
             )}
           </div>
         </div>

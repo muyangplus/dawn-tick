@@ -14,13 +14,13 @@
 
 | 模块 | 内容 |
 |---|---|
-| 课表 | 学期与节次、周视图（5/6/7 天，时间轴与当前时间指示线）、今日视图、课程详情、拖拽调课、调课与放假、停课（课表灰显标注，日程归入已完成） |
-| 导入 | ICS 导入导出、CSV 与 Excel 二维矩阵、内置高校与教务入口、内嵌教务窗口导入、通用网页课表识别（含手动校正映射）、手动添加 |
+| 课表 | 学期与节次、周视图（1–7 天任意天数，窄屏按列宽压缩、不横向滚动）、时间轴与当前时间指示线、今日视图、课程详情、拖拽调课、调课与放假、停课与调课标记（原位置「已调课」、落点「调课」） |
+| 导入 | ICS 导入导出、CSV 与 Excel 二维矩阵、内置高校与教务入口、内嵌教务窗口导入（Windows 独立窗口、Android 应用内 WebView）、通用网页课表识别（含手动校正映射）、手动添加 |
 | 日程 | 考试倒计时、待办分组与勾选、调课与临时日程；正在上的课带「进行中」与剩余时间 |
 | 检索 | 课程、教师、地点、周次与日程全文搜索（`/` 唤起） |
 | 提醒 | 课前 5/10/15/30 分钟与自定义、放假跳过、贪睡、勿扰分级 |
-| 主题 | 四套配色 × 深浅模式（含跟随系统），设计令牌与对比度校验 |
-| 数据 | JSON 全量备份导出导入，支持按模块选择与覆盖策略；同步协议 pull → push → pull |
+| 主题 | 四套配色 × 深浅模式（含跟随系统），设计令牌与对比度校验；小组件背景（浅色/深色/透明）同时作用于悬浮窗与 Android 小组件 |
+| 数据 | JSON 与 Base64 两种备份格式，导出时选择保存位置；同步协议 pull → push → pull |
 | 组件 | Windows 悬浮窗（四种样式，上课中显示剩余时间）；Android 2×2 下一节课、4×2 今日课表、4×4 一周概览、2×2 考试倒计时 |
 
 ## 预设仓库（作息与教务配置）
@@ -86,6 +86,7 @@
 | `tools/design` | 设计令牌导出与无障碍校验 |
 | `tools/release` | 版本号同步与发布规则 |
 | `tools/setup` | 镜像、Rust、Android SDK、JDK、图标、密钥脚本 |
+| `tools/legal` | 第三方许可证清单生成与校验 |
 | `tools/verify` | 验证脚本 |
 | `docs` | 规范与记录 |
 
@@ -101,6 +102,7 @@
 | `pnpm -C apps/desktop exec tauri build` | 构建 Windows 安装包 |
 | `pnpm version:set 0.2.0` | 同步五处版本号 |
 | `pnpm version:check` | 校验版本号一致 |
+| `node tools/legal/collect-licenses.mjs --check` | 校验第三方许可证清单与依赖一致 |
 | `powershell -File tools/verify/verify-all.ps1` | 三端产物与测试总校验 |
 
 ## 文档
@@ -125,8 +127,8 @@
 
 `powershell -File tools/build-local.ps1` 默认 **dev 渠道 + debug 构建**（`-Channel release` 才出 release），产物在 `out-local/`。
 
-运行日志：`%LOCALAPPDATA%\com.dawntick.app\startup.log`，同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）；dev 与 beta 渠道的设置页提供「打开日志文件所在目录」，在资源管理器中定位该目录。
+运行日志：`%LOCALAPPDATA%\com.dawntick.app\startup.log`，同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）。日志行为 `YYYY-MM-DD HH:MM:SS.mmm ±HH:MM [level] scope: 消息`，文件、控制台与导出文件同一格式；dev 与 beta 渠道的设置页提供「打开日志文件所在目录」，在资源管理器中定位该目录。
 
 ## 许可证
 
-Apache-2.0，见 [LICENSE](LICENSE)。
+Apache-2.0，见 [LICENSE](LICENSE)。运行时依赖的清单与许可证全文见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)：由 `node tools/legal/collect-licenses.mjs` 从各端清单与已安装依赖的元数据生成，`--check` 可校验两者一致；应用内「关于」也展示同一份清单。

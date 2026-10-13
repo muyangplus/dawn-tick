@@ -1,6 +1,5 @@
 import { detectPlatform } from './platform-detect.ts';
 import { logInfo, logWarn } from './log.ts';
-
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -71,4 +70,65 @@ export async function openLogDirectory(): Promise<string | null> {
     logWarn('log', '打开日志目录失败', { message: describe(cause) });
     return null;
   }
+}
+
+export interface SaveTextResult {
+  /** 是否写出成功；用户取消时为 false 且 `cancelled` 为 true */
+  ok: boolean;
+  cancelled: boolean;
+  /** 实际写入的路径，浏览器下载时为 null */
+  path: string | null;
+  error: string | null;
+}
+
+/**
+ * 保存文本：桌面端弹系统保存对话框并写入用户选定的路径；
+ * 浏览器与移动端退回浏览器下载（位置由浏览器决定）。
+ */
+export async function saveTextFile(
+  name: string,
+  content: string,
+  options: { filterName?: string; extension?: string } = {},
+): Promise<SaveTextResult> {
+  const extension = options.extension ?? 'txt';
+  if (detectPlatform() === 'tauri') {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const chosen = await save({
+        defaultPath: name,
+        filters: [{ name: options.filterName ?? '文本文件', extensions: [extension] }],
+      });
+      if (chosen === null) {
+        logInfo('export', '用户取消保存', { name });
+        return { ok: false, cancelled: true, path: null, error: null };
+      }
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path = await invoke<string>('write_text_file', { path: chosen, content });
+      logInfo('export', '已写入文件', { path, bytes: content.length });
+      return { ok: true, cancelled: false, path, error: null };
+    } catch (cause: unknown) {
+      const message = describe(cause);
+      logWarn('export', '写入文件失败', { name, message });
+      return { ok: false, cancelled: false, path: null, error: message };
+    }
+  }
+  try {
+    downloadInBrowser(name, content);
+    logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
+    return { ok: true, cancelled: false, path: null, error: null };
+  } catch (cause: unknown) {
+    const message = describe(cause);
+    logWarn('export', '浏览器下载失败', { name, message });
+    return { ok: false, cancelled: false, path: null, error: message };
+  }
+}
+
+/** 浏览器下载：生成 Blob 并触发一次 a[download]。 */
+export function downloadInBrowser(name: string, content: string, type = 'text/plain'): void {
+  const url = URL.createObjectURL(new Blob([content], { type: `${type};charset=utf-8` }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

@@ -233,7 +233,8 @@ test('开机自启默认关闭，隐藏窗口默认开启', async () => {
 
 test('设置非法值被拒或回退', async () => {
   const storage = new MemoryStorage();
-  await assert.rejects(() => writeSettings(storage, { viewDays: 4 }), RangeError);
+  await assert.rejects(() => writeSettings(storage, { viewDays: 0 }), RangeError);
+  await assert.rejects(() => writeSettings(storage, { viewDays: 8 }), RangeError);
   await assert.rejects(() => writeSettings(storage, { timeZone: '' }), RangeError);
 
   await storage.writeMeta('view_days', '99');

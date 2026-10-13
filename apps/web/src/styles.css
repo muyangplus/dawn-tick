@@ -135,6 +135,26 @@
     cursor: grabbing;
   }
 
+  /* 小组件背景：浅色 / 深色 / 透明，与 Android 小组件的三种底色同一口径 */
+  .mini-bg-light {
+    --dt-surface: #ffffff;
+    --dt-text: #1f1b24;
+    --dt-muted: #6b6475;
+    --dt-border: #e4e0ea;
+  }
+
+  .mini-bg-dark {
+    --dt-surface: #1e1a26;
+    --dt-text: #f3eff6;
+    --dt-muted: #a79fb3;
+    --dt-border: #3a3442;
+  }
+
+  .mini-bg-transparent {
+    background: color-mix(in srgb, var(--dt-surface) 55%, transparent);
+    border-color: color-mix(in srgb, var(--dt-border) 45%, transparent);
+  }
+
   .mini-head {
     display: flex;
     align-items: center;

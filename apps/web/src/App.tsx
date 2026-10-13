@@ -115,6 +115,8 @@ function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
     inWeek: true,
     holiday: data.holidayLabels.has(target.date),
     cancelled: false,
+    movedOut: false,
+    movedIn: false,
   };
 }
 

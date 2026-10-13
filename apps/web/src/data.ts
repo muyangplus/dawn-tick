@@ -49,6 +49,10 @@ export interface LessonCell {
   holiday: boolean;
   /** 该课所在日期被「停课」：课表里灰显并标注，不参与拖动 */
   cancelled: boolean;
+  /** 该课次被调到别处（本格当天不上）：灰显标「已调课」 */
+  movedOut: boolean;
+  /** 该格是调课后的落点：正常显示并标「调课」 */
+  movedIn: boolean;
 }
 
 export interface AppData {
@@ -157,15 +161,39 @@ export async function loadAppData(
     }
   }
   const holidayDates = new Set(holidayLabels.keys());
-  // 停课：按「排课 + 那天」记录，同一天同一节只认一条
+  // 停课与调课都按「排课 + 那天」记录：停课的格子灰显，调课的格子标出原位置与落点
   const cancelledKeys = new Set<string>();
+  const movedOutKeys = new Set<string>();
+  interface MoveIn {
+    scheduleId: string;
+    newDate: string;
+    dayOfWeek: number;
+    periodStart: number;
+    periodEnd: number;
+    room: string | null;
+  }
+  const movedIn: MoveIn[] = [];
   for (const row of semesterEvents) {
-    if (row.type !== 'reschedule' || row.action !== 'cancel') continue;
+    if (row.type !== 'reschedule' || row.ref_schedule_id === null) continue;
     const date = row.on_date;
-    if (typeof date !== 'string' || row.ref_schedule_id === null) continue;
-    cancelledKeys.add(`${row.ref_schedule_id}|${date}`);
+    if (typeof date !== 'string') continue;
+    if (row.action === 'cancel') {
+      cancelledKeys.add(`${row.ref_schedule_id}|${date}`);
+      continue;
+    }
+    if (row.action !== 'move' || row.new_date === null) continue;
+    movedOutKeys.add(`${row.ref_schedule_id}|${date}`);
+    movedIn.push({
+      scheduleId: row.ref_schedule_id,
+      newDate: row.new_date,
+      dayOfWeek: row.as_day_of_week ?? dayOfWeek(row.new_date),
+      periodStart: row.new_period_start ?? 1,
+      periodEnd: row.new_period_end ?? row.new_period_start ?? 1,
+      room: row.new_room,
+    });
   }
   const viewWeekStart = weekDateOf(semester, viewWeek, 1);
+  const viewWeekEnd = addDays(viewWeekStart, 6);
   const dateOfDay = (day: number): string => addDays(viewWeekStart, day - 1);
 
   const grid = new Map<string, LessonCell[]>();
@@ -178,10 +206,12 @@ export async function loadAppData(
     periodStart: number;
     periodEnd: number;
     day: number;
+    date: string;
     inWeek: boolean;
+    movedIn?: boolean;
   }): LessonCell => {
     const course = courseById.get(input.courseId);
-    const date = dateOfDay(input.day);
+    const date = input.date;
     return {
       scheduleId: input.scheduleId,
       courseId: input.courseId,
@@ -197,6 +227,8 @@ export async function loadAppData(
       inWeek: input.inWeek,
       holiday: holidayDates.has(date),
       cancelled: input.inWeek && cancelledKeys.has(`${input.scheduleId}|${date}`),
+      movedOut: input.inWeek && movedOutKeys.has(`${input.scheduleId}|${date}`),
+      movedIn: input.movedIn === true,
     };
   };
 
@@ -214,6 +246,7 @@ export async function loadAppData(
           periodStart: row.period_start,
           periodEnd: row.period_end,
           day,
+          date: dateOfDay(day),
           inWeek: true,
         }),
       );
@@ -221,8 +254,37 @@ export async function loadAppData(
     }
   }
 
-  // 非本周课程：仍在课表中，但这一周不上，按设置虚线显示
+  // 调课的落点：目标日期落在这一周时，把课次画到落点格上并标「调课」
   const activeIds = new Set(activeCourses.map((row) => row.id));
+  const scheduleById = new Map(schedules.map((row) => [row.id, row]));
+  for (const move of movedIn) {
+    if (move.newDate < viewWeekStart || move.newDate > viewWeekEnd) continue;
+    const schedule = scheduleById.get(move.scheduleId);
+    if (schedule === undefined || schedule.deleted_at !== null || !activeIds.has(schedule.course_id)) continue;
+    const course = courseById.get(schedule.course_id);
+    if (course === undefined) continue;
+    const key = `${move.dayOfWeek}:${move.periodStart}`;
+    const list = grid.get(key) ?? [];
+    if (list.some((cell) => cell.scheduleId === move.scheduleId && cell.movedIn)) continue;
+    list.push(
+      cellOf({
+        scheduleId: move.scheduleId,
+        courseId: schedule.course_id,
+        fallbackName: course.name,
+        color: course.color,
+        room: move.room ?? schedule.room,
+        periodStart: move.periodStart,
+        periodEnd: move.periodEnd,
+        day: move.dayOfWeek,
+        date: move.newDate,
+        inWeek: true,
+        movedIn: true,
+      }),
+    );
+    grid.set(key, list);
+  }
+
+  // 非本周课程：仍在课表中，但这一周不上，按设置虚线显示
   for (const row of schedules) {
     if (row.deleted_at !== null || !activeIds.has(row.course_id)) continue;
     if (maskToWeeks(row.weeks_mask, semester.total_weeks).includes(viewWeek)) continue;
@@ -242,6 +304,7 @@ export async function loadAppData(
         periodStart: row.period_start,
         periodEnd: row.period_end,
         day,
+        date: dateOfDay(day),
         inWeek: false,
       }),
     );

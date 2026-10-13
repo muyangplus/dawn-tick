@@ -9,7 +9,8 @@ export type WidgetVariant = 'bar' | 'today' | 'minimal' | 'combo';
 export const WIDGET_VARIANTS: readonly WidgetVariant[] = ['bar', 'today', 'minimal', 'combo'];
 
 export const THEME_PRESETS: readonly ThemePreset[] = ['vivid', 'fresh', 'mono', 'muted'];
-export const VIEW_DAY_OPTIONS: readonly number[] = [5, 6, 7];
+/** 周视图可显示的天数：1–7 天任意一天。 */
+export const VIEW_DAY_OPTIONS: readonly number[] = [1, 2, 3, 4, 5, 6, 7];
 export const WIDGET_BACKGROUNDS: readonly WidgetBackground[] = ['light', 'dark', 'transparent'];
 
 export interface AppSettings {

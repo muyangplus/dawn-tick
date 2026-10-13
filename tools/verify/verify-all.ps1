@@ -74,6 +74,11 @@ Run-Check '工作流语法与触发' {
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
     ($out.Trim() -split "`n" | Select-Object -Last 1)
 }
+Run-Check '第三方许可证清单一致' {
+    $out = node tools/legal/collect-licenses.mjs --check 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    ($out.Trim() -split "`n" | Select-Object -Last 1)
+}
 
 Section '5. 设计令牌与无障碍'
 Run-Check '对比度与触控尺寸' {

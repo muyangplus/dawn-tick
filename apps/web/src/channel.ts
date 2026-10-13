@@ -21,8 +21,6 @@ export const CHANNEL_LABEL: Record<Channel, string> = {
 export const FEATURES = {
   /** 日志导出与诊断信息 */
   diagnostics: ['dev', 'beta'],
-  /** 填充示例数据 */
-  sampleData: ['dev'],
 } as const satisfies Record<string, readonly Channel[]>;
 
 export type FeatureId = keyof typeof FEATURES;

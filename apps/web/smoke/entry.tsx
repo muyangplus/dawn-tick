@@ -13,11 +13,13 @@ import {
   DEFAULT_TIMETABLE_ID,
   effectivePresetVersion,
   findTimetable,
+  fromBase64Utf8,
   setPresetOverride,
   validatedStorage,
   writeSettings,
 } from '@dawn-tick/core';
 import { App } from '../src/App.tsx';
+import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
@@ -610,6 +612,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
     '',
   );
+  check(
+    '课表不再依赖左右滑动',
+    view.container.querySelector('.overflow-x-auto') === null &&
+      view.container.querySelector('[class*="min-w-[40rem]"]') === null,
+    '',
+  );
 
   // ③ 放假优先于非本周：周一既放假、又只在第 1-2 周上的「概率论」必须按放假渲染
   const holidayGhostCard = [...view.container.querySelectorAll('[data-tone]')].find((item) =>
@@ -959,6 +967,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '重叠调课保存成功并提示',
     (document.body.textContent ?? '').includes('调整后与「重叠测试课」第 1–3 节重叠，已同时保留'),
     (document.body.textContent ?? '').slice(-70),
+  );
+  // 本周生效的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
+  const movedOutCard = view.container.querySelector('[data-tone="movedOut"]');
+  const movedInCard = view.container.querySelector('[data-role="moved-in-label"]')?.closest('[data-tone]') ?? null;
+  check(
+    '本周调课后课表标出原位置与落点',
+    movedOutCard !== null &&
+      (movedOutCard.querySelector('[data-role="moved-out-label"]')?.textContent ?? '').trim() === '已调课' &&
+      (movedOutCard.textContent ?? '').includes('高数') &&
+      movedInCard !== null &&
+      (movedInCard.textContent ?? '').includes('高数') &&
+      movedOutCard.className.includes('opacity-45'),
+    `${movedOutCard?.textContent?.trim() ?? '(无原位置)'} / ${movedInCard?.textContent?.trim() ?? '(无落点)'}`,
   );
   const switchedToSchedule = clickByText(view.container, '日程');
   await flush(10);
@@ -1632,10 +1653,25 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
   check(
-    '开发版独占入口可见',
-    panelText.includes('填充示例数据') && panelText.includes('导出日志') && panelText.includes('开发版'),
+    '诊断入口可见且不再有示例数据按钮',
+    panelText.includes('导出日志') && panelText.includes('开发版') && !panelText.includes('填充示例数据'),
     '',
   );
+  // 周视图天数：1–7 天都可选
+  const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');
+  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();
+  await flush(10);
+  const dayOptions = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
+  const dayOptionSet = new Set(dayOptions.filter((item) => item.endsWith(' 天')));
+  check(
+    '周视图天数可选 1–7 天',
+    dayTrigger !== null &&
+      dayOptions.length >= 7 &&
+      ['1 天', '4 天', '7 天'].every((label) => dayOptionSet.has(label)),
+    dayOptions.join(' / ') || '(无候选)',
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
   check(
     '课次时间可逐节编辑',
     view.container.querySelector('input[aria-label="第 1 节开始时间"]') !== null &&
@@ -1802,8 +1838,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (appBlock.textContent ?? '').includes('Apache-2.0') &&
       creditsBlock !== null &&
       creditItems.length >= 10 &&
-      creditItems.some((item) => item.includes('React') && item.includes('MIT')) &&
-      creditItems.some((item) => item.includes('Tauri')),
+      creditItems.some((item) => /react/i.test(item) && item.includes('MIT')) &&
+      creditItems.some((item) => item.includes('tauri')) &&
+      (creditsBlock.querySelector('summary')?.textContent ?? '').includes('展开依赖与许可证'),
     `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
   );
 
@@ -1814,6 +1851,41 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('input[aria-label="导出 课程与排课"]') !== null &&
       document.querySelector('input[aria-label="导出 提醒"]') !== null,
     '',
+  );
+  // Base64 导出：切到 Base64 文本后生成文本框，内容可解析回备份
+  if (clickByLabel(document.body, '导出为 Base64 文本')) await flush(10);
+  if (clickByText(document.body, '生成文本')) await flush(14);
+  const base64Box = document.querySelector<HTMLTextAreaElement>('[data-role="export-base64"]');
+  const base64Text = (base64Box?.value ?? '').trim();
+  let base64Ok = false;
+  try {
+    const parsed = JSON.parse(fromBase64Utf8(base64Text)) as { format?: string };
+    base64Ok = parsed.format === 'dawn-tick-backup';
+  } catch {
+    base64Ok = false;
+  }
+  check(
+    '导出可选 Base64 文本并能在文本框里复制',
+    base64Box !== null &&
+      base64Text.length > 0 &&
+      base64Ok &&
+      document.body.textContent?.includes('复制文本') === true,
+    `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+  // 粘贴导入：把刚生成的 Base64 文本贴回去，应能识别出模块
+  if (clickByLabel(view.container, '粘贴备份文本')) await flush(10);
+  const importTextBox = document.querySelector<HTMLTextAreaElement>('[data-role="import-text"]');
+  if (importTextBox !== null) setInputValue(importTextBox, base64Text);
+  await flush(6);
+  const pasteParsed = clickByText(document.body, '解析');
+  await flush(14);
+  check(
+    '粘贴 Base64 文本可导入备份',
+    pasteParsed &&
+      document.body.textContent?.includes('备份内容') === true &&
+      document.querySelector('input[aria-label="导入 课程与排课"]') !== null,
+    (document.body.textContent ?? '').slice(-60),
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
@@ -2195,6 +2267,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(4);
   check('悬浮窗关闭按钮触发隐藏', hidden === 1, `隐藏 ${hidden} 次`);
   mini.root.unmount();
+
+  // —— 日志时间戳：与原生 startup.log 同一口径（本地时间 + 偏移，毫秒） ——
+  const sampleTime = formatLogTimestamp(Date.UTC(2026, 9, 13, 10, 1, 34, 123));
+  check(
+    '日志时间戳带本地时间与偏移',
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}$/.test(sampleTime),
+    sampleTime,
+  );
 
   return results;
 }

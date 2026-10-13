@@ -107,17 +107,85 @@ fn ensure_console() {
 #[cfg(not(windows))]
 fn ensure_console() {}
 
+/// 日志统一格式：`2026-10-13 18:01:34.123 +08:00 [info] scope: 消息`。
+/// 时间戳口径为本地时间 + 与 UTC 的偏移，文件与控制台用同一行。
+
+/// 天数（1970-01-01 起，可为负）→ 公历年月日（Howard Hinnant 的 civil_from_days）。
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// 把 UTC 毫秒按给定偏移格式化成日志时间戳。
+fn format_log_timestamp(unix_ms: i64, offset_minutes: i32) -> String {
+    let shifted = unix_ms + i64::from(offset_minutes) * 60_000;
+    let days = shifted.div_euclid(86_400_000);
+    let rest = shifted.rem_euclid(86_400_000);
+    let (year, month, day) = civil_from_days(days);
+    let hours = rest / 3_600_000;
+    let minutes = (rest % 3_600_000) / 60_000;
+    let seconds = (rest % 60_000) / 1000;
+    let millis = rest % 1000;
+    let sign = if offset_minutes < 0 { '-' } else { '+' };
+    let abs = offset_minutes.abs();
+    format!(
+        "{year:04}-{month:02}-{day:02} {hours:02}:{minutes:02}:{seconds:02}.{millis:03} {sign}{:02}:{:02}",
+        abs / 60,
+        abs % 60
+    )
+}
+
+/// 当前本地时间相对 UTC 的偏移（分钟）。
+#[cfg(windows)]
+fn local_offset_minutes() -> i32 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    /// 系统处于夏令时（windows-sys 0.52 未导出该常量，取值见 Win32 文档）。
+    const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
+    unsafe {
+        let mut info: TIME_ZONE_INFORMATION = std::mem::zeroed();
+        let state = GetTimeZoneInformation(&mut info);
+        let mut bias = info.Bias + info.StandardBias;
+        if state == TIME_ZONE_ID_DAYLIGHT {
+            bias += info.DaylightBias;
+        }
+        -bias
+    }
+}
+
+#[cfg(not(windows))]
+fn local_offset_minutes() -> i32 {
+    0
+}
+
+/// 一行日志的前缀：时间戳 + 空格。
+fn log_prefix() -> String {
+    let unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or(0);
+    format!("{} ", format_log_timestamp(unix_ms, local_offset_minutes()))
+}
+
 fn append_log(message: &str) {
+    let line = format!("{}{message}", log_prefix());
     for dir in log_dirs() {
         if create_dir_all(&dir).is_err() {
             continue;
         }
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir.join("startup.log")) {
-            let _ = writeln!(file, "{message}");
+            let _ = writeln!(file, "{line}");
             break;
         }
     }
-    console_log(message);
+    console_log(&line);
 }
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -621,6 +689,18 @@ fn open_external_url(url: String) -> Result<(), String> {
     {
         Err("当前平台不支持".to_string())
     }
+}
+
+/// 把文本写到用户选定的路径：导出备份与日志用。
+#[tauri::command]
+fn write_text_file(path: String, content: String) -> Result<String, String> {
+    let target = std::path::PathBuf::from(&path);
+    if target.as_os_str().is_empty() {
+        return Err("没有选择保存位置".to_string());
+    }
+    std::fs::write(&target, content.as_bytes()).map_err(|error| format!("写入失败: {error}"))?;
+    append_log(&format!("已写入文件: {path}（{} 字节）", content.len()));
+    Ok(path)
 }
 
 /// 在资源管理器里打开日志目录，返回目录路径。
@@ -1784,7 +1864,8 @@ pub fn run() {
             hide_widget,
             tray_status,
             open_external_url,
-            open_log_dir
+            open_log_dir,
+            write_text_file
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -1799,7 +1880,8 @@ pub fn run() {
                 )
                 .build(),
         )
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init());
 
     #[cfg(desktop)]
     let builder = builder
@@ -1888,6 +1970,29 @@ mod tests {
         assert!(!hidden_for_launch(&autostart, &show));
         assert!(!hidden_for_launch(&manual, &hide));
         assert!(!hidden_for_launch(&manual, &show));
+    }
+
+    #[test]
+    fn log_timestamp_matches_local_offset() {
+        assert_eq!(format_log_timestamp(0, 0), "1970-01-01 00:00:00.000 +00:00");
+        assert_eq!(format_log_timestamp(0, 480), "1970-01-01 08:00:00.000 +08:00");
+        assert_eq!(format_log_timestamp(0, -330), "1969-12-31 18:30:00.000 -05:30");
+        assert_eq!(format_log_timestamp(1_700_000_000_000, 0), "2023-11-14 22:13:20.000 +00:00");
+        assert_eq!(
+            format_log_timestamp(1_700_000_000_123, 480),
+            "2023-11-15 06:13:20.123 +08:00"
+        );
+    }
+
+    #[test]
+    fn log_prefix_has_local_offset() {
+        let prefix = log_prefix();
+        let chars: Vec<char> = prefix.chars().collect();
+        assert_eq!(chars.len(), 31, "{prefix}");
+        assert_eq!(chars[10], ' ');
+        assert_eq!(chars[23], ' ');
+        assert!(chars[24] == '+' || chars[24] == '-', "{prefix}");
+        assert_eq!(chars[30], ' ');
     }
 
     #[test]
