@@ -17,6 +17,13 @@
 ## 界面
 
 - [ ] 「我的」页面内容（当前为建设中占位）
+- [ ] 暂停时未提交的改动（改完但未 verify-all、未 commit，工作区文件：`apps/web/src/screens/onboarding.tsx`、`apps/web/src/App.tsx`、`apps/web/src/components/nav.tsx`、`apps/web/src/styles.css`、`apps/web/smoke/entry.tsx`）：
+  - 引导页整页可滚动：`data-role="onboarding-scroll"`，`h-full` + `overflow-y-auto` + 内层 `my-auto` 居中（原先被 `#root { overflow: hidden }` 裁掉，无法滚动）
+  - 学校选择折叠进首启页「高级设置」`<details>`（默认收起，`summary` 显示已选学校；「已有数据：直接导入」保持可见）
+  - 底部栏与悬浮按钮留白：新增 `--dt-bottom-nav` / `--dt-bottom-fab`，`app-main` 的 `padding-bottom` 与「快速添加」按钮的 `bottom` 都按它们加安全区计算，`BottomNav` 用同一高度
+  - 布局自检写日志：`layout: 视口变化` 带上 `navHeight` 与 `mainPadBottom`，留白小于栏高告警；`layout: 引导页滚动容器` 记录内容超出却不可滚动的情况
+  - 日志级别从未同步到原生：`App.tsx` 里 `applyLogSettings` 只导入未调用 → 设置里的「应用诊断日志 / 日志级别」对 `dawn-tick.log` 无效，写文件门槛停在 info（`[debug]`/`[trace]` 进不去）；已补 effect 同步
+- [ ] 上述改动的收尾：`verify-all` 全量验证 + 真实窗口复核（引导页能滚到底、底部栏与悬浮按钮不挡内容、日志级别改 trace 后文件里能看到 `[debug]`；jsdom 量不到布局，只能靠真机日志里的 `layout: 视口变化` / `引导页滚动容器` 两行判断）
 
 ## 发布
 
