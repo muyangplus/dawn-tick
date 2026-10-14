@@ -63,6 +63,17 @@ test('版本比较遵循语义化规则', () => {
   assert.ok(compareVersions('v0.1.1', '0.1.0') > 0, '允许 v 前缀');
 });
 
+test('版本顺序：0.1.1-beta.2 > 0.1.1-beta.1 > 0.1.0 > 0.1.0-beta.N', () => {
+  const chain = ['0.1.1-beta.2', '0.1.1-beta.1', '0.1.0', '0.1.0-beta.9', '0.1.0-beta.1'];
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    const higher = chain[index] ?? '';
+    const lower = chain[index + 1] ?? '';
+    assert.ok(compareVersions(higher, lower) > 0, `${higher} 应高于 ${lower}`);
+    assert.ok(compareVersions(lower, higher) < 0, `${lower} 应低于 ${higher}`);
+  }
+  assert.equal(compareVersions('0.1.0', '0.1.0'), 0, '同版本相等');
+});
+
 test('dev 构建时间戳不参与版本比较', () => {
   assert.equal(compareVersions('0.1.0.202610132203', '0.1.0'), 0, '同一基础版本视为相同');
   assert.equal(compareVersions('0.1.0', '0.1.0.202610132203'), 0);
