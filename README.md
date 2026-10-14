@@ -130,7 +130,7 @@
 
 `powershell -File tools/build-local.ps1` 默认 **dev 渠道 + debug 构建**（`-Channel release` 才出 release），产物在 `out-local/`。
 
-运行日志：`%LOCALAPPDATA%\com.dawntick.app\startup.log`，同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）。日志行为 `YYYY-MM-DD HH:MM:SS.mmm ±HH:MM [level] scope: 消息`，文件、控制台与导出文件同一格式；dev 与 beta 渠道的设置页提供「打开日志文件所在目录」，在资源管理器中定位该目录。
+运行日志：写入应用数据目录（安装版 `%APPDATA%\com.dawntick.app`，便携版在程序所在目录；该目录不可写时依次回退 `%LOCALAPPDATA%\com.dawntick.app`、`%TEMP%\DawnTick`），同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）。日志行为 `YYYY-MM-DD HH:MM:SS.mmm ±HH:MM [level] scope: 消息`，文件、控制台与导出文件同一格式；设置页「数据」提供「打开数据目录」「打开日志文件所在目录」，并可填自定义存储位置与「启用 WAL 日志模式」。
 
 ## 许可证
 

@@ -21,6 +21,10 @@ export const LOG_LEVELS: readonly LogLevel[] = ['error', 'warn', 'info', 'debug'
 export type TodoSort = 'start' | 'type';
 export const TODO_SORTS: readonly TodoSort[] = ['start', 'type'];
 
+/** 数据库日志模式：auto 随存储位置（便携关、安装开），on 用 WAL，off 用单文件 DELETE。 */
+export type WalMode = 'auto' | 'on' | 'off';
+export const WAL_MODES: readonly WalMode[] = ['auto', 'on', 'off'];
+
 export interface AppSettings {
   timeZone: string;
   autoTimeZone: boolean;
@@ -58,6 +62,8 @@ export interface AppSettings {
   logEnabled: boolean;
   /** 日志级别：error / warn / info / debug / trace */
   logLevel: LogLevel;
+  /** 数据库日志模式：auto / on / off */
+  walMode: WalMode;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -82,7 +88,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   devFeatures: true,
   logEnabled: true,
   logLevel: 'info',
+  walMode: 'auto',
 };
+
+/** 数据库日志模式的存储键；开启数据库前要先读它。 */
+export const WAL_META_KEY = 'wal_mode';
 
 const KEYS = {
   timeZone: 'time_zone',
@@ -106,6 +116,7 @@ const KEYS = {
   devFeatures: 'dev_features',
   logEnabled: 'log_enabled',
   logLevel: 'log_level',
+  walMode: WAL_META_KEY,
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -137,6 +148,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.devFeatures),
     storage.readMeta(KEYS.logEnabled),
     storage.readMeta(KEYS.logLevel),
+    storage.readMeta(KEYS.walMode),
   ]);
   const [
     timeZone,
@@ -160,6 +172,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     devFeatures,
     logEnabled,
     logLevel,
+    walMode,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -206,6 +219,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       logLevel !== undefined && (LOG_LEVELS as readonly string[]).includes(logLevel)
         ? (logLevel as LogLevel)
         : DEFAULT_SETTINGS.logLevel,
+    walMode:
+      walMode !== undefined && (WAL_MODES as readonly string[]).includes(walMode)
+        ? (walMode as WalMode)
+        : DEFAULT_SETTINGS.walMode,
   };
 }
 
@@ -284,6 +301,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
       throw new RangeError(`日志级别只能是 ${LOG_LEVELS.join(' / ')}`);
     }
     await storage.writeMeta(KEYS.logLevel, patch.logLevel);
+  }
+  if (patch.walMode !== undefined) {
+    if (!(WAL_MODES as readonly string[]).includes(patch.walMode)) {
+      throw new RangeError(`数据库日志模式只能是 ${WAL_MODES.join(' / ')}`);
+    }
+    await storage.writeMeta(KEYS.walMode, patch.walMode);
   }
 
   return readSettings(storage);

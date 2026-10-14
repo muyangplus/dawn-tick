@@ -11,6 +11,8 @@ import customTimeSql from '@dawn-tick/core/schema/003_custom_time.sql?raw';
 import timetableEntriesSql from '@dawn-tick/core/schema/004_timetable_entries.sql?raw';
 import dueAtAnySql from '@dawn-tick/core/schema/005_due_at_any.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
+import { readStorageInfo } from '../storage-config.ts';
+import { applyStoredJournalMode } from './journal.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 
 export { detectPlatform };
@@ -32,7 +34,11 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
       : await (await import('./capacitor-driver.ts')).openCapacitorDriver();
 
   await migrate(driver, MIGRATIONS);
-  return sqliteStorage(driver);
+  const storage = sqliteStorage(driver);
+  // 便携版默认单文件（无 -wal/-shm），安装版默认 WAL；设置里可改
+  const portable = platform === 'tauri' ? (await readStorageInfo())?.portable === true : false;
+  await applyStoredJournalMode(driver, storage, { platform, portable });
+  return storage;
 }
 
 /** 各端使用各自最合适的底层存储：Windows/Android 用 SQLite，Web 用 IndexedDB。 */

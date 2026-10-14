@@ -18,17 +18,149 @@ pub const SCHEMA_DUE_AT_ANY_SQL: &str =
     include_str!("../../../../packages/core/src/schema/005_due_at_any.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
+/// 便携版的程序名：打包脚本把可执行文件重命名为 DawnTick.exe。
+const PORTABLE_EXE_NAME: &str = "DawnTick.exe";
+/// 数据库文件名。
+const DATABASE_FILE_NAME: &str = "dawn-tick.db";
+/// 自定义存储位置的引导文件（数据库此时还没打开，只能另存一份小 JSON）。
+const STORAGE_FILE_NAME: &str = "storage.json";
+/// 安装版的程序目录名：%LOCALAPPDATA%\DawnTick。
+const INSTALL_DIR_NAME: &str = "DawnTick";
 
-/// 数据目录固定为 %APPDATA%\com.dawntick.app（不做候选与回退）。
-fn data_dir() -> std::path::PathBuf {
+fn exe_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()))
+}
+
+/// 安装版的程序目录：%LOCALAPPDATA%\DawnTick。
+fn install_dir() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|base| PathBuf::from(base).join(INSTALL_DIR_NAME))
+}
+
+/// 安装版的数据目录：%APPDATA%\com.dawntick.app；引导文件也放这里。
+fn roaming_dir() -> PathBuf {
     std::env::var("APPDATA")
-        .map(|base| std::path::PathBuf::from(base).join("com.dawntick.app"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("com.dawntick.app"))
+        .map(|base| PathBuf::from(base).join("com.dawntick.app"))
+        .unwrap_or_else(|_| PathBuf::from("com.dawntick.app"))
+}
+
+fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    left.to_string_lossy().eq_ignore_ascii_case(&right.to_string_lossy())
+}
+
+/// 便携版判定：程序名是 DawnTick.exe 且不在安装目录下。
+/// 开发构建（dawn-tick-desktop.exe）与安装版都按安装版处理，数据留在 %APPDATA%。
+fn portable_layout(exe: &std::path::Path, install: Option<&std::path::Path>) -> bool {
+    let named = exe
+        .file_name()
+        .map(|name| name.to_string_lossy().eq_ignore_ascii_case(PORTABLE_EXE_NAME))
+        .unwrap_or(false);
+    if !named {
+        return false;
+    }
+    match (
+        exe.parent().filter(|dir| !dir.as_os_str().is_empty()),
+        install,
+    ) {
+        (Some(dir), Some(root)) => !same_path(dir, root),
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn is_portable_layout() -> bool {
+    match std::env::current_exe() {
+        Ok(exe) => portable_layout(&exe, install_dir().as_deref()),
+        Err(_) => false,
+    }
+}
+
+/// 默认数据目录：便携版取程序所在目录（拷走即可带走全部数据），安装版取 %APPDATA%。
+fn default_data_dir() -> PathBuf {
+    if is_portable_layout() {
+        if let Some(dir) = exe_dir() {
+            return dir;
+        }
+    }
+    roaming_dir()
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct StorageConfig {
+    #[serde(default)]
+    path: String,
+}
+
+fn storage_config_file() -> PathBuf {
+    roaming_dir().join(STORAGE_FILE_NAME)
+}
+
+/// 用户填的自定义存储位置；没填过返回 None。
+fn custom_storage_path() -> Option<String> {
+    let config = read_json::<StorageConfig>(&storage_config_file())?;
+    let text = config.path.trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// 相对路径以程序所在目录为基准。
+fn resolve_storage_path(text: &str) -> PathBuf {
+    let path = std::path::Path::new(text);
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    match exe_dir() {
+        Some(dir) => dir.join(path),
+        None => path.to_path_buf(),
+    }
+}
+
+/// 建目录并写探针，确认这个位置真能写进去。
+fn ensure_writable_dir(dir: &std::path::Path) -> Result<(), String> {
+    create_dir_all(dir).map_err(|error| format!("创建目录失败({error})"))?;
+    let probe = dir.join("dawntick-storage-probe.tmp");
+    std::fs::write(&probe, b"probe").map_err(|error| format!("写入失败({error})"))?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+/// 在默认目录与自定义位置之间做选择；自定义位置不可用时退回默认并带上提示。
+fn choose_data_dir(default: PathBuf, custom: Option<String>) -> (PathBuf, Option<String>) {
+    let Some(text) = custom else {
+        return (default, None);
+    };
+    let candidate = resolve_storage_path(&text);
+    match ensure_writable_dir(&candidate) {
+        Ok(()) => (candidate, None),
+        Err(error) => (
+            default,
+            Some(format!("自定义存储位置不可用（{error}），已改用默认位置")),
+        ),
+    }
+}
+
+/// 实际使用的数据目录；自定义位置不可用时退回默认并带上提示。
+fn resolve_data_dir() -> (PathBuf, Option<String>) {
+    choose_data_dir(default_data_dir(), custom_storage_path())
+}
+
+fn data_dir() -> PathBuf {
+    resolve_data_dir().0
+}
+
+fn database_file(dir: &std::path::Path) -> PathBuf {
+    dir.join(DATABASE_FILE_NAME)
 }
 
 /// 数据库地址：绝对路径，位于数据目录内。
 fn database_url_string() -> String {
-    let file = data_dir().join("dawn-tick.db");
+    let file = database_file(&data_dir());
     format!("sqlite:{}", file.to_string_lossy().replace('\\', "/"))
 }
 
@@ -37,11 +169,156 @@ fn database_url() -> String {
     database_url_string()
 }
 
+/// 存储位置信息，供设置页展示与回填。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageInfo {
+    /// 实际使用的数据目录
+    dir: String,
+    /// 没设置自定义位置时使用的目录
+    default_dir: String,
+    /// 用户填的自定义位置（原样返回，便于回填输入框）
+    custom_path: String,
+    /// 便携版：程序名 DawnTick.exe 且不在安装目录下
+    portable: bool,
+    /// 引导文件路径
+    config_file: String,
+    /// 数据目录当前是否可写
+    writable: bool,
+    /// 自定义位置不可用时的提示
+    fallback_reason: Option<String>,
+    /// 数据库文件
+    db_file: String,
+    db_exists: bool,
+    db_bytes: u64,
+    /// 数据库旁边的 -wal / -shm / -journal 文件
+    sidecars: Vec<String>,
+    /// 日志目录
+    log_dir: String,
+    /// 本次改位置时复制过去的文件名
+    copied: Vec<String>,
+}
 
-fn log_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Ok(base) = std::env::var("LOCALAPPDATA") {
-        dirs.push(PathBuf::from(base).join("com.dawntick.app"));
+fn storage_info_of(dir: &std::path::Path, fallback_reason: Option<String>, copied: Vec<String>) -> StorageInfo {
+    let file = database_file(dir);
+    let meta = std::fs::metadata(&file).ok();
+    let mut sidecars = Vec::new();
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let side = dir.join(format!("{DATABASE_FILE_NAME}{suffix}"));
+        if side.exists() {
+            sidecars.push(format!("{DATABASE_FILE_NAME}{suffix}"));
+        }
+    }
+    StorageInfo {
+        dir: dir.to_string_lossy().to_string(),
+        default_dir: default_data_dir().to_string_lossy().to_string(),
+        custom_path: custom_storage_path().unwrap_or_default(),
+        portable: is_portable_layout(),
+        config_file: storage_config_file().to_string_lossy().to_string(),
+        writable: ensure_writable_dir(dir).is_ok(),
+        fallback_reason,
+        db_file: file.to_string_lossy().to_string(),
+        db_exists: meta.is_some(),
+        db_bytes: meta.map(|meta| meta.len()).unwrap_or(0),
+        sidecars,
+        log_dir: log_file_dir()
+            .map(|dir| dir.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        copied,
+    }
+}
+
+#[tauri::command]
+fn storage_info() -> StorageInfo {
+    let (dir, fallback) = resolve_data_dir();
+    storage_info_of(&dir, fallback, Vec::new())
+}
+
+/// 复制数据文件：数据库（含 WAL 附带文件）、窗口几何与现有日志；目标已有同名文件时保留目标。
+fn copy_data_files(from: &std::path::Path, to: &std::path::Path) -> Vec<String> {
+    let mut copied = Vec::new();
+    if same_path(from, to) {
+        return copied;
+    }
+    let mut names = vec![
+        DATABASE_FILE_NAME.to_string(),
+        "window.json".to_string(),
+        LOG_FILE_NAME.to_string(),
+        "startup.log".to_string(),
+    ];
+    for suffix in ["-wal", "-shm"] {
+        names.push(format!("{DATABASE_FILE_NAME}{suffix}"));
+    }
+    for name in names {
+        let source = from.join(&name);
+        let target = to.join(&name);
+        if !source.is_file() || target.exists() {
+            continue;
+        }
+        if std::fs::copy(&source, &target).is_ok() {
+            copied.push(name);
+        }
+    }
+    copied
+}
+
+/// 设置或清除自定义存储位置：清空即恢复默认。改完需要重启才生效。
+#[tauri::command]
+fn set_storage_path(path: String) -> Result<StorageInfo, String> {
+    let text = path.trim().to_string();
+    let config_file = storage_config_file();
+    if text.is_empty() {
+        let _ = std::fs::remove_file(&config_file);
+        let (dir, fallback) = resolve_data_dir();
+        append_log(&format!("存储位置已恢复默认: {}", dir.display()));
+        return Ok(storage_info_of(&dir, fallback, Vec::new()));
+    }
+    let target = resolve_storage_path(&text);
+    ensure_writable_dir(&target)?;
+    // 先取旧目录：写入引导文件后 data_dir() 就指向新目录了
+    let current = data_dir();
+    if let Some(parent) = config_file.parent() {
+        create_dir_all(parent).map_err(|error| format!("创建引导文件目录失败: {error}"))?;
+    }
+    if !write_json(&config_file, &StorageConfig { path: text.clone() }) {
+        return Err("写入引导文件失败".to_string());
+    }
+    let copied = if same_path(&current, &target) {
+        Vec::new()
+    } else {
+        copy_data_files(&current, &target)
+    };
+    append_log(&format!(
+        "存储位置已改为: {}（复制 {} 个文件）",
+        target.display(),
+        copied.len()
+    ));
+    Ok(storage_info_of(&target, None, copied))
+}
+
+/// 在资源管理器里打开数据目录，返回目录路径。
+#[tauri::command]
+fn open_data_dir() -> Result<String, String> {
+    let dir = data_dir();
+    create_dir_all(&dir).map_err(|error| format!("创建数据目录失败: {error}"))?;
+    shell_open(&dir.to_string_lossy(), "打开数据目录")?;
+    append_log(&format!("已打开数据目录: {}", dir.display()));
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// 由界面调用：改完存储位置后立即重启。
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    append_log("按用户请求重启应用");
+    app.restart();
+}
+
+
+/// 日志目录候选：数据目录优先，其次 %LOCALAPPDATA%\com.dawntick.app，最后 %TEMP%\DawnTick。
+fn compute_log_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![data_dir()];
+    if let Some(dir) = app_dir() {
+        dirs.push(dir);
     }
     if let Ok(temp) = std::env::var("TEMP") {
         dirs.push(PathBuf::from(temp).join("DawnTick"));
@@ -49,13 +326,32 @@ fn log_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// 日志实际落盘的目录：优先已经存在 startup.log 的那个，否则用第一个候选。
+/// 日志目录只解析一次：解析要读引导文件与探针，不能每写一行都算一遍。
+static LOG_DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+
+fn log_dirs() -> &'static [PathBuf] {
+    LOG_DIRS.get_or_init(compute_log_dirs)
+}
+
+/// 以追加方式打开某个候选目录里的日志文件；不可写返回 None。
+fn open_log_file(dir: &std::path::Path) -> Option<std::fs::File> {
+    if create_dir_all(dir).is_err() {
+        return None;
+    }
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(LOG_FILE_NAME))
+        .ok()
+}
+
+/// 日志实际落盘的目录：第一个写得进去的候选。
 fn log_file_dir() -> Option<PathBuf> {
-    let dirs = log_dirs();
-    dirs.iter()
-        .find(|dir| dir.join(LOG_FILE_NAME).exists() || dir.join("startup.log").exists())
+    log_dirs()
+        .iter()
+        .find(|dir| open_log_file(dir).is_some())
         .cloned()
-        .or_else(|| dirs.into_iter().next())
+        .or_else(|| log_dirs().first().cloned())
 }
 
 /// 同一条日志写到控制台：有控制台句柄时直接写，否则退回标准输出。
@@ -250,10 +546,7 @@ fn append_log(message: &str) {
         return;
     }
     for dir in log_dirs() {
-        if create_dir_all(&dir).is_err() {
-            continue;
-        }
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(dir.join(LOG_FILE_NAME)) {
+        if let Some(mut file) = open_log_file(dir) {
             let _ = writeln!(file, "{line}");
             break;
         }
@@ -442,9 +735,9 @@ fn install_panic_logger() {
 
 /// 便于用户排查的目录提示。
 fn data_root_hint() -> String {
-    let mut parts = Vec::new();
+    let mut parts = vec![format!("数据目录 {}", data_dir().display())];
     if let Ok(base) = std::env::var("LOCALAPPDATA") {
-        parts.push(format!("用户目录 {base}\\com.dawntick.app"));
+        parts.push(format!("日志回退目录 {base}\\com.dawntick.app"));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -472,12 +765,12 @@ fn show_error_box(_title: &str, _message: &str) {}
 /// 记录数据库路径与可写性，便于定位 readonly 类报错。只读探测，不改动数据。
 #[cfg(windows)]
 fn log_database_status() {
-    let Some(roaming) = std::env::var("APPDATA").ok() else {
-        append_log("数据库路径未解析：缺少 APPDATA");
-        return;
-    };
-    let dir = PathBuf::from(roaming).join("com.dawntick.app");
-    let file = dir.join("dawn-tick.db");
+    let (dir, fallback) = resolve_data_dir();
+    if let Some(reason) = fallback {
+        append_log(&reason);
+    }
+    let file = database_file(&dir);
+    append_log(&format!("数据目录: {}", dir.display()));
     append_log(&format!("数据库路径: {}", file.display()));
     append_log(&format!(
         "数据库文件: {}",
@@ -502,9 +795,12 @@ fn log_database_status() {
     }
 
     for suffix in ["-wal", "-shm", "-journal"] {
-        let side = dir.join(format!("dawn-tick.db{suffix}"));
+        let side = dir.join(format!("{DATABASE_FILE_NAME}{suffix}"));
         if let Ok(meta) = std::fs::metadata(&side) {
-            append_log(&format!("附带文件 dawn-tick.db{suffix}: {} 字节", meta.len()));
+            append_log(&format!(
+                "附带文件 {DATABASE_FILE_NAME}{suffix}: {} 字节",
+                meta.len()
+            ));
         }
     }
 }
@@ -1337,10 +1633,7 @@ fn elevation_status() -> ElevationStatus {
 /// 数据库是否可写：目录建写探针 + 数据库文件开写句柄（文件不存在时以目录可写为准）。
 #[cfg(windows)]
 fn database_writable() -> bool {
-    let Some(roaming) = std::env::var("APPDATA").ok() else {
-        return false;
-    };
-    let dir = PathBuf::from(roaming).join("com.dawntick.app");
+    let dir = data_dir();
     if create_dir_all(&dir).is_err() {
         return false;
     }
@@ -1349,7 +1642,7 @@ fn database_writable() -> bool {
         return false;
     }
     let _ = std::fs::remove_file(&probe);
-    let file = dir.join("dawn-tick.db");
+    let file = database_file(&dir);
     if !file.exists() {
         return true;
     }
@@ -1937,6 +2230,10 @@ pub fn run() {
             relaunch_elevated,
             elevation_status,
             database_url,
+            storage_info,
+            set_storage_path,
+            open_data_dir,
+            relaunch_app,
             open_import_window,
             close_import_window,
             submit_page_import,
@@ -2467,5 +2764,86 @@ mod tests {
         assert!(!position_visible(i32::MIN, i32::MIN, u32::MAX, u32::MAX, &screens, VISIBLE_MARGIN));
         // 拿不到显示器列表时不设位置
         assert!(!position_visible(100, 80, 1200, 800, &[], VISIBLE_MARGIN));
+    }
+
+    /// 便携版判定：必须叫 DawnTick.exe 且不在安装目录里。
+    #[test]
+    fn portable_layout_needs_renamed_exe_outside_install_dir() {
+        let install_root = std::path::Path::new(r"C:\Users\me\AppData\Local\DawnTick");
+        let installed = std::path::Path::new(r"C:\Users\me\AppData\Local\DawnTick\DawnTick.exe");
+        assert!(!portable_layout(installed, Some(install_root)), "安装目录里的同名程序按安装版处理");
+        assert!(
+            portable_layout(std::path::Path::new(r"D:\dt\DawnTick.exe"), Some(install_root)),
+            "别的目录里的便携包按便携版处理"
+        );
+        assert!(
+            portable_layout(std::path::Path::new(r"D:\dt\DawnTick.exe"), None),
+            "拿不到安装目录时按便携版处理"
+        );
+        assert!(
+            !portable_layout(std::path::Path::new(r"E:\repo\target\debug\dawn-tick-desktop.exe"), Some(install_root)),
+            "开发构建按安装版处理"
+        );
+        assert!(
+            !portable_layout(std::path::Path::new("DawnTick.exe"), Some(install_root)),
+            "没有父目录时按安装版处理"
+        );
+    }
+
+    /// 自定义位置：相对路径以程序所在目录为基准，绝对路径原样使用。
+    #[cfg(windows)]
+    #[test]
+    fn storage_path_resolves_relative_to_exe() {
+        let base = exe_dir().expect("测试进程有程序目录");
+        assert_eq!(resolve_storage_path("dawn-tick-data"), base.join("dawn-tick-data"));
+        assert_eq!(resolve_storage_path(r"D:\dt-data"), PathBuf::from(r"D:\dt-data"));
+    }
+
+    /// 自定义位置不可用时退回默认目录并给出提示。
+    #[cfg(desktop)]
+    #[test]
+    fn choose_data_dir_falls_back_when_custom_unusable() {
+        let temp = scratch_dir(&format!("dawntick-storage-test-{}", std::process::id()));
+        let default = temp.join("default");
+        let usable = temp.join("custom");
+        let (picked, note) = choose_data_dir(default.clone(), Some(usable.to_string_lossy().to_string()));
+        assert_eq!(picked, usable);
+        assert!(note.is_none(), "可用位置不应有提示");
+
+        // 把一个文件当目录用：创建目录必然失败
+        let blocked = temp.join("blocked");
+        std::fs::write(&blocked, b"file").expect("写入占位文件");
+        let (picked, note) = choose_data_dir(default.clone(), Some(blocked.to_string_lossy().to_string()));
+        assert_eq!(picked, default, "不可用时应退回默认目录");
+        assert!(note.is_some(), "不可用时应给出提示");
+
+        let (picked, note) = choose_data_dir(default.clone(), None);
+        assert_eq!(picked, default);
+        assert!(note.is_none());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// 换存储位置时复制数据库、几何与日志，目标已有的文件不覆盖。
+    #[cfg(desktop)]
+    #[test]
+    fn copy_data_files_keeps_existing_target() {
+        let temp = scratch_dir(&format!("dawntick-copy-test-{}", std::process::id()));
+        let from = temp.join("from");
+        let to = temp.join("to");
+        std::fs::create_dir_all(&from).expect("建源目录");
+        std::fs::create_dir_all(&to).expect("建目标目录");
+        std::fs::write(from.join(DATABASE_FILE_NAME), b"db").expect("写数据库");
+        std::fs::write(from.join(format!("{DATABASE_FILE_NAME}-wal")), b"wal").expect("写 wal");
+        std::fs::write(from.join("window.json"), b"{}").expect("写几何");
+        std::fs::write(to.join("window.json"), b"keep").expect("目标已有同名文件");
+
+        let copied = copy_data_files(&from, &to);
+        assert!(copied.contains(&DATABASE_FILE_NAME.to_string()));
+        assert!(copied.contains(&format!("{DATABASE_FILE_NAME}-wal")));
+        assert!(!copied.contains(&"window.json".to_string()), "目标已有文件不覆盖");
+        assert_eq!(std::fs::read(to.join(DATABASE_FILE_NAME)).expect("读回数据库"), b"db");
+        assert_eq!(std::fs::read(to.join("window.json")).expect("读回几何"), b"keep");
+        assert!(copy_data_files(&to, &to).is_empty(), "同一个目录不复制");
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

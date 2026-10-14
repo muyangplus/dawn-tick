@@ -2108,6 +2108,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
   );
 
+  check(
+    '浏览器端不显示存储位置与日志模式开关',
+    view.container.querySelector('[data-role="storage-location"]') === null &&
+      view.container.querySelector('[data-role="wal-setting"]') === null &&
+      (view.container.textContent ?? '').includes('本地存储：'),
+    '',
+  );
+
   if (clickByText(view.container, '导出配置')) await flush(10);
   check(
     '导出可选模块',

@@ -49,6 +49,16 @@ import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
 import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget, type PinWidgetResult } from '../widget-pin.ts';
 import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
+import {
+  canConfigureStorage,
+  openDataDirectory,
+  readStorageInfo,
+  relaunchApplication,
+  saveStoragePath,
+  type StorageInfo,
+} from '../storage-config.ts';
+import { walEnabledByDefault } from '../db/journal.ts';
+import { detectPlatform } from '../platform-detect.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
@@ -179,6 +189,64 @@ export function SettingsView({
   const [presetBusy, setPresetBusy] = useState(false);
   const [presetResult, setPresetResult] = useState<string | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const [storagePathInput, setStoragePathInput] = useState('');
+  const [storageMessage, setStorageMessage] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [restartNeeded, setRestartNeeded] = useState(false);
+  const platform = detectPlatform();
+  const portableStorage = storageInfo?.portable === true;
+  const walDefaultOn = walEnabledByDefault(portableStorage, platform);
+  const walOn = settings.walMode === 'on' || (settings.walMode === 'auto' && walDefaultOn);
+
+  useEffect(() => {
+    if (!canConfigureStorage()) return;
+    void (async () => {
+      const info = await readStorageInfo();
+      if (info === null) return;
+      setStorageInfo(info);
+      setStoragePathInput(info.customPath);
+      if (info.fallbackReason !== null) setStorageError(info.fallbackReason);
+    })();
+  }, []);
+
+  /** 保存存储位置：成功后要重启才生效。 */
+  async function saveStorage(path: string): Promise<void> {
+    setStorageBusy(true);
+    setStorageError(null);
+    setStorageMessage(null);
+    try {
+      const result = await saveStoragePath(path);
+      if (result.info === null) {
+        setStorageError(result.error ?? '保存失败');
+        return;
+      }
+      setStorageInfo(result.info);
+      setStoragePathInput(result.info.customPath);
+      const copied = result.info.copied.length;
+      setStorageMessage(
+        copied > 0
+          ? `已写入 ${result.info.dir}，复制了 ${copied} 个数据文件，重启后生效`
+          : `已写入 ${result.info.dir}，重启后生效`,
+      );
+      setRestartNeeded(true);
+    } finally {
+      setStorageBusy(false);
+    }
+  }
+
+  /** 日志模式存在库里，下次打开数据库时套用。 */
+  async function toggleWal(next: boolean): Promise<void> {
+    await onPatch({ walMode: next ? 'on' : 'off' });
+    setStorageMessage('日志模式已保存，重启后生效');
+    setRestartNeeded(true);
+  }
+
+  async function restartNow(): Promise<void> {
+    const ok = await relaunchApplication();
+    if (!ok) setStorageError('重启失败，请手动重新打开应用');
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -976,9 +1044,101 @@ export function SettingsView({
     data: (
       <>
         <span className="text-xs text-muted">本地存储：{storageKind}</span>
-        <span className="text-xs text-muted">
-          浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
-        </span>
+        {platform !== 'tauri' && platform !== 'capacitor' && (
+          <span className="text-xs text-muted">
+            浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
+          </span>
+        )}
+        {canConfigureStorage() ? (
+          <>
+            <div className="flex flex-col gap-1" data-role="storage-location">
+              <span className="text-xs text-muted" data-role="storage-dir">
+                存储位置：{storageInfo === null ? '读取中' : storageInfo.dir}
+                {storageInfo === null ? '' : storageInfo.portable ? '（便携版）' : '（安装版）'}
+              </span>
+              <Field label="自定义存储位置" hint="留空用默认位置；相对路径以程序所在目录为基准，改完重启生效">
+                <Input
+                  data-role="storage-path"
+                  value={storagePathInput}
+                  placeholder={storageInfo?.defaultDir ?? ''}
+                  onChange={(event) => setStoragePathInput(event.target.value)}
+                />
+              </Field>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label="保存存储位置"
+                  disabled={storageBusy}
+                  onClick={() => void saveStorage(storagePathInput)}
+                >
+                  保存位置
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="恢复默认存储位置"
+                  disabled={storageBusy}
+                  onClick={() => void saveStorage('')}
+                >
+                  恢复默认
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label="打开数据目录"
+                  onClick={() => void openDataDirectory()}
+                >
+                  打开数据目录
+                </Button>
+              </div>
+              {storageInfo !== null && (
+                <span className="text-xs text-muted" data-role="storage-detail">
+                  数据库文件：{storageInfo.dbFile}（
+                  {storageInfo.dbExists ? `${Math.round(storageInfo.dbBytes / 1024)} KB` : '尚未创建'}）
+                  {storageInfo.sidecars.length > 0 ? `，附带 ${storageInfo.sidecars.join(' / ')}` : '，无附带文件'}
+                </span>
+              )}
+              {storageError !== null && (
+                <span className="text-xs text-danger-strong" data-role="storage-error">
+                  {storageError}
+                </span>
+              )}
+              {storageMessage !== null && (
+                <span className="text-xs text-muted" data-role="storage-message">
+                  {storageMessage}
+                </span>
+              )}
+              {restartNeeded && (
+                <Button size="sm" variant="primary" aria-label="立即重启" onClick={() => void restartNow()}>
+                  立即重启
+                </Button>
+              )}
+            </div>
+          </>
+        ) : platform === 'capacitor' ? (
+          <span className="text-xs text-muted">存储位置：应用私有目录（不可改）</span>
+        ) : null}
+        {platform !== 'web' && (
+          <div className="flex flex-col gap-1" data-role="wal-setting">
+            <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+              <span>启用 WAL 日志模式</span>
+              <Switch
+                aria-label="启用 WAL 日志模式"
+                data-role="wal-switch"
+                checked={walOn}
+                onCheckedChange={(checked) => void toggleWal(checked)}
+              />
+            </label>
+            <span className="text-xs text-muted" data-role="wal-hint">
+              {settings.walMode === 'auto'
+                ? `跟随默认：便携版关闭、安装版开启（当前${walOn ? '开启' : '关闭'}）`
+                : settings.walMode === 'on'
+                  ? '已手动开启：数据库旁会有 -wal / -shm 两个文件'
+                  : '已手动关闭：数据库为单个文件，不产生 -wal / -shm'}
+            </span>
+          </div>
+        )}
         <span className="text-xs text-muted">
           本期无服务端，同步协议已就绪但未启用；跨设备迁移用 JSON 或 Base64 备份。
         </span>
