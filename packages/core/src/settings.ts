@@ -64,6 +64,14 @@ export interface AppSettings {
   logLevel: LogLevel;
   /** 数据库日志模式：auto / on / off */
   walMode: WalMode;
+  /** 自动备份总开关 */
+  autoBackup: boolean;
+  /** 启动时备份一次 */
+  backupOnStart: boolean;
+  /** 每天备份一次 */
+  backupDaily: boolean;
+  /** 保留最近多少份快照 */
+  backupKeep: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -89,7 +97,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logEnabled: true,
   logLevel: 'info',
   walMode: 'auto',
+  autoBackup: true,
+  backupOnStart: true,
+  backupDaily: true,
+  backupKeep: 10,
 };
+
+/** 快照保留份数的取值范围。 */
+export const BACKUP_KEEP_MIN = 1;
+export const BACKUP_KEEP_MAX = 100;
 
 /** 数据库日志模式的存储键；开启数据库前要先读它。 */
 export const WAL_META_KEY = 'wal_mode';
@@ -117,6 +133,10 @@ const KEYS = {
   logEnabled: 'log_enabled',
   logLevel: 'log_level',
   walMode: WAL_META_KEY,
+  autoBackup: 'auto_backup',
+  backupOnStart: 'backup_on_start',
+  backupDaily: 'backup_daily',
+  backupKeep: 'backup_keep',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -149,6 +169,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.logEnabled),
     storage.readMeta(KEYS.logLevel),
     storage.readMeta(KEYS.walMode),
+    storage.readMeta(KEYS.autoBackup),
+    storage.readMeta(KEYS.backupOnStart),
+    storage.readMeta(KEYS.backupDaily),
+    storage.readMeta(KEYS.backupKeep),
   ]);
   const [
     timeZone,
@@ -173,9 +197,14 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     logEnabled,
     logLevel,
     walMode,
+    autoBackup,
+    backupOnStart,
+    backupDaily,
+    backupKeep,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
+  const parsedKeep = Number(backupKeep);
 
   return {
     timeZone: timeZone ?? DEFAULT_SETTINGS.timeZone,
@@ -223,6 +252,13 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       walMode !== undefined && (WAL_MODES as readonly string[]).includes(walMode)
         ? (walMode as WalMode)
         : DEFAULT_SETTINGS.walMode,
+    autoBackup: parseBoolean(autoBackup, DEFAULT_SETTINGS.autoBackup),
+    backupOnStart: parseBoolean(backupOnStart, DEFAULT_SETTINGS.backupOnStart),
+    backupDaily: parseBoolean(backupDaily, DEFAULT_SETTINGS.backupDaily),
+    backupKeep:
+      Number.isFinite(parsedKeep) && parsedKeep >= BACKUP_KEEP_MIN && parsedKeep <= BACKUP_KEEP_MAX
+        ? Math.round(parsedKeep)
+        : DEFAULT_SETTINGS.backupKeep,
   };
 }
 
@@ -307,6 +343,25 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
       throw new RangeError(`数据库日志模式只能是 ${WAL_MODES.join(' / ')}`);
     }
     await storage.writeMeta(KEYS.walMode, patch.walMode);
+  }
+  if (patch.autoBackup !== undefined) {
+    await storage.writeMeta(KEYS.autoBackup, patch.autoBackup ? '1' : '0');
+  }
+  if (patch.backupOnStart !== undefined) {
+    await storage.writeMeta(KEYS.backupOnStart, patch.backupOnStart ? '1' : '0');
+  }
+  if (patch.backupDaily !== undefined) {
+    await storage.writeMeta(KEYS.backupDaily, patch.backupDaily ? '1' : '0');
+  }
+  if (patch.backupKeep !== undefined) {
+    if (
+      !Number.isFinite(patch.backupKeep) ||
+      patch.backupKeep < BACKUP_KEEP_MIN ||
+      patch.backupKeep > BACKUP_KEEP_MAX
+    ) {
+      throw new RangeError(`保留份数需要在 ${BACKUP_KEEP_MIN} 到 ${BACKUP_KEEP_MAX} 之间`);
+    }
+    await storage.writeMeta(KEYS.backupKeep, String(Math.round(patch.backupKeep)));
   }
 
   return readSettings(storage);

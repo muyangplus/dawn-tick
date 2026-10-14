@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import {
   BACKUP_MODULES,
@@ -64,6 +64,15 @@ import {
   type StorageInfo,
 } from '../storage-config.ts';
 import { walEnabledByDefault } from '../db/journal.ts';
+import {
+  createSnapshot,
+  deleteSnapshot,
+  listSnapshots,
+  pruneSnapshots,
+  restoreSnapshot,
+  snapshotKind,
+  type SnapshotEntry,
+} from '../backup.ts';
 import { detectPlatform } from '../platform-detect.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
@@ -116,6 +125,13 @@ const LOG_LEVEL_HINT: Record<LogLevel, string> = {
   debug: '详细信息，包含请求/响应详情',
   trace: '全部日志，最详细',
 };
+
+/** 快照大小的可读文案。 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 /** 时区候选：常用 IANA 时区，默认上海；系统时区不在列表里时会额外补一项。 */
 export const TIME_ZONE_OPTIONS: readonly string[] = [
@@ -201,6 +217,10 @@ export function SettingsView({
   const [storageError, setStorageError] = useState<string | null>(null);
   const [storageBusy, setStorageBusy] = useState(false);
   const [restartNeeded, setRestartNeeded] = useState(false);
+  const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
+  const [snapshotMessage, setSnapshotMessage] = useState<string | null>(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const [snapshotRestartNeeded, setSnapshotRestartNeeded] = useState(false);
   const platform = detectPlatform();
   const portableStorage = storageInfo?.portable === true;
   const walDefaultOn = walEnabledByDefault(portableStorage, platform);
@@ -252,6 +272,75 @@ export function SettingsView({
   async function restartNow(): Promise<void> {
     const ok = await relaunchApplication();
     if (!ok) setStorageError('重启失败，请手动重新打开应用');
+  }
+
+  const refreshSnapshots = useCallback(async (): Promise<void> => {
+    setSnapshots(await listSnapshots(storage));
+  }, [storage]);
+
+  useEffect(() => {
+    void refreshSnapshots();
+  }, [refreshSnapshots]);
+
+  /** 立即做一份快照，并按保留份数清理。 */
+  async function backupNow(): Promise<void> {
+    setSnapshotBusy(true);
+    setSnapshotMessage(null);
+    try {
+      const entry = await createSnapshot(storage);
+      if (entry === null) {
+        setSnapshotMessage('备份失败，详见日志');
+        return;
+      }
+      const removed = await pruneSnapshots(storage, settings.backupKeep);
+      await refreshSnapshots();
+      setSnapshotMessage(
+        `已生成快照 ${formatDateTime(entry.createdAt, settings.timeZone)}${removed > 0 ? `，清理了 ${removed} 份旧快照` : ''}`,
+      );
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
+  async function removeSnapshot(entry: SnapshotEntry): Promise<void> {
+    setSnapshotBusy(true);
+    try {
+      const ok = await deleteSnapshot(storage, entry);
+      await refreshSnapshots();
+      setSnapshotMessage(ok ? '已删除该快照' : '删除失败，详见日志');
+    } finally {
+      setSnapshotBusy(false);
+    }
+  }
+
+  /** 恢复：文件快照排队到重启后套用，JSON 快照当场覆盖数据。 */
+  async function restoreSnapshotNow(entry: SnapshotEntry): Promise<void> {
+    setSnapshotBusy(true);
+    setSnapshotMessage(null);
+    try {
+      const safe = await createSnapshot(storage);
+      await pruneSnapshots(storage, settings.backupKeep);
+      const outcome = await restoreSnapshot(storage, entry);
+      if (!outcome.ok) {
+        setSnapshotMessage(`恢复失败：${outcome.error ?? '未知原因'}`);
+        return;
+      }
+      await refreshSnapshots();
+      if (outcome.needsRestart) {
+        setSnapshotRestartNeeded(true);
+        setSnapshotMessage('已排好恢复，重启后生效');
+        return;
+      }
+      const result = outcome.result;
+      setSnapshotMessage(
+        result === null
+          ? '已恢复快照'
+          : `已恢复快照：写入 ${result.imported} 条，清空 ${result.removed} 条${safe === null ? '' : '（恢复前已备份当前数据）'}`,
+      );
+      onChanged();
+    } finally {
+      setSnapshotBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -1138,6 +1227,109 @@ export function SettingsView({
           本期无服务端，同步协议已就绪但未启用；跨设备迁移用 JSON、Base64 文本或整包 zip 备份。
         </span>
         <span className="text-xs text-muted">预设来源：独立仓库 dawn-tick-presets；更新于下次启动生效。</span>
+        <div className="flex flex-col gap-1" data-role="backup-settings">
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>自动备份</span>
+            <Switch
+              aria-label="自动备份"
+              checked={settings.autoBackup}
+              onCheckedChange={(checked) => void onPatch({ autoBackup: checked })}
+            />
+          </label>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>启动时备份一次</span>
+            <Switch
+              aria-label="启动时备份"
+              checked={settings.backupOnStart}
+              disabled={!settings.autoBackup}
+              onCheckedChange={(checked) => void onPatch({ backupOnStart: checked })}
+            />
+          </label>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>每天备份一次</span>
+            <Switch
+              aria-label="每天备份"
+              checked={settings.backupDaily}
+              disabled={!settings.autoBackup}
+              onCheckedChange={(checked) => void onPatch({ backupDaily: checked })}
+            />
+          </label>
+          <Field label="保留份数" hint="1–100 份，超出后自动删最旧的">
+            <Input
+              data-role="backup-keep"
+              type="number"
+              min={1}
+              max={100}
+              value={settings.backupKeep}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                if (Number.isFinite(value) && value >= 1 && value <= 100) {
+                  void onPatch({ backupKeep: Math.round(value) });
+                }
+              }}
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="立即备份"
+              disabled={snapshotBusy}
+              onClick={() => void backupNow()}
+            >
+              立即备份
+            </Button>
+            <span className="text-xs text-muted" data-role="backup-kind">
+              {snapshotKind() === 'file' ? '整库文件快照（数据目录 backups）' : '库内 JSON 快照'}
+            </span>
+          </div>
+          {snapshotMessage !== null && (
+            <span className="text-xs text-muted" data-role="snapshot-message">
+              {snapshotMessage}
+            </span>
+          )}
+          {snapshots.length === 0 ? (
+            <span className="text-xs text-muted" data-role="snapshot-empty">
+              暂无快照
+            </span>
+          ) : (
+            <ul className="flex flex-col gap-1" data-role="snapshot-list">
+              {snapshots.map((entry) => (
+                <li
+                  key={entry.id}
+                  data-role="backup-row"
+                  className="flex flex-wrap items-center gap-2 text-xs text-ink"
+                >
+                  <span>{formatDateTime(entry.createdAt, settings.timeZone)}</span>
+                  <span className="text-muted">{formatBytes(entry.bytes)}</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`恢复快照 ${entry.id}`}
+                    disabled={snapshotBusy}
+                    onClick={() => void restoreSnapshotNow(entry)}
+                  >
+                    恢复
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label={`删除快照 ${entry.id}`}
+                    disabled={snapshotBusy}
+                    onClick={() => void removeSnapshot(entry)}
+                  >
+                    删除
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {snapshotRestartNeeded && (
+            <Button size="sm" variant="primary" aria-label="重启以应用恢复" onClick={() => void restartNow()}>
+              立即重启
+            </Button>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
             导出配置

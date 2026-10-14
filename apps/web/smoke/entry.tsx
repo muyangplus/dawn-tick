@@ -2115,6 +2115,16 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (view.container.textContent ?? '').includes('本地存储：'),
     '',
   );
+  check(
+    '数据页有自动备份开关、保留份数与快照列表',
+    view.container.querySelector('[data-role="backup-settings"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="自动备份"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="启动时备份"]') !== null &&
+      view.container.querySelector('[data-role="backup-keep"]') !== null &&
+      view.container.querySelector('[data-role="backup-kind"]')?.textContent?.includes('JSON 快照') === true &&
+      view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
+    (view.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').slice(0, 80),
+  );
 
   if (clickByText(view.container, '导出配置')) await flush(10);
   check(

@@ -15,6 +15,7 @@ import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { logWarn } from '../log.ts';
 import { readStorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
+import { setActiveSqlDriver } from './active-driver.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 
 export { detectPlatform };
@@ -30,6 +31,7 @@ export const MIGRATIONS: Migration[] = [
   { id: '006_schema_version', sql: schemaVersionSql },
 ];
 
+/** 当前打开的 SQLite 驱动；Web（IndexedDB）与未打开时为 null。快照的 VACUUM INTO 要用。 */
 async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Storage> {
   const driver =
     platform === 'tauri'
@@ -41,6 +43,7 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
   const portable = platform === 'tauri' ? (await readStorageInfo())?.portable === true : false;
   await applyStoredJournalMode(driver, storage, { platform, portable });
   await migrate(driver, MIGRATIONS);
+  setActiveSqlDriver(driver);
   return storage;
 }
 

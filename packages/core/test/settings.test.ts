@@ -44,3 +44,26 @@ test('非法日志模式被拒绝', async () => {
   );
   assert.equal((await readSettings(storage)).walMode, DEFAULT_SETTINGS.walMode);
 });
+
+test('备份设置默认开、保留 10 份且范围受限', async () => {
+  const storage = createStorage();
+  const initial = await readSettings(storage);
+  assert.equal(initial.autoBackup, true);
+  assert.equal(initial.backupOnStart, true);
+  assert.equal(initial.backupDaily, true);
+  assert.equal(initial.backupKeep, 10);
+
+  const saved = await writeSettings(storage, {
+    autoBackup: false,
+    backupOnStart: false,
+    backupDaily: false,
+    backupKeep: 3,
+  });
+  assert.equal(saved.autoBackup, false);
+  assert.equal(saved.backupKeep, 3);
+  assert.equal(await storage.readMeta('backup_keep'), '3');
+
+  await assert.rejects(() => writeSettings(storage, { backupKeep: 0 }), /保留份数/);
+  await assert.rejects(() => writeSettings(storage, { backupKeep: 101 }), /保留份数/);
+  assert.equal((await readSettings(storage)).backupKeep, 3, '非法值不落库');
+});

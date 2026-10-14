@@ -316,6 +316,194 @@ fn relaunch_app(app: tauri::AppHandle) {
     app.restart();
 }
 
+/// 数据库快照目录：数据目录下的 backups。
+fn backups_dir() -> PathBuf {
+    data_dir().join("backups")
+}
+
+/// 待生效的恢复请求：重启时在打开数据库之前套用。
+fn pending_restore_file() -> PathBuf {
+    data_dir().join("pending-restore.json")
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupEntry {
+    name: String,
+    bytes: u64,
+    /// 文件修改时间（UTC 毫秒）
+    created_at: u64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingRestore {
+    name: String,
+}
+
+/// 快照文件名：dawn-tick-<yyyyMMdd-HHmmss>.db，按名字排序即为时间顺序。
+fn backup_name(unix_ms: i64) -> String {
+    let offset = local_offset_minutes();
+    let shifted = unix_ms + i64::from(offset) * 60_000;
+    let days = shifted.div_euclid(86_400_000);
+    let rest = shifted.rem_euclid(86_400_000);
+    let (year, month, day) = civil_from_days(days);
+    let hour = rest / 3_600_000;
+    let minute = (rest % 3_600_000) / 60_000;
+    let second = (rest % 60_000) / 1000;
+    format!("dawn-tick-{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}.db")
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 快照名只允许 backups 目录内的 dawn-tick-*.db，拒绝任何路径穿越。
+fn safe_backup_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.contains(['/', '\\', ':'])
+        || !trimmed.starts_with("dawn-tick-")
+        || !trimmed.ends_with(".db")
+    {
+        return Err("快照名不合法".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupTarget {
+    name: String,
+    path: String,
+    /// 已转义，可直接拼进 `VACUUM INTO ...` 的 SQL 字面量
+    sql_literal: String,
+}
+
+/// 取下一个快照的目标路径：建目录、给出唯一文件名与 SQL 字面量。
+#[tauri::command]
+fn backup_target() -> Result<BackupTarget, String> {
+    let dir = backups_dir();
+    create_dir_all(&dir).map_err(|error| format!("创建备份目录失败: {error}"))?;
+    let name = backup_name(now_ms());
+    let path = dir.join(&name);
+    let literal = format!("'{}'", path.to_string_lossy().replace('\'', "''"));
+    Ok(BackupTarget {
+        name,
+        path: path.to_string_lossy().to_string(),
+        sql_literal: literal,
+    })
+}
+
+fn list_backup_entries() -> Result<Vec<BackupEntry>, String> {
+    let dir = backups_dir();
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for item in std::fs::read_dir(&dir).map_err(|error| format!("读取备份目录失败: {error}"))? {
+        let Ok(item) = item else { continue };
+        let name = item.file_name().to_string_lossy().to_string();
+        if !name.starts_with("dawn-tick-") || !name.ends_with(".db") {
+            continue;
+        }
+        let Ok(meta) = item.metadata() else { continue };
+        let created_at = meta
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|value| value.as_millis() as u64)
+            .unwrap_or(0);
+        entries.push(BackupEntry {
+            name,
+            bytes: meta.len(),
+            created_at,
+        });
+    }
+    entries.sort_by(|left, right| right.name.cmp(&left.name));
+    Ok(entries)
+}
+
+/// 列出全部快照，最新的排在最前。
+#[tauri::command]
+fn list_backups() -> Result<Vec<BackupEntry>, String> {
+    list_backup_entries()
+}
+
+#[tauri::command]
+fn delete_backup(name: String) -> Result<(), String> {
+    let safe = safe_backup_name(&name)?;
+    let path = backups_dir().join(&safe);
+    std::fs::remove_file(&path).map_err(|error| format!("删除快照失败: {error}"))?;
+    append_log(&format!("已删除快照: {safe}"));
+    Ok(())
+}
+
+/// 只保留最新的 keep 份，返回实际删掉的份数。
+#[tauri::command]
+fn prune_backups(keep: usize) -> Result<usize, String> {
+    let entries = list_backup_entries()?;
+    let mut removed = 0;
+    for entry in entries.into_iter().skip(keep) {
+        if std::fs::remove_file(backups_dir().join(&entry.name)).is_ok() {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        append_log(&format!("已按保留份数清理 {removed} 份快照"));
+    }
+    Ok(removed)
+}
+
+/// 排队一份恢复请求：重启时在打开数据库之前用快照覆盖当前库。
+#[tauri::command]
+fn restore_backup(name: String) -> Result<String, String> {
+    let safe = safe_backup_name(&name)?;
+    if !backups_dir().join(&safe).is_file() {
+        return Err("快照不存在".to_string());
+    }
+    write_json(&pending_restore_file(), &PendingRestore { name: safe.clone() })
+        .then_some(())
+        .ok_or_else(|| "写入恢复请求失败".to_string())?;
+    append_log(&format!("已排队恢复快照: {safe}"));
+    Ok(safe)
+}
+
+/// 启动时套用排队的恢复请求：覆盖数据库并清掉 WAL 附带文件。
+fn apply_pending_restore() {
+    let marker = pending_restore_file();
+    let Some(pending) = read_json::<PendingRestore>(&marker) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&marker);
+    let Ok(safe) = safe_backup_name(&pending.name) else {
+        append_log("恢复请求里的快照名不合法，已忽略");
+        return;
+    };
+    let source = backups_dir().join(&safe);
+    if !source.is_file() {
+        append_log(&format!("恢复请求的快照不存在，已忽略: {safe}"));
+        return;
+    }
+    let dir = data_dir();
+    let _ = create_dir_all(&dir);
+    let db = database_file(&dir);
+    for path in [
+        db.clone(),
+        dir.join(format!("{DATABASE_FILE_NAME}-wal")),
+        dir.join(format!("{DATABASE_FILE_NAME}-shm")),
+        dir.join(format!("{DATABASE_FILE_NAME}-journal")),
+    ] {
+        let _ = std::fs::remove_file(&path);
+    }
+    match std::fs::copy(&source, &db) {
+        Ok(bytes) => append_log(&format!("已套用快照 {safe}（{bytes} 字节）")),
+        Err(error) => append_log(&format!("套用快照失败: {error}")),
+    }
+}
+
 
 /// 日志目录候选：数据目录优先，其次 %LOCALAPPDATA%\com.dawntick.app，最后 %TEMP%\DawnTick。
 fn compute_log_dirs() -> Vec<PathBuf> {
@@ -2236,6 +2424,9 @@ pub fn run() {
         InstanceRole::Owner => write_instance_state(),
     }
 
+    // 先套用排队的恢复请求：必须在打开数据库之前完成
+    apply_pending_restore();
+
     #[cfg(windows)]
     ensure_webview_folder_writable();
 
@@ -2281,6 +2472,11 @@ pub fn run() {
             set_storage_path,
             open_data_dir,
             relaunch_app,
+            backup_target,
+            list_backups,
+            delete_backup,
+            prune_backups,
+            restore_backup,
             open_import_window,
             close_import_window,
             submit_page_import,
@@ -2818,6 +3014,36 @@ mod tests {
         assert!(!position_visible(i32::MIN, i32::MIN, u32::MAX, u32::MAX, &screens, VISIBLE_MARGIN));
         // 拿不到显示器列表时不设位置
         assert!(!position_visible(100, 80, 1200, 800, &[], VISIBLE_MARGIN));
+    }
+
+    /// 快照文件名与安全校验。
+    #[test]
+    fn backup_names_are_stamped_and_sandboxed() {
+        let name = backup_name(1_793_000_000_000);
+        assert!(name.starts_with("dawn-tick-"), "{name}");
+        assert!(name.ends_with(".db"), "{name}");
+        let digits: String = name
+            .trim_start_matches("dawn-tick-")
+            .trim_end_matches(".db")
+            .to_string();
+        assert_eq!(digits.len(), 15, "yyyyMMdd-HHmmss：{digits}");
+        assert!(digits.chars().all(|ch| ch.is_ascii_digit() || ch == '-'));
+
+        assert_eq!(
+            safe_backup_name(" dawn-tick-20261014-120000.db ").unwrap(),
+            "dawn-tick-20261014-120000.db"
+        );
+        for bad in [
+            "",
+            "../dawn-tick-20261014-120000.db",
+            "dawn-tick-20261014-120000.db/..",
+            r"sub\dawn-tick-20261014-120000.db",
+            "dawn-tick-C:20261014-120000.db",
+            "other.db",
+            "dawn-tick-x.txt",
+        ] {
+            assert!(safe_backup_name(bad).is_err(), "应拒绝：{bad}");
+        }
     }
 
     /// 标准 Base64 解码：导出整包时按二进制写盘用。

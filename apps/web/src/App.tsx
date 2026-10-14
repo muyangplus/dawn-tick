@@ -30,6 +30,7 @@ import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
 import { Plus } from 'lucide-react';
 import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type LessonCell } from './data.ts';
+import { maybeAutoBackup } from './backup.ts';
 import { openStorage } from './db/platform.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
@@ -172,6 +173,8 @@ const SEEN_NOTICES_KEY = 'seen_notices';
 const NOTICE_DEV = 'dev-frequent-updates';
 const NOTICE_BETA = 'beta-unstable';
 const RELEASES_URL = 'https://github.com/muyangplus/dawn-tick/releases';
+/** 每天备份的检查间隔：够短能补上当天的份，又不至于频繁查目录 */
+const DAILY_BACKUP_CHECK_MS = 10 * 60 * 1000;
 
 async function readSeenNotices(storage: Storage): Promise<string[]> {
   try {
@@ -296,6 +299,10 @@ export function App() {
         setSettings(loaded);
         setResolvedMode(applyTheme(loaded.themePreset, loaded.theme));
         logInfo('storage', '存储就绪', { kind: opened.kind, theme: loaded.themePreset, mode: loaded.theme });
+        const snapshot = await maybeAutoBackup(opened, loaded, { startup: true });
+        if (snapshot !== null) {
+          logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
+        }
         await reload(opened, loaded);
         const manager = globalThis.navigator?.storage;
         if (manager !== undefined && typeof manager.persist === 'function') {
@@ -313,6 +320,19 @@ export function App() {
       cancelled = true;
     };
   }, [reload]);
+
+  // 每天一次自动备份：应用一直开着时也要能补上当天那份
+  useEffect(() => {
+    if (storage === null) return;
+    const timer = globalThis.setInterval(() => {
+      void maybeAutoBackup(storage, settings, { startup: false }).then((snapshot) => {
+        if (snapshot !== null) {
+          logInfo('backup', '每日自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
+        }
+      });
+    }, DAILY_BACKUP_CHECK_MS);
+    return () => globalThis.clearInterval(timer);
+  }, [storage, settings]);
 
   // 开发者特性开关：影响 debug 日志、右键菜单与控制台；更新渠道不变
   useEffect(() => {
