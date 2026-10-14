@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts test/reminder-flow.test.ts test/timeline.test.ts test/channel.test.ts test/log.test.ts test/journal.test.ts test/storage-config.test.ts test/data-management.test.ts test/backup.test.ts test/bookmarklet.test.ts test/import-injection.test.ts test/update.test.ts test/preset-update.test.ts test/preset-startup.test.ts test/school-picker.test.ts",
+    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts test/reminder-flow.test.ts test/timeline.test.ts test/channel.test.ts test/log.test.ts test/journal.test.ts test/storage-config.test.ts test/data-management.test.ts test/backup.test.ts test/webdav.test.ts test/bookmarklet.test.ts test/import-injection.test.ts test/update.test.ts test/preset-update.test.ts test/preset-startup.test.ts test/school-picker.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
@@ -32,6 +32,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2.12.2",
     "@tauri-apps/plugin-dialog": "^2.8.2",
+    "@tauri-apps/plugin-http": "^2.8.2",
     "@tauri-apps/plugin-notification": "^2.5.1",
     "@tauri-apps/plugin-sql": "^2.5.0",
     "class-variance-authority": "^0.7.1",

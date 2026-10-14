@@ -134,6 +134,8 @@
 
 数据库快照：Windows 用 `VACUUM INTO` 在数据目录 `backups/` 写整库文件，Web 与 Android 存库内 JSON 快照；默认自动备份（启动时与每天各一次，保留最近 10 份，份数可改 1–100），也可手动备份；设置页可查看、恢复与删除快照，恢复文件快照后重启生效。跨设备迁移用「导出配置 / 导入配置」：JSON 文件、Base64 文本或整包 zip。
 
+WebDAV 同步：把整库快照与设置预设打包传到远端目录，可手动上传/下载，也可开启自动同步（启动时与每天各一次，远端更新时提示下载）；地址、用户名与密码存在本机设置里（密码不进导出）。
+
 ## 许可证
 
 Apache-2.0，见 [LICENSE](LICENSE)。运行时依赖的清单与许可证全文见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)：由 `node tools/legal/collect-licenses.mjs` 从各端清单与已安装依赖的元数据生成，`--check` 可校验两者一致；应用内「关于」也展示同一份清单。

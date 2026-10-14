@@ -72,6 +72,19 @@ export interface AppSettings {
   backupDaily: boolean;
   /** 保留最近多少份快照 */
   backupKeep: number;
+  /** WebDAV 目录地址（完整 URL） */
+  webdavUrl: string;
+  webdavUser: string;
+  /** WebDAV 密码：只存本机，不参与导出 */
+  webdavPassword: string;
+  /** 自动同步总开关 */
+  webdavAuto: boolean;
+  /** 启动时同步一次 */
+  webdavOnStart: boolean;
+  /** 每天同步一次 */
+  webdavDaily: boolean;
+  /** 远端保留历史多份（关闭时固定文件名覆盖） */
+  webdavHistory: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -101,6 +114,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   backupOnStart: true,
   backupDaily: true,
   backupKeep: 10,
+  webdavUrl: '',
+  webdavUser: '',
+  webdavPassword: '',
+  webdavAuto: false,
+  webdavOnStart: true,
+  webdavDaily: true,
+  webdavHistory: false,
 };
 
 /** 快照保留份数的取值范围。 */
@@ -137,6 +157,13 @@ const KEYS = {
   backupOnStart: 'backup_on_start',
   backupDaily: 'backup_daily',
   backupKeep: 'backup_keep',
+  webdavUrl: 'webdav_url',
+  webdavUser: 'webdav_user',
+  webdavPassword: 'webdav_password',
+  webdavAuto: 'webdav_auto',
+  webdavOnStart: 'webdav_on_start',
+  webdavDaily: 'webdav_daily',
+  webdavHistory: 'webdav_history',
 } as const;
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
@@ -173,6 +200,13 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.backupOnStart),
     storage.readMeta(KEYS.backupDaily),
     storage.readMeta(KEYS.backupKeep),
+    storage.readMeta(KEYS.webdavUrl),
+    storage.readMeta(KEYS.webdavUser),
+    storage.readMeta(KEYS.webdavPassword),
+    storage.readMeta(KEYS.webdavAuto),
+    storage.readMeta(KEYS.webdavOnStart),
+    storage.readMeta(KEYS.webdavDaily),
+    storage.readMeta(KEYS.webdavHistory),
   ]);
   const [
     timeZone,
@@ -201,6 +235,13 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     backupOnStart,
     backupDaily,
     backupKeep,
+    webdavUrl,
+    webdavUser,
+    webdavPassword,
+    webdavAuto,
+    webdavOnStart,
+    webdavDaily,
+    webdavHistory,
   ] = entries;
   const parsedDays = Number(viewDays);
   const parsedMinutes = Number(classReminderMinutes);
@@ -259,6 +300,13 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       Number.isFinite(parsedKeep) && parsedKeep >= BACKUP_KEEP_MIN && parsedKeep <= BACKUP_KEEP_MAX
         ? Math.round(parsedKeep)
         : DEFAULT_SETTINGS.backupKeep,
+    webdavUrl: (webdavUrl ?? '').trim(),
+    webdavUser: (webdavUser ?? '').trim(),
+    webdavPassword: webdavPassword ?? '',
+    webdavAuto: parseBoolean(webdavAuto, DEFAULT_SETTINGS.webdavAuto),
+    webdavOnStart: parseBoolean(webdavOnStart, DEFAULT_SETTINGS.webdavOnStart),
+    webdavDaily: parseBoolean(webdavDaily, DEFAULT_SETTINGS.webdavDaily),
+    webdavHistory: parseBoolean(webdavHistory, DEFAULT_SETTINGS.webdavHistory),
   };
 }
 
@@ -362,6 +410,23 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
       throw new RangeError(`保留份数需要在 ${BACKUP_KEEP_MIN} 到 ${BACKUP_KEEP_MAX} 之间`);
     }
     await storage.writeMeta(KEYS.backupKeep, String(Math.round(patch.backupKeep)));
+  }
+  if (patch.webdavUrl !== undefined) await storage.writeMeta(KEYS.webdavUrl, patch.webdavUrl.trim());
+  if (patch.webdavUser !== undefined) await storage.writeMeta(KEYS.webdavUser, patch.webdavUser.trim());
+  if (patch.webdavPassword !== undefined) {
+    await storage.writeMeta(KEYS.webdavPassword, patch.webdavPassword);
+  }
+  if (patch.webdavAuto !== undefined) {
+    await storage.writeMeta(KEYS.webdavAuto, patch.webdavAuto ? '1' : '0');
+  }
+  if (patch.webdavOnStart !== undefined) {
+    await storage.writeMeta(KEYS.webdavOnStart, patch.webdavOnStart ? '1' : '0');
+  }
+  if (patch.webdavDaily !== undefined) {
+    await storage.writeMeta(KEYS.webdavDaily, patch.webdavDaily ? '1' : '0');
+  }
+  if (patch.webdavHistory !== undefined) {
+    await storage.writeMeta(KEYS.webdavHistory, patch.webdavHistory ? '1' : '0');
   }
 
   return readSettings(storage);

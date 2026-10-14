@@ -33,6 +33,13 @@ export const BACKUP_META_KEYS: readonly string[] = [
   'backup_on_start',
   'backup_daily',
   'backup_keep',
+  // WebDAV 密码不进导出：备份文件可能被分享出去
+  'webdav_url',
+  'webdav_user',
+  'webdav_auto',
+  'webdav_on_start',
+  'webdav_daily',
+  'webdav_history',
 ];
 
 /** 备份模块：界面按模块勾选，导出与导入共用同一分组。 */

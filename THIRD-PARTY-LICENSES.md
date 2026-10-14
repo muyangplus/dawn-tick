@@ -31,6 +31,7 @@
 | Web | @tailwindcss/vite | 4.3.3 | MIT |
 | Web | @tauri-apps/api | 2.12.2 | Apache-2.0 OR MIT |
 | Web | @tauri-apps/plugin-dialog | 2.8.2 | MIT OR Apache-2.0 |
+| Web | @tauri-apps/plugin-http | 2.8.2 | MIT OR Apache-2.0 |
 | Web | @tauri-apps/plugin-notification | 2.5.1 | MIT OR Apache-2.0 |
 | Web | @tauri-apps/plugin-sql | 2.5.0 | MIT OR Apache-2.0 |
 | Web | class-variance-authority | 0.7.1 | Apache-2.0 |
@@ -54,6 +55,7 @@
 | Windows | tauri | 2.12.2 | Apache-2.0 OR MIT |
 | Windows | tauri-build | 2.7.1 | Apache-2.0 OR MIT |
 | Windows | tauri-plugin-dialog | 2.8.2 | Apache-2.0 OR MIT |
+| Windows | tauri-plugin-http | 2.8.2 | Apache-2.0 OR MIT |
 | Windows | tauri-plugin-notification | 2.5.1 | Apache-2.0 OR MIT |
 | Windows | tauri-plugin-sql | 2.5.0 | Apache-2.0 OR MIT |
 | Windows | windows-sys | 0.52.0 | MIT OR Apache-2.0 |
@@ -272,6 +274,10 @@ Apache License
 该包未随附许可证全文，许可证类型以上表声明为准。
 
 #### tauri-plugin-dialog 2.8.2（Windows）
+
+该包未随附许可证全文，许可证类型以上表声明为准。
+
+#### tauri-plugin-http 2.8.2（Windows）
 
 该包未随附许可证全文，许可证类型以上表声明为准。
 
@@ -1109,6 +1115,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ### MIT OR Apache-2.0
 
 #### @tauri-apps/plugin-dialog 2.8.2（Web）
+
+该包未随附许可证全文，许可证类型以上表声明为准。
+
+#### @tauri-apps/plugin-http 2.8.2（Web）
 
 该包未随附许可证全文，许可证类型以上表声明为准。
 

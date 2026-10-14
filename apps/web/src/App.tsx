@@ -30,7 +30,8 @@ import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
 import { Plus } from 'lucide-react';
 import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type LessonCell } from './data.ts';
-import { maybeAutoBackup } from './backup.ts';
+import { maybeAutoBackup, createSnapshot, pruneSnapshots } from './backup.ts';
+import { downloadAndApply, maybeAutoSync, type ApplyMode } from './webdav.ts';
 import { openStorage } from './db/platform.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
@@ -46,6 +47,7 @@ import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint } from './lib/use-media.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
+import { relaunchApplication } from './storage-config.ts';
 import { applyDevFeatures } from './dev-features.ts';
 import { applyLogSettings, defaultLogLevel } from './log.ts';
 import { openExternalUrl } from './system-actions.ts';
@@ -303,6 +305,14 @@ export function App() {
         if (snapshot !== null) {
           logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
         }
+        const sync = await maybeAutoSync(opened, loaded, { startup: true });
+        if (sync.action === 'remote-newer') {
+          setRemoteNewer({ name: sync.name, detail: sync.detail });
+        } else if (sync.action === 'uploaded') {
+          logInfo('webdav', '启动自动同步已上传', { name: sync.name });
+        } else if (sync.action === 'error') {
+          logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
+        }
         await reload(opened, loaded);
         const manager = globalThis.navigator?.storage;
         if (manager !== undefined && typeof manager.persist === 'function') {
@@ -321,13 +331,22 @@ export function App() {
     };
   }, [reload]);
 
-  // 每天一次自动备份：应用一直开着时也要能补上当天那份
+  // 每天一次自动备份与自动同步：应用一直开着时也要能补上当天那次
   useEffect(() => {
     if (storage === null) return;
     const timer = globalThis.setInterval(() => {
       void maybeAutoBackup(storage, settings, { startup: false }).then((snapshot) => {
         if (snapshot !== null) {
           logInfo('backup', '每日自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
+        }
+      });
+      void maybeAutoSync(storage, settings, { startup: false }).then((outcome) => {
+        if (outcome.action === 'remote-newer') {
+          setRemoteNewer({ name: outcome.name, detail: outcome.detail });
+        } else if (outcome.action === 'uploaded') {
+          logInfo('webdav', '每日自动同步已上传', { name: outcome.name });
+        } else if (outcome.action === 'error') {
+          logWarn('webdav', '每日自动同步失败', { detail: outcome.detail });
         }
       });
     }, DAILY_BACKUP_CHECK_MS);
@@ -403,6 +422,40 @@ export function App() {
   const refresh = useCallback(() => {
     void reload(storage, settings, viewWeek);
   }, [reload, storage, settings, viewWeek]);
+
+  /** 从库外写入设置后（WebDAV 只应用设置与预设）重新读一遍并热加载。 */
+  const reloadSettings = useCallback(async (): Promise<void> => {
+    if (storage === null) return;
+    const next = await readSettings(storage);
+    setSettings(next);
+    setResolvedMode(applyTheme(next.themePreset, next.theme));
+    await reload(storage, next, viewWeek);
+  }, [reload, storage, viewWeek]);
+
+  const [remoteNewer, setRemoteNewer] = useState<{ name: string; detail: string | null } | null>(null);
+  const [remoteRestartNeeded, setRemoteRestartNeeded] = useState(false);
+
+  /** 远端备份比本机新时的提示：下载前先给本机做快照，避免静默覆盖。 */
+  async function applyRemote(mode: ApplyMode): Promise<void> {
+    if (storage === null) return;
+    const safe = await createSnapshot(storage);
+    await pruneSnapshots(storage, settings.backupKeep);
+    const result = await downloadAndApply(storage, settings, mode, remoteNewer?.name);
+    if (!result.ok) {
+      toast.error(`下载失败：${result.error ?? '未知原因'}`);
+      logWarn('webdav', '下载同步包失败', { error: result.error });
+      return;
+    }
+    setRemoteNewer(null);
+    if (mode === 'settings') {
+      await reloadSettings();
+      toast.success(`已应用远端设置与预设${safe === null ? '' : '（已先备份本机）'}`);
+      return;
+    }
+    await reloadSettings();
+    setRemoteRestartNeeded(true);
+    toast.success(`已恢复整库（写入 ${result.outcome?.full?.imported ?? 0} 条），重启后完全生效`);
+  }
 
   // 窗口改尺寸后记录一次视口与滚动区高度：滑不动时日志里能看出是哪一层算错
   useEffect(() => {
@@ -781,6 +834,7 @@ export function App() {
           storageKind={STORAGE_LABEL[storage.kind]}
           onPatch={patch}
           onChanged={refresh}
+          onSettingsReplaced={reloadSettings}
         />
       )}
       {view === 'mine' && (
@@ -1140,6 +1194,48 @@ export function App() {
             </Button>
             <Button variant="primary" onClick={() => openExternalUrl(RELEASES_URL)}>
               去发布页下载
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 远端备份更新：提示下载，下载前先给本机做快照 */}
+      <Dialog
+        open={remoteNewer !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoteNewer(null);
+        }}
+      >
+        <DialogContent
+          title="远端有较新的备份"
+          description={`${remoteNewer?.name ?? ''}${remoteNewer?.detail == null ? '' : ` · ${remoteNewer.detail}`}；下载前会先给本机做一份快照`}
+        >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRemoteNewer(null)}>
+              稍后
+            </Button>
+            <Button
+              variant="secondary"
+              aria-label="下载并只应用设置与预设"
+              onClick={() => void applyRemote('settings')}
+            >
+              只应用设置与预设
+            </Button>
+            <Button variant="danger" aria-label="下载并恢复整库" onClick={() => void applyRemote('all')}>
+              恢复全部
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={remoteRestartNeeded} onOpenChange={() => setRemoteRestartNeeded(false)}>
+        <DialogContent title="已恢复整库" description="重启后完全生效">
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRemoteRestartNeeded(false)}>
+              稍后
+            </Button>
+            <Button variant="primary" aria-label="立即重启" onClick={() => void relaunchApplication()}>
+              立即重启
             </Button>
           </DialogFooter>
         </DialogContent>

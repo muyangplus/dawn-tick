@@ -73,6 +73,14 @@ import {
   snapshotKind,
   type SnapshotEntry,
 } from '../backup.ts';
+import {
+  davConfigured,
+  downloadAndApply,
+  testConnection,
+  uploadPackage,
+  type ApplyMode,
+  type DavSettings,
+} from '../webdav.ts';
 import { detectPlatform } from '../platform-detect.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
@@ -182,6 +190,8 @@ export interface SettingsViewProps {
   storageKind: string;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
   onChanged: () => void;
+  /** 从库外写入设置后（如 WebDAV 只应用设置）重新读取设置并热加载 */
+  onSettingsReplaced: () => Promise<void>;
 }
 
 export function SettingsView({
@@ -198,6 +208,7 @@ export function SettingsView({
   storageKind,
   onPatch,
   onChanged,
+  onSettingsReplaced,
 }: SettingsViewProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [semesterName, setSemesterName] = useState('');
@@ -221,6 +232,9 @@ export function SettingsView({
   const [snapshotMessage, setSnapshotMessage] = useState<string | null>(null);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [snapshotRestartNeeded, setSnapshotRestartNeeded] = useState(false);
+  const [davStatus, setDavStatus] = useState<string | null>(null);
+  const [davBusy, setDavBusy] = useState(false);
+  const [davConfirmOpen, setDavConfirmOpen] = useState(false);
   const platform = detectPlatform();
   const portableStorage = storageInfo?.portable === true;
   const walDefaultOn = walEnabledByDefault(portableStorage, platform);
@@ -354,6 +368,83 @@ export function SettingsView({
       cancelled = true;
     };
   }, [storage]);
+
+  const dav: DavSettings = {
+    webdavUrl: settings.webdavUrl,
+    webdavUser: settings.webdavUser,
+    webdavPassword: settings.webdavPassword,
+    webdavHistory: settings.webdavHistory,
+  };
+
+  async function testDav(): Promise<void> {
+    setDavBusy(true);
+    setDavStatus('正在测试连接…');
+    try {
+      const status = await testConnection(dav);
+      if (!status.ok) {
+        setDavStatus(`连接失败：${status.error ?? `服务器返回 ${status.status}`}`);
+        return;
+      }
+      const remote =
+        status.lastModified === null
+          ? status.exists
+            ? '远端已有备份'
+            : '远端还没有备份'
+          : `远端备份时间 ${formatDateTime(status.lastModified, settings.timeZone)}`;
+      setDavStatus(`连接正常，${remote}`);
+    } finally {
+      setDavBusy(false);
+    }
+  }
+
+  async function uploadDav(): Promise<void> {
+    setDavBusy(true);
+    setDavStatus(null);
+    try {
+      const result = await uploadPackage(storage, dav);
+      if (!result.ok) {
+        setDavStatus(`上传失败：${result.error ?? '未知原因'}`);
+        return;
+      }
+      await refreshSnapshots();
+      setDavStatus(`已上传 ${result.name}（${formatBytes(result.bytes)}）`);
+    } finally {
+      setDavBusy(false);
+    }
+  }
+
+  /** 下载并应用：先自动备份本机，再按所选模式覆盖。 */
+  async function downloadDav(mode: ApplyMode): Promise<void> {
+    setDavBusy(true);
+    setDavConfirmOpen(false);
+    setDavStatus(null);
+    try {
+      const safe = await createSnapshot(storage);
+      await pruneSnapshots(storage, settings.backupKeep);
+      const result = await downloadAndApply(storage, dav, mode);
+      await refreshSnapshots();
+      if (!result.ok) {
+        setDavStatus(`下载失败：${result.error ?? '未知原因'}`);
+        return;
+      }
+      const outcome = result.outcome;
+      if (mode === 'settings') {
+        const count = outcome?.settings?.imported ?? 0;
+        setDavStatus(
+          `已应用设置与预设（写入 ${count} 条${outcome?.presets === true ? '，含预设' : ''}）${safe === null ? '' : '，下载前已备份本机数据'}`,
+        );
+        await onSettingsReplaced();
+        return;
+      }
+      setDavStatus(
+        `已恢复整库（写入 ${outcome?.full?.imported ?? 0} 条，清空 ${outcome?.full?.removed ?? 0} 条）${safe === null ? '' : '，下载前已备份本机数据'}；重启后完全生效`,
+      );
+      setRestartNeeded(true);
+      onChanged();
+    } finally {
+      setDavBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!canUseWidget()) return;
@@ -1330,6 +1421,100 @@ export function SettingsView({
             </Button>
           )}
         </div>
+        <div className="flex flex-col gap-1" data-role="webdav-settings">
+          <span className="text-sm font-medium text-ink">WebDAV 云同步</span>
+          <Field label="WebDAV 地址" hint="填完整目录 URL，例如 https://dav.example.com/remote.php/dav/files/me/DawnTick">
+            <Input
+              data-role="webdav-url"
+              value={settings.webdavUrl}
+              placeholder="https://dav.example.com/dav/DawnTick"
+              onChange={(event) => void onPatch({ webdavUrl: event.target.value })}
+            />
+          </Field>
+          <Field label="用户名">
+            <Input
+              data-role="webdav-user"
+              value={settings.webdavUser}
+              onChange={(event) => void onPatch({ webdavUser: event.target.value })}
+            />
+          </Field>
+          <Field label="密码" hint="只存在本机设置里，不参与导出">
+            <Input
+              data-role="webdav-password"
+              type="password"
+              value={settings.webdavPassword}
+              onChange={(event) => void onPatch({ webdavPassword: event.target.value })}
+            />
+          </Field>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>自动同步</span>
+            <Switch
+              aria-label="自动同步"
+              checked={settings.webdavAuto}
+              onCheckedChange={(checked) => void onPatch({ webdavAuto: checked })}
+            />
+          </label>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>启动时同步一次</span>
+            <Switch
+              aria-label="启动时同步"
+              checked={settings.webdavOnStart}
+              disabled={!settings.webdavAuto}
+              onCheckedChange={(checked) => void onPatch({ webdavOnStart: checked })}
+            />
+          </label>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>每天同步一次</span>
+            <Switch
+              aria-label="每天同步"
+              checked={settings.webdavDaily}
+              disabled={!settings.webdavAuto}
+              onCheckedChange={(checked) => void onPatch({ webdavDaily: checked })}
+            />
+          </label>
+          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+            <span>远端保留历史多份</span>
+            <Switch
+              aria-label="远端保留历史多份"
+              checked={settings.webdavHistory}
+              onCheckedChange={(checked) => void onPatch({ webdavHistory: checked })}
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="测试 WebDAV 连接"
+              disabled={davBusy || !davConfigured(dav)}
+              onClick={() => void testDav()}
+            >
+              测试连接
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="上传到 WebDAV"
+              disabled={davBusy || !davConfigured(dav)}
+              onClick={() => void uploadDav()}
+            >
+              立即上传
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="从 WebDAV 下载"
+              disabled={davBusy || !davConfigured(dav)}
+              onClick={() => setDavConfirmOpen(true)}
+            >
+              立即下载
+            </Button>
+          </div>
+          {davStatus !== null && (
+            <span className="text-xs text-muted" data-role="webdav-status">
+              {davStatus}
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
             导出配置
@@ -1696,6 +1881,40 @@ export function SettingsView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={davConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setDavConfirmOpen(false);
+        }}
+      >
+        <DialogContent
+          title="从 WebDAV 下载"
+          description="下载前会先给本机做一份快照；「恢复全部」会覆盖本机数据，需重启后完全生效"
+        >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDavConfirmOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="secondary"
+              aria-label="下载并只应用设置与预设"
+              disabled={davBusy}
+              onClick={() => void downloadDav('settings')}
+            >
+              只应用设置与预设
+            </Button>
+            <Button
+              variant="danger"
+              aria-label="下载并恢复整库"
+              disabled={davBusy}
+              onClick={() => void downloadDav('all')}
+            >
+              恢复全部
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={exportOpen}
         onOpenChange={(open) => {

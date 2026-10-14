@@ -2126,6 +2126,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (view.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').slice(0, 80),
   );
 
+  check(
+    '数据页有 WebDAV 地址、账号密码与上传下载入口',
+    view.container.querySelector('[data-role="webdav-settings"]') !== null &&
+      view.container.querySelector('[data-role="webdav-url"]') !== null &&
+      view.container.querySelector('[data-role="webdav-user"]') !== null &&
+      view.container.querySelector('[data-role="webdav-password"]')?.getAttribute('type') === 'password' &&
+      view.container.querySelector('button[aria-label="测试 WebDAV 连接"]')?.hasAttribute('disabled') === true &&
+      view.container.querySelector('button[aria-label="上传到 WebDAV"]') !== null &&
+      view.container.querySelector('button[aria-label="从 WebDAV 下载"]') !== null,
+    '',
+  );
+
   if (clickByText(view.container, '导出配置')) await flush(10);
   check(
     '导出可选模块',
