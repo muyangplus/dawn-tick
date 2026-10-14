@@ -46,8 +46,12 @@ try {
   $base64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($keystorePath))
   [System.IO.File]::WriteAllText($tempFile, $base64, [System.Text.UTF8Encoding]::new($false))
 
-  & gh secret set ANDROID_KEYSTORE_BASE64 -R $Repo --body $base64
-  if ($LASTEXITCODE -ne 0) { throw "写入 ANDROID_KEYSTORE_BASE64 失败：$LASTEXITCODE" }
+  # gh 2.102 的 secret set 没有 --body-file：不传 --body 时它从标准输入读值，
+  # 用 Start-Process 把临时文件直接接到 stdin，既不进命令行也不多加换行
+  $proc = Start-Process -FilePath 'gh' `
+    -ArgumentList @('secret', 'set', 'ANDROID_KEYSTORE_BASE64', '-R', $Repo) `
+    -NoNewWindow -Wait -PassThru -RedirectStandardInput $tempFile
+  if ($proc.ExitCode -ne 0) { throw "写入 ANDROID_KEYSTORE_BASE64 失败：$($proc.ExitCode)" }
   Write-Output ("ANDROID_KEYSTORE_BASE64 已写入（{0} 字节 base64）" -f $base64.Length)
 
   & gh secret set ANDROID_KEYSTORE_PASSWORD -R $Repo --body $storePassword

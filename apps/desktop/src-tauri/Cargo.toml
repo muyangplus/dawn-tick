@@ -19,7 +19,14 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
-tauri-plugin-http = "2"
+# 关掉默认特性里的 cookies：插件的 cookie 存储要在 %LOCALAPPDATA% 下建目录并开文件，
+# 权限稍有问题就会以「拒绝访问」让整个应用起不来；WebDAV 用 Basic 认证，不需要 cookie。
+tauri-plugin-http = { version = "2", default-features = false, features = [
+    "rustls-tls",
+    "http2",
+    "charset",
+    "system-proxy",
+] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
