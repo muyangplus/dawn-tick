@@ -2124,6 +2124,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('input[aria-label="导出 提醒"]') !== null,
     '',
   );
+  // 整包 zip：可选把预设快照与日志一起打包，导出格式仍是三选一
+  if (clickByLabel(document.body, '导出为整包 zip')) await flush(6);
+  check(
+    '整包 zip 可选打包预设与日志',
+    document.querySelector('input[aria-label="整包包含预设快照"]') !== null &&
+      document.querySelector('input[aria-label="整包包含日志文件"]') !== null,
+    '',
+  );
   // Base64 导出：切到 Base64 文本后生成文本框，内容可解析回备份
   if (clickByLabel(document.body, '导出为 Base64 文本')) await flush(10);
   if (clickByText(document.body, '生成文本')) await flush(14);
@@ -2161,7 +2169,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '粘贴 Base64 文本可导入配置',
     pasteParsed &&
-      document.body.textContent?.includes('备份内容') === true &&
+      document.body.textContent?.includes('按修改时间合并') === true &&
       document.querySelector('input[aria-label="导入 课程与排课"]') !== null,
     (document.body.textContent ?? '').slice(-60),
   );

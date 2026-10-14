@@ -198,3 +198,90 @@ test('导入摘要给出各模块行数', async () => {
   assert.ok((settings?.rows ?? 0) >= 3, '设置项按 meta 条数统计');
   assert.equal(summary.length, 5);
 });
+
+test('设置清单覆盖全部设置键', async () => {
+  const { storage } = await seedStorage();
+  await writeSettings(storage, {
+    autoCheckUpdate: false,
+    todoSort: 'type',
+    devFeatures: false,
+    logEnabled: false,
+    logLevel: 'warn',
+    walMode: 'off',
+  });
+  const payload = await exportBackup(storage, { modules: ['settings'] });
+  assert.equal(payload.meta['auto_check_update'], '0');
+  assert.equal(payload.meta['todo_sort'], 'type');
+  assert.equal(payload.meta['dev_features'], '0');
+  assert.equal(payload.meta['log_enabled'], '0');
+  assert.equal(payload.meta['log_level'], 'warn');
+  assert.equal(payload.meta['wal_mode'], 'off');
+
+  const target = createStorage();
+  await importBackup(target, payload, { modules: ['settings'], mode: 'overwrite' });
+  const settings = await import('../src/settings.ts').then((module) => module.readSettings(target));
+  assert.equal(settings.todoSort, 'type');
+  assert.equal(settings.walMode, 'off');
+  assert.equal(settings.devFeatures, false);
+});
+
+test('清空模式先删掉所选模块的本地行', async () => {
+  const { storage } = await seedStorage();
+  const payload = await exportBackup(storage);
+  const target = createStorage();
+  await importBackup(target, payload, { now: 1 });
+
+  // 本地再塞一条备份里没有的课程排课
+  await target.collection('course_schedules').put({
+    id: 's-local',
+    course_id: 'c-1',
+    day_of_week: 3,
+    period_start: 1,
+    period_end: 1,
+    weeks_mask: 1,
+    weeks_raw: '1周',
+    room: null,
+    created_at: 1,
+    updated_at: 1,
+    deleted_at: null,
+    rev: 0,
+    dirty: 0,
+  });
+  assert.equal((await target.collection('course_schedules').getAll()).length, 2);
+
+  const result = await importBackup(target, payload, { mode: 'clear', modules: ['courses'], now: 2 });
+  assert.equal(result.removed, 3, '清掉本地课程 1 行与排课 2 行');
+  assert.equal(result.imported, 2);
+  const schedules = await target.collection<Record<string, unknown>>('course_schedules').getAll();
+  assert.deepEqual(
+    schedules.map((row) => row['id']),
+    ['s-1'],
+    '本地多出来的排课被清掉',
+  );
+  // 未勾选的模块不动
+  assert.ok((await target.collection('events').getAll()).length >= 0);
+});
+
+test('合并模式按 updated_at 取较新的一份', async () => {
+  const { storage } = await seedStorage();
+  const payload = await exportBackup(storage);
+  const target = createStorage();
+  await importBackup(target, payload, { now: 10 });
+
+  const local = await target.collection<Record<string, unknown>>('courses').get('c-1');
+  await target.collection('courses').put({ ...local, name: '本地较新', updated_at: 99 });
+  await importBackup(target, payload, { mode: 'merge', now: 20 });
+  assert.equal(
+    (await target.collection<Record<string, unknown>>('courses').get('c-1'))?.['name'],
+    '本地较新',
+    '本地更新时保留本地',
+  );
+
+  const older = await target.collection<Record<string, unknown>>('courses').get('c-1');
+  await target.collection('courses').put({ ...older, name: '本地较旧', updated_at: 0 });
+  const result = await importBackup(target, payload, { mode: 'merge', now: 20 });
+  assert.ok(result.imported >= 1);
+  const merged = await target.collection<Record<string, unknown>>('courses').get('c-1');
+  assert.equal(merged?.['name'], '高等数学', '本地较旧时用备份覆盖');
+  assert.equal(merged?.['updated_at'], 20);
+});

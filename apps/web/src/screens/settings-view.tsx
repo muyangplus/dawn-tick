@@ -3,21 +3,18 @@ import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload
 import {
   BACKUP_MODULES,
   BACKUP_MODULE_LABEL,
+  IMPORT_MODE_LABEL,
+  IMPORT_MODES,
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
   WIDGET_VARIANTS,
   createSemester,
   deleteSemesterDeep,
-  exportBackup,
   formatDateTime,
-  fromBase64Utf8,
-  importBackup,
   isValidTimeZone,
-  parseBackup,
   LOG_LEVELS,
   summarizeBackup,
-  toBase64Utf8,
   updateSemester,
   type AppSettings,
   type BackupModule,
@@ -32,6 +29,15 @@ import {
   type TodoSort,
   type LogLevel,
 } from '@dawn-tick/core';
+import {
+  exportConfig,
+  importConfig,
+  importResultText,
+  parseImportText,
+  presentModules,
+  readImportFile,
+  type ExportFormat,
+} from '../data-management.ts';
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
 import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
@@ -378,8 +384,10 @@ export function SettingsView({
   }
   const [busy, setBusy] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  /** 导出格式：JSON 文件，或 Base64 文本（文本框展示 + 复制） */
-  const [exportFormat, setExportFormat] = useState<'json' | 'base64'>('json');
+  /** 导出格式：JSON 文件、Base64 文本，或带预设与日志的整包 zip */
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('json');
+  const [bundlePresets, setBundlePresets] = useState(true);
+  const [bundleLogs, setBundleLogs] = useState(false);
   const [exportText, setExportText] = useState('');
   const [importText, setImportText] = useState('');
   /** 手机端添加小组件的结果提示 */
@@ -503,24 +511,29 @@ export function SettingsView({
         setBackupMessage('请至少勾选一个模块');
         return;
       }
-      const payload = await exportBackup(storage, { modules });
-      const json = JSON.stringify(payload, null, 2);
-      const day = new Date().toISOString().slice(0, 10);
-      const stats = {
+      const outcome = await exportConfig(storage, {
         modules,
-        stores: Object.keys(payload.stores).length,
-        rows: Object.values(payload.stores).reduce((total, rows) => total + (Array.isArray(rows) ? rows.length : 0), 0),
-      };
-      if (exportFormat === 'base64') {
-        setExportText(toBase64Utf8(json));
-        logInfo('backup', '生成 Base64 备份文本', stats);
-        setBackupMessage(`已生成 Base64 文本（${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}）`);
+        format: exportFormat,
+        bundlePresets,
+        bundleLogs,
+      });
+      if (outcome.cancelled) {
+        setBackupMessage('已取消保存');
         return;
       }
-      const saved = await saveText(`DawnTick-backup-${day}.json`, json, 'json', 'JSON 备份');
-      if (!saved) return;
-      logInfo('backup', '导出备份', stats);
-      setBackupMessage(`已导出 ${modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、')}`);
+      if (!outcome.ok) {
+        setBackupMessage(`保存失败：${outcome.error ?? '未知原因'}`);
+        return;
+      }
+      const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、');
+      if (exportFormat === 'base64' && outcome.text !== null) {
+        setExportText(outcome.text);
+        setBackupMessage(`已生成 Base64 文本（${label}）`);
+        return;
+      }
+      setBackupMessage(
+        outcome.path === null ? `已下载 ${outcome.name}` : `已保存到 ${outcome.path}`,
+      );
       setExportOpen(false);
     } finally {
       setBusy(false);
@@ -541,22 +554,10 @@ export function SettingsView({
       setBackupMessage('请先粘贴备份文本');
       return;
     }
-    let json = text;
-    if (!text.startsWith('{')) {
-      try {
-        json = fromBase64Utf8(text);
-      } catch (cause: unknown) {
-        setBackupMessage(`Base64 解析失败：${cause instanceof Error ? cause.message : String(cause)}`);
-        return;
-      }
-    }
     try {
-      const payload = parseBackup(json);
+      const payload = parseImportText(text);
       setPendingImport(payload);
-      const present = summarizeBackup(payload)
-        .filter((item) => item.rows > 0)
-        .map((item) => item.module);
-      setImportModules(new Set(present.length > 0 ? present : BACKUP_MODULES));
+      setImportModules(new Set(presentModules(payload)));
       setImportMode('skip');
       setImportOpen(false);
       setBackupMessage('已解析粘贴的配置文本');
@@ -566,18 +567,15 @@ export function SettingsView({
   }
 
   async function chooseBackupFile(file: File): Promise<void> {
-    try {
-      const payload = parseBackup(await file.text());
-      setPendingImport(payload);
-      const present = summarizeBackup(payload)
-        .filter((item) => item.rows > 0)
-        .map((item) => item.module);
-      setImportModules(new Set(present.length > 0 ? present : BACKUP_MODULES));
-      setImportMode('skip');
-      setImportOpen(false);
-    } catch (cause: unknown) {
-      setBackupMessage(cause instanceof Error ? cause.message : String(cause));
+    const { payload, error } = await readImportFile(file);
+    if (payload === null) {
+      setBackupMessage(error ?? '读取备份文件失败');
+      return;
     }
+    setPendingImport(payload);
+    setImportModules(new Set(presentModules(payload)));
+    setImportMode('skip');
+    setImportOpen(false);
   }
 
   async function confirmImport(): Promise<void> {
@@ -589,11 +587,8 @@ export function SettingsView({
         setBackupMessage('请至少勾选一个模块');
         return;
       }
-      const result = await importBackup(storage, pendingImport, { mode: importMode, modules });
-      logInfo('backup', '导入备份', { mode: importMode, modules, imported: result.imported, skipped: result.skipped });
-      setBackupMessage(
-        `${importMode === 'skip' ? '保留现有数据' : '覆盖为备份内容'}：写入 ${result.imported} 条，跳过 ${result.skipped} 条`,
-      );
+      const result = await importConfig(storage, pendingImport, { mode: importMode, modules });
+      setBackupMessage(importResultText(result, importMode));
       setPendingImport(null);
       onChanged();
     } finally {
@@ -1140,7 +1135,7 @@ export function SettingsView({
           </div>
         )}
         <span className="text-xs text-muted">
-          本期无服务端，同步协议已就绪但未启用；跨设备迁移用 JSON 或 Base64 备份。
+          本期无服务端，同步协议已就绪但未启用；跨设备迁移用 JSON、Base64 文本或整包 zip 备份。
         </span>
         <span className="text-xs text-muted">预设来源：独立仓库 dawn-tick-presets；更新于下次启动生效。</span>
         <div className="flex flex-wrap items-center gap-2">
@@ -1170,7 +1165,7 @@ export function SettingsView({
           <input
             ref={fileInput}
             type="file"
-            accept="application/json,.json"
+            accept="application/json,.json,.zip,.txt"
             hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -1565,7 +1560,39 @@ export function SettingsView({
             >
               Base64 文本
             </Button>
+            <Button
+              size="sm"
+              variant={exportFormat === 'zip' ? 'primary' : 'secondary'}
+              aria-label="导出为整包 zip"
+              onClick={() => setExportFormat('zip')}
+            >
+              整包 zip
+            </Button>
           </div>
+          {exportFormat === 'zip' && (
+            <div className="flex flex-col gap-1">
+              <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  aria-label="整包包含预设快照"
+                  checked={bundlePresets}
+                  onChange={(event) => setBundlePresets(event.target.checked)}
+                />
+                一并打包预设快照
+              </label>
+              <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  aria-label="整包包含日志文件"
+                  checked={bundleLogs}
+                  onChange={(event) => setBundleLogs(event.target.checked)}
+                />
+                一并打包日志文件
+              </label>
+            </div>
+          )}
           {exportFormat === 'base64' && exportText !== '' && (
             <div className="flex flex-col gap-2">
               <span className="text-xs text-muted">复制下面这段文本，或保存成文件后传输。</span>
@@ -1623,7 +1650,7 @@ export function SettingsView({
             >
               选择备份文件
             </Button>
-            <span className="text-xs text-muted">支持晓刻导出的 JSON 与 Base64 文本</span>
+            <span className="text-xs text-muted">支持晓刻导出的 JSON、Base64 文本与整包 zip</span>
           </div>
           <textarea
             data-role="import-text"
@@ -1676,20 +1703,17 @@ export function SettingsView({
               ))}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant={importMode === 'skip' ? 'primary' : 'secondary'}
-              onClick={() => setImportMode('skip')}
-            >
-              不覆盖已存在
-            </Button>
-            <Button
-              size="sm"
-              variant={importMode === 'overwrite' ? 'primary' : 'secondary'}
-              onClick={() => setImportMode('overwrite')}
-            >
-              覆盖为备份内容
-            </Button>
+            {IMPORT_MODES.map((mode) => (
+              <Button
+                key={mode}
+                size="sm"
+                variant={importMode === mode ? 'primary' : 'secondary'}
+                aria-label={`导入方式：${IMPORT_MODE_LABEL[mode]}`}
+                onClick={() => setImportMode(mode)}
+              >
+                {IMPORT_MODE_LABEL[mode]}
+              </Button>
+            ))}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPendingImport(null)}>

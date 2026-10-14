@@ -16,6 +16,9 @@ pub const SCHEMA_TIMETABLE_ENTRIES_SQL: &str =
 /// 005：截止时刻对所有条目类型开放。
 pub const SCHEMA_DUE_AT_ANY_SQL: &str =
     include_str!("../../../../packages/core/src/schema/005_due_at_any.sql");
+/// 006：把迁移版本写进 app_meta，与其余端口径一致。
+pub const SCHEMA_VERSION_SQL: &str =
+    include_str!("../../../../packages/core/src/schema/006_schema_version.sql");
 
 pub const DATABASE_URL: &str = "sqlite:dawn-tick.db";
 /// 便携版的程序名：打包脚本把可执行文件重命名为 DawnTick.exe。
@@ -1069,6 +1072,50 @@ fn write_text_file(path: String, content: String) -> Result<String, String> {
     }
     std::fs::write(&target, content.as_bytes()).map_err(|error| format!("写入失败: {error}"))?;
     append_log(&format!("已写入文件: {path}（{} 字节）", content.len()));
+    Ok(path)
+}
+
+/// 标准 Base64 解码；长度或字符不合法时返回 None。
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    for byte in text.bytes() {
+        if byte == b'=' || byte.is_ascii_whitespace() {
+            continue;
+        }
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32;
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+    if bits >= 6 {
+        return None;
+    }
+    Some(out)
+}
+
+/// 把 Base64 内容按二进制写到用户选定的路径：整包 zip 导出用。
+#[tauri::command]
+fn write_binary_file(path: String, base64: String) -> Result<String, String> {
+    let target = std::path::PathBuf::from(&path);
+    if target.as_os_str().is_empty() {
+        return Err("没有选择保存位置".to_string());
+    }
+    let bytes = decode_base64(&base64).ok_or_else(|| "内容不是合法的 Base64".to_string())?;
+    std::fs::write(&target, &bytes).map_err(|error| format!("写入失败: {error}"))?;
+    append_log(&format!("已写入文件: {path}（{} 字节）", bytes.len()));
     Ok(path)
 }
 
@@ -2242,7 +2289,8 @@ pub fn run() {
             tray_status,
             open_external_url,
             open_log_dir,
-            write_text_file
+            write_text_file,
+            write_binary_file
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
@@ -2277,6 +2325,12 @@ pub fn run() {
                             version: 5,
                             description: "due_at_any",
                             sql: SCHEMA_DUE_AT_ANY_SQL,
+                            kind: tauri_plugin_sql::MigrationKind::Up,
+                        },
+                        tauri_plugin_sql::Migration {
+                            version: 6,
+                            description: "schema_version",
+                            sql: SCHEMA_VERSION_SQL,
                             kind: tauri_plugin_sql::MigrationKind::Up,
                         },
                     ],
@@ -2764,6 +2818,20 @@ mod tests {
         assert!(!position_visible(i32::MIN, i32::MIN, u32::MAX, u32::MAX, &screens, VISIBLE_MARGIN));
         // 拿不到显示器列表时不设位置
         assert!(!position_visible(100, 80, 1200, 800, &[], VISIBLE_MARGIN));
+    }
+
+    /// 标准 Base64 解码：导出整包时按二进制写盘用。
+    #[test]
+    fn base64_decode_roundtrip() {
+        assert_eq!(decode_base64("aGVsbG8="), Some(b"hello".to_vec()));
+        assert_eq!(
+            decode_base64("5Lit5paH"),
+            Some("中文".as_bytes().to_vec())
+        );
+        assert_eq!(decode_base64(""), Some(Vec::new()));
+        assert_eq!(decode_base64("aGVs bG8=\n"), Some(b"hello".to_vec()));
+        assert_eq!(decode_base64("不是base64"), None);
+        assert_eq!(decode_base64("aGVsbG8"), Some(b"hello".to_vec()), "缺 padding 也能解");
     }
 
     /// 便携版判定：必须叫 DawnTick.exe 且不在安装目录里。

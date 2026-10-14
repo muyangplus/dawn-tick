@@ -10,7 +10,9 @@ import eventKindsSql from '@dawn-tick/core/schema/002_event_kinds.sql?raw';
 import customTimeSql from '@dawn-tick/core/schema/003_custom_time.sql?raw';
 import timetableEntriesSql from '@dawn-tick/core/schema/004_timetable_entries.sql?raw';
 import dueAtAnySql from '@dawn-tick/core/schema/005_due_at_any.sql?raw';
+import schemaVersionSql from '@dawn-tick/core/schema/006_schema_version.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
+import { logWarn } from '../log.ts';
 import { readStorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
@@ -25,6 +27,7 @@ export const MIGRATIONS: Migration[] = [
   { id: '003_custom_time', sql: customTimeSql },
   { id: '004_timetable_entries', sql: timetableEntriesSql },
   { id: '005_due_at_any', sql: dueAtAnySql },
+  { id: '006_schema_version', sql: schemaVersionSql },
 ];
 
 async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Storage> {
@@ -33,11 +36,11 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
       ? await (await import('./tauri-driver.ts')).openTauriDriver()
       : await (await import('./capacitor-driver.ts')).openCapacitorDriver();
 
-  await migrate(driver, MIGRATIONS);
   const storage = sqliteStorage(driver);
-  // 便携版默认单文件（无 -wal/-shm），安装版默认 WAL；设置里可改
+  // 日志模式要在建表之前套用：建表写数据后再切就晚了（WAL 下还有其它连接时切不动）
   const portable = platform === 'tauri' ? (await readStorageInfo())?.portable === true : false;
   await applyStoredJournalMode(driver, storage, { platform, portable });
+  await migrate(driver, MIGRATIONS);
   return storage;
 }
 
@@ -48,7 +51,10 @@ export async function openStorage(): Promise<Storage> {
     try {
       return validatedStorage(await openSqliteStorage(platform));
     } catch (error) {
-      console.warn('原生 SQLite 不可用，回退到 IndexedDB', error);
+      logWarn('storage', '原生 SQLite 不可用，回退到 IndexedDB', {
+        platform,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }
   return validatedStorage(await openIndexedDbStorage());

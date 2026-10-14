@@ -2,7 +2,11 @@ const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 
 /** 文本按 UTF-8 编成标准 Base64（带 padding，不使用 URL 安全字符）。 */
 export function toBase64Utf8(text: string): string {
-  const bytes = new TextEncoder().encode(text);
+  return toBase64Bytes(new TextEncoder().encode(text));
+}
+
+/** 字节按标准 Base64 编码（带 padding）。 */
+export function toBase64Bytes(bytes: Uint8Array): string {
   let out = '';
   for (let index = 0; index < bytes.length; index += 3) {
     const b0 = bytes[index] as number;
@@ -21,8 +25,13 @@ export function toBase64Utf8(text: string): string {
  * 容忍换行与空格，也接受 URL 安全形式（`-` `_`）；长度或字符不合法时抛错。
  */
 export function fromBase64Utf8(text: string): string {
+  return new TextDecoder().decode(fromBase64Bytes(text));
+}
+
+/** 标准 Base64 还原成字节；长度或字符不合法时抛错。 */
+export function fromBase64Bytes(text: string): Uint8Array {
   const clean = text.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
-  if (clean === '') return '';
+  if (clean === '') return new Uint8Array();
   if (clean.length % 4 !== 0) throw new Error('Base64 长度不合法');
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(clean)) throw new Error('Base64 含不合法字符');
   const bytes: number[] = [];
@@ -43,5 +52,5 @@ export function fromBase64Utf8(text: string): string {
     if (chunk[2] !== '=') bytes.push(((v1 << 4) | (v2 >> 2)) & 0xff);
     if (chunk[3] !== '=') bytes.push(((v2 << 6) | v3) & 0xff);
   }
-  return new TextDecoder().decode(new Uint8Array(bytes));
+  return new Uint8Array(bytes);
 }

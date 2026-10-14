@@ -10,6 +10,7 @@ MIGRATION_002_PATH = SCHEMA_DIR / "002_event_kinds.sql"
 MIGRATION_003_PATH = SCHEMA_DIR / "003_custom_time.sql"
 MIGRATION_004_PATH = SCHEMA_DIR / "004_timetable_entries.sql"
 MIGRATION_005_PATH = SCHEMA_DIR / "005_due_at_any.sql"
+MIGRATION_006_PATH = SCHEMA_DIR / "006_schema_version.sql"
 
 
 def apply_migrations(con, include_event_kinds=True):
@@ -20,6 +21,7 @@ def apply_migrations(con, include_event_kinds=True):
     con.executescript(MIGRATION_003_PATH.read_text(encoding="utf-8"))
     con.executescript(MIGRATION_004_PATH.read_text(encoding="utf-8"))
     con.executescript(MIGRATION_005_PATH.read_text(encoding="utf-8"))
+    con.executescript(MIGRATION_006_PATH.read_text(encoding="utf-8"))
 NOW = 1759900000000
 U = "u1"
 S1 = "sem-1"
@@ -294,6 +296,20 @@ if due_rows == 4:
     ok("005 迁移后截止时刻对所有类型开放", f"带 due_at 的条目 {due_rows} 条（待办/作业/实验/考试各一条）")
 else:
     fail("截止时刻未放开", f"带 due_at 的条目 {due_rows} 条")
+
+# 006：迁移版本写进 app_meta（Windows 侧由原生插件执行迁移，版本靠这一步补齐）
+version_row = con.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
+if version_row is not None and version_row[0] == "006_schema_version":
+    ok("006 迁移记录 schema_version", f"app_meta.schema_version={version_row[0]}")
+else:
+    fail("006 未记录 schema_version", str(version_row))
+con.execute("UPDATE app_meta SET value = '005_due_at_any' WHERE key = 'schema_version'")
+con.executescript(MIGRATION_006_PATH.read_text(encoding="utf-8"))
+migrated = con.execute("SELECT value FROM app_meta WHERE key = 'schema_version'").fetchone()
+if migrated is not None and migrated[0] == "006_schema_version":
+    ok("006 迁移可重复应用", "已有旧版本号时覆盖为新版本")
+else:
+    fail("006 迁移不可重复应用", str(migrated))
 
 # —— 002 迁移：旧结构的库（001 之后、002 之前）重建事件表后数据保留、新类型与开关可用 ——
 con2 = sqlite3.connect(":memory:")

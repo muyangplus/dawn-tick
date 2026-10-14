@@ -9,7 +9,7 @@ import {
   walEnabledByDefault,
 } from '../src/db/journal.ts';
 
-function fakeDriver(): { driver: SqlDriver; sql: string[] } {
+function fakeDriver(applied?: string): { driver: SqlDriver; sql: string[] } {
   const sql: string[] = [];
   const driver: SqlDriver = {
     async exec(statement: string): Promise<void> {
@@ -17,7 +17,8 @@ function fakeDriver(): { driver: SqlDriver; sql: string[] } {
     },
     async all<T>(statement: string, _params: readonly SqlValue[] = []): Promise<T[]> {
       sql.push(statement);
-      return [] as T[];
+      const wanted = /journal_mode=(\w+)/i.exec(statement)?.[1] ?? '';
+      return [{ journal_mode: applied ?? wanted }] as unknown as T[];
     },
     async get<T>(): Promise<T | undefined> {
       return undefined;
@@ -48,10 +49,17 @@ test('SQL 口径：开 WAL、关 DELETE', () => {
   assert.equal(journalModeSql(false), 'PRAGMA journal_mode=DELETE');
 });
 
-test('套用日志模式会落到驱动上', async () => {
+test('套用日志模式会落到驱动上并回读实际模式', async () => {
   const { driver, sql } = fakeDriver();
-  await applyJournalMode(driver, false);
+  assert.equal(await applyJournalMode(driver, false), 'delete');
   assert.deepEqual(sql, ['PRAGMA journal_mode=DELETE']);
+  assert.equal(await applyJournalMode(driver, true), 'wal');
+});
+
+test('切不动时如实报告，不谎报成功', async () => {
+  // 还有别的连接在用 WAL 时，SQLite 会返回当前模式而不是报错
+  const { driver } = fakeDriver('wal');
+  assert.equal(await applyJournalMode(driver, false), null);
 });
 
 test('按库里的设置套用：未设置时便携版用 DELETE', async () => {

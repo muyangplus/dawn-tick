@@ -28,16 +28,25 @@ export function journalModeSql(enabled: boolean): string {
 }
 
 /** 开启数据库后套用日志模式；失败只记日志，不挡住启动。 */
-export async function applyJournalMode(driver: SqlDriver, enabled: boolean): Promise<void> {
+export async function applyJournalMode(driver: SqlDriver, enabled: boolean): Promise<string | null> {
   const sql = journalModeSql(enabled);
+  const want = enabled ? 'wal' : 'delete';
   try {
-    await driver.all(sql);
-    logInfo('storage', '数据库日志模式', { mode: enabled ? 'WAL' : 'DELETE' });
+    const rows = await driver.all<Record<string, string>>(sql);
+    const applied = (rows[0]?.['journal_mode'] ?? '').toLowerCase();
+    if (applied !== want) {
+      // SQLite 改不动时返回当前模式而不是报错：有其它连接在用时就会这样
+      logWarn('storage', '数据库日志模式未生效', { want, applied: applied || '未知' });
+      return null;
+    }
+    logInfo('storage', '数据库日志模式', { mode: want });
+    return applied;
   } catch (cause: unknown) {
     logWarn('storage', '设置数据库日志模式失败', {
-      mode: enabled ? 'WAL' : 'DELETE',
+      mode: want,
       message: cause instanceof Error ? cause.message : String(cause),
     });
+    return null;
   }
 }
 
@@ -46,9 +55,15 @@ export async function applyStoredJournalMode(
   driver: SqlDriver,
   storage: Storage,
   options: { portable: boolean; platform: Platform },
-): Promise<void> {
-  const mode = await storage.readMeta(WAL_META_KEY);
+): Promise<boolean> {
+  let mode: string | undefined;
+  try {
+    mode = await storage.readMeta(WAL_META_KEY);
+  } catch {
+    // 全新库还没有 app_meta：按默认口径处理
+    mode = undefined;
+  }
   const enabled = resolveWalEnabled(mode, options);
-  if (enabled === null) return;
-  await applyJournalMode(driver, enabled);
+  if (enabled === null) return false;
+  return (await applyJournalMode(driver, enabled)) !== null;
 }

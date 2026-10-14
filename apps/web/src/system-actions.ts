@@ -1,3 +1,4 @@
+import { toBase64Bytes } from '@dawn-tick/core';
 import { detectPlatform } from './platform-detect.ts';
 import { logInfo, logWarn } from './log.ts';
 function describe(cause: unknown): string {
@@ -124,11 +125,61 @@ export async function saveTextFile(
 }
 
 /** 浏览器下载：生成 Blob 并触发一次 a[download]。 */
-export function downloadInBrowser(name: string, content: string, type = 'text/plain'): void {
-  const url = URL.createObjectURL(new Blob([content], { type: `${type};charset=utf-8` }));
+export function downloadInBrowser(
+  name: string,
+  content: string | Uint8Array,
+  type = 'text/plain',
+): void {
+  const part: BlobPart = typeof content === 'string' ? content : new Uint8Array(content).buffer;
+  const url = URL.createObjectURL(new Blob([part], { type: `${type};charset=utf-8` }));
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = name;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * 保存二进制：桌面端弹系统保存对话框并按 Base64 交给原生写盘；
+ * 浏览器与移动端退回浏览器下载。
+ */
+export async function saveBinaryFile(
+  name: string,
+  content: Uint8Array,
+  options: { filterName?: string; extension?: string } = {},
+): Promise<SaveTextResult> {
+  const extension = options.extension ?? 'bin';
+  if (detectPlatform() === 'tauri') {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const chosen = await save({
+        defaultPath: name,
+        filters: [{ name: options.filterName ?? '文件', extensions: [extension] }],
+      });
+      if (chosen === null) {
+        logInfo('export', '用户取消保存', { name });
+        return { ok: false, cancelled: true, path: null, error: null };
+      }
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path = await invoke<string>('write_binary_file', {
+        path: chosen,
+        base64: toBase64Bytes(content),
+      });
+      logInfo('export', '已写入二进制文件', { path, bytes: content.length });
+      return { ok: true, cancelled: false, path, error: null };
+    } catch (cause: unknown) {
+      const message = describe(cause);
+      logWarn('export', '写入二进制文件失败', { name, message });
+      return { ok: false, cancelled: false, path: null, error: message };
+    }
+  }
+  try {
+    downloadInBrowser(name, content, 'application/octet-stream');
+    logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
+    return { ok: true, cancelled: false, path: null, error: null };
+  } catch (cause: unknown) {
+    const message = describe(cause);
+    logWarn('export', '浏览器下载失败', { name, message });
+    return { ok: false, cancelled: false, path: null, error: message };
+  }
 }
