@@ -50,15 +50,44 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
     }
   }
 
+  /** 全部显示：把所有卡片改回可见，顺序与主/侧列保持不动。 */
+  async function showAll(): Promise<void> {
+    setBusy(true);
+    try {
+      const next: LayoutConfig = { ...layout };
+      for (const scope of ['schedule', 'settings'] as const) {
+        for (const card of resolveAllCards(scope, layout)) {
+          next[card.def.id] = { ...next[card.def.id], visible: true };
+        }
+      }
+      await writeLayout(storage, next);
+      onChange(next);
+      setMessage('已把所有卡片设为显示');
+    } catch (cause: unknown) {
+      setMessage(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <span className="text-xs text-muted">
-        每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换；恢复默认即返回出厂顺序。
+        每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换；「全部显示」把所有卡片恢复可见，恢复默认即返回出厂顺序。
       </span>
       {(['schedule', 'settings'] as const).map((scope) => (
         <ScopeGroup key={scope} scope={scope} layout={layout} busy={busy} onApply={(next) => void apply(next)} />
       ))}
       <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={busy}
+          aria-label="全部显示卡片"
+          onClick={() => void showAll()}
+        >
+          全部显示
+        </Button>
         <Button
           size="sm"
           variant="secondary"

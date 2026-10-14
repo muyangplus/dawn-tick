@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
-import { BadgeCheck, Bell, Database, Info, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { BadgeCheck, Bell, Database, Info, LayoutGrid, Palette, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import {
   BACKUP_MODULES,
   BACKUP_MODULE_LABEL,
@@ -584,6 +584,7 @@ export function SettingsView({
   const [editZone, setEditZone] = useState('');
   const [removing, setRemoving] = useState<SemesterRow | null>(null);
   const [layout, setLayout] = useState<LayoutConfig>({});
+  const [layoutOpen, setLayoutOpen] = useState(false);
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
   /** 诊断入口：dev/beta 可见；dev 关掉开发者特性后与正式版一致地隐藏 */
   const diagnosticsVisible = featureVisible('diagnostics') && (CHANNEL !== 'dev' || settings.devFeatures);
@@ -815,12 +816,8 @@ export function SettingsView({
     }
   }
 
-  const layoutGroups: ReactNode = (
-    <div className="flex flex-col gap-2">
-      <span className="text-xs text-muted">每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换。</span>
-      <CardLayoutPanel layout={layout} onChange={setLayout} storage={storage} />
-    </div>
-  );
+  /** 卡片布局独立成一个对话框，从设置页顶部按钮进入：不再受「外观」卡片显隐影响 */
+  const layoutGroups: ReactNode = <CardLayoutPanel layout={layout} onChange={setLayout} storage={storage} />;
 
   const bodies: Record<string, ReactNode> = {
     semesters: (
@@ -1121,7 +1118,11 @@ export function SettingsView({
         </Field>
           </>
         )}
-        <Field label="卡片布局">{layoutGroups}</Field>
+        <Field label="卡片布局" hint="已独立成顶部「卡片布局」按钮，隐藏卡片后也能随时改回来">
+          <Button size="sm" variant="secondary" aria-label="打开卡片布局" onClick={() => setLayoutOpen(true)}>
+            打开卡片布局
+          </Button>
+        </Field>
         {canUseWidget() && (
           <span className="text-xs text-muted">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</span>
         )}
@@ -1803,6 +1804,20 @@ export function SettingsView({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* 卡片布局入口固定在顶部：卡片被隐藏也进得来 */}
+      <div className="flex flex-wrap items-center gap-2" data-role="settings-toolbar">
+        <Button
+          size="sm"
+          variant="secondary"
+          aria-label="卡片布局"
+          onClick={() => setLayoutOpen(true)}
+        >
+          <LayoutGrid className="size-4" aria-hidden />
+          卡片布局
+        </Button>
+        <span className="text-xs text-muted">显示 / 隐藏卡片、调顺序与主侧列</span>
+      </div>
+
       {cards.map((card) => {
         const body = bodies[card.def.id];
         if (body === undefined) return null;
@@ -1819,6 +1834,23 @@ export function SettingsView({
           </CollapsibleCard>
         );
       })}
+
+      <Dialog
+        open={layoutOpen}
+        onOpenChange={setLayoutOpen}
+      >
+        <DialogContent
+          title="卡片布局"
+          description="显示 / 隐藏、上移下移、主列 / 侧列；「全部显示」可把所有卡片一次改回可见"
+        >
+          {layoutGroups}
+          <DialogFooter>
+            <Button variant="ghost" aria-label="关闭卡片布局" onClick={() => setLayoutOpen(false)}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={editing !== null}

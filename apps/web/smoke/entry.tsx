@@ -2067,14 +2067,20 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
     `组件 ${MOBILE_WIDGETS.map((item) => item.size).join(' / ')}；Web 平台=${hasMobileWidgets() ? '手机' : '桌面/浏览器'}`,
   );
+  // 卡片布局入口固定在设置页顶部，面板在对话框里：隐藏卡片后仍能改回来
+  const layoutOpened = clickByLabel(view.container, '卡片布局');
+  await flush(12);
   check(
-    '日程卡片可显隐排序',
-    view.container.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&
-      view.container.querySelector('[aria-label="上移卡片：倒计时"]') !== null &&
-      view.container.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
-      view.container.querySelector('[aria-label="恢复默认布局"]') !== null,
-    '',
+    '卡片布局独立成对话框，可显隐排序并一键全部显示',
+    layoutOpened &&
+      document.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&
+      document.querySelector('[aria-label="上移卡片：倒计时"]') !== null &&
+      document.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
+      document.querySelector('[aria-label="恢复默认布局"]') !== null &&
+      document.querySelector('[aria-label="全部显示卡片"]') !== null,
+    (document.body.textContent ?? '').slice(-60),
   );
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(8);
   // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
   const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
   const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';
@@ -2538,6 +2544,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   }
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
+  // 外部链接确认弹窗在引导页也要能弹出（曾经没挂，点了没反应）
   // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——
   const onboardScroll = remounted.container.querySelector<HTMLElement>('[data-role="onboarding-scroll"]');
   const onboardAdvanced = remounted.container.querySelector<HTMLDetailsElement>('[data-role="onboarding-advanced"]');
@@ -2550,17 +2557,40 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (onboardAdvanced.querySelector('summary')?.textContent ?? '').includes('高级设置'),
     `scroll=${(onboardScroll?.className ?? '?').slice(0, 40)} open=${onboardAdvanced?.open ?? '?'}`,
   );
-  const onboardSearch = remounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索学校"]');
+  // 选校改成弹窗：点「选择学校」后列表在弹窗里，选中即关闭
+  const schoolOpened = clickByLabel(remounted.container, '选择学校');
+  await flush(12);
+  const onboardSearch = document.querySelector<HTMLInputElement>('input[aria-label="搜索学校"]');
   check(
-    '引导页提供选校入口',
-    onboardSearch !== null && onboardAdvanced !== null,
+    '引导页用弹窗选校',
+    schoolOpened && onboardSearch !== null && onboardAdvanced !== null,
     '',
   );
   if (onboardSearch !== null) setInputValue(onboardSearch, '苏州');
-  await flush(14);
-  const onboardRow = [...remounted.container.querySelectorAll<HTMLElement>('[data-role="school-row"]')].find(
-    (item) => (item.textContent ?? '').includes('苏州科技大学'),
+  await flush(26);
+  const onboardRows = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>('[data-role="school-row"]'),
+  ];
+  // 选校弹窗里的「请求适配」是外部链接（<a data-role="request-school">）：引导页也挂了确认弹窗
+  const onboardRequestLink = [...document.querySelectorAll<HTMLElement>('[data-role="request-school"]')].find(
+    (item) => (item.getAttribute('aria-label') ?? '').includes('苏州科技大学'),
   );
+  onboardRequestLink?.click();
+  await flush(12);
+  const externalUrl = document.querySelector<HTMLInputElement>('[data-role="external-link-url"]');
+  check(
+    '引导页的外部链接确认弹窗能弹出',
+    onboardRequestLink !== undefined && externalUrl !== null,
+    `学校行 ${onboardRows().length} 条；确认框=${externalUrl === null ? '无' : '有'}`,
+  );
+  // 关掉确认框时只点它自己的「取消」：选校弹窗里也有一个「取消」，按文本取会点错
+  const confirmBody = externalUrl?.closest('[data-role="dialog-body"]');
+  const confirmCancel = [...(confirmBody?.querySelectorAll('button') ?? [])].find(
+    (item) => (item.textContent ?? '').trim() === '取消',
+  );
+  confirmCancel?.click();
+  await flush(10);
+  const onboardRow = onboardRows().find((item) => (item.textContent ?? '').includes('苏州科技大学'));
   onboardRow?.click();
   await flush(12);
   check(
