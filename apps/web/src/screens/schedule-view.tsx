@@ -6,11 +6,11 @@ import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx
 import { Button } from '../components/ui/button.tsx';
 import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } from './cards/registry.ts';
 import { readLayout } from './cards/layout-store.ts';
-import { actionsCard, countdownsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
+import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
 
 // 日程页的卡片在注册表里声明：显隐、顺序与区域都可由用户配置。
 // 显式引用这几张卡片，注册先于首次渲染完成。
-void [actionsCard, timelineCard, examsCard, countdownsCard, tomorrowCard];
+void [actionsCard, timelineCard, examsCard, tomorrowCard];
 
 export interface ScheduleViewProps {
   data: AppData;

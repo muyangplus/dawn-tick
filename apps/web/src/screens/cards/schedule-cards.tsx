@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import {
   CalendarClock,
-  CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -553,7 +552,7 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
   );
 }
 
-/** 侧列：考试倒计时 */
+/** 侧列：倒计时（上半开学/假期徽标，下半逐条作业与考试倒计时） */
 export const examsCard = defineCard({
   id: 'exams',
   scope: 'schedule',
@@ -563,23 +562,59 @@ export const examsCard = defineCard({
   defaultVisible: true,
   render: (ctx) => {
     if (ctx.scope !== 'schedule') return null;
-    const { data, onAddExam, onOpenEvent } = ctx;
+    const { data, onAddExam, onOpenEvent, semesterCountdown, holidayCountdown } = ctx;
     const now = Date.now();
     const rows = data.countdowns;
+    const daysUntil = (date: string): number =>
+      Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
+    const semesterStart = data.semester?.start_date ?? null;
+    const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
+    const nextHolidayDate =
+      holidayCountdown
+        ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
+        : null;
+    const badges: ReactNode[] = [];
+    if (semesterCountdown && semesterDays !== null && semesterDays > 0) {
+      badges.push(
+        <span
+          key="semester"
+          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
+        >
+          距开学还有 {semesterDays} 天
+        </span>,
+      );
+    }
+    if (nextHolidayDate !== null) {
+      badges.push(
+        <span
+          key="holiday"
+          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
+        >
+          距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
+        </span>,
+      );
+    }
     return (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-semibold text-ink">倒计时</span>
+        {badges.length > 0 && (
+          <div className="flex flex-wrap gap-2" data-role="countdown-badges">
+            {badges}
+          </div>
+        )}
         {rows.length === 0 ? (
-          <EmptyState
-            icon={GraduationCap}
-            title="暂无倒计时条目"
-            description="在「加待办」里打开「开启倒计时」，作业与考试会显示剩余天数"
-            action={
-              <Button size="sm" variant="secondary" onClick={onAddExam}>
-                加待办
-              </Button>
-            }
-          />
+          badges.length === 0 && (
+            <EmptyState
+              icon={GraduationCap}
+              title="暂无倒计时条目"
+              description="在「加待办」里打开「开启倒计时」，作业与考试会显示剩余天数"
+              action={
+                <Button size="sm" variant="secondary" onClick={onAddExam}>
+                  加待办
+                </Button>
+              }
+            />
+          )
         ) : (
           <div className="grid gap-2">
             {rows.map((row) => (
@@ -672,59 +707,6 @@ function countdownTarget(row: EventRow): number {
   if (row.on_date !== null && row.on_date !== undefined) return Date.parse(`${row.on_date}T00:00:00Z`);
   return 0;
 }
-
-/** 侧列：开学与假期倒计时 */
-export const countdownsCard = defineCard({
-  id: 'countdowns',
-  scope: 'schedule',
-  title: '日期与倒计时',
-  defaultZone: 'side',
-  defaultOrder: 3,
-  defaultVisible: true,
-  render: (ctx) => {
-    if (ctx.scope !== 'schedule') return null;
-    const { data, semesterCountdown, holidayCountdown } = ctx;
-    const daysUntil = (date: string): number =>
-      Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
-    const semesterStart = data.semester?.start_date ?? null;
-    const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
-    const nextHolidayDate =
-      holidayCountdown
-        ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
-        : null;
-    const badges: ReactNode[] = [];
-    if (semesterCountdown && semesterDays !== null && semesterDays > 0) {
-      badges.push(
-        <span
-          key="semester"
-          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
-        >
-          距开学还有 {semesterDays} 天
-        </span>,
-      );
-    }
-    if (nextHolidayDate !== null) {
-      badges.push(
-        <span
-          key="holiday"
-          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
-        >
-          距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
-        </span>,
-      );
-    }
-    if (badges.length === 0) return null;
-    return (
-      <div className="flex flex-col gap-2">
-        <span className="flex items-center gap-2 text-sm font-semibold text-ink">
-          <CalendarDays className="size-4" aria-hidden />
-          日期与倒计时
-        </span>
-        <div className="flex flex-wrap gap-2">{badges}</div>
-      </div>
-    );
-  },
-});
 
 /** 侧列：明日预告 */
 export const tomorrowCard = defineCard({
