@@ -23,6 +23,11 @@
 - [x] 底部栏与悬浮按钮留白：`--dt-bottom-nav` / `--dt-bottom-fab` 变量，`app-main` 的 `padding-bottom`（含 `tablet:` 断点，原先被 `tablet:p-4` 覆盖成 16px）与「快速添加」按钮位置同源；实测 1000×720 `navHeight 56 / mainPadBottom 120`、336×656 同样通过
 - [x] 布局自检写日志：`layout: 视口变化`（视口 / shell / main / 底部栏高度 / 主区留白 / 卡片数 / 补白是否存在）、`layout: 行高自适应` 与 `layout: 行高自检`；留白小于栏高、行高到上限仍被裁都会告警
 - [x] 日志级别从未同步到原生：`App.tsx` 里 `applyLogSettings` 只导入未调用，已在设置变化时同步（修好后 `dawn-tick.log` 才能看到 `[debug]`/`[trace]`）
+- [x] 引导页「请求适配 / 提交学校信息」点了没反应：`ExternalLinkConfirm` 只挂在主壳里，引导页分支没挂（所以创建学期后弹窗才冒出来）→ 引导页也挂上
+- [x] 选校改弹窗：首启页「高级设置」里只留一行「已选：X」+「选择学校」按钮，点开 `SchoolPickerDialog`（搜索 / 筛选 / 列表，选中即关），不再把长列表铺在页面上
+- [x] 卡片布局独立成对话框：设置页顶部固定一个「卡片布局」按钮（不受卡片显隐影响），面板里新增「全部显示」把被隐藏的卡片一次改回可见
+- [x] 倒计时块宽屏只占一半：按你的要求**不改**（它在侧列，需要时在「卡片布局」里把「倒计时」切到主列即可占满整行）
+- [x] 去掉便携目录里的 EBWebView 与 window.json：WebView2 用户数据目录固定到 `%LOCALAPPDATA%\com.dawntick.app\EBWebView`（首次运行把旧的 `<数据目录>\EBWebView` 整体搬过去；新位置已有数据就清掉残留；搬迁失败继续用旧位置），窗口几何改存数据库 `app_meta.window_geometry` 并在窗口显示前由原生侧读出应用（实测：启动即按 1250×900 恢复、无跳动；`window.json` 启动时清理）
 
 ## 发布
 
