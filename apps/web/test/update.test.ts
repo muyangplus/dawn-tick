@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   UPDATE_API_FEEDS,
   UPDATE_FEEDS,
+  UPDATE_RELEASES_API,
   checkForUpdate,
   compareVersions,
   defaultReceiveBeta,
+  pickBetaCandidate,
   resolveFeed,
   resolveReceiveBeta,
 } from '../src/update.ts';
@@ -142,11 +144,23 @@ test('打开接收测试版后 release 用户能看到 beta 版', async () => {
     receiveBeta: true,
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
-      assert.equal(String(input), UPDATE_API_FEEDS.beta, '开关打开后查的是 beta 发布记录');
-      return manifestResponse(
+      assert.equal(String(input), UPDATE_RELEASES_API, '开关打开后查的是发布列表');
+      return manifestResponse([
         releaseBody({
-          tag_name: 'beta-latest',
-          body: '渠道 beta · 来源 main · 提交 9c1de44',
+          tag_name: 'v0.1.0',
+          body: '正式版',
+          prerelease: false,
+          assets: [
+            {
+              name: 'DawnTick-0.1.0-release-windows-x64-setup.exe',
+              size: 90,
+              browser_download_url: 'https://example.com/stable.exe',
+            },
+          ],
+        }),
+        releaseBody({
+          tag_name: 'v0.2.0-beta.1',
+          body: '渠道 beta · 来源 beta · 提交 9c1de44',
           prerelease: true,
           assets: [
             {
@@ -156,13 +170,91 @@ test('打开接收测试版后 release 用户能看到 beta 版', async () => {
             },
           ],
         }),
-      );
+      ]);
     },
   });
   assert.equal(status.feed, 'beta');
   assert.equal(status.available, true);
   assert.equal(status.latest, '0.2.0-beta.1');
   assert.equal(status.manifest?.channel, 'beta');
+});
+
+test('beta 列表里正式版更高时，测试版用户更新到正式版', async () => {
+  const list = [
+    releaseBody({
+      tag_name: 'v0.2.0-beta.1',
+      body: '渠道 beta · 来源 beta · 提交 1aac20a',
+      prerelease: true,
+      assets: [
+        {
+          name: 'DawnTick-0.2.0-beta.1-beta-android.apk',
+          size: 100,
+          browser_download_url: 'https://example.com/beta.apk',
+        },
+      ],
+    }),
+    releaseBody({
+      tag_name: 'v0.3.0',
+      body: '渠道 release · 来源 main · 提交 aaaaaaa',
+      prerelease: false,
+      assets: [
+        {
+          name: 'DawnTick-0.3.0-release-android.apk',
+          size: 110,
+          browser_download_url: 'https://example.com/stable.apk',
+        },
+      ],
+    }),
+  ];
+  const status = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.2.0-beta.1',
+    fetchImpl: async () => manifestResponse(list),
+  });
+  assert.equal(status.feed, 'beta');
+  assert.equal(status.latest, '0.3.0', '正式版版本更高时按正式版算');
+  assert.equal(status.manifest?.channel, 'release', '清单渠道跟随实际来源');
+  assert.equal(status.manifest?.assets?.android?.url, 'https://example.com/stable.apk');
+  assert.equal(status.available, true);
+
+  // 同号正式版高于预发布：测试版用户应当更到正式版
+  const same = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.2.0-beta.1',
+    fetchImpl: async () => manifestResponse([releaseBody({ tag_name: 'v0.2.0', prerelease: false })]),
+  });
+  assert.equal(same.latest, '0.2.0');
+  assert.equal(same.manifest?.channel, 'release');
+  assert.equal(same.available, true, '0.2.0 高于 0.2.0-beta.1');
+});
+
+test('beta 候选只认 beta 预发布与正式版：草稿 / rc / 滚动标签都跳过', () => {
+  assert.equal(pickBetaCandidate([]), null);
+  assert.equal(pickBetaCandidate([{ tag_name: 'dev-latest', prerelease: true }]), null);
+  assert.equal(
+    pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0-rc.1', prerelease: true })]),
+    null,
+    '非 beta 的预发布不算候选',
+  );
+  assert.equal(pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', draft: true })]), null, '草稿不算候选');
+
+  const picked = pickBetaCandidate([
+    releaseBody({ tag_name: 'v0.1.0-beta.2', prerelease: true }),
+    releaseBody({ tag_name: 'v0.1.0', prerelease: false }),
+    releaseBody({ tag_name: 'v0.0.9-beta.9', prerelease: true }),
+  ]);
+  assert.equal(picked?.channel, 'release', '同号正式版高于预发布');
+  assert.equal(picked?.record['tag_name'], 'v0.1.0');
+
+  const newerBeta = pickBetaCandidate([
+    releaseBody({ tag_name: 'v0.1.0-beta.2', prerelease: true }),
+    releaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true }),
+    releaseBody({ tag_name: 'v0.1.9', prerelease: false }),
+  ]);
+  assert.equal(newerBeta?.channel, 'beta', 'beta 版本更高时按 beta 算');
+  assert.equal(newerBeta?.record['tag_name'], 'v0.2.0-beta.1');
 });
 
 test('网络与格式异常都有可读原因', async () => {

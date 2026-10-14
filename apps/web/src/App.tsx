@@ -1218,7 +1218,7 @@ export function App() {
       >
         <DialogContent
           title={`发现新版本 ${updateInfo?.latest ?? ''}`}
-          description={`当前 ${appVersion()} · 渠道 ${CHANNEL_LABEL[updateInfo?.feed ?? CHANNEL]}`}
+          description={`当前 ${appVersion()} · 渠道 ${CHANNEL_LABEL[updateInfo?.manifest?.channel ?? updateInfo?.feed ?? CHANNEL]}`}
         >
           {updateInfo?.manifest?.notes !== undefined && updateInfo.manifest.notes.trim().length > 0 && (
             <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-muted p-2 text-xs text-ink">

@@ -37,6 +37,17 @@ export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
   release: `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`,
 };
 
+/**
+ * beta 渠道用发布列表：beta 是按版本发预发布（`vX.Y.Z-beta.N`）并保留历史的，
+ * 没有滚动标签可查；从最近发布里取最新的 beta 预发布，同时也看最新正式版，
+ * 谁版本高就用谁——正式版发布后测试版用户能直接更到正式版。
+ */
+export const UPDATE_RELEASES_API = `https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=30`;
+
+/** beta 预发布标签与正式版标签。 */
+const BETA_RELEASE_TAG = /^v?\d+\.\d+\.\d+-beta\.\d+$/;
+const STABLE_RELEASE_TAG = /^v?\d+\.\d+\.\d+$/;
+
 /** GitHub 接口的 accept：只读公开仓库，不带任何凭据。 */
 const GITHUB_API_ACCEPT = 'application/vnd.github+json';
 
@@ -255,6 +266,31 @@ function manifestFromRelease(feed: UpdateChannel, value: unknown): UpdateManifes
 }
 
 /**
+ * 从发布列表里挑候选：最新的 beta 预发布与最新的正式版比版本，取更高的那个。
+ * 草稿、非 beta 的预发布（如 rc）与其他渠道的滚动发布都跳过。
+ */
+export function pickBetaCandidate(
+  releases: unknown,
+): { record: Record<string, unknown>; channel: 'beta' | 'release' } | null {
+  if (!Array.isArray(releases)) return null;
+  let best: { record: Record<string, unknown>; channel: 'beta' | 'release'; version: string } | null = null;
+  for (const raw of releases) {
+    const record = asRecord(raw);
+    if (record === null || record['draft'] === true) continue;
+    const tag = typeof record['tag_name'] === 'string' ? record['tag_name'].trim() : '';
+    const isBeta = BETA_RELEASE_TAG.test(tag) && record['prerelease'] === true;
+    const isStable = STABLE_RELEASE_TAG.test(tag) && record['prerelease'] !== true;
+    if (!isBeta && !isStable) continue;
+    const version = versionFromTag(tag);
+    if (version === null) continue;
+    if (best === null || compareVersions(version, best.version) > 0) {
+      best = { record, channel: isBeta ? 'beta' : 'release', version };
+    }
+  }
+  return best === null ? null : { record: best.record, channel: best.channel };
+}
+
+/**
  * 检查更新。先查 GitHub 发布接口；只有网络异常才回退 `version.json` 直连。
  * 只接受与来源渠道一致、且更新于当前版本的清单；跨渠道或降级一律视为无更新，避免"串版"。
  */
@@ -274,13 +310,26 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
   // ① 首选：GitHub 发布接口。状态错误与格式错误就地给文案，不回退。
   let networkError: string | null = null;
   try {
-    const response = await doFetch(UPDATE_API_FEEDS[feed], { headers: { accept: GITHUB_API_ACCEPT } });
+    const url = feed === 'beta' ? UPDATE_RELEASES_API : UPDATE_API_FEEDS[feed];
+    const response = await doFetch(url, { headers: { accept: GITHUB_API_ACCEPT } });
     if (!response.ok) return { ...base, error: describeApiStatus(response.status) };
     let parsed: unknown;
     try {
       parsed = await response.json();
     } catch {
       return { ...base, error: '更新清单格式不正确' };
+    }
+    if (feed === 'beta') {
+      const candidate = pickBetaCandidate(parsed);
+      if (candidate === null) return { ...base, error: '该渠道还没有发布记录' };
+      const manifest = manifestFromRelease(candidate.channel, candidate.record);
+      if (manifest === null) return { ...base, error: '更新清单格式不正确' };
+      return {
+        ...base,
+        available: compareVersions(manifest.version, options.currentVersion) > 0,
+        latest: manifest.version,
+        manifest,
+      };
     }
     if (feed === 'release' && isPrereleaseOrDraft(parsed)) return base;
     const manifest = manifestFromRelease(feed, parsed);
