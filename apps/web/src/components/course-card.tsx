@@ -146,6 +146,7 @@ export function CourseCard({
       )}
       style={style}
       data-tone={resolvedTone}
+      data-role="course-card"
       data-dashed={resolvedTone === 'ghost' ? 'true' : undefined}
     >
       {content}

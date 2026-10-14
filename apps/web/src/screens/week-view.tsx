@@ -7,7 +7,9 @@ import { NowIndicator } from '../components/now-indicator.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
-import { localMinuteOfDay, nowRatio } from '../lib/timeline.ts';
+import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
+import { localMinuteOfDay } from '../lib/timeline.ts';
+import { logDebug, logWarn } from '../log.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const ROW_HEIGHT = 56;
@@ -60,9 +62,15 @@ function occupied(data: AppData, day: number, period: number): boolean {
   return false;
 }
 
-/** 落点所在的节次（按列高度换算，越界夹到首尾节）。 */
-function periodAt(clientY: number, columnTop: number, periodCount: number, rowHeightPx: number): number {
-  return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop) / rowHeightPx) + 1));
+/** 落点所在的节次（按列高度换算，越界夹到首尾节）；padTop 是头部补白的高度。 */
+function periodAt(
+  clientY: number,
+  columnTop: number,
+  periodCount: number,
+  rowHeightPx: number,
+  padTop = 0,
+): number {
+  return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop - padTop) / rowHeightPx) + 1));
 }
 
 /** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
@@ -186,34 +194,24 @@ function lessonsOf(data: AppData): LessonCell[] {
   return out;
 }
 
-/** 墙钟时间映射到「节次行空间」：行内线性，落在一节里就返回小数行号。 */
-function customRow(
-  clock: string | null | undefined,
-  slots: ReadonlyArray<{ periodNo: number; startTime: string; endTime: string }>,
-  periodCount: number,
-): number | null {
-  if (clock === null || clock === undefined || clock === '' || slots.length === 0) return null;
-  const toMinutes = (value: string): number => {
-    const [hour, minute] = value.split(':').map(Number);
-    return (hour ?? 0) * 60 + (minute ?? 0);
-  };
-  const target = toMinutes(clock);
-  for (const slot of slots) {
-    const from = toMinutes(slot.startTime);
-    const to = toMinutes(slot.endTime);
-    if (target >= from && target <= to && to > from) {
-      return slot.periodNo - 1 + (target - from) / (to - from);
+/** 量一次课表卡片是否被裁：卡片本身与所有后代 span 都要看（truncate/line-clamp 量不到卡片）。 */
+function measureCardFit(): { cards: number; clipped: boolean; overflow: number } {
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]')).filter(
+    (card) => card.closest('[data-role="drag-ghost"]') === null,
+  );
+  let overflow = 0;
+  let clipped = false;
+  for (const card of cards) {
+    const cardOverflow = card.scrollHeight - card.clientHeight;
+    if (cardOverflow > overflow) overflow = cardOverflow;
+    if (cardOverflow > 2) clipped = true;
+    for (const node of Array.from(card.querySelectorAll<HTMLElement>('span'))) {
+      const spanOverflow = node.scrollHeight - node.clientHeight;
+      if (spanOverflow > overflow) overflow = spanOverflow;
+      if (spanOverflow > 2) clipped = true;
     }
   }
-  const first = slots[0];
-  const last = slots[slots.length - 1];
-  if (first !== undefined && target < toMinutes(first.startTime)) {
-    return -Math.min(1, (toMinutes(first.startTime) - target) / 60);
-  }
-  if (last !== undefined && target > toMinutes(last.endTime)) {
-    return periodCount + Math.min(1, (target - toMinutes(last.endTime)) / 60);
-  }
-  return null;
+  return { cards: cards.length, clipped, overflow };
 }
 
 export function WeekView({
@@ -258,30 +256,29 @@ export function WeekView({
     () => data.slots.map((slot) => ({ periodNo: slot.period_no, startTime: slot.start_time, endTime: slot.end_time })),
     [data.slots],
   );
-  const ratio = nowRatio(slots, localMinuteOfDay(nowTick, data.timeZone));
   const lessons = useMemo(() => lessonsOf(data), [data]);
   const periodCount = slots.length;
+  /** 头部/尾部补白随自定义时间条目伸缩：节次轴、时间线与拖动换算都跟着平移 */
+  const metrics = useMemo(() => gridMetrics(slots, lessons, rowHeight), [slots, lessons, rowHeight]);
+  const gridHeight = metrics.padTop + periodCount * rowHeight + metrics.padBottom;
+  const nowMinute = localMinuteOfDay(nowTick, data.timeZone);
+  const ratio =
+    gridHeight === 0 ? null : minuteToY(nowMinute, slots, rowHeight, metrics) / gridHeight;
 
   // 内容自适应行高：卡片被裁就整体加高（上限 ROW_HEIGHT_MAX），变宽不挤了逐级收回
   useEffect(() => {
     if (typeof globalThis.requestAnimationFrame !== 'function') return;
     const handle = globalThis.requestAnimationFrame(() => {
-      // 拖动残影也要排除：它是固定宽度的小卡，永远量成裁切
-      const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]')).filter(
-        (card) => card.closest('[data-role="drag-ghost"]') === null,
-      );
-      if (cards.length === 0) return;
-      // 名称/地点/教师这些 span 自带 truncate 或 line-clamp，卡片的 scrollHeight 量不到，
-      // 必须逐个后代比较：谁被裁都算挤不下（课表待办条目同样走这套）
-      const clipped = cards.some((card) => {
-        if (card.scrollHeight > card.clientHeight + 2) return true;
-        return Array.from(card.querySelectorAll<HTMLElement>('span')).some(
-          (node) => node.scrollHeight > node.clientHeight + 2,
-        );
-      });
-      if (clipped && rowHeight < ROW_HEIGHT_MAX) {
+      const { cards, clipped, overflow } = measureCardFit();
+      if (cards === 0) return;
+      logDebug('layout', '行高自适应', { rowHeight, cards, clipped, overflow });
+      if (clipped && rowHeight >= ROW_HEIGHT_MAX) {
+        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight, overflow, cards });
+        return;
+      }
+      if (clipped) {
         setRowHeight((current) => Math.min(ROW_HEIGHT_MAX, current + 8));
-      } else if (!clipped && rowHeight > ROW_HEIGHT_MIN) {
+      } else if (rowHeight > ROW_HEIGHT_MIN) {
         setRowHeight((current) => Math.max(ROW_HEIGHT_MIN, current - 4));
       }
     });
@@ -289,6 +286,29 @@ export function WeekView({
       if (typeof globalThis.cancelAnimationFrame === 'function') globalThis.cancelAnimationFrame(handle);
     };
   }, [rowHeight, data, lessons]);
+
+  // 真实窗口里的行高自检：启动时日志级别还没同步到原生，等布局稳定后再量一次并留痕
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const fit = measureCardFit();
+      if (fit.cards === 0) return;
+      logDebug('layout', '行高自检', {
+        rowHeight,
+        cards: fit.cards,
+        clipped: fit.clipped,
+        overflow: fit.overflow,
+        height: gridHeight,
+        padTop: metrics.padTop,
+        padBottom: metrics.padBottom,
+      });
+      if (fit.clipped && rowHeight >= ROW_HEIGHT_MAX) {
+        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight, overflow: fit.overflow, cards: fit.cards });
+      }
+    }, 2500);
+    return () => clearTimeout(timer);
+    // 只在挂载后量一次：后续行高变化由上面的自适应逻辑负责
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(
     () => () => {
@@ -533,7 +553,7 @@ export function WeekView({
     for (const [day, element] of columns.current) {
       const bounds = element.getBoundingClientRect();
       if (clientX < bounds.left || clientX > bounds.right) continue;
-      return { day, period: periodAt(clientY, bounds.top, periodCount, rowHeight) };
+      return { day, period: periodAt(clientY, bounds.top, periodCount, rowHeight, metrics.padTop) };
     }
     return null;
   }
@@ -708,7 +728,7 @@ export function WeekView({
             className="relative grid"
             style={{
               gridTemplateColumns: `var(--dt-axis) repeat(${viewDays}, minmax(0, 1fr))`,
-              height: `${periodCount * rowHeight}px`,
+              height: `${gridHeight}px`,
             }}
           >
             <div className="relative border-r border-line">
@@ -716,7 +736,7 @@ export function WeekView({
                 <div
                   key={slot.periodNo}
                   className="absolute inset-x-0 flex flex-col items-center justify-center gap-0.5 border-b border-line text-[9px] text-muted tablet:text-[11px]"
-                  style={{ top: `${index * rowHeight}px`, height: `${rowHeight}px` }}
+                  style={{ top: `${metrics.padTop + index * rowHeight}px`, height: `${rowHeight}px` }}
                 >
                   <span className="tabular font-semibold text-ink">{slot.periodNo}</span>
                   <span className="tabular">{slot.startTime}</span>
@@ -724,6 +744,28 @@ export function WeekView({
                 </div>
               ))}
             </div>
+
+            {/* 头部/尾部补白：只有自定义时间条目超出节次范围时才出现，标出真实时间范围 */}
+            {metrics.padTop > 0 && (
+              <div
+                aria-hidden
+                data-role="grid-pad-top"
+                className="pointer-events-none absolute left-[var(--dt-axis)] right-0 top-0 flex items-center justify-center border-b border-dashed border-line bg-surface-muted/50 text-[9px] text-muted tablet:text-[10px]"
+                style={{ height: `${metrics.padTop}px` }}
+              >
+                {padLabel(metrics.firstMinute - Math.round((metrics.padTop * metrics.minutesPerRow) / rowHeight), metrics.firstMinute)}
+              </div>
+            )}
+            {metrics.padBottom > 0 && (
+              <div
+                aria-hidden
+                data-role="grid-pad-bottom"
+                className="pointer-events-none absolute bottom-0 left-[var(--dt-axis)] right-0 flex items-center justify-center border-t border-dashed border-line bg-surface-muted/50 text-[9px] text-muted tablet:text-[10px]"
+                style={{ height: `${metrics.padBottom}px` }}
+              >
+                {padLabel(metrics.lastMinute, metrics.lastMinute + Math.round((metrics.padBottom * metrics.minutesPerRow) / rowHeight))}
+              </div>
+            )}
 
             {Array.from({ length: viewDays }, (_, index) => {
               const day = index + 1;
@@ -766,7 +808,7 @@ export function WeekView({
                     // 长按拖动课程卡时会冒泡到列上，此时不要弹占位块
                     if (session.current !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    const period = periodAt(event.clientY, bounds.top, periodCount, rowHeight);
+                    const period = periodAt(event.clientY, bounds.top, periodCount, rowHeight, metrics.padTop);
                     // 已占用的格只清掉占位块，不进入拖动
                     if (occupied(data, day, period)) {
                       setEmptyTarget(null);
@@ -787,14 +829,14 @@ export function WeekView({
                     if (target.closest('[data-role="empty-slot"]') !== null) return;
                     if (target.closest('[data-tone]') !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount, rowHeight));
+                    pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount, rowHeight, metrics.padTop));
                   }}
                 >
                   {Array.from({ length: periodCount }, (_, rowIndex) => (
                     <div
                       key={`line-${day}-${rowIndex}`}
                       className="absolute inset-x-0 border-b border-line"
-                      style={{ top: `${rowIndex * rowHeight}px`, height: `${rowHeight}px` }}
+                      style={{ top: `${metrics.padTop + rowIndex * rowHeight}px`, height: `${rowHeight}px` }}
                     />
                   ))}
 
@@ -803,7 +845,7 @@ export function WeekView({
                       aria-hidden
                       className="pointer-events-none absolute inset-x-1 rounded-sm border-2 border-dashed border-primary-strong bg-primary/15"
                       style={{
-                        top: `${(drag.period - 1) * rowHeight + 2}px`,
+                        top: `${metrics.padTop + (drag.period - 1) * rowHeight + 2}px`,
                         height: `${(drag.cell.periodEnd - drag.cell.periodStart + 1) * rowHeight - 4}px`,
                       }}
                     />
@@ -816,7 +858,7 @@ export function WeekView({
                         bodyDragging && 'ring-2 ring-primary-strong',
                       )}
                       style={{
-                        top: `${(placeholder.start - 1) * rowHeight + 2}px`,
+                        top: `${metrics.padTop + (placeholder.start - 1) * rowHeight + 2}px`,
                         height: `${Math.max(rowHeight - 4, (placeholder.end - placeholder.start + 1) * rowHeight - 4)}px`,
                         touchAction: 'none',
                       }}
@@ -913,18 +955,19 @@ export function WeekView({
                   )}
 
                   {dayLessons.map((lesson) => {
-                    // 自定义时间的条目按真实时间定位：把墙钟时间映射到节次行空间（行内线性）
-                    const clockTop = customRow(lesson.customStart, slots, periodCount);
-                    const clockBottom = customRow(lesson.customEnd, slots, periodCount);
-                    const custom = clockTop !== null && clockBottom !== null;
-                    const rawTop = custom ? clockTop * rowHeight + 2 : (lesson.periodStart - 1) * rowHeight + 2;
+                    // 自定义时间的条目按真实时间定位：分钟直接映射到网格（含头部补白）
+                    const startMinute = minuteOf(lesson.customStart);
+                    const endMinute = minuteOf(lesson.customEnd);
+                    const custom = startMinute !== null && endMinute !== null;
+                    const customTop = custom ? minuteToY(startMinute, slots, rowHeight, metrics) : 0;
+                    const customBottom = custom ? minuteToY(endMinute, slots, rowHeight, metrics) : 0;
+                    const rawTop = custom ? customTop + 2 : metrics.padTop + (lesson.periodStart - 1) * rowHeight + 2;
                     const rawHeight = custom
-                      ? Math.max(24, (clockBottom - clockTop) * rowHeight - 4)
+                      ? Math.max(24, customBottom - customTop - 4)
                       : (lesson.periodEnd - lesson.periodStart + 1) * rowHeight - 4;
-                    // 自定义时间落在节次范围外时，夹进网格内保证可见（卡片本身仍显示真实时间）
-                    const gridBottom = periodCount * rowHeight;
-                    const height = Math.min(rawHeight, gridBottom);
-                    const top = Math.max(0, Math.min(rawTop, gridBottom - height));
+                    // 补白已按分钟展开，这里只兜底：极端值仍保证卡片落在网格内可见
+                    const height = Math.min(rawHeight, gridHeight);
+                    const top = Math.max(0, Math.min(rawTop, gridHeight - height));
                     return (
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}
