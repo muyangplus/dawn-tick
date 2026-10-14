@@ -1,0 +1,23 @@
+{
+  "name": "@dawn-tick/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema/001_init.sql": "./src/schema/001_init.sql",
+    "./schema/002_event_kinds.sql": "./src/schema/002_event_kinds.sql",
+    "./schema/003_custom_time.sql": "./src/schema/003_custom_time.sql",
+    "./schema/004_timetable_entries.sql": "./src/schema/004_timetable_entries.sql",
+    "./schema/005_due_at_any.sql": "./src/schema/005_due_at_any.sql",
+    "./schema/006_schema_version.sql": "./src/schema/006_schema_version.sql"
+  },
+  "scripts": {
+    "test": "node --test test/time.test.ts test/weeks.test.ts test/timetable.test.ts test/migrate.test.ts test/schema.test.ts test/columns.test.ts test/base64.test.ts test/repository.test.ts test/expand.test.ts test/sync.test.ts test/validation.test.ts test/mutations.test.ts test/import-weeks.test.ts test/import-csv.test.ts test/import-ics.test.ts test/import-apply.test.ts test/reminders.test.ts test/backup.test.ts test/zip.test.ts test/search.test.ts test/page-tables.test.ts test/school-list.test.ts test/import-effective-config.test.ts test/config.test.ts test/preset-override.test.ts test/preset-snapshot.test.ts test/settings.test.ts test/schools.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,19 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">晓刻 DawnTick</string>
+    <string name="title_activity_main">晓刻 DawnTick</string>
+    <string name="package_name">com.dawntick.app</string>
+    <string name="custom_url_scheme">com.dawntick.app</string>
+    <string name="widget_next_label">下一节课</string>
+    <string name="widget_in_class">正在上课</string>
+    <string name="widget_today_label">今日课表</string>
+    <string name="widget_no_lesson">暂无后续课程</string>
+    <string name="widget_no_data">尚未同步数据</string>
+    <string name="widget_today_header">今日课表 · 第 %1$d 周</string>
+    <string name="widget_today_empty">今天没有课</string>
+    <string name="widget_week_label">本周课表</string>
+    <string name="widget_week_header">本周课表 · 第 %1$d 周</string>
+    <string name="widget_week_empty_row">%1$s 无课</string>
+    <string name="widget_exam_label">考试倒计时</string>
+    <string name="widget_exam_none">暂无考试</string>
+</resources>

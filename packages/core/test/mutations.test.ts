@@ -1,0 +1,487 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  DEFAULT_PERIODS,
+  appendTimeSlot,
+  clearReschedules,
+  createCourse,
+  createEvent,
+  createReschedule,
+  createSchedule,
+  createSemester,
+  deleteCourse,
+  deleteEvent,
+  deleteSemesterDeep,
+  deleteTimeSlot,
+  ensureUser,
+  listManagedCourses,
+  listReschedules,
+  replaceTimeSlots,
+  setReminder,
+  setSchedules,
+  updateCourse,
+  updateTimeSlot,
+  uuidv7,
+} from '../src/mutations.ts';
+import { listTimeSlots } from '../src/repository.ts';
+
+type Row = Record<string, unknown>;
+import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.ts';
+import { weekView } from '../src/repository.ts';
+import { ValidationError } from '../src/validation.ts';
+import { MemoryStorage } from '../src/storage.ts';
+import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './helpers.ts';
+
+const FIXED = (() => {
+  let counter = 0;
+  return () => {
+    counter += 1;
+    return `id-${counter}`;
+  };
+})();
+
+function fixedClock(): () => number {
+  let tick = 1759900000000;
+  return () => {
+    tick += 1000;
+    return tick;
+  };
+}
+
+test('uuidv7 编码 48 位时间戳且版本位正确', () => {
+  const value = uuidv7(1759900000000);
+  assert.match(value, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  const stampOf = (uuid: string): bigint => BigInt(`0x${uuid.replace(/-/g, '').slice(0, 12)}`);
+  assert.equal(stampOf(value), 1759900000000n);
+  assert.equal(stampOf(uuidv7(1759900005000)), 1759900005000n);
+  assert.ok(stampOf(uuidv7(1759900005000)) > stampOf(value));
+});
+
+test('ensureUser 幂等', async () => {
+  const storage = createStorage();
+  const first = await ensureUser(storage, USER_ID);
+  const second = await ensureUser(storage, USER_ID, '别人');
+  assert.equal(first['id'], second['id']);
+  assert.equal(second['nickname'], '我');
+  assert.equal((await storage.collection('users').getAll()).length, 1);
+});
+
+test('新建学期会把旧学期取消当前状态', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const first = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const second = await createSemester(storage, { userId: USER_ID, name: '第二学期', startDate: '2027-02-22' }, options);
+
+  const rows = await storage.collection<Record<string, unknown>>('semesters').getAll();
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((row) => row['id'] === first['id'])?.['is_active'], 0);
+  assert.equal(rows.find((row) => row['id'] === second['id'])?.['is_active'], 1);
+});
+
+test('新建学期后可立即用于周视图', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(
+    storage,
+    { userId: USER_ID, name: '第一学期', startDate: START_DATE },
+    options,
+  );
+  const course = await createCourse(
+    storage,
+    { semesterId: String(semester['id']), name: '高等数学', shortName: '高数', location: '教三-201' },
+    options,
+  );
+  await createSchedule(
+    storage,
+    {
+      courseId: String(course['id']),
+      dayOfWeek: 1,
+      periodStart: 1,
+      periodEnd: 2,
+      weeks: weekRange(1, 16),
+    },
+    options,
+  );
+
+  const rows = await weekView(storage, String(semester['id']), 1, 3);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.name, '高等数学');
+  assert.equal(rows[0]?.room, '教三-201');
+});
+
+test('更新会递增 rev 并置 dirty', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const course = await createCourse(storage, { semesterId: String(semester['id']), name: '高等数学' }, options);
+  const updated = await updateCourse(storage, String(course['id']), { name: '高等数学（改）' }, options);
+
+  assert.equal(updated['name'], '高等数学（改）');
+  assert.equal(updated['rev'], 1);
+  assert.equal(updated['dirty'], 1);
+});
+
+test('删除课程会软删除排课并清理提醒', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const course = await createCourse(storage, { semesterId: String(semester['id']), name: '高等数学' }, options);
+  const schedule = await createSchedule(
+    storage,
+    { courseId: String(course['id']), dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: weekRange(1, 16) },
+    options,
+  );
+  await setReminder(
+    storage,
+    { userId: USER_ID, targetType: 'course', targetId: String(course['id']), advanceMinutes: 15 },
+    options,
+  );
+
+  await deleteCourse(storage, String(course['id']), options);
+
+  const schedules = await storage.collection<Record<string, unknown>>('course_schedules').get(String(schedule['id']));
+  assert.ok((schedules?.['deleted_at'] as number) > 0);
+  const reminders = await storage.collection<Record<string, unknown>>('reminders').getAll();
+  assert.ok(reminders.every((row) => (row['deleted_at'] as number) > 0));
+  assert.deepEqual(await weekView(storage, String(semester['id']), 1, 3), []);
+});
+
+test('删除待办会连带删除子任务', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  await ensureUser(storage, USER_ID, '我', options);
+  const parent = await createEvent(storage, { userId: USER_ID, type: 'todo', title: '交实验报告' }, options);
+  const child = await createEvent(
+    storage,
+    { userId: USER_ID, type: 'todo', title: '写实验一', parentId: String(parent['id']) },
+    options,
+  );
+
+  await deleteEvent(storage, String(parent['id']), options);
+  const events = await storage.collection<Record<string, unknown>>('events').getAll();
+  assert.ok(events.every((row) => (row['deleted_at'] as number) > 0));
+  assert.equal(events.length, 2);
+  assert.ok(events.some((row) => row['id'] === child['id']));
+});
+
+test('同一目标的提醒只保留一条', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  await ensureUser(storage, USER_ID, '我', options);
+  await setReminder(storage, { userId: USER_ID, targetType: 'course', targetId: 'c-1', advanceMinutes: 5 }, options);
+  const second = await setReminder(
+    storage,
+    { userId: USER_ID, targetType: 'course', targetId: 'c-1', advanceMinutes: 30, dnd: 2 },
+    options,
+  );
+
+  const rows = await storage.collection<Record<string, unknown>>('reminders').getAll();
+  assert.equal(rows.length, 1);
+  assert.equal(second['advance_minutes'], 30);
+  assert.equal(second['dnd'], 2);
+});
+
+test('写入前校验会拦截非法值', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  await assert.rejects(
+    () => createCourse(storage, { semesterId: String(semester['id']), name: '坏色', color: 'red' }, options),
+    (error: unknown) => error instanceof ValidationError,
+  );
+  await assert.rejects(
+    () => createSemester(storage, { userId: USER_ID, name: '坏周数', startDate: START_DATE, totalWeeks: 99 }, options),
+    (error: unknown) => error instanceof ValidationError,
+  );
+});
+
+test('设置默认值与读写回环', async () => {
+  const storage = new MemoryStorage();
+  assert.deepEqual(await readSettings(storage), DEFAULT_SETTINGS);
+
+  const saved = await writeSettings(storage, {
+    viewDays: 7,
+    theme: 'dark',
+    themePreset: 'muted',
+    autoTimeZone: true,
+    autoStart: true,
+    startHidden: false,
+  });
+  assert.equal(saved.viewDays, 7);
+  assert.equal(saved.theme, 'dark');
+  assert.equal(saved.themePreset, 'muted');
+  assert.equal(saved.autoTimeZone, true);
+  assert.equal(saved.autoStart, true);
+  assert.equal(saved.startHidden, false);
+  assert.equal(saved.timeZone, DEFAULT_SETTINGS.timeZone);
+
+  assert.deepEqual(await readSettings(storage), saved);
+});
+
+test('开机自启默认关闭，隐藏窗口默认开启', async () => {
+  const storage = new MemoryStorage();
+  const settings = await readSettings(storage);
+  assert.equal(settings.autoStart, false);
+  assert.equal(settings.startHidden, true);
+
+  await storage.writeMeta('auto_start', '1');
+  await storage.writeMeta('start_hidden', '0');
+  const loaded = await readSettings(storage);
+  assert.equal(loaded.autoStart, true);
+  assert.equal(loaded.startHidden, false);
+});
+
+test('设置非法值被拒或回退', async () => {
+  const storage = new MemoryStorage();
+  await assert.rejects(() => writeSettings(storage, { viewDays: 0 }), RangeError);
+  await assert.rejects(() => writeSettings(storage, { viewDays: 8 }), RangeError);
+  await assert.rejects(() => writeSettings(storage, { timeZone: '' }), RangeError);
+
+  await storage.writeMeta('view_days', '99');
+  await storage.writeMeta('theme', 'neon');
+  await storage.writeMeta('theme_preset', 'unknown');
+  const settings = await readSettings(storage);
+  assert.equal(settings.viewDays, DEFAULT_SETTINGS.viewDays);
+  assert.equal(settings.theme, DEFAULT_SETTINGS.theme);
+  assert.equal(settings.themePreset, DEFAULT_SETTINGS.themePreset);
+});
+
+test('新建学期会带默认节次时间表', async () => {
+  const storage = createStorage();
+  const semester = await createSemester(
+    storage,
+    { userId: USER_ID, name: '第一学期', startDate: START_DATE },
+    { now: fixedClock(), id: FIXED },
+  );
+  const slots = await storage.collection<Record<string, unknown>>('time_slots').getAll();
+  assert.equal(slots.length, DEFAULT_PERIODS.length);
+  assert.equal(slots.filter((row) => row['semester_id'] === semester['id']).length, DEFAULT_PERIODS.length);
+  const first = slots.find((row) => row['period_no'] === 1);
+  assert.equal(first?.['start_time'], '08:00');
+  assert.equal(first?.['section'], 'am');
+
+  const withoutSlots = await createSemester(
+    storage,
+    { userId: USER_ID, name: '第二学期', startDate: '2027-02-22', withDefaultTimeSlots: false },
+    { now: fixedClock(), id: FIXED },
+  );
+  const rows = await storage.collection<Record<string, unknown>>('time_slots').getAll();
+  assert.equal(rows.filter((row) => row['semester_id'] === withoutSlots['id']).length, 0);
+});
+
+test('调课记录可写入、查询与撤销', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+
+  const created = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: 'sem-1',
+    refScheduleId: 's-1',
+    onDate: '2026-09-21',
+    action: 'move',
+    newDate: '2026-09-22',
+    newPeriodStart: 3,
+    newPeriodEnd: 4,
+  });
+  assert.equal(created['type'], 'reschedule');
+  assert.equal(created['action'], 'move');
+
+  const found = await listReschedules(storage, 's-1', '2026-09-21');
+  assert.equal(found.length, 1);
+  assert.equal(found[0]?.['new_period_start'], 3);
+  assert.deepEqual(await listReschedules(storage, 's-1', '2026-09-28'), []);
+
+  assert.equal(await clearReschedules(storage, 's-1', '2026-09-21'), 1);
+  assert.deepEqual(await listReschedules(storage, 's-1', '2026-09-21'), []);
+
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: 'sem-1',
+    refScheduleId: 's-1',
+    onDate: '2026-09-28',
+    action: 'cancel',
+  });
+  assert.equal(cancel['title'], '停课');
+});
+
+test('调课记录缺少字段时被校验拒绝', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await assert.rejects(
+    () =>
+      createReschedule(storage, {
+        userId: USER_ID,
+        semesterId: 'sem-1',
+        refScheduleId: 's-1',
+        onDate: '2026-09-21',
+        action: 'move',
+      }),
+    /new_date|new_period|校验/,
+  );
+});
+
+test('级联删除学期会清理课程、排课、节次、日程与提醒', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: 's-1',
+    onDate: '2026-09-21',
+    action: 'move',
+    newDate: '2026-09-22',
+    newPeriodStart: 3,
+    newPeriodEnd: 4,
+  });
+  await setReminder(storage, {
+    userId: USER_ID,
+    targetType: 'course',
+    targetId: 'c-1',
+    advanceMinutes: 10,
+  });
+
+  const report = await deleteSemesterDeep(storage, SEMESTER_ID);
+  assert.ok(report.courses >= 1, `课程应被清理，实际 ${report.courses}`);
+  assert.ok(report.schedules >= 1, `排课应被清理，实际 ${report.schedules}`);
+  assert.ok(report.slots >= 1, `节次应被清理，实际 ${report.slots}`);
+  assert.ok(report.events >= 1, `日程应被清理，实际 ${report.events}`);
+  assert.ok(report.reminders >= 1, `提醒应被清理，实际 ${report.reminders}`);
+  assert.equal((await storage.collection<Row>('semesters').get(SEMESTER_ID))?.['deleted_at'] === null, false);
+  assert.deepEqual(
+    (await storage.collection<Row>('courses').getAll()).filter((row) => row['deleted_at'] === null),
+    [],
+  );
+
+  const second = await createSemester(storage, {
+    userId: USER_ID,
+    name: '第二个学期',
+    startDate: '2027-02-22',
+    totalWeeks: 18,
+  });
+  const third = await createSemester(storage, {
+    userId: USER_ID,
+    name: '第三个学期',
+    startDate: '2027-09-06',
+    totalWeeks: 18,
+  });
+  await deleteSemesterDeep(storage, String(third['id']));
+  const active = await storage.collection<Row>('semesters').get(String(second['id']));
+  assert.equal(active?.['is_active'], 1, '删除当前学期后应切到剩余学期');
+});
+
+test('删除不存在的学期不报错且返回全零', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  assert.deepEqual(await deleteSemesterDeep(storage, 'sem-missing'), {
+    courses: 0,
+    schedules: 0,
+    slots: 0,
+    events: 0,
+    reminders: 0,
+  });
+});
+
+test('时间表可整体替换、追加与受限删除', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+
+  const replaced = await replaceTimeSlots(storage, SEMESTER_ID, [
+    { periodNo: 1, startTime: '08:00', endTime: '08:45', section: 'am' },
+    { periodNo: 2, startTime: '08:55', endTime: '09:40', section: 'am' },
+  ]);
+  assert.equal(replaced.length, 2);
+  const slots = await listTimeSlots(storage, SEMESTER_ID);
+  assert.deepEqual(
+    slots.map((slot) => `${slot.period_no} ${slot.start_time}`),
+    ['1 08:00', '2 08:55'],
+  );
+
+  const appended = await appendTimeSlot(storage, SEMESTER_ID, 45, 10);
+  assert.equal(appended['period_no'], 3);
+  assert.equal(appended['start_time'], '09:50');
+  assert.equal(appended['end_time'], '10:35');
+
+  // 种子数据里的排课使用第 1-2 节，删除第 1 节应被拒绝
+  const blocked = await deleteTimeSlot(storage, SEMESTER_ID, 1);
+  assert.equal(blocked.deleted, false);
+  assert.ok(blocked.usedBy >= 1);
+
+  // 把全部排课收敛到第 1-2 节后，第 3 节可删除
+  for (const course of await listManagedCourses(storage, SEMESTER_ID)) {
+    await setSchedules(storage, course.id, [
+      { dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: [1, 2, 3] },
+    ]);
+  }
+  const removed = await deleteTimeSlot(storage, SEMESTER_ID, 3);
+  assert.equal(removed.deleted, true);
+  assert.equal((await listTimeSlots(storage, SEMESTER_ID)).length, 2);
+});
+
+test('课程管理列表带出排课并可整体替换排课', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+
+  const list = await listManagedCourses(storage, SEMESTER_ID);
+  const course = list.find((item) => item.name.length > 0);
+  assert.ok(course !== undefined);
+  assert.ok(course.schedules.length >= 1);
+  assert.ok(course.schedules[0]?.weeks.length ?? 0 >= 1);
+
+  const target = course.schedules[0]?.id ?? '';
+  await setSchedules(storage, course.id, [
+    { dayOfWeek: 3, periodStart: 5, periodEnd: 6, weeks: [1, 3, 5], room: '教三-301' },
+  ]);
+  const after = await listManagedCourses(storage, SEMESTER_ID);
+  const updated = after.find((item) => item.id === course.id);
+  assert.equal(updated?.schedules.length, 1);
+  assert.equal(updated?.schedules[0]?.dayOfWeek, 3);
+  assert.deepEqual(updated?.schedules[0]?.weeks, [1, 3, 5]);
+  assert.equal(updated?.schedules[0]?.room, '教三-301');
+  assert.equal(
+    (await storage.collection<Row>('course_schedules').get(target))?.['deleted_at'] === null,
+    false,
+  );
+});
+
+test('可单独修改某节课次的时间', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const before = await listTimeSlots(storage, SEMESTER_ID);
+  const third = before.find((slot) => slot.period_no === 3);
+  assert.ok(third !== undefined, '默认时间表应有第 3 节');
+
+  const updated = await updateTimeSlot(storage, third.id, { startTime: '10:20', endTime: '11:05' });
+  assert.equal(updated['start_time'], '10:20');
+  assert.equal(updated['end_time'], '11:05');
+  assert.equal(updated['section'], 'am');
+
+  const after = await listTimeSlots(storage, SEMESTER_ID);
+  assert.equal(after.find((slot) => slot.period_no === 3)?.start_time, '10:20');
+  assert.equal(after.find((slot) => slot.period_no === 2)?.start_time, '08:55', '其他课次不受影响');
+
+  await assert.rejects(() => updateTimeSlot(storage, third.id, { startTime: '25:00' }), /超出范围/);
+  await assert.rejects(() => updateTimeSlot(storage, third.id, { startTime: '十点' }), /HH:MM/);
+
+  const evening = await updateTimeSlot(storage, third.id, { startTime: '19:30' });
+  assert.equal(evening['section'], 'night', '时段归属随开始时间更新');
+});
+
+test('新建学期使用固定 id 生成器便于断言', async () => {
+  const storage = createStorage();
+  let first = true;
+  const semester = await createSemester(
+    storage,
+    { userId: USER_ID, name: '第一学期', startDate: START_DATE },
+    {
+      now: fixedClock(),
+      id: () => {
+        if (first) {
+          first = false;
+          return SEMESTER_ID;
+        }
+        return `slot-${Math.random().toString(16).slice(2)}`;
+      },
+    },
+  );
+  assert.equal(semester['id'], SEMESTER_ID);
+});

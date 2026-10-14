@@ -1,0 +1,14 @@
+{
+  "name": "@dawn-tick/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "check": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.1"
+  }
+}

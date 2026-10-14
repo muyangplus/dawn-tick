@@ -1,0 +1,22 @@
+{
+  "name": "@dawn-tick/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cap": "cap",
+    "add:android": "cap add android",
+    "sync": "cap sync android",
+    "build:android": "cap sync android && cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor-community/sqlite": "^8.1.1",
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/local-notifications": "^8.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
+    "typescript": "^7.0.2"
+  }
+}

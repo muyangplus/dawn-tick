@@ -1,0 +1,327 @@
+name: Publish
+
+on:
+  push:
+    tags: ['v*']
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 发布渠道
+        type: choice
+        required: true
+        default: dev
+        options: [dev, beta, release]
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    name: 计算渠道与标签
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.compute.outputs.channel }}
+      version: ${{ steps.compute.outputs.version }}
+      appVersion: ${{ steps.compute.outputs.appVersion }}
+      stamp: ${{ steps.compute.outputs.stamp }}
+      versionCode: ${{ steps.compute.outputs.versionCode }}
+      skip: ${{ steps.skipcheck.outputs.skip }}
+      tag: ${{ steps.compute.outputs.tag }}
+      buildRef: ${{ steps.compute.outputs.buildRef }}
+      rolling: ${{ steps.compute.outputs.rolling }}
+      prerelease: ${{ steps.compute.outputs.prerelease }}
+      title: ${{ steps.compute.outputs.title }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: compute
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          TAGS=$(git tag --list 'v*-beta.*' | tr '\n' ',')
+          node tools/release/plan.mjs \
+            --ref="$GITHUB_REF" \
+            --event="$GITHUB_EVENT_NAME" \
+            --run="$GITHUB_RUN_NUMBER" \
+            --channel="$INPUT_CHANNEL" \
+            --existing-tags="$TAGS" \
+            --github-output >> "$GITHUB_OUTPUT"
+      - name: 判断是否需要构建
+        id: skipcheck
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          CHANNEL="${{ steps.compute.outputs.channel }}"
+          if [ "$CHANNEL" != "dev" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # 滚动渠道：dev-latest 记录的提交与本次相同就不重复构建（定时任务尤其省事）
+          body=$(gh release view dev-latest --json body --jq .body 2>/dev/null || true)
+          last=$(printf '%s' "$body" | sed -n 's/.*提交 \([0-9a-f]\{7,40\}\).*/\1/p' | head -n 1)
+          if [ -n "$last" ] && [ "$last" = "$GITHUB_SHA" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "dev-latest 已是提交 $last，跳过本次构建" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "将构建：dev-latest 记录 ${last:-无}，本次 $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: 渠道摘要
+        run: |
+          echo "渠道 ${{ steps.compute.outputs.channel }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "版本 ${{ steps.compute.outputs.appVersion }}（构建时间戳 ${{ steps.compute.outputs.stamp }}）" >> "$GITHUB_STEP_SUMMARY"
+          echo "标签 ${{ steps.compute.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "构建自 ${{ steps.compute.outputs.buildRef }}" >> "$GITHUB_STEP_SUMMARY"
+
+  gate:
+    name: 等待 CI 通过
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
+          fetch-depth: 1
+      - name: 等待该提交的 CI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/release/ci-gate.mjs --ref="${{ needs.plan.outputs.buildRef }}" --timeout=2400
+
+  windows:
+    name: Windows 安装包
+    needs: [plan, gate]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: windows-latest
+    env:
+      DT_CHANNEL: ${{ needs.plan.outputs.channel }}
+      DT_VERSION: ${{ needs.plan.outputs.appVersion }}
+      DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: 打包
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.channel }}" = "dev" ]; then
+            echo "PROFILE=debug" >> "$GITHUB_ENV"
+            pnpm -C apps/desktop exec tauri build --debug
+          else
+            echo "PROFILE=release" >> "$GITHUB_ENV"
+            pnpm -C apps/desktop exec tauri build
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            apps/desktop/src-tauri/target/${{ env.PROFILE }}/*.exe
+            apps/desktop/src-tauri/target/${{ env.PROFILE }}/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  android:
+    name: Android APK
+    needs: [plan, gate]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      DT_CHANNEL: ${{ needs.plan.outputs.channel }}
+      DT_VERSION: ${{ needs.plan.outputs.appVersion }}
+      DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: 准备 Android SDK
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms" || true
+          ls "$ANDROID_HOME/build-tools" || true
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          fi
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/web build
+      - run: pnpm -C apps/mobile exec cap sync android
+      - name: 写入签名材料
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.key"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.key" >> "$GITHUB_ENV"
+      - name: 打包（dev 渠道为 debug 版）
+        working-directory: apps/mobile/android
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.plan.outputs.channel }}" = "dev" ]; then
+            sh ./gradlew assembleDebug --no-daemon
+          elif [ -n "${KEYSTORE_BASE64:-}" ]; then
+            sh ./gradlew assembleRelease --no-daemon
+          else
+            echo "未配置签名材料，降级为 debug 版" >&2
+            sh ./gradlew assembleDebug --no-daemon
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: apps/mobile/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  web:
+    name: Web 静态包
+    needs: [plan, gate]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      DT_CHANNEL: ${{ needs.plan.outputs.channel }}
+      DT_VERSION: ${{ needs.plan.outputs.appVersion }}
+      DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.buildRef }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/web build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web
+          path: apps/web/dist/**
+          if-no-files-found: error
+
+  publish:
+    name: 发布
+    needs: [plan, gate, windows, android, web]
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      VERSION: ${{ needs.plan.outputs.appVersion }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      ROLLING: ${{ needs.plan.outputs.rolling }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      TITLE: ${{ needs.plan.outputs.title }}
+      BUILD_REF: ${{ needs.plan.outputs.buildRef }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: 重命名并生成校验和
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          SUFFIX="DawnTick-${VERSION}-${CHANNEL}"
+
+          setup=$(find artifacts/windows -path '*bundle/nsis*' -name '*.exe' | head -n 1)
+          cp "$setup" "out/${SUFFIX}-windows-x64-setup.exe"
+
+          portable=$(find artifacts/windows -name '*.exe' -not -path '*nsis*' | head -n 1)
+          mkdir -p portable
+          cp "$portable" portable/DawnTick.exe
+          printf '%s\n' \
+            '晓刻 DawnTick 便携版' \
+            '' \
+            '数据与日志目录：%LOCALAPPDATA%\com.dawntick.app' \
+            '启动异常时请查看该目录下的 startup.log' \
+            '' \
+            '首次运行会补齐 Windows 上的本地数据库；若原生数据库不可用，应用会回退到浏览器存储并提示。' \
+            > portable/README-portable.txt
+          (cd portable && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-windows-x64-portable.zip" .)
+
+          apk=$(find artifacts/android -name '*.apk' | head -n 1)
+          cp "$apk" "out/${SUFFIX}-android.apk"
+
+          (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
+
+          cd out
+          for file in $(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.apk' -o -name '*.zip' \) -printf '%f\n'); do
+            sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
+          done
+          ls -l
+
+      - name: 滚动渠道先删除旧发布
+        if: env.ROLLING == 'true'
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag || true
+
+      - name: 发布或更新
+        run: |
+          set -euo pipefail
+          REMOTE="https://github.com/${GITHUB_REPOSITORY}.git"
+          TARGET=$(git ls-remote "$REMOTE" "refs/heads/${BUILD_REF}" | cut -f1 || true)
+          if [[ -z "$TARGET" ]]; then TARGET=$(git ls-remote "$REMOTE" "refs/tags/${BUILD_REF}" | cut -f1 || true); fi
+          if [[ -z "$TARGET" ]]; then TARGET="$GITHUB_SHA"; fi
+
+          case "$CHANNEL" in
+            release)
+              PREV=$(gh release list --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == false) | .tagName][]' | grep -v "^${TAG}$" | head -n 1 || true)
+              ;;
+            beta)
+              PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E -- '-beta\.' | grep -v "^${TAG}$" | head -n 1 || true)
+              ;;
+            *)
+              PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v '^dev-latest$' | head -n 1 || true)
+              ;;
+          esac
+          PREV="${PREV//[[:space:]]/}"
+
+          NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "标签 $TAG 已存在，覆盖产物"
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --title "$TITLE" --prerelease=$PRERELEASE
+          else
+            echo "创建标签 $TAG 并发布，比较基准 ${PREV:-无}"
+            args=(--title "$TITLE" --target "$TARGET" --generate-notes --notes "$NOTES" --prerelease=$PRERELEASE)
+            if [[ -n "$PREV" ]]; then args+=(--notes-start-tag "$PREV"); fi
+            gh release create "$TAG" out/* "${args[@]}"
+          fi

@@ -1,0 +1,334 @@
+@import 'tailwindcss';
+
+/* 静态设计令牌：与 apps/web/src/design/tokens.ts 一致，由 tools/design/check-a11y.mjs 校验。 */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-tap: 44px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 20px;
+  --text-lg--line-height: 28px;
+  --text-xl: 24px;
+  --text-xl--line-height: 32px;
+  --text-2xl: 32px;
+  --text-2xl--line-height: 40px;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.10);
+  --shadow-lg: 0 12px 32px rgb(0 0 0 / 0.16);
+
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1024px;
+}
+
+/* 运行时颜色令牌：由 applyTheme 写入 --dt-*，随主题与深浅模式变化。 */
+@theme inline {
+  --color-page: var(--dt-bg);
+  --color-surface: var(--dt-surface);
+  --color-surface-muted: var(--dt-surface-muted);
+  --color-line: var(--dt-border);
+  --color-line-strong: var(--dt-border-strong);
+  --color-ink: var(--dt-text);
+  --color-muted: var(--dt-muted);
+  --color-primary: var(--dt-primary);
+  --color-on-primary: var(--dt-on-primary);
+  --color-primary-strong: var(--dt-primary-strong);
+  --color-accent: var(--dt-accent);
+  --color-accent-strong: var(--dt-accent-strong);
+  --color-success: var(--dt-success);
+  --color-success-strong: var(--dt-success-strong);
+  --color-warning: var(--dt-warning);
+  --color-warning-strong: var(--dt-warning-strong);
+  --color-danger: var(--dt-danger);
+  --color-danger-strong: var(--dt-danger-strong);
+  --color-info: var(--dt-info);
+  --color-info-strong: var(--dt-info-strong);
+  --color-overlay: var(--dt-overlay);
+}
+
+@layer base {
+  /* 默认值取「青春活力 + 浅色」，保证 applyTheme 运行前界面已着色 */
+  :root {
+    color-scheme: light;
+    /* 移动端底部栏与悬浮按钮占位：主区留白按实际高度算，内容不会被挡住 */
+    --dt-bottom-nav: 56px;
+    --dt-bottom-fab: 56px;
+    --dt-bg: #fff7f2;
+    --dt-surface: #ffffff;
+    --dt-surface-muted: #fffbf9;
+    --dt-border: #f0e4dc;
+    --dt-border-strong: #9a8b84;
+    --dt-text: #1f1b24;
+    --dt-muted: #6b6475;
+    --dt-primary: #ff6b4a;
+    --dt-on-primary: #111111;
+    --dt-primary-strong: #b13a1c;
+    --dt-accent: #6c5ce7;
+    --dt-accent-strong: #4a37c9;
+    --dt-success: #2ed573;
+    --dt-success-strong: #0f7a41;
+    --dt-warning: #ffb020;
+    --dt-warning-strong: #8a5600;
+    --dt-danger: #ff4757;
+    --dt-danger-strong: #b3121f;
+    --dt-info: #4d96ff;
+    --dt-info-strong: #0a53c0;
+    --dt-overlay: rgba(0, 0, 0, 0.36);
+    --dt-course-0: #ff6b4a;
+    --dt-course-0-tint: #fffaf7;
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+  }
+
+  /* 视口高度交给外壳自己的 fixed inset-0，这里只保证根节点不撑出滚动条 */
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    background: var(--dt-bg);
+    color: var(--dt-text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* 仅紧凑条窗口：透明背景且自身不滚动；不要命中主窗口的 html */
+  body.mini-body {
+    background: transparent;
+    overflow: hidden;
+  }
+
+  .mini {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--dt-surface) 92%, transparent);
+    border: 1px solid var(--dt-border);
+    box-shadow: var(--shadow-lg);
+    cursor: grab;
+    user-select: none;
+  }
+
+  .mini:active {
+    cursor: grabbing;
+  }
+
+  /* 小组件背景：浅色 / 深色 / 透明，与 Android 小组件的三种底色同一口径 */
+  .mini-bg-light {
+    --dt-surface: #ffffff;
+    --dt-text: #1f1b24;
+    --dt-muted: #6b6475;
+    --dt-border: #e4e0ea;
+  }
+
+  .mini-bg-dark {
+    --dt-surface: #1e1a26;
+    --dt-text: #f3eff6;
+    --dt-muted: #a79fb3;
+    --dt-border: #3a3442;
+  }
+
+  .mini-bg-transparent {
+    background: color-mix(in srgb, var(--dt-surface) 55%, transparent);
+    border-color: color-mix(in srgb, var(--dt-border) 45%, transparent);
+  }
+
+  .mini-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .mini-label {
+    color: var(--dt-muted);
+    font-size: var(--text-xs);
+  }
+
+  .mini-close {
+    border: 0;
+    background: transparent;
+    color: var(--dt-muted);
+    padding: 0 4px;
+    font-size: var(--text-sm);
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .mini-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mini-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .mini-count {
+    color: var(--dt-primary-strong);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mini-meta,
+  .mini-empty {
+    color: var(--dt-muted);
+    font-size: var(--text-xs);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 极简数字：只留大号倒计时 */
+  .mini-minimal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mini-count-big {
+    color: var(--dt-primary-strong);
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+
+  .mini-minimal-name {
+    color: var(--dt-muted);
+    font-size: var(--text-xs);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 今日课表：可滚动的课次列表 */
+  .mini-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+    gap: 4px;
+  }
+
+  .mini-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .mini-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 6px;
+    border-left: 3px solid var(--dt-border);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--dt-surface-muted) 70%, transparent);
+    font-size: var(--text-xs);
+  }
+
+  .mini-item-now {
+    background: color-mix(in srgb, var(--dt-primary) 18%, transparent);
+    font-weight: 600;
+  }
+
+  .mini-item-done {
+    opacity: 0.45;
+  }
+
+  .mini-item-time {
+    color: var(--dt-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mini-item-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mini-item-room {
+    color: var(--dt-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40%;
+  }
+
+  /* 今日课表里正在上的那一节：右侧剩余时间 */
+  .mini-item-remain {
+    color: var(--dt-primary-strong);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .mini-item-task {
+    justify-content: space-between;
+  }
+
+  /* 组合卡：上半下一节课，下半待办 */
+  .mini-combo-top,
+  .mini-combo-bottom {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+  }
+
+  .mini-combo-bottom {
+    flex: 1;
+    border-top: 1px solid var(--dt-border);
+    padding-top: 4px;
+  }
+}

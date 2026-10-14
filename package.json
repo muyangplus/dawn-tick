@@ -1,0 +1,24 @@
+{
+  "name": "dawn-tick",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "晓刻 DawnTick：课表与日程提醒工具",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test && node --test tools/release/plan.test.mjs tools/release/build-stamp.test.mjs tools/release/ci-gate.test.mjs tools/design/check-a11y.test.mjs",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "version:current": "node tools/release/version.mjs --current",
+    "version:set": "node tools/release/version.mjs",
+    "version:check": "node tools/release/version.mjs --check",
+    "ui:smoke": "node tools/verify/smoke-ui.mjs",
+    "android:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/build-android-release.ps1 -Channel dev",
+    "android:release": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/build-android-release.ps1 -Channel release"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.2"
+  }
+}

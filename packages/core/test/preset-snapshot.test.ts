@@ -1,0 +1,913 @@
+/**
+ * 内置预设快照的一致性测试。
+ *
+ * 守五件事：
+ *   1. **快照自洽**：`verifyBuiltinPresetSnapshot()` 复算规范化 sha256 必须与快照里的 `hash` 一致；
+ *   2. **篡改可见**：改动快照内容（含新增的 `index` 字段）后复算哈希必须对不上
+ *      （只改内存里的浅拷贝，不碰仓库文件）；
+ *   3. **不漂移**：`BUILTIN_TIMETABLES` / `readSystemsConfig()` 与快照 `sources` 清单对齐，
+ *      且内嵌 `index` 的路径指向合并后的真实文件 `schools/<校目录>/school.json`；
+ *   4. **同步脚本可用**：`tools/presets/sync-snapshot.mjs` 能正确写入、`--check` 只读、
+ *      快照被篡改或缺目录时非 0 退出、一个文件都不写；
+ *   5. **真实内置配置零改动**：所有会写盘的用例一律走 `--out <临时目录>`，
+ *      本测试**从不写** `packages/core/src/config/` 下的那两个真实文件；
+ *      测试结束时还会比对它们的 sha256 与测试开始前是否**完全一致**。
+ *
+ * 为什么这么严：写入类用例曾经临时改写真实的内置配置再在 finally 还原，
+ * 进程被强杀就会把 9.9.9 的假快照留在工作区。现在写盘只发生在 `mkdtempSync` 出来的临时目录里，
+ * 真实目录连 mtime 都不该变——这本身就是一条被断言的验收项。
+ */
+import test, { after, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  existsSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  BUILTIN_PRESET_SCHEMA_VERSION,
+  BUILTIN_PRESET_SNAPSHOT,
+  BUILTIN_PRESET_VERSION,
+  BUILTIN_TIMETABLES,
+  canonicalPresetJson,
+  builtinPresetSourcesDigest,
+  readSystemsConfig,
+  sha256HexSync,
+  verifyBuiltinPresetSnapshot,
+  type PresetSnapshot,
+} from '../src/config/index.ts';
+
+/** 仓库根目录（本文件在 packages/core/test/ 下）。 */
+const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+const SYNC_SCRIPT = join(REPO_ROOT, 'tools', 'presets', 'sync-snapshot.mjs');
+
+/**
+ * 真实内置配置的两个目标文件：本测试**只读**它们，任何写入都必须发生在 `--out` 临时目录里。
+ */
+const SNAPSHOT_TARGET = join(REPO_ROOT, 'packages', 'core', 'src', 'config', 'builtin-preset-snapshot.json');
+const VERSION_TARGET = join(REPO_ROOT, 'packages', 'core', 'src', 'config', 'preset-version.json');
+
+/**
+ * 只读参考：预设仓库（`E:\work\dsh\dawn-tick-presets` 或仓库旁的同级目录）。
+ * 为了让本测试既能当仓库内单测、也能在外层做端到端核对，它缺失时相关断言会跳过。
+ * 可用 `DAWN_TICK_PRESETS_DIR` 环境变量指定。
+ */
+const PRESETS_DIR = process.env['DAWN_TICK_PRESETS_DIR'] ?? 'E:/work/dsh/dawn-tick-presets';
+
+/** 预设仓库 snapshot.mjs 的签名口径：去掉 hash 后规范化序列化，再取 sha256。 */
+function sign(snapshot: Omit<PresetSnapshot, 'hash'>): PresetSnapshot {
+  return { ...snapshot, hash: `sha256:${sha256HexSync(canonicalPresetJson(snapshot))}` };
+}
+
+/** 复算任意快照对象的规范化哈希（与实现同一套口径，直接取自 core）。 */
+function recomputedHashOf(snapshot: PresetSnapshot): string {
+  const { hash: _ignored, ...unsigned } = snapshot as unknown as Record<string, unknown>;
+  return `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}`;
+}
+
+function readText(path: string): string {
+  return readFileSync(path, 'utf8');
+}
+
+/** 真实文件的 sha256（hex，无前缀）——本文件所有「没被写过」的断言都用它。 */
+function sha256OfFile(path: string): string {
+  return sha256HexSync(readText(path));
+}
+
+/**
+ * 本文件刚加载时（= 测试运行前）两个真实文件的原文与 sha256。
+ * 既是下面只读断言的基准，也是「测试结束后真实文件必须一字未动」的比对依据。
+ */
+const ORIGINAL_SNAPSHOT_TEXT = readText(SNAPSHOT_TARGET);
+const ORIGINAL_VERSION_TEXT = readText(VERSION_TARGET);
+const ORIGINAL_SNAPSHOT_SHA256 = sha256OfFile(SNAPSHOT_TARGET);
+const ORIGINAL_VERSION_SHA256 = sha256OfFile(VERSION_TARGET);
+const ORIGINAL_DIGEST = builtinPresetSourcesDigest();
+
+/**
+ * 预设仓库 `dawn-tick-presets` 当前版本（0.1.0）快照的**原文**，手抄在此作「外部基准」。
+ *
+ * 里面的 `path`、单条 `sha256`、整份 `hash` 与新增的 `index` 全部是预设仓库
+ * `scripts/snapshot.mjs` 在 0.1.0 上真实产出的值（可从 `<预设仓库>/snapshot/presets-0.1.0.json`
+ * 逐字核对；文件自身的 sha256 是 `05d3196eaa23d9795399339e4665b53ccf2011728d11d2ea8afa2938239561dc`）。
+ * 用自己的实现去签自己的数据是循环论证，只有这份**别人算出来的 hash** 才能证明口径对齐。
+ *
+ * 2026 结构合并后的要点：
+ * - 顶层多了 `index`（原 `presets/index.json` 的全部信息），它也**参与内容哈希**；
+ * - 学校目录合并成 `schools/<校目录>/school.json`，所以 `sources.timetables[].path`
+ *   与索引里的 `configPath` / `timetablePath` 语义**不一样**：前者仍是历史契约里的符号路径
+ *   `presets/schools/<校目录>/timetable.json`（该文件已不存在，代表内嵌的 timetable 值），
+ *   后者是**真实文件** `presets/schools/<校目录>/school.json`；
+ * - `sources.systems[].path` 是 `presets/systems/<id>/system.json`，合并后这个文件**真的存在**，
+ *   但条目 `sha256` 覆盖的是它被编译成旧扁平结构后的文本（所以不能按文件复算哈希），
+ *   索引的 `metaPath` / `loginPath` 才是指向文件本身的真实路径。
+ */
+const PRESET_REPO_SNAPSHOT_0_1_0: PresetSnapshot = {
+  version: '0.1.0',
+  schemaVersion: 1,
+  generatedAt: '2026-01-01T00:00:00.000Z',
+  sources: {
+    timetables: [
+      {
+        id: 'default',
+        path: 'presets/schools/_default/timetable.json',
+        sha256: 'sha256:1dea538e8d0113060d63dee0c2ebd4068e515b7d77dce6e9446200343f3564b3',
+      },
+      {
+        id: 'usts',
+        path: 'presets/schools/usts/timetable.json',
+        sha256: 'sha256:7f60536005ef6bce600b4beff8bed52fe32f223f72cb8eb2ba3b1d90a80c58b0',
+      },
+    ],
+    systems: [
+      {
+        id: 'jwglxt',
+        path: 'presets/systems/jwglxt/system.json',
+        sha256: 'sha256:1941bb2ba38310ddd806761b73bb8b6b8dbb88873588fdfa91459214d4b302f6',
+      },
+      {
+        id: 'other',
+        path: 'presets/systems/other/system.json',
+        sha256: 'sha256:5267d69d0c21271af940fb68d84b011a0808154294fae2b9e92a3efe065e8669',
+      },
+      {
+        id: 'qzdatasource',
+        path: 'presets/systems/qzdatasource/system.json',
+        sha256: 'sha256:4bcd4571220c4be38f4ae319b4eae3d641d1ea1bf655a82d8d65814d330b23e1',
+      },
+      {
+        id: 'urp',
+        path: 'presets/systems/urp/system.json',
+        sha256: 'sha256:9e7c5f59be36d1bbf6909e8f27cd881c4beff0662732e2fd6881b8c2190cb961',
+      },
+    ],
+    adapters: {
+      'jwglxt.js': 'sha256:070522737bf3d60b4f2fff8dd246c2664acef7ce9189e862a8934c40068fa4b0',
+    },
+  },
+  index: {
+    _generated: true,
+    version: '0.1.0',
+    schemaVersion: 1,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    schools: [
+      {
+        id: 'default',
+        name: '通用作息',
+        type: 'generic',
+        system: null,
+        aliases: ['默认作息'],
+        generic: true,
+        default: true,
+        configPath: 'presets/schools/_default/school.json',
+        timetablePath: 'presets/schools/_default/school.json',
+      },
+      {
+        id: 'usts',
+        name: '苏州科技大学',
+        region: '江苏',
+        type: 'university',
+        system: 'jwglxt',
+        aliases: ['苏州科技大学', '苏科大', 'USTS'],
+        generic: false,
+        default: false,
+        configPath: 'presets/schools/usts/school.json',
+        timetablePath: 'presets/schools/usts/school.json',
+      },
+    ],
+    systems: [
+      {
+        id: 'jwglxt',
+        name: '正方教务',
+        version: '1.0.0',
+        aliases: ['jwglxt', '正方教务'],
+        hasParser: true,
+        parserPath: 'presets/systems/jwglxt/parse.js',
+        metaPath: 'presets/systems/jwglxt/system.json',
+        loginPath: 'presets/systems/jwglxt/system.json',
+        detect: {
+          markers: ['jwglxt', 'xskb_list', 'timetable_con', 'kbgrid_table'],
+          timetableTableIds: ['kbtable'],
+          timetableTableClasses: ['kb', 'timetable', 'schedule', 'skb'],
+          gridCellIdPatterns: ['\\d{1,2}[-_]\\d{1,2}'],
+        },
+        entryPath: '/jwglxt/xtgl/login_slogin.html',
+        hint: '个人课表查询在「信息查询 → 学生课表查询」',
+      },
+      {
+        id: 'other',
+        name: '其他教务',
+        version: '1.0.0',
+        aliases: ['other', '其他教务'],
+        hasParser: false,
+        metaPath: 'presets/systems/other/system.json',
+        loginPath: 'presets/systems/other/system.json',
+        detect: {
+          markers: [],
+          timetableTableIds: [],
+          timetableTableClasses: [],
+          gridCellIdPatterns: [],
+        },
+        entryPath: '/',
+        hint: '自行登录后打开课表页',
+      },
+      {
+        id: 'qzdatasource',
+        name: '强智教务',
+        version: '1.0.0',
+        aliases: ['qzdatasource', '强智教务'],
+        hasParser: false,
+        metaPath: 'presets/systems/qzdatasource/system.json',
+        loginPath: 'presets/systems/qzdatasource/system.json',
+        detect: {
+          markers: ['qzdatasource', '强智', 'qzjw'],
+          timetableTableIds: [],
+          timetableTableClasses: [],
+          gridCellIdPatterns: [],
+        },
+        entryPath: '/jsxsd/',
+        hint: '课表在「培养管理 → 我的课表」',
+      },
+      {
+        id: 'urp',
+        name: 'URP 教务',
+        version: '1.0.0',
+        aliases: ['urp', 'URP 教务'],
+        hasParser: false,
+        metaPath: 'presets/systems/urp/system.json',
+        loginPath: 'presets/systems/urp/system.json',
+        detect: {
+          markers: ['urp', '教学信息服务平台', 'jwgl\\.urp'],
+          timetableTableIds: [],
+          timetableTableClasses: [],
+          gridCellIdPatterns: [],
+        },
+        entryPath: '/',
+        hint: '综合教务系统，课表在「课表查询」',
+      },
+    ],
+  },
+  hash: 'sha256:b035466f88fa0b8f3ccbffe3f20cd0bff9fe0977291d3cfb08728db758bc5bbd',
+};
+
+/**
+ * 内置快照是否还是预设仓库 0.1.0 的原文（为假说明工作区被假数据污染了，见 before 钩子）。
+ * 判据用外部基准的 hash 写进原文里的那一行（快照是 `JSON.stringify(_, null, 2)` 写的）——
+ * 它同时把 `index` 的有无管住了：只加上 index、忘了改 hash 的话这里立刻为假。
+ */
+const SNAPSHOT_IS_REAL =
+  ORIGINAL_SNAPSHOT_TEXT.includes(`"hash": "${PRESET_REPO_SNAPSHOT_0_1_0.hash}"`) &&
+  ORIGINAL_SNAPSHOT_TEXT.includes(`"version": "${PRESET_REPO_SNAPSHOT_0_1_0.version}"`) &&
+  ORIGINAL_SNAPSHOT_TEXT.includes('"_generated": true');
+
+before(() => {
+  // 本测试不再改写真实文件，所以这里只做「进来时工作区必须是干净的」这一条体检；
+  // 上次若被旧版测试跑崩在中途留下假数据，这里会明确指出怎么恢复。
+  assert.equal(
+    readText(SNAPSHOT_TARGET),
+    ORIGINAL_SNAPSHOT_TEXT,
+    '测试开始时真实内置快照与本文件加载时读到的原文不一致（工作区被污染了）',
+  );
+  assert.equal(
+    readText(VERSION_TARGET),
+    ORIGINAL_VERSION_TEXT,
+    '测试开始时真实 preset-version.json 与本文件加载时读到的原文不一致（工作区被污染了）',
+  );
+});
+
+after(() => {
+  // 收尾兜底：两个真实文件的 sha256 必须与测试开始前完全一致
+  assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256, '真实内置快照的 sha256 在测试前后必须一致');
+  assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256, '真实 preset-version.json 的 sha256 在测试前后必须一致');
+  assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '测试结束时内置快照应仍是原文');
+  assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT, '测试结束时 preset-version.json 应仍是原文');
+});
+
+test('前置：内置快照是真实快照（工作区没被假数据污染）', () => {
+  assert.equal(
+    SNAPSHOT_IS_REAL,
+    true,
+    '内置快照不是预设仓库 0.1.0 的原文，说明工作区里留着测试注入的假数据；' +
+      '请重跑 node tools/presets/sync-snapshot.mjs --from <预设仓库> 恢复',
+  );
+});
+
+test('内置快照：verifyBuiltinPresetSnapshot() 通过', () => {
+  const result = verifyBuiltinPresetSnapshot();
+  assert.equal(result.ok, true, `内置快照应通过校验，实际原因：${result.reason ?? '（无）'}`);
+  assert.equal(result.reason, undefined);
+});
+
+test('内置快照：逐字段与预设仓库 0.1.0 的真快照一致（含 hash 与 generatedAt）', () => {
+  // 期望值就是上面那份「外部基准」——由预设仓库的生成器算出来、手抄进来的真快照。
+  assert.deepEqual(BUILTIN_PRESET_SNAPSHOT, PRESET_REPO_SNAPSHOT_0_1_0);
+  // 版本文件与快照必须同一版本线
+  assert.equal(BUILTIN_PRESET_VERSION, BUILTIN_PRESET_SNAPSHOT.version);
+  assert.equal(BUILTIN_PRESET_SCHEMA_VERSION, BUILTIN_PRESET_SNAPSHOT.schemaVersion);
+});
+
+test('篡改检测：改写 sources.systems[0] 的条目后复算哈希与 hash 不符', () => {
+  const first = BUILTIN_PRESET_SNAPSHOT.sources.systems[0];
+  assert.ok(first !== undefined, '快照应至少有一个教务系统');
+  const originalPath = first.path;
+
+  // 浅拷贝两层：改的是内存对象，仓库文件一个字都不动。
+  // 用 unknown 转换是因为「塞一个源清单里没有的字段」正是要模拟的篡改行为，类型系统当然不允许。
+  const tamperedSystems = [...BUILTIN_PRESET_SNAPSHOT.sources.systems];
+  tamperedSystems[0] = { ...first, path: 'presets/systems/被篡改的教务系统.json' } as unknown as typeof first;
+  const tampered: PresetSnapshot = {
+    ...BUILTIN_PRESET_SNAPSHOT,
+    sources: { ...BUILTIN_PRESET_SNAPSHOT.sources, systems: tamperedSystems },
+  };
+
+  const declared = tampered.hash;
+  const recomputed = recomputedHashOf(tampered);
+  assert.notEqual(recomputed, declared, '条目被改写后复算哈希必须与快照声明的 hash 不同');
+  assert.equal(BUILTIN_PRESET_SNAPSHOT.sources.systems[0]?.path, originalPath, '原对象不应被污染');
+  assert.equal(verifyBuiltinPresetSnapshot().ok, true, '仓库里的内置快照仍然自洽');
+
+  // 反向验证：同一份篡改对象若把 hash 一起改掉，就会「自洽」——说明检测点确实是内容哈希
+  const resigned = { ...tampered, hash: recomputed };
+  assert.equal(recomputedHashOf(resigned), recomputed);
+  assert.notEqual(resigned.hash, declared);
+});
+
+test('篡改检测：内嵌 index 也参与内容哈希（改学校路径立刻对不上）', () => {
+  const index = BUILTIN_PRESET_SNAPSHOT.index;
+  assert.ok(index !== undefined, '新结构的内置快照必须内嵌 index');
+  const firstSchool = index.schools[0];
+  assert.ok(firstSchool !== undefined, 'index 应至少有一所学校');
+
+  // 把真实文件路径改回合并前的旧文件名：结构完全合法，只有内容哈希对不上
+  const tamperedIndex = {
+    ...index,
+    schools: index.schools.map((school, position) =>
+      position === 0
+        ? { ...school, timetablePath: 'presets/schools/_default/timetable.json' }
+        : school,
+    ),
+  };
+  const tampered: PresetSnapshot = { ...BUILTIN_PRESET_SNAPSHOT, index: tamperedIndex };
+  assert.notEqual(
+    recomputedHashOf(tampered),
+    tampered.hash,
+    'index 被改写后复算哈希必须与快照声明的 hash 不同（index 在哈希范围内）',
+  );
+  assert.equal(
+    BUILTIN_PRESET_SNAPSHOT.index?.schools[0]?.timetablePath,
+    'presets/schools/_default/school.json',
+    '原对象不应被污染',
+  );
+});
+
+test('一致性：BUILTIN_TIMETABLES 与快照 sources.timetables 对齐', () => {
+  const listed = BUILTIN_PRESET_SNAPSHOT.sources.timetables;
+  assert.equal(listed.length, BUILTIN_TIMETABLES.length, '快照列出的作息表数量应与内置一致');
+  const listedIds = listed.map((item) => item.id);
+  assert.deepEqual(
+    [...new Set(listedIds)].sort(),
+    BUILTIN_TIMETABLES.map((preset) => preset.id).sort(),
+    '快照清单 id 与内置作息表 id 必须一一对应',
+  );
+  // 内置顺序不必等于快照顺序（快照按 id 排序），但内容集合必须相同
+  for (const item of listed) {
+    const builtin: { id: string } | undefined = BUILTIN_TIMETABLES.find((preset) => preset.id === item.id);
+    assert.ok(builtin !== undefined, `内置作息表应含 ${item.id}`);
+    // 作息表的 path 是**符号路径**：合并后 presets/schools/<校目录>/timetable.json 并不存在，
+    // 它代表 school.json 里内嵌的那个 timetable 值（sha256 是它逐字节还原后的文本哈希）。
+    // 校目录名与作息 id 可以不同（`_default` 目录 → `default` 作息），所以只校验形状；
+    // 真实的 id → 路径对应关系由「预设仓库在场」那条用例读 school.json 核对。
+    assert.match(item.path, /^presets\/schools\/[^/]+\/timetable\.json$/, `${item.id} 的 path 应为历史契约符号路径`);
+  }
+});
+
+test('一致性：内嵌 index 的学校/系统路径指向合并后的真实文件', () => {
+  const index = BUILTIN_PRESET_SNAPSHOT.index;
+  assert.ok(index !== undefined, '新结构的内置快照必须内嵌 index（原 presets/index.json 的信息）');
+  assert.equal(index._generated, true, 'index 必须是生成物');
+  assert.equal(index.version, BUILTIN_PRESET_VERSION);
+  assert.equal(index.schemaVersion, BUILTIN_PRESET_SCHEMA_VERSION);
+
+  for (const school of index.schools) {
+    // 合并后没有 config.json / timetable.json：两个路径键都指向 school.json
+    assert.match(
+      school.timetablePath ?? '',
+      /^presets\/schools\/[^/]+\/school\.json$/,
+      `${school.id} 的 timetablePath 应指向合并后的 school.json`,
+    );
+    if (school.configPath !== null && school.configPath !== undefined) {
+      assert.match(school.configPath, /^presets\/schools\/[^/]+\/school\.json$/, `${school.id} 的 configPath 应指向 school.json`);
+    }
+  }
+
+  for (const system of index.systems) {
+    // 合并后一个系统只有一个文件：metaPath 与 loginPath 都是 system.json
+    assert.equal(system.metaPath, `presets/systems/${system.id}/system.json`);
+    assert.equal(system.loginPath, `presets/systems/${system.id}/system.json`);
+  }
+
+  // 索引里的系统 id 必须与内置 systems.json 一一对应（学校 id 是校目录 id，不要求等于作息 id）
+  assert.deepEqual(
+    index.systems.map((system) => system.id).sort(),
+    readSystemsConfig().map((system) => system.id).sort(),
+    'index.systems 的 id 应与内置教务系统一一对应',
+  );
+});
+
+test('一致性：readSystemsConfig() 与快照 sources.systems 对齐', () => {
+  const listed = BUILTIN_PRESET_SNAPSHOT.sources.systems;
+  const systems = readSystemsConfig();
+  assert.equal(listed.length, systems.length, '快照列出的教务系统数量应与内置一致');
+  assert.deepEqual(
+    listed.map((item) => item.id).sort(),
+    systems.map((system) => system.id).sort(),
+    '快照清单 id 与内置教务系统 id 必须一一对应',
+  );
+  for (const item of listed) {
+    const builtin: { id: string } | undefined = systems.find((system) => system.id === item.id);
+    assert.ok(builtin !== undefined, `内置教务系统应含 ${item.id}`);
+    // 教务系统的 path 是历史契约路径：合并后 presets/systems/<id>/system.json **确实存在**，
+    // 但条目 sha256 覆盖的是它编译成旧扁平结构后的文本。由 id 唯一决定，所以可以逐字比对。
+    assert.equal(item.path, `presets/systems/${item.id}/system.json`);
+  }
+});
+
+/**
+ * 与预设仓库 `scripts/snapshot.mjs#extractTimetableText` **同口径**的测试副本：
+ * 从 `school.json` 的**文件文本**里切出内嵌的 `timetable` 值、去掉合并时多加的一层缩进、
+ * 补回结尾换行，还原成「独立 timetable.json」的字节。
+ *
+ * 为什么测试里要自带一份：`sources.timetables[].sha256` 是**那个还原文本**的哈希，
+ * 不是 school.json 自身的哈希——不还原就没法跨仓核对「合并时逐字节保留」这条承诺。
+ * 主仓库的**运行时代码**绝不复制这套规则（复制就会漂移），它只活在测试里，作为外部基准的复核手段。
+ */
+function extractEmbeddedTimetable(schoolJsonText: string): string | undefined {
+  const marker = '"timetable"';
+  const keyStart = schoolJsonText.indexOf(marker);
+  if (keyStart === -1) return undefined;
+  const colon = schoolJsonText.indexOf(':', keyStart + marker.length);
+  if (colon === -1) return undefined;
+  let start = colon + 1;
+  while (start < schoolJsonText.length && /\s/.test(schoolJsonText[start] ?? '')) start += 1;
+  if (schoolJsonText[start] !== '{') return undefined;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let cursor = start; cursor < schoolJsonText.length; cursor += 1) {
+    const char = schoolJsonText[cursor];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = cursor;
+        break;
+      }
+    }
+  }
+  if (end === -1) return undefined;
+
+  const dedented = schoolJsonText
+    .slice(start, end + 1)
+    .split('\n')
+    .map((line) => (line.startsWith('  ') ? line.slice(2) : line))
+    .join('\n');
+  return `${dedented}\n`;
+}
+
+/** 从符号路径 `presets/schools/<校目录>/timetable.json` 里取出校目录名。 */
+function schoolDirOf(sourcePath: string): string {
+  const segments = sourcePath.split('/');
+  assert.equal(segments.length, 4, `符号路径形状应为 presets/schools/<校目录>/timetable.json：${sourcePath}`);
+  return segments[2] ?? '';
+}
+
+/**
+ * 一致性：预设仓库只读参考在场时，逐条内容与内置配置 deepEqual。
+ *
+ * 2026 结构合并后，两类来源的核对方式**必须分开**：
+ * - 作息表：`sources.timetables[].path` 是**历史契约符号路径**，那个 `timetable.json` 已经不存在了；
+ *   真实文件是同目录下的 `school.json`（内嵌 `timetable`）。所以按**目录**找到 school.json，
+ *   读它、断言旧文件不存在，再把内嵌值**逐字节还原**后复算 sha256 与快照条目比对。
+ * - 教务系统：`sources.systems[].path` 指的 `system.json` **确实存在**（就是合并后的真身），
+ *   但记录在快照里的 sha256 是 `scripts/lib/legacy.mjs` 把它编译成**旧扁平结构**后那段文本的哈希，
+ *   与文件自身的哈希不同——所以同样不能「读文件算哈希」了事。
+ *   主仓库不重复实现那套编译规则（重复实现就会漂移），改为核对预设仓库**快照里的 `index`**——
+ *   原 `presets/index.json` 的信息已并入快照的 `index` 字段，且它由预设仓库自己的 CI 守着。
+ */
+test('一致性：预设仓库只读参考在场时，逐条内容与内置配置 deepEqual', (t) => {
+  if (!existsSync(PRESETS_DIR)) {
+    t.skip(`预设仓库不在 ${PRESETS_DIR}，跳过端到端内容比对`);
+    return;
+  }
+
+  // —— 作息表：符号路径 → 同目录的 school.json（真实新文件） ——
+  for (const item of BUILTIN_PRESET_SNAPSHOT.sources.timetables) {
+    const dir = schoolDirOf(item.path);
+    const schoolPath = join(PRESETS_DIR, 'presets', 'schools', dir, 'school.json');
+    const retiredPath = join(PRESETS_DIR, item.path);
+    assert.ok(existsSync(schoolPath), `预设仓库应存在合并后的真实文件 presets/schools/${dir}/school.json`);
+    assert.equal(existsSync(retiredPath), false, `合并后不该再有独立文件 ${item.path}`);
+
+    const builtin = BUILTIN_TIMETABLES.find((entry) => entry.id === item.id);
+    assert.ok(builtin !== undefined);
+
+    const schoolText = readText(schoolPath);
+    const doc = JSON.parse(schoolText) as { timetable?: unknown };
+    assert.deepEqual(
+      builtin,
+      doc.timetable as unknown,
+      `内置作息表「${item.id}」应与预设仓库 presets/schools/${dir}/school.json 内嵌的 timetable 逐字段一致`,
+    );
+
+    if (SNAPSHOT_IS_REAL) {
+      // 合并必须**逐字节保留**原始 timetable 文本：还原后复算的哈希要等于快照里的 sha256
+      const restored = extractEmbeddedTimetable(schoolText);
+      assert.ok(restored !== undefined, `应从 ${schoolPath} 里切出内嵌的 timetable 文本`);
+      assert.equal(
+        `sha256:${sha256HexSync(restored)}`,
+        item.sha256,
+        `内置作息「${item.id}」的 sha256 应等于 school.json 内嵌 timetable 还原后的文本哈希`,
+      );
+    }
+  }
+
+  // —— 教务系统：path 指的是存在但「哈希口径不同」的文件，改读快照内嵌的 index ——
+  const retiredIndexPath = join(PRESETS_DIR, 'presets', 'index.json');
+  assert.equal(
+    existsSync(retiredIndexPath),
+    false,
+    `预设仓库已不再产出 presets/index.json（信息并入快照的 index 字段），但 ${retiredIndexPath} 还在`,
+  );
+
+  const repoSchemaVersion = BUILTIN_PRESET_SNAPSHOT.schemaVersion;
+  const repoSnapshotPath = join(PRESETS_DIR, 'snapshot', `presets-${BUILTIN_PRESET_SNAPSHOT.version}.json`);
+  if (!existsSync(repoSnapshotPath)) {
+    t.diagnostic(`预设仓库缺少快照 ${repoSnapshotPath}，跳过教务系统比对`);
+    return;
+  }
+  const repoSnapshot = JSON.parse(readText(repoSnapshotPath)) as {
+    index?: { _generated?: unknown; systems?: Array<Record<string, unknown>> };
+    schemaVersion?: unknown;
+  };
+  assert.equal(repoSnapshot.schemaVersion, repoSchemaVersion, '两边快照的 schemaVersion 应一致');
+  assert.equal(repoSnapshot.index?._generated, true, '预设仓库快照的 index 应是生成物（_generated: true）');
+  const indexSystems = repoSnapshot.index?.systems ?? [];
+
+  for (const item of BUILTIN_PRESET_SNAPSHOT.sources.systems) {
+    // path 是历史契约路径，形状由 id 唯一决定
+    assert.equal(item.path, `presets/systems/${item.id}/system.json`);
+    // 合并后**这个文件真的存在**（就是 `presets/systems/<id>/system.json` 本身）……
+    const systemFilePath = join(PRESETS_DIR, item.path);
+    assert.ok(existsSync(systemFilePath), `预设仓库应存在合并后的真实文件 ${item.path}`);
+    // ……但快照里的 sha256 **不是它的哈希**，而是 `scripts/lib/legacy.mjs` 把 system.json
+    // 编译成旧扁平结构后那段**文本**的哈希。所以「读文件 → 复算哈希」核对不了这项，
+    // 内容级比对必须走编译产物的字段来源，也就是快照内嵌的 index。
+    if (SNAPSHOT_IS_REAL) {
+      assert.notEqual(
+        `sha256:${sha256HexSync(readText(systemFilePath))}`,
+        item.sha256,
+        `${item.path} 的 sha256 覆盖的是 legacy 编译产物文本，不是 system.json 文件本身`,
+      );
+    }
+
+    const entry = indexSystems.find((system) => system['id'] === item.id);
+    assert.ok(entry !== undefined, `预设仓库快照的 index 应含教务系统 ${item.id}（它是该项内容的来源）`);
+    const builtin = readSystemsConfig().find((system) => system.id === item.id);
+    assert.ok(builtin !== undefined);
+
+    if (SNAPSHOT_IS_REAL) {
+      assert.deepEqual(
+        {
+          id: builtin.id,
+          name: builtin.name,
+          entryPath: builtin.entryPath,
+          hint: builtin.hint,
+          detect: builtin.detect,
+        },
+        {
+          id: entry['id'],
+          name: entry['name'],
+          entryPath: entry['entryPath'],
+          hint: entry['hint'],
+          detect: entry['detect'],
+        },
+        `内置教务系统「${item.id}」应与预设仓库快照 index 的系统引用逐字段一致`,
+      );
+    } else {
+      assert.equal(typeof builtin.id, 'string');
+    }
+  }
+});
+
+test('内置正文指纹：builtinPresetSourcesDigest() 稳定', () => {
+  const digest = builtinPresetSourcesDigest();
+  assert.match(digest.timetables, /^sha256:[0-9a-f]{64}$/);
+  assert.match(digest.systems, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(builtinPresetSourcesDigest(), digest, '同一份内容必须得到同一个指纹');
+  assert.notEqual(digest.timetables, digest.systems, '两类源的指纹不应偶合');
+  assert.deepEqual(builtinPresetSourcesDigest(), ORIGINAL_DIGEST, '内置正文在测试前后必须没变');
+});
+
+// —— 下面全部是会「真的落盘」的用例，一律只写 --out 给的临时目录 ——
+//
+// node:test 的同文件用例按注册顺序串行跑，所以最后的「真实文件 sha256 未变」用例
+// 排在所有写盘用例之后，能把它们的副作用一并兜住。
+
+/**
+ * 造一份假的预设仓库：内容清单与内置一致，但版本 / 时间戳 / 格式都不同。
+ * 这样既能验证「写入的是快照原文」，也不会和真实内置配置撞车。
+ * 调用方负责 `rmSync(root, { recursive: true, force: true })`。
+ */
+function makeFakePresetRepo(version = '9.9.9'): { root: string; snapshotText: string } {
+  const root = mkdtempSync(join(tmpdir(), 'dawn-tick-presets-'));
+  const systems = readSystemsConfig();
+  const fake: Omit<PresetSnapshot, 'hash'> = {
+    version,
+    schemaVersion: 1,
+    generatedAt: '2030-05-06T07:08:09.000Z',
+    sources: {
+      timetables: BUILTIN_TIMETABLES.map((preset) => ({
+        id: preset.id,
+        // 假仓库也照新结构写：两类源都用**历史契约路径**
+        // （假仓库里并不真的落这两个文件，sync 脚本也从不按 path 读文件）
+        path: `presets/schools/${preset.id}/timetable.json`,
+        sha256: `sha256:${'1'.repeat(64)}`,
+      })),
+      systems: systems.map((system) => ({
+        id: system.id,
+        path: `presets/systems/${system.id}/system.json`,
+        sha256: `sha256:${'2'.repeat(64)}`,
+      })),
+      adapters: { 'demo.js': `sha256:${'f'.repeat(64)}` },
+    },
+    // 新结构的快照一定内嵌 index（原 presets/index.json 的信息）：假仓库同样带上，
+    // 这样「逐字节复制原文」验证的是一份形状与真实产物一致的快照。
+    index: {
+      _generated: true,
+      version,
+      schemaVersion: 1,
+      generatedAt: '2030-05-06T07:08:09.000Z',
+      schools: BUILTIN_TIMETABLES.map((preset) => ({
+        id: preset.id,
+        name: preset.name,
+        system: null,
+        // 合并后学校真实文件是 school.json：两个路径键都指它
+        configPath: `presets/schools/${preset.id}/school.json`,
+        timetablePath: `presets/schools/${preset.id}/school.json`,
+      })),
+      systems: systems.map((system) => ({
+        id: system.id,
+        name: system.name,
+        metaPath: `presets/systems/${system.id}/system.json`,
+        loginPath: `presets/systems/${system.id}/system.json`,
+      })),
+    },
+  };
+  const snapshot = sign(fake);
+  // 故意写成紧凑的单行：写入必须是逐字节复制，不能是重排后的 JSON
+  const snapshotText = JSON.stringify(snapshot);
+  mkdirSync(join(root, 'snapshot'), { recursive: true });
+  writeFileSync(join(root, 'snapshot', `presets-${version}.json`), snapshotText, 'utf8');
+  writeFileSync(
+    join(root, 'version.json'),
+    `${JSON.stringify({ version, schemaVersion: 1, channel: 'stable' }, null, 2)}\n`,
+    'utf8',
+  );
+  return { root, snapshotText };
+}
+
+/** 一个只用来接 `--out` 的空临时目录（调用方负责删除）。 */
+function makeTempOutDir(prefix = 'dawn-tick-snapshot-out-'): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+/** 跑同步脚本（预期成功），返回 stdout。 */
+function runSync(args: string[]): string {
+  return execFileSync(process.execPath, [SYNC_SCRIPT, ...args], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, SOURCE_DATE_EPOCH: '0' },
+  });
+}
+
+test('同步脚本：--out 临时目录 → 写入两份文件，真实内置配置一字未动', () => {
+  const repo = makeFakePresetRepo();
+  const outDir = makeTempOutDir();
+  const beforeSnapshotText = readText(SNAPSHOT_TARGET);
+  const beforeVersionText = readText(VERSION_TARGET);
+  const beforeSnapshotMtime = statSync(SNAPSHOT_TARGET).mtimeMs;
+  const beforeVersionMtime = statSync(VERSION_TARGET).mtimeMs;
+  try {
+    const stdout = runSync(['--from', repo.root, '--out', outDir]);
+    assert.match(stdout, /=== 预设快照同步 ===/);
+    assert.match(stdout, /版本：9\.9\.9（schemaVersion 1）/);
+    assert.match(stdout, /内容哈希：sha256:[0-9a-f]{64}（已复算一致）/);
+    assert.match(stdout, /输出目录：.*（--out 指定）/, '摘要必须写明写入目录');
+    assert.match(stdout, /已写入：.*builtin-preset-snapshot\.json/);
+    assert.match(stdout, /已写入：.*preset-version\.json/);
+
+    // ① --out 目录里出现了两份内容正确的文件
+    const outSnapshotPath = join(outDir, 'builtin-preset-snapshot.json');
+    const outVersionPath = join(outDir, 'preset-version.json');
+    const writtenSnapshot = readText(outSnapshotPath);
+    assert.equal(writtenSnapshot, repo.snapshotText, '写入的必须是预设仓库快照的原文（逐字节）');
+    assert.deepEqual(JSON.parse(writtenSnapshot), JSON.parse(repo.snapshotText));
+    assert.deepEqual(JSON.parse(readText(outVersionPath)), { version: '9.9.9', schemaVersion: 1 });
+
+    // ② 真实内置配置：内容、sha256 与 mtime 都不许变
+    assert.equal(readText(SNAPSHOT_TARGET), beforeSnapshotText, '真实内置快照不得被写入');
+    assert.equal(readText(VERSION_TARGET), beforeVersionText, '真实 preset-version.json 不得被写入');
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+    assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256);
+    assert.equal(statSync(SNAPSHOT_TARGET).mtimeMs, beforeSnapshotMtime, '真实内置快照的 mtime 不应变化');
+    assert.equal(statSync(VERSION_TARGET).mtimeMs, beforeVersionMtime, '真实 preset-version.json 的 mtime 不应变化');
+
+    // ③ 幂等：再跑一次不再写文件，并明确报告「未改动」
+    const secondRun = runSync(['--from', repo.root, '--out', outDir]);
+    assert.match(secondRun, /未改动任何文件（幂等）/);
+    assert.equal(readText(outSnapshotPath), repo.snapshotText);
+    assert.equal(readText(outVersionPath), `${JSON.stringify({ version: '9.9.9', schemaVersion: 1 }, null, 2)}\n`);
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：--out 目录不存在时按需创建（默认目录不受影响）', () => {
+  const repo = makeFakePresetRepo();
+  const parent = makeTempOutDir('dawn-tick-snapshot-nested-');
+  const outDir = join(parent, '子目录', 'config');
+  assert.equal(existsSync(outDir), false);
+  try {
+    const stdout = runSync(['--from', repo.root, '--out', outDir]);
+    assert.match(stdout, /已写入：.*builtin-preset-snapshot\.json/);
+    assert.equal(readText(join(outDir, 'builtin-preset-snapshot.json')), repo.snapshotText);
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256, '真实内置快照不受影响');
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：--check 只校验不写盘（--out 目录为空 → 需要同步；写入后 → 已是最新）', () => {
+  const repo = makeFakePresetRepo();
+  const outDir = makeTempOutDir('dawn-tick-snapshot-check-');
+  try {
+    const first = runSync(['--from', repo.root, '--out', outDir, '--check']);
+    assert.match(first, /--check：.*需要同步/);
+    assert.match(first, /未改动任何文件（幂等）/);
+    assert.deepEqual(readdirSync(outDir), [], '--check 不得写出任何文件');
+
+    runSync(['--from', repo.root, '--out', outDir]);
+    const second = runSync(['--from', repo.root, '--out', outDir, '--check']);
+    assert.match(second, /--check：.*已是最新，不需要同步/);
+    assert.deepEqual(
+      readdirSync(outDir).sort(),
+      ['builtin-preset-snapshot.json', 'preset-version.json'],
+      '写入后目录里应正好是两份目标文件',
+    );
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：不给 --out 时默认输出目录仍是主仓库内置配置（--check 只读，不写真实文件）', () => {
+  const repo = makeFakePresetRepo();
+  const beforeSnapshotMtime = statSync(SNAPSHOT_TARGET).mtimeMs;
+  try {
+    const stdout = runSync(['--from', repo.root, '--check']);
+    assert.match(stdout, /输出目录：packages\/core\/src\/config（主仓库内置配置，默认）/);
+    assert.match(
+      stdout,
+      /目标文件：packages\/core\/src\/config\/builtin-preset-snapshot\.json、packages\/core\/src\/config\/preset-version\.json/,
+    );
+    assert.match(stdout, /--check：packages\/core\/src\/config 里的内置快照与预设仓库不一致，需要同步/);
+    assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '默认路径的 --check 也不得写盘');
+    assert.equal(statSync(SNAPSHOT_TARGET).mtimeMs, beforeSnapshotMtime);
+    assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：哈希不符的假快照 → 非 0 退出、不写任何文件（含 --out 目录）', () => {
+  const repo = makeFakePresetRepo();
+  const outDir = makeTempOutDir('dawn-tick-snapshot-bad-');
+  try {
+    const good = JSON.parse(repo.snapshotText) as PresetSnapshot;
+    // 只改 hash 的最后一位：结构完全合法，只有内容哈希对不上
+    const broken = { ...good, hash: `${good.hash.slice(0, -1)}${good.hash.endsWith('0') ? '1' : '0'}` };
+    assert.notEqual(broken.hash, good.hash);
+    writeFileSync(join(repo.root, 'snapshot', 'presets-9.9.9.json'), `${JSON.stringify(broken, null, 2)}\n`, 'utf8');
+
+    const failure = runExpectingFailure(['--from', repo.root, '--out', outDir]);
+    assert.notEqual(failure.status, 0, '哈希不符必须非 0 退出');
+    assert.match(failure.stderr, /快照哈希校验未通过/);
+    assert.match(failure.stderr, /未写入任何文件/);
+
+    assert.deepEqual(readdirSync(outDir), [], '失败时 --out 目录里不该有任何文件');
+    assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT, '失败时不得改动内置快照');
+    assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT, '失败时不得改动 preset-version.json');
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：预设仓库目录不存在 → 非 0 退出、不写任何文件（含 --out 目录）', () => {
+  const outDir = makeTempOutDir('dawn-tick-snapshot-missing-');
+  const missing = join(tmpdir(), 'dawn-tick-presets-不存在-9f3c1a');
+  assert.equal(existsSync(missing), false);
+  try {
+    const failure = runExpectingFailure(['--from', missing, '--out', outDir]);
+    assert.notEqual(failure.status, 0);
+    assert.match(failure.stderr, /预设仓库目录不存在/);
+    assert.match(failure.stderr, /未写入任何文件/);
+    assert.deepEqual(readdirSync(outDir), []);
+    assert.equal(readText(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_TEXT);
+    assert.equal(readText(VERSION_TARGET), ORIGINAL_VERSION_TEXT);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('同步脚本：--out 指向文件或缺值 → 非 0 退出、不写任何文件', () => {
+  const repo = makeFakePresetRepo();
+  const parent = makeTempOutDir('dawn-tick-snapshot-badout-');
+  const notADir = join(parent, '其实是文件.txt');
+  writeFileSync(notADir, 'not a directory\n', 'utf8');
+  try {
+    const asFile = runExpectingFailure(['--from', repo.root, '--out', notADir]);
+    assert.notEqual(asFile.status, 0);
+    assert.match(asFile.stderr, /--out 指向的不是目录/);
+    assert.match(asFile.stderr, /未写入任何文件/);
+
+    // --out 后没跟目录：必须报错，绝不能悄悄退回默认目录去写真实内置配置
+    const noValue = runExpectingFailure(['--from', repo.root, '--out']);
+    assert.notEqual(noValue.status, 0);
+    assert.match(noValue.stderr, /--out 参数（输出目录）应为非空字符串/);
+    assert.match(noValue.stderr, /未写入任何文件/);
+
+    assert.equal(readText(notADir), 'not a directory\n', '被当成 --out 的文件不应被改写');
+    assert.equal(sha256OfFile(SNAPSHOT_TARGET), ORIGINAL_SNAPSHOT_SHA256);
+    assert.equal(sha256OfFile(VERSION_TARGET), ORIGINAL_VERSION_SHA256);
+  } finally {
+    rmSync(repo.root, { recursive: true, force: true });
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('真实内置配置零改动：两个文件的 sha256 与测试开始前完全一致', () => {
+  // 这条排在所有写盘用例之后：若上面任何一条偷偷写了真实文件，这里会当场对不上。
+  assert.equal(
+    sha256OfFile(SNAPSHOT_TARGET),
+    ORIGINAL_SNAPSHOT_SHA256,
+    'builtin-preset-snapshot.json 的 sha256 与本文件加载时不一致（有用例写了真实文件）',
+  );
+  assert.equal(
+    sha256OfFile(VERSION_TARGET),
+    ORIGINAL_VERSION_SHA256,
+    'preset-version.json 的 sha256 与本文件加载时不一致（有用例写了真实文件）',
+  );
+  assert.match(ORIGINAL_SNAPSHOT_SHA256, /^[0-9a-f]{64}$/);
+  assert.match(ORIGINAL_VERSION_SHA256, /^[0-9a-f]{64}$/);
+});
+
+/** 跑一个预期失败的同步脚本，返回状态码与 stderr（不抛异常）。 */
+function runExpectingFailure(args: string[]): { status: number; stderr: string } {
+  try {
+    const stdout = execFileSync(process.execPath, [SYNC_SCRIPT, ...args], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      env: { ...process.env, SOURCE_DATE_EPOCH: '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    throw new Error(`本应失败却成功了：${stdout}`);
+  } catch (cause: unknown) {
+    const error = cause as { status?: number | null; stderr?: string | Buffer };
+    if (typeof error.status !== 'number') throw cause;
+    return { status: error.status, stderr: String(error.stderr ?? '') };
+  }
+}

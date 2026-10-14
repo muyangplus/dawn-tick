@@ -1,0 +1,45 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "晓刻 DawnTick 桌面端默认能力",
+  "windows": ["main", "mini"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-close",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "sql:default",
+    "sql:allow-load",
+    "sql:allow-execute",
+    "sql:allow-select",
+    "sql:allow-close",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-request-permission",
+    "notification:allow-is-permission-granted",
+    "dialog:default",
+    "http:default",
+    {
+      "identifier": "http:allow-fetch",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    },
+    {
+      "identifier": "http:allow-fetch-send",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    },
+    {
+      "identifier": "http:allow-fetch-read-body",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    },
+    {
+      "identifier": "http:allow-fetch-cancel",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    },
+    {
+      "identifier": "http:allow-fetch-cancel-body",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    }
+  ]
+}

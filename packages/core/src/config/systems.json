@@ -1,0 +1,50 @@
+[
+  {
+    "id": "jwglxt",
+    "name": "正方教务",
+    "entryPath": "/jwglxt/xtgl/login_slogin.html",
+    "hint": "个人课表查询在「信息查询 → 学生课表查询」",
+    "detect": {
+      "markers": ["jwglxt", "xskb_list", "timetable_con", "kbgrid_table"],
+      "timetableTableIds": ["kbtable"],
+      "timetableTableClasses": ["kb", "timetable", "schedule", "skb"],
+      "gridCellIdPatterns": ["\\d{1,2}[-_]\\d{1,2}"]
+    }
+  },
+  {
+    "id": "qzdatasource",
+    "name": "强智教务",
+    "entryPath": "/jsxsd/",
+    "hint": "课表在「培养管理 → 我的课表」",
+    "detect": {
+      "markers": ["qzdatasource", "强智", "qzjw"],
+      "timetableTableIds": [],
+      "timetableTableClasses": [],
+      "gridCellIdPatterns": []
+    }
+  },
+  {
+    "id": "urp",
+    "name": "URP 教务",
+    "entryPath": "/",
+    "hint": "综合教务系统，课表在「课表查询」",
+    "detect": {
+      "markers": ["urp", "教学信息服务平台", "jwgl\\.urp"],
+      "timetableTableIds": [],
+      "timetableTableClasses": [],
+      "gridCellIdPatterns": []
+    }
+  },
+  {
+    "id": "other",
+    "name": "其他教务",
+    "entryPath": "/",
+    "hint": "自行登录后打开课表页",
+    "detect": {
+      "markers": [],
+      "timetableTableIds": [],
+      "timetableTableClasses": [],
+      "gridCellIdPatterns": []
+    }
+  }
+]

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "晓刻 DawnTick",
+  "version": "0.1.0",
+  "identifier": "com.dawntick.app",
+  "build": {
+    "frontendDist": "../../web/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm -C ../web dev",
+    "beforeBuildCommand": "pnpm -C ../web build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "晓刻 DawnTick",
+        "width": 1000,
+        "height": 720,
+        "resizable": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+  }
+}
