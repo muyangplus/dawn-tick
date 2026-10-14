@@ -262,17 +262,26 @@ export function WeekView({
   const lessons = useMemo(() => lessonsOf(data), [data]);
   const periodCount = slots.length;
 
-  // 内容自适应行高：渲染后量一次卡片是否被裁掉，有就整体加高（上限 ROW_HEIGHT_MAX）
+  // 内容自适应行高：卡片被裁就整体加高（上限 ROW_HEIGHT_MAX），变宽不挤了逐级收回
   useEffect(() => {
     if (typeof globalThis.requestAnimationFrame !== 'function') return;
     const handle = globalThis.requestAnimationFrame(() => {
-      const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]'));
+      // 拖动残影也要排除：它是固定宽度的小卡，永远量成裁切
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]')).filter(
+        (card) => card.closest('[data-role="drag-ghost"]') === null,
+      );
       if (cards.length === 0) return;
-      const clipped = cards.some((card) => card.scrollHeight > card.clientHeight + 2);
+      // 名称/地点/教师这些 span 自带 truncate 或 line-clamp，卡片的 scrollHeight 量不到，
+      // 必须逐个后代比较：谁被裁都算挤不下（课表待办条目同样走这套）
+      const clipped = cards.some((card) => {
+        if (card.scrollHeight > card.clientHeight + 2) return true;
+        return Array.from(card.querySelectorAll<HTMLElement>('span')).some(
+          (node) => node.scrollHeight > node.clientHeight + 2,
+        );
+      });
       if (clipped && rowHeight < ROW_HEIGHT_MAX) {
         setRowHeight((current) => Math.min(ROW_HEIGHT_MAX, current + 8));
       } else if (!clipped && rowHeight > ROW_HEIGHT_MIN) {
-        // 变宽后不挤了：逐级收回，避免一直停在最大行高
         setRowHeight((current) => Math.max(ROW_HEIGHT_MIN, current - 4));
       }
     });
@@ -1005,6 +1014,7 @@ export function WeekView({
       {drag !== null && (
         <div
           aria-hidden
+          data-role="drag-ghost"
           className="pointer-events-none fixed z-50 w-32 opacity-70 shadow-lg"
           style={{ left: `${drag.x + 12}px`, top: `${drag.y + 12}px` }}
         >
