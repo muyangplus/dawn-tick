@@ -1343,6 +1343,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     }`,
   );
 
+  // 原来的「倒计时」与「日期与倒计时」已合并成一张卡：桌上不再有第二个标题
+  const countdownHeading = [...view.container.querySelectorAll<HTMLElement>('span')].find(
+    (item) => (item.textContent ?? '').trim() === '倒计时' && item.className.includes('font-semibold'),
+  );
+  const countdownCardRoot = countdownHeading?.parentElement ?? null;
+  check(
+    '开学假期徽标与条目倒计时合并在一张卡片里',
+    (document.body.textContent ?? '').includes('日期与倒计时') === false &&
+      countdownCardRoot !== null &&
+      countdownCardRoot.querySelector('[data-role="countdown-row"]') !== null,
+    `卡片根=${countdownCardRoot === null ? '无' : '有'}`,
+  );
+
   // 倒计时卡片：可以直接勾完成，也可以点进详情
   const countdownDone = [...view.container.querySelectorAll('input[type="checkbox"]')].find(
     (box) => box.getAttribute('aria-label') === '标记完成：组会',
@@ -1448,7 +1461,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     switchedToSettings &&
       settingsText.includes('外观') &&
       settingsText.includes('小组件背景') &&
-      settingsText.includes('导出日志'),
+      !settingsText.includes('导出日志'),
     settingsText.slice(0, 60),
   );
 
@@ -1854,8 +1867,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
   check(
-    '诊断入口可见且不再有示例数据按钮',
-    panelText.includes('导出日志') && panelText.includes('开发版') && !panelText.includes('填充示例数据'),
+    '默认关着开发者特性：诊断入口不显示，也没有示例数据按钮',
+    !panelText.includes('导出日志') && !panelText.includes('填充示例数据'),
     '',
   );
   check(
@@ -1864,27 +1877,32 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
   );
-  // 开发者特性：dev 默认开，关掉后诊断入口隐藏、debug 日志停记
+  // 开发者特性：默认关，打开后诊断入口出现、关掉后又隐藏
   const devSwitch = view.container.querySelector('[aria-label="开发者特性"]');
   check(
-    'dev 构建有开发者特性开关且默认开启',
-    devSwitch !== null && devSwitch.getAttribute('aria-checked') === 'true',
+    '开发者特性开关默认关闭',
+    devSwitch !== null && devSwitch.getAttribute('aria-checked') === 'false',
     devSwitch === null ? '(无开关)' : String(devSwitch.getAttribute('aria-checked')),
+  );
+  check(
+    '关着开发者特性时诊断入口隐藏',
+    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
+      !(view.container.textContent ?? '').includes('导出日志'),
+    '',
   );
   if (devSwitch instanceof window.HTMLElement) devSwitch.click();
   await flush(12);
   check(
-    '关掉开发者特性后诊断入口隐藏',
-    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
-      !(view.container.textContent ?? '').includes('导出日志'),
+    '打开开发者特性后诊断入口出现',
+    (view.container.textContent ?? '').includes('导出日志'),
     '',
   );
   const devSwitchBack = view.container.querySelector('[aria-label="开发者特性"]');
   if (devSwitchBack instanceof window.HTMLElement) devSwitchBack.click();
   await flush(12);
   check(
-    '重新打开开发者特性后诊断入口恢复',
-    (view.container.textContent ?? '').includes('导出日志'),
+    '再关掉开发者特性后诊断入口恢复隐藏',
+    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null,
     '',
   );
   // 时区与待办排序都是选择列表
@@ -2070,6 +2088,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   // 卡片布局入口固定在设置页顶部，面板在对话框里：隐藏卡片后仍能改回来
   const layoutOpened = clickByLabel(view.container, '卡片布局');
   await flush(12);
+  const layoutTitles = [
+    ...document.querySelectorAll('[data-role="dialog-body"] span'),
+  ].map((item) => (item.textContent ?? '').trim());
   check(
     '卡片布局独立成对话框，可显隐排序并一键全部显示',
     layoutOpened &&
@@ -2077,8 +2098,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('[aria-label="上移卡片：倒计时"]') !== null &&
       document.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
       document.querySelector('[aria-label="恢复默认布局"]') !== null &&
-      document.querySelector('[aria-label="全部显示卡片"]') !== null,
-    (document.body.textContent ?? '').slice(-60),
+      document.querySelector('[aria-label="全部显示卡片"]') !== null &&
+      layoutTitles.filter((title) => title.includes('倒计时')).length === 1 &&
+      !layoutTitles.includes('日期与倒计时'),
+    `倒计时相关卡片 ${layoutTitles.filter((title) => title.includes('倒计时')).length} 张`,
   );
   if (clickByLabel(document.body, '关闭卡片布局')) await flush(8);
   // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
@@ -2543,6 +2566,30 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(24);
   }
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
+
+  // 引导页可跳过：用默认值直接建学期进应用
+  check(
+    '引导页提供跳过入口',
+    remounted.container.querySelector('button[aria-label="跳过引导"]') !== null,
+    '',
+  );
+  if (clickByLabel(remounted.container, '跳过引导')) await flush(26);
+  check(
+    '跳过引导会建默认学期并进入应用',
+    (remounted.container.textContent ?? '').includes('我的学期') &&
+      !(remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
+    (remounted.container.textContent ?? '').slice(0, 60),
+  );
+  // 删掉这个默认学期，后面的「选校建学期」用例仍从引导页开始
+  if (clickByText(remounted.container, '设置')) await flush(16);
+  clickByLabel(remounted.container, '删除学期');
+  await flush(10);
+  if (clickByText(document.body, '确认删除')) await flush(24);
+  check(
+    '删掉默认学期后回到引导页',
+    (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
+    '',
+  );
 
   // 外部链接确认弹窗在引导页也要能弹出（曾经没挂，点了没反应）
   // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——

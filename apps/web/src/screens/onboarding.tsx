@@ -25,6 +25,10 @@ export interface OnboardingProps {
   onDone: () => void;
 }
 
+/** 跳过引导时用的默认学期。 */
+const DEFAULT_SEMESTER_NAME = '我的学期';
+const DEFAULT_WEEKS = 20;
+
 export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProps) {
   const today = formatDate(Date.now(), timeZone);
   const [name, setName] = useState('');
@@ -83,23 +87,29 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     }
   }
 
-  async function submit(): Promise<void> {
+  /** 建学期：跳过引导与「创建并开始」共用这一段，只有取值来源不同。 */
+  async function createSemesterWith(
+    semesterName: string,
+    start: string,
+    weeks: number,
+    picked: School | null,
+  ): Promise<void> {
     setBusy(true);
     setError(null);
     try {
       const semester = await createSemester(storage, {
         userId,
-        name: name.trim().length > 0 ? name.trim() : '我的学期',
-        startDate,
-        totalWeeks,
+        name: semesterName,
+        startDate: start,
+        totalWeeks: weeks,
         timeZone,
       });
-      if (school !== null) {
+      if (picked !== null) {
         // 记录这次选择：作息设置里据此置顶「一键套用」
-        await writeRecentSchool(storage, school);
+        await writeRecentSchool(storage, picked);
         try {
-          const result = await applySchoolTimetable(storage, String(semester['id']), school);
-          toast.success(`已按 ${school.name} 排好课次（${result.periods} 节）`);
+          const result = await applySchoolTimetable(storage, String(semester['id']), picked);
+          toast.success(`已按 ${picked.name} 排好课次（${result.periods} 节）`);
         } catch (cause: unknown) {
           // 套用作息失败不影响学期创建，用户可在作息设置里重来
           setError(`学期已创建，但套用作息失败：${cause instanceof Error ? cause.message : String(cause)}`);
@@ -113,6 +123,20 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     } finally {
       setBusy(false);
     }
+  }
+
+  async function submit(): Promise<void> {
+    await createSemesterWith(
+      name.trim().length > 0 ? name.trim() : DEFAULT_SEMESTER_NAME,
+      startDate,
+      totalWeeks,
+      school,
+    );
+  }
+
+  /** 跳过引导：直接用默认值建学期（学期名、本周一开学、20 周、内置默认作息）。 */
+  async function skip(): Promise<void> {
+    await createSemesterWith(DEFAULT_SEMESTER_NAME, weekStart(today), DEFAULT_WEEKS, null);
   }
 
   return (
@@ -156,7 +180,18 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             >
               下周一开学
             </Button>
+            <Button
+              variant="ghost"
+              aria-label="跳过引导"
+              disabled={busy}
+              onClick={() => void skip()}
+            >
+              跳过，先用默认学期
+            </Button>
           </div>
+          <span className="text-xs text-muted">
+            跳过会直接建一个「{DEFAULT_SEMESTER_NAME}」（本周一开学、{DEFAULT_WEEKS} 周、内置默认作息），之后在设置里随时可改。
+          </span>
 
           <details className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-advanced">
             <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-xs font-semibold text-ink">

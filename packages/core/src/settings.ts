@@ -56,7 +56,7 @@ export interface AppSettings {
   autoCheckUpdate: boolean;
   /** 待办排序：按开始时间 / 按类型 */
   todoSort: TodoSort;
-  /** 开发者特性：dev 渠道默认开启；关掉后按正式版特性运行（更新仍随 dev） */
+  /** 开发者特性：默认关闭；打开后按开发版特性运行（更新渠道不受影响） */
   devFeatures: boolean;
   /** 应用诊断日志：是否写 dawn-tick.log */
   logEnabled: boolean;
@@ -106,7 +106,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   receiveBeta: null,
   autoCheckUpdate: true,
   todoSort: 'start',
-  devFeatures: true,
+  devFeatures: false,
   logEnabled: true,
   logLevel: 'info',
   walMode: 'auto',
