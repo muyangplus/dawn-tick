@@ -353,6 +353,11 @@ export function App() {
     return () => globalThis.clearInterval(timer);
   }, [storage, settings]);
 
+  // 日志级别与开关同步到原生：写文件的门槛按设置走（dev 默认 trace）
+  useEffect(() => {
+    applyLogSettings({ level: settings.logLevel, fileEnabled: settings.logEnabled });
+  }, [settings.logLevel, settings.logEnabled]);
+
   // 开发者特性开关：影响 debug 日志、右键菜单与控制台；更新渠道不变
   useEffect(() => {
     applyDevFeatures(settings.devFeatures);
@@ -466,18 +471,48 @@ export function App() {
       timer = setTimeout(() => {
         const main = document.querySelector('[data-role="app-main"]');
         const shell = document.querySelector('[data-role="app-shell"]');
+        const nav = document.querySelector('[data-role="bottom-nav"]');
+        const navHeight = nav === null ? null : Math.round(nav.getBoundingClientRect().height);
+        const mainPadBottom =
+          main === null ? null : Math.round(Number.parseFloat(getComputedStyle(main).paddingBottom) || 0);
         logDebug('layout', '视口变化', {
           viewport: `${globalThis.innerWidth}x${globalThis.innerHeight}`,
           shell: shell === null ? null : Math.round(shell.getBoundingClientRect().height),
           main: main === null ? null : Math.round(main.getBoundingClientRect().height),
           mainScroll: main === null ? null : `${main.scrollTop}/${main.scrollHeight}`,
+          navHeight,
+          mainPadBottom,
+          cards: document.querySelectorAll('[data-role="course-card"]').length,
+          gridPadTop: document.querySelector('[data-role="grid-pad-top"]') === null ? 0 : 1,
+          gridPadBottom: document.querySelector('[data-role="grid-pad-bottom"]') === null ? 0 : 1,
         });
+        // 自检：底部留白必须不小于底部栏，否则最后一屏会被挡住
+        if (navHeight !== null && mainPadBottom !== null && mainPadBottom < navHeight) {
+          logWarn('layout', '主区底部留白小于底部栏高度', { navHeight, mainPadBottom });
+        }
+        // 自检：引导页内容超出时必须可滚动
+        const onboard = document.querySelector('[data-role="onboarding-scroll"]');
+        if (onboard !== null) {
+          const overflowY = getComputedStyle(onboard).overflowY;
+          const box = {
+            clientHeight: Math.round(onboard.clientHeight),
+            scrollHeight: Math.round(onboard.scrollHeight),
+            overflowY,
+          };
+          logDebug('layout', '引导页滚动容器', box);
+          if (box.scrollHeight > box.clientHeight && overflowY !== 'auto' && overflowY !== 'scroll') {
+            logWarn('layout', '引导页内容超出却不可滚动', box);
+          }
+        }
       }, 200);
     };
     globalThis.addEventListener('resize', report);
     report();
+    // 启动时日志级别还没同步到原生，第一次上报可能被门槛挡掉：布局稳定后再报一次
+    const late = setTimeout(report, 2500);
     return () => {
       globalThis.removeEventListener('resize', report);
+      clearTimeout(late);
       if (timer !== null) clearTimeout(timer);
     };
   }, []);
@@ -739,15 +774,15 @@ export function App() {
 
   if (error !== null) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-page p-4">
-        <p className="text-sm text-danger-strong">{error}</p>
+      <main className="flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4">
+        <p className="my-auto text-sm text-danger-strong">{error}</p>
       </main>
     );
   }
 
   if (storage === null || data === null) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-page">
+      <main className="flex h-full items-center justify-center bg-page">
         <p className="text-sm text-muted">载入中</p>
       </main>
     );
@@ -903,7 +938,7 @@ export function App() {
           compact={!isDesktop}
         />
         <main
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-24 tablet:p-4 desktop:pb-4"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] tablet:p-4 tablet:pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] desktop:pb-4"
           data-role="app-main"
         >
           {content}
@@ -923,7 +958,7 @@ export function App() {
           type="button"
           aria-label="快速添加"
           onClick={() => setAddMenuOpen(true)}
-          className="fixed bottom-20 right-4 z-30 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary shadow-lg"
+          className="fixed bottom-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--spacing-2))] right-4 z-30 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary shadow-lg"
         >
           <Plus className="size-6" aria-hidden />
         </button>

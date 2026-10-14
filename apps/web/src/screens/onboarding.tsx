@@ -114,8 +114,11 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-page p-4">
-      <div className="w-full max-w-md">
+    <main
+      className="flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4"
+      data-role="onboarding-scroll"
+    >
+      <div className="my-auto w-full max-w-md">
         <Card className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
             <CardTitle>欢迎使用晓刻 DawnTick</CardTitle>
@@ -153,29 +156,33 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             </Button>
           </div>
 
-          <div className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-school">
-            <span className="text-xs font-semibold text-ink">学校（可选）</span>
-            <span className="text-xs text-muted">
-              选一所学校：创建学期时按该校作息排好课次；以后在「设置 → 学期设置」里可一键再套用。
-            </span>
-            {school !== null && (
-              <span className="text-xs text-muted" data-role="onboarding-school-picked">
-                已选：{school.name}
+          <details className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-advanced">
+            <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
+              高级设置：按学校套用作息{school === null ? '' : `（已选 ${school.name}）`}
+            </summary>
+            <div className="flex flex-col gap-2 pt-1">
+              <span className="text-xs text-muted">
+                选一所学校：创建学期时按该校作息排好课次；以后在「设置 → 学期设置」里可一键再套用。
               </span>
-            )}
-            <SchoolPicker
-              context={context}
-              selectedId={school?.id ?? recent?.id ?? null}
-              pinned={recent}
-              onPick={(picked) => setSchool(picked)}
-              listClassName="max-h-56"
-            />
-            {school !== null && (
-              <Button variant="ghost" size="sm" onClick={() => setSchool(null)}>
-                取消选择
-              </Button>
-            )}
-          </div>
+              {school !== null && (
+                <span className="text-xs text-muted" data-role="onboarding-school-picked">
+                  已选：{school.name}
+                </span>
+              )}
+              <SchoolPicker
+                context={context}
+                selectedId={school?.id ?? recent?.id ?? null}
+                pinned={recent}
+                onPick={(picked) => setSchool(picked)}
+                listClassName="max-h-56"
+              />
+              {school !== null && (
+                <Button variant="ghost" size="sm" onClick={() => setSchool(null)}>
+                  取消选择
+                </Button>
+              )}
+            </div>
+          </details>
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">
             <span className="text-xs font-semibold text-ink">已有数据：直接导入</span>

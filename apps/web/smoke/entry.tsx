@@ -616,6 +616,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
   const text = view.container.textContent ?? '';
   check('课表渲染课程', text.includes('高数'), text.slice(0, 80));
+  // 卡片无论是可点击的 button 还是只读 div，都要带 data-role：行高自适应靠它量布局
+  check(
+    '课表卡片带可测量的 data-role',
+    view.container.querySelectorAll('[data-role="course-card"]').length > 0,
+    `${view.container.querySelectorAll('[data-role="course-card"]').length} 张`,
+  );
   check('工具栏渲染周次', /第\s*\d+\s*周/.test(text), '');
   check('渲染当前时间指示线', view.container.querySelector('[aria-hidden="true"]') !== null, '');
   check('高亮当天列', view.container.querySelector('[data-today="true"]') !== null, '');
@@ -623,6 +629,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '非本周课程用虚线框显示',
     text.includes('大物') && view.container.querySelector('[data-dashed="true"]') !== null,
     '',
+  );
+  // 20:00 的组会晚于最后一节课：网格要按真实分钟向下扩展，而不是把卡片夹回来
+  const gridPadBottom = view.container.querySelector<HTMLElement>('[data-role="grid-pad-bottom"]');
+  const customCard = view.container.querySelector<HTMLElement>('[data-custom-time="true"]');
+  const gridBox = view.container.querySelector<HTMLElement>('[data-role="app-main"]');
+  check(
+    '晚于最后一节的条目把网格尾部按分钟扩展',
+    gridPadBottom !== null &&
+      customCard !== null &&
+      /^\d{2}:\d{2}–\d{2}:\d{2}$/.test((gridPadBottom.textContent ?? '').trim()) &&
+      Number.parseFloat(customCard.style.top) > 0 &&
+      gridBox !== null,
+    gridPadBottom === null ? '没有尾部补白' : `补白 ${gridPadBottom.textContent?.trim() ?? ''}`,
   );
 
   const roomField = view.container.querySelector('[data-field="room"]');
@@ -2138,6 +2157,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
+  check(
+    '主区底部留白按底部栏与悬浮按钮高度计算',
+    (view.container.querySelector('[data-role="app-main"]')?.className ?? '').includes('--dt-bottom-nav') &&
+      (view.container.querySelector('[data-role="app-main"]')?.className ?? '').includes('--dt-bottom-fab'),
+    '',
+  );
+
   if (clickByText(view.container, '导出配置')) await flush(10);
   check(
     '导出可选模块',
@@ -2513,10 +2539,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
   // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——
+  const onboardScroll = remounted.container.querySelector<HTMLElement>('[data-role="onboarding-scroll"]');
+  const onboardAdvanced = remounted.container.querySelector<HTMLDetailsElement>('[data-role="onboarding-advanced"]');
+  check(
+    '引导页自身可滚动，学校选择收进默认收起的高级设置',
+    onboardScroll !== null &&
+      (onboardScroll.className ?? '').includes('overflow-y-auto') &&
+      onboardAdvanced !== null &&
+      onboardAdvanced.open === false &&
+      (onboardAdvanced.querySelector('summary')?.textContent ?? '').includes('高级设置'),
+    `scroll=${(onboardScroll?.className ?? '?').slice(0, 40)} open=${onboardAdvanced?.open ?? '?'}`,
+  );
   const onboardSearch = remounted.container.querySelector<HTMLInputElement>('input[aria-label="搜索学校"]');
   check(
     '引导页提供选校入口',
-    onboardSearch !== null && remounted.container.querySelector('[data-role="onboarding-school"]') !== null,
+    onboardSearch !== null && onboardAdvanced !== null,
     '',
   );
   if (onboardSearch !== null) setInputValue(onboardSearch, '苏州');

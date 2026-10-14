@@ -66,6 +66,9 @@
   /* 默认值取「青春活力 + 浅色」，保证 applyTheme 运行前界面已着色 */
   :root {
     color-scheme: light;
+    /* 移动端底部栏与悬浮按钮占位：主区留白按实际高度算，内容不会被挡住 */
+    --dt-bottom-nav: 56px;
+    --dt-bottom-fab: 56px;
     --dt-bg: #fff7f2;
     --dt-surface: #ffffff;
     --dt-surface-muted: #fffbf9;

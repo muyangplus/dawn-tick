@@ -69,8 +69,9 @@ export function AppSidebar({
 export function BottomNav({ current, onSelect }: { current: NavId; onSelect: (id: NavId) => void }) {
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-30 flex border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]"
+      className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom))] border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]"
       aria-label="主导航"
+      data-role="bottom-nav"
     >
       {MOBILE_NAV.map((item) => {
         const Icon = item.icon;
