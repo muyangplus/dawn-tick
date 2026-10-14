@@ -803,6 +803,8 @@ export function App() {
           }}
         />
         <Toaster mode={resolvedMode} />
+        {/* 外部链接确认弹窗在引导页也要挂上，否则「请求适配 / 提交学校信息」点了没反应 */}
+        <ExternalLinkConfirm />
       </>
     );
   }

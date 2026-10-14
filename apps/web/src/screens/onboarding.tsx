@@ -13,7 +13,7 @@ import {
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
-import { SchoolPicker } from '../components/school-picker.tsx';
+import { SchoolPickerDialog } from '../components/school-picker-dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { applySchoolTimetable, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
@@ -38,6 +38,8 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   const [school, setSchool] = useState<School | null>(null);
   const [context, setContext] = useState<PresetContext | null>(null);
   const [recent, setRecent] = useState<School | null>(null);
+  /** 选校弹窗：与教务导入一样用弹窗挑，不再把长列表铺在页面上 */
+  const [schoolOpen, setSchoolOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,29 +162,36 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
               高级设置：按学校套用作息{school === null ? '' : `（已选 ${school.name}）`}
             </summary>
-            <div className="flex flex-col gap-2 pt-1">
-              <span className="text-xs text-muted">
-                选一所学校：创建学期时按该校作息排好课次；以后在「设置 → 学期设置」里可一键再套用。
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="text-xs text-muted" data-role="onboarding-school-picked">
+                {school === null
+                  ? '未选学校：只按总周数建学期，作息在「设置 → 学期设置」里再套用'
+                  : `已选：${school.name}`}
               </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label="选择学校"
+                onClick={() => setSchoolOpen(true)}
+              >
+                选择学校
+              </Button>
               {school !== null && (
-                <span className="text-xs text-muted" data-role="onboarding-school-picked">
-                  已选：{school.name}
-                </span>
-              )}
-              <SchoolPicker
-                context={context}
-                selectedId={school?.id ?? recent?.id ?? null}
-                pinned={recent}
-                onPick={(picked) => setSchool(picked)}
-                listClassName="max-h-56"
-              />
-              {school !== null && (
-                <Button variant="ghost" size="sm" onClick={() => setSchool(null)}>
+                <Button variant="ghost" size="sm" aria-label="取消选择学校" onClick={() => setSchool(null)}>
                   取消选择
                 </Button>
               )}
             </div>
           </details>
+
+          <SchoolPickerDialog
+            open={schoolOpen}
+            onOpenChange={setSchoolOpen}
+            context={context}
+            selectedId={school?.id ?? recent?.id ?? null}
+            pinned={recent}
+            onPick={(picked) => setSchool(picked)}
+          />
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">
             <span className="text-xs font-semibold text-ink">已有数据：直接导入</span>
