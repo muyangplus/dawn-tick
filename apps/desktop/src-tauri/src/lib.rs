@@ -237,7 +237,8 @@ fn storage_info() -> StorageInfo {
     storage_info_of(&dir, fallback, Vec::new())
 }
 
-/// 复制数据文件：数据库（含 WAL 附带文件）、窗口几何与现有日志；目标已有同名文件时保留目标。
+/// 复制数据文件：数据库（含 WAL 附带文件）与现有日志；目标已有同名文件时保留目标。
+/// 窗口几何存在数据库里，跟着数据库一起走，不再单独复制。
 fn copy_data_files(from: &std::path::Path, to: &std::path::Path) -> Vec<String> {
     let mut copied = Vec::new();
     if same_path(from, to) {
@@ -245,7 +246,6 @@ fn copy_data_files(from: &std::path::Path, to: &std::path::Path) -> Vec<String> 
     }
     let mut names = vec![
         DATABASE_FILE_NAME.to_string(),
-        "window.json".to_string(),
         LOG_FILE_NAME.to_string(),
         "startup.log".to_string(),
     ];
@@ -1004,8 +1004,28 @@ fn log_database_status() {}
 /// 不可用先改名让 WebView2 重建，改名也失败就改用可写目录。
 #[cfg(windows)]
 fn ensure_webview_folder_writable() {
-    // 数据目录锁死：不再列候选、不再探测回退
-    let locked = data_dir();
+    // WebView2 用户数据目录固定在 %LOCALAPPDATA%\com.dawntick.app\EBWebView：
+    // 不占便携目录，也不受程序目录权限影响；首次运行把旧的 <数据目录>\EBWebView 搬过去，搬不动就继续用旧位置
+    let base = app_dir().unwrap_or_else(data_dir);
+    let legacy = data_dir().join("EBWebView");
+    if !same_path(&base, &data_dir()) && legacy.is_dir() {
+        let target = base.join("EBWebView");
+        if !target.exists() {
+            let _ = create_dir_all(&base);
+            match std::fs::rename(&legacy, &target) {
+                Ok(()) => append_log(&format!("WebView2 数据目录已迁到 {}", base.display())),
+                Err(error) => {
+                    append_log(&format!("WebView2 数据目录迁移失败（{error}），继续用旧位置"));
+                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", data_dir());
+                    return;
+                }
+            }
+        } else if std::fs::remove_dir_all(&legacy).is_ok() {
+            // 新位置已经有 WebView2 数据了：数据目录里这份是迁移后的残留，清掉
+            append_log("已清理数据目录里残留的 EBWebView");
+        }
+    }
+    let locked = base;
     std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &locked);
     match probe_folder(&locked) {
         Ok(()) => append_log(&format!("WebView2 数据目录已锁定: {}", locked.display())),
@@ -1929,7 +1949,7 @@ fn elevate_on_access_denied(reason: &str) -> bool {
     }
 }
 
-/// 主窗口几何，字段与 `window.json` 一一对应。
+/// 主窗口几何：与存进 app_meta 的 `window_geometry` JSON 字段一一对应。
 /// `width/height/x/y` 是**物理像素**（且宽高是内尺寸），与旧版文件完全一致；
 /// `monitor` 是后加的显示器指纹，旧文件没有该字段、反序列化为 `None`，
 /// 此时一律按旧的物理像素逻辑恢复（向后兼容，不 panic）。
@@ -2117,20 +2137,68 @@ fn snapshot_of(monitor: &tauri::Monitor) -> Option<MonitorSnapshot> {
     })
 }
 
-/// 窗口几何文件：放在数据目录内，与其他状态文件同处。
+/// 窗口几何存在数据库 app_meta 里（不再落 window.json）：启动时在窗口显示前读出来应用。
 #[cfg(desktop)]
-fn window_geometry_path() -> PathBuf {
-    data_dir().join("window.json")
+const WINDOW_GEOMETRY_KEY: &str = "window_geometry";
+
+/// 只读取一个 app_meta 值：短连接，只读打开不会改日志模式。
+#[cfg(desktop)]
+async fn read_meta_value(key: &str) -> Option<String> {
+    use sqlx::{ConnectOptions, Connection, Row};
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(database_file(&data_dir()))
+        .read_only(true)
+        .busy_timeout(std::time::Duration::from_millis(500));
+    let mut connection = options.connect().await.ok()?;
+    let row = sqlx::query("SELECT value FROM app_meta WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&mut connection)
+        .await
+        .ok()
+        .flatten();
+    let _ = connection.close().await;
+    row.and_then(|row| row.try_get::<String, _>("value").ok())
 }
 
-/// 读取并校验窗口几何。缺失、损坏或数值不合理都返回 None（用默认值），绝不 panic、不弹窗。
+/// 写入一个 app_meta 值：短连接 + busy_timeout，和前端用的是同一个库文件。
 #[cfg(desktop)]
-fn read_window_geometry() -> Option<WindowGeometry> {
-    let path = window_geometry_path();
-    let Some(geometry) = read_json::<WindowGeometry>(&path) else {
-        if path.exists() {
-            append_log("窗口几何文件不可解析，按默认值处理");
+async fn write_meta_value(key: &str, value: &str) -> bool {
+    use sqlx::{ConnectOptions, Connection};
+    let file = database_file(&data_dir());
+    if let Some(parent) = file.parent() {
+        if create_dir_all(parent).is_err() {
+            return false;
         }
+    }
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(file)
+        .create_if_missing(true)
+        .busy_timeout(std::time::Duration::from_millis(1000));
+    let Ok(mut connection) = options.connect().await else {
+        return false;
+    };
+    let created = sqlx::query("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        .execute(&mut connection)
+        .await
+        .is_ok();
+    let written = created
+        && sqlx::query(
+            "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&mut connection)
+        .await
+        .is_ok();
+    let _ = connection.close().await;
+    written
+}
+
+/// 解析并校验几何文本。缺失、损坏或数值不合理都返回 None（用默认值），绝不 panic、不弹窗。
+#[cfg(desktop)]
+fn parse_window_geometry(text: &str) -> Option<WindowGeometry> {
+    let Ok(geometry) = serde_json::from_str::<WindowGeometry>(text) else {
+        append_log("窗口几何不可解析，按默认值处理");
         return None;
     };
     if !geometry_is_sane(&geometry) {
@@ -2143,13 +2211,23 @@ fn read_window_geometry() -> Option<WindowGeometry> {
     Some(geometry)
 }
 
-/// 落盘并记日志。数值不合理时不写入，保留上一次的有效值。
+/// 读取窗口几何：数据库里没有或不可用时返回 None。
+#[cfg(desktop)]
+fn read_window_geometry() -> Option<WindowGeometry> {
+    let text = tauri::async_runtime::block_on(read_meta_value(WINDOW_GEOMETRY_KEY))?;
+    parse_window_geometry(&text)
+}
+
+/// 写入数据库并记日志。数值不合理时不写入，保留上一次的有效值。
 #[cfg(desktop)]
 fn save_window_geometry(geometry: &WindowGeometry) -> bool {
     if !geometry_is_sane(geometry) {
         return false;
     }
-    if !write_json(&window_geometry_path(), geometry) {
+    let Ok(text) = serde_json::to_string(geometry) else {
+        return false;
+    };
+    if !tauri::async_runtime::block_on(write_meta_value(WINDOW_GEOMETRY_KEY, &text)) {
         append_log("窗口几何写入失败");
         return false;
     }
@@ -2281,7 +2359,7 @@ fn save_geometry_now(window: &tauri::WebviewWindow) {
 }
 
 /// 恢复主窗口几何。决策顺序：
-/// 1. 读 `window.json`；缺失/损坏/数值不合理 → 直接用默认几何，什么都不做；
+/// 1. 读数据库 app_meta 里的 `window_geometry`；缺失/损坏/数值不合理 → 直接用默认几何，什么都不做；
 /// 2. 采集当前显示器：物理矩形用于可见性判断，逻辑原点 + 当前 scale 用于 DPI 重映射；
 /// 3. 若保存的显示器**名称能在当前 `available_monitors()` 里找到**且数值合法 →
 ///    **DPI 重映射**：逻辑尺寸 = 保存的物理尺寸 / 保存时的 scale，
@@ -2426,6 +2504,12 @@ pub fn run() {
 
     // 先套用排队的恢复请求：必须在打开数据库之前完成
     apply_pending_restore();
+
+    // 旧的 window.json 不再使用（窗口几何改存数据库），顺手清掉
+    let legacy_geometry = data_dir().join("window.json");
+    if legacy_geometry.is_file() && std::fs::remove_file(&legacy_geometry).is_ok() {
+        append_log("已清理不再使用的 window.json");
+    }
 
     #[cfg(windows)]
     ensure_webview_folder_writable();
@@ -2952,34 +3036,34 @@ mod tests {
         panic!("找不到可写的临时目录");
     }
 
-    /// 落盘/读取的完整往返：用临时目录顶替 APPDATA，避免污染真实数据目录。
+    /// 几何存数据库 app_meta：写入后能读回，损坏与不合理值都按默认值处理。
     #[cfg(desktop)]
-    #[test]
-    fn geometry_file_roundtrip_uses_data_dir() {
-        let temp = scratch_dir(&format!("dawntick-geometry-test-{}", std::process::id()));
+    #[tokio::test]
+    async fn geometry_roundtrip_in_database() {
+        let temp = scratch_dir(&format!("dawntick-geometry-db-test-{}", std::process::id()));
         let previous_appdata = std::env::var("APPDATA").ok();
         let previous_local = std::env::var("LOCALAPPDATA").ok();
         std::env::set_var("APPDATA", &temp);
         std::env::set_var("LOCALAPPDATA", &temp);
 
-        let file = temp.join("com.dawntick.app").join("window.json");
-        // 文件缺失：按默认值处理
-        assert!(read_window_geometry().is_none());
+        // 数据库还没有 / 键还没有：按默认值处理
+        assert!(read_meta_value(WINDOW_GEOMETRY_KEY).await.is_none());
 
-        // 写入后能原样读回，且落在 <data_dir>\window.json
         let sample = geometry(1200, 800, 100, 80, false);
-        assert!(save_window_geometry(&sample), "写入应成功");
-        assert!(file.exists(), "文件应位于 {}", file.display());
-        assert_eq!(read_window_geometry(), Some(sample));
+        let text = serde_json::to_string(&sample).expect("序列化几何");
+        assert!(write_meta_value(WINDOW_GEOMETRY_KEY, &text).await, "写入应成功");
+        let stored = read_meta_value(WINDOW_GEOMETRY_KEY).await.expect("读回几何");
+        assert_eq!(parse_window_geometry(&stored), Some(sample));
 
-        // 损坏内容按默认值处理
-        std::fs::write(&file, "{不是 JSON").expect("写坏文件");
-        assert!(read_window_geometry().is_none());
+        // 覆盖写：同一个键只保留最新值
+        let moved = geometry(1024, 768, 40, 30, true);
+        assert!(write_meta_value(WINDOW_GEOMETRY_KEY, &serde_json::to_string(&moved).unwrap()).await);
+        assert_eq!(read_meta_value(WINDOW_GEOMETRY_KEY).await, Some(serde_json::to_string(&moved).unwrap()));
 
-        // 数值不合理按默认值处理，且不覆盖上一次的有效内容
-        std::fs::write(&file, r#"{"width":10,"height":10,"x":0,"y":0,"maximized":false}"#).expect("写小尺寸");
-        assert!(read_window_geometry().is_none());
-        assert!(!save_window_geometry(&geometry(10, 10, 0, 0, false)), "不合理数值不落盘");
+        // 损坏内容与不合理数值都按默认值处理
+        assert!(parse_window_geometry("{不是 JSON").is_none());
+        assert!(parse_window_geometry(r#"{"width":10,"height":10,"x":0,"y":0,"maximized":false}"#).is_none());
+        assert!(!geometry_is_sane(&geometry(10, 10, 0, 0, false)), "不合理数值不落盘");
 
         // 还原环境变量并清理
         match previous_appdata {
@@ -3118,7 +3202,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp);
     }
 
-    /// 换存储位置时复制数据库、几何与日志，目标已有的文件不覆盖。
+    /// 换存储位置时复制数据库与日志，目标已有的文件不覆盖。
     #[cfg(desktop)]
     #[test]
     fn copy_data_files_keeps_existing_target() {
@@ -3129,15 +3213,15 @@ mod tests {
         std::fs::create_dir_all(&to).expect("建目标目录");
         std::fs::write(from.join(DATABASE_FILE_NAME), b"db").expect("写数据库");
         std::fs::write(from.join(format!("{DATABASE_FILE_NAME}-wal")), b"wal").expect("写 wal");
-        std::fs::write(from.join("window.json"), b"{}").expect("写几何");
-        std::fs::write(to.join("window.json"), b"keep").expect("目标已有同名文件");
+        std::fs::write(from.join(LOG_FILE_NAME), b"log-a").expect("写日志");
+        std::fs::write(to.join(LOG_FILE_NAME), b"keep").expect("目标已有同名文件");
 
         let copied = copy_data_files(&from, &to);
         assert!(copied.contains(&DATABASE_FILE_NAME.to_string()));
         assert!(copied.contains(&format!("{DATABASE_FILE_NAME}-wal")));
-        assert!(!copied.contains(&"window.json".to_string()), "目标已有文件不覆盖");
+        assert!(!copied.contains(&LOG_FILE_NAME.to_string()), "目标已有文件不覆盖");
         assert_eq!(std::fs::read(to.join(DATABASE_FILE_NAME)).expect("读回数据库"), b"db");
-        assert_eq!(std::fs::read(to.join("window.json")).expect("读回几何"), b"keep");
+        assert_eq!(std::fs::read(to.join(LOG_FILE_NAME)).expect("读回日志"), b"keep");
         assert!(copy_data_files(&to, &to).is_empty(), "同一个目录不复制");
         let _ = std::fs::remove_dir_all(&temp);
     }

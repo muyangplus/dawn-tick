@@ -130,7 +130,7 @@
 
 `powershell -File tools/build-local.ps1` 默认 **dev 渠道 + debug 构建**（`-Channel release` 才出 release），产物在 `out-local/`。
 
-运行日志：写入应用数据目录（安装版 `%APPDATA%\com.dawntick.app`，便携版在程序所在目录；该目录不可写时依次回退 `%LOCALAPPDATA%\com.dawntick.app`、`%TEMP%\DawnTick`），同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）。日志行为 `YYYY-MM-DD HH:MM:SS.mmm ±HH:MM [level] scope: 消息`，文件、控制台与导出文件同一格式；设置页「数据」提供「打开数据目录」「打开日志文件所在目录」，并可填自定义存储位置、「启用 WAL 日志模式」与自动备份设置。
+运行日志：写入应用数据目录（安装版 `%APPDATA%\com.dawntick.app`，便携版在程序所在目录；该目录不可写时依次回退 `%LOCALAPPDATA%\com.dawntick.app`、`%TEMP%\DawnTick`），同时输出到启动它的控制台（提权启动时附加父控制台，附加不到则另开一个日志控制台）。数据目录里只有数据库与日志；窗口几何存在数据库的 `app_meta.window_geometry`，WebView2 的用户数据目录固定在 `%LOCALAPPDATA%\com.dawntick.app\EBWebView`（首次运行会把旧的 `<数据目录>\EBWebView` 搬过去）。日志行为 `YYYY-MM-DD HH:MM:SS.mmm ±HH:MM [level] scope: 消息`，文件、控制台与导出文件同一格式；设置页「数据」提供「打开数据目录」「打开日志文件所在目录」，并可填自定义存储位置、「启用 WAL 日志模式」与自动备份设置。
 
 数据库快照：Windows 用 `VACUUM INTO` 在数据目录 `backups/` 写整库文件，Web 与 Android 存库内 JSON 快照；默认自动备份（启动时与每天各一次，保留最近 10 份，份数可改 1–100），也可手动备份；设置页可查看、恢复与删除快照，恢复文件快照后重启生效。跨设备迁移用「导出配置 / 导入配置」：JSON 文件、Base64 文本或整包 zip。
 

@@ -64,7 +64,8 @@ Copy-Item $exe (Join-Path $stage 'DawnTick.exe') -Force
 $readme = @(
   "晓刻 DawnTick 便携版（$Channel 渠道 / $buildKind 构建 / v$version）",
   '',
-  '数据与日志都在本目录（dawn-tick.db、window.json、dawn-tick.log），整个文件夹拷走即带走全部数据',
+  '数据与日志都在本目录（dawn-tick.db、dawn-tick.log），整个文件夹拷走即带走全部数据',
+  'WebView2 缓存与窗口几何不放在这里：前者在 %LOCALAPPDATA%\com.dawntick.app\EBWebView，后者存在数据库里',
   '数据库默认单文件（journal_mode=DELETE）；设置页「数据」可改存储位置与「启用 WAL 日志模式」',
   '导入：搜索学校 → 打开内嵌窗口 → 自行登录进课表页 → 点右下角「导入到晓刻」'
 ) -join "`r`n"
