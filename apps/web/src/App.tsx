@@ -24,6 +24,7 @@ import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
 import { Button } from './components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
+import { BusyOverlay } from './components/ui/busy-overlay.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { Field, Input } from './components/ui/input.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
@@ -74,7 +75,8 @@ interface DetailState {
 
 interface MoveState {
   cell: LessonCell;
-  dayOfWeek: number;
+  /** 拖动落到的日期（YYYY-MM-DD）与节次 */
+  date: string;
   period: number;
 }
 
@@ -87,6 +89,28 @@ type MoveTarget =
 
 function weekDateOf(semester: { start_date: string }, week: number, dayOfWeek: number): string {
   return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
+}
+
+/**
+ * 查看窗口按设置的天数平移一屏：当前 state 为 null（起点是今天）时以已加载的起点为基准。
+ * 起点可以早于学期或晚于学期，交给加载侧按周次渲染。
+ */
+function shiftWindowStart(current: string | null, loaded: string, days: number): string {
+  return addDays(current ?? loaded, days);
+}
+
+/** 窗口覆盖的日期区间文案，例如 8/19–8/23。 */
+function formatWindowRange(data: AppData): string {
+  const last = data.windowDates[data.windowDates.length - 1] ?? data.windowStart;
+  const monthDay = (date: string): string => {
+    const [, month, day] = date.split('-');
+    return `${Number(month)}/${Number(day)}`;
+  };
+  if (data.windowStart === last) return monthDay(data.windowStart);
+  const [fromYear, fromMonth] = data.windowStart.split('-');
+  const [toYear, toMonth] = last.split('-');
+  if (fromYear === toYear && fromMonth === toMonth) return `${monthDay(data.windowStart)}–${Number(last.split('-')[2])}`;
+  return `${monthDay(data.windowStart)}–${monthDay(last)}`;
 }
 
 /** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
@@ -116,6 +140,7 @@ function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
     room: occurrence?.room ?? null,
     color: occurrence?.color ?? 'var(--dt-primary)',
     dayOfWeek: nextDayOfWeek(target.date),
+    date: target.date,
     periodStart,
     periodEnd,
     startTime: slotOf(periodStart),
@@ -202,7 +227,8 @@ export function App() {
   const [data, setData] = useState<AppData | null>(null);
   const [view, setView] = useState<NavId>('timetable');
   const [mode, setMode] = useState<'week' | 'today'>('week');
-  const [viewWeek, setViewWeek] = useState<number | null>(null);
+  /** 查看窗口的起始日期；null 表示从今天开始（默认）。窗口里的周次由 data.viewWeek 给出 */
+  const [windowStart, setWindowStart] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjust, setAdjust] = useState<AdjustTarget | null>(null);
@@ -240,14 +266,17 @@ export function App() {
   });
 
   const reload = useCallback(
-    async (target: Storage | null, current: AppSettings, week?: number | null) => {
+    async (target: Storage | null, current: AppSettings, start?: string | null) => {
       if (target === null) return;
-      const next = await loadAppData(target, current, week === undefined || week === null ? {} : { viewWeek: week });
+      const next = await loadAppData(target, current, start === undefined || start === null ? {} : { windowStart: start });
       setData(next);
-      setViewWeek(next.viewWeek);
+      setWindowStart(next.windowStart);
       logInfo('data', '加载课表', {
         week: next.week,
         viewWeek: next.viewWeek,
+        windowStart: next.windowStart,
+        windowDays: next.windowDates.length,
+        spansWeeks: next.windowSpansWeeks,
         lessons: [...next.grid.values()].reduce((total, list) => total + list.length, 0),
         today: next.todayLessons.length,
         todos: next.todos.length,
@@ -257,6 +286,18 @@ export function App() {
       await notifyWidgetWindows();
     },
     [],
+  );
+
+  /** 上一屏 / 下一屏：按设置的天数平移窗口起点。 */
+  const shiftWindow = useCallback(
+    (days: number) => {
+      setWindowStart((current) => {
+        const loaded = data?.windowStart;
+        if (current === null && (loaded === undefined || loaded === '')) return current;
+        return shiftWindowStart(current, loaded ?? '', days);
+      });
+    },
+    [data?.windowStart],
   );
 
   useEffect(() => {
@@ -387,6 +428,11 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 动效设置落到根节点：CSS 按 data-motion 统一停用
+  useEffect(() => {
+    document.documentElement.dataset.motion = settings.motion;
+  }, [settings.motion]);
+
   // 渠道提示：不是初次使用也要弹——只要这条提示没展示过
   useEffect(() => {
     const storageReady = storage;
@@ -412,9 +458,10 @@ export function App() {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-      if (event.key === 'ArrowLeft') setViewWeek((week) => shiftWeek(week ?? 1, -1));
-      else if (event.key === 'ArrowRight') setViewWeek((week) => shiftWeek(week ?? 1, 1));
-      else if (event.key === 't' || event.key === 'T') setViewWeek(data?.week ?? 1);
+      // ←/→ 平移一屏（设置里的天数），T 回到以今天开头的窗口
+      if (event.key === 'ArrowLeft') shiftWindow(-settings.viewDays);
+      else if (event.key === 'ArrowRight') shiftWindow(settings.viewDays);
+      else if (event.key === 't' || event.key === 'T') setWindowStart(null);
       else if (event.key === '/') {
         event.preventDefault();
         setSearchOpen(true);
@@ -422,27 +469,27 @@ export function App() {
     };
     globalThis.addEventListener('keydown', onKeyDown);
     return () => globalThis.removeEventListener('keydown', onKeyDown);
-  }, [data?.week]);
+  }, [settings.viewDays, windowStart, data?.windowStart]);
 
   useEffect(() => {
-    if (storage === null || viewWeek === null || data === null) return;
-    if (viewWeek === data.viewWeek) return;
-    void reload(storage, settings, viewWeek);
-  }, [viewWeek, data, storage, settings, reload]);
+    if (storage === null || windowStart === null || data === null) return;
+    if (windowStart === data.windowStart) return;
+    void reload(storage, settings, windowStart);
+  }, [windowStart, data, storage, settings, reload]);
 
   const patch = useCallback(
     async (partial: Partial<AppSettings>) => {
       if (storage === null) return;
       const next = await writeSettings(storage, partial);
       setSettings(next);
-      await reload(storage, next, viewWeek);
+      await reload(storage, next, windowStart);
     },
-    [storage, reload, viewWeek],
+    [storage, reload, windowStart],
   );
 
   const refresh = useCallback(() => {
-    void reload(storage, settings, viewWeek);
-  }, [reload, storage, settings, viewWeek]);
+    void reload(storage, settings, windowStart);
+  }, [reload, storage, settings, windowStart]);
 
   /** 从库外写入设置后（WebDAV 只应用设置与预设）重新读一遍并热加载。 */
   const reloadSettings = useCallback(async (): Promise<void> => {
@@ -450,8 +497,8 @@ export function App() {
     const next = await readSettings(storage);
     setSettings(next);
     setResolvedMode(applyTheme(next.themePreset, next.theme));
-    await reload(storage, next, viewWeek);
-  }, [reload, storage, viewWeek]);
+    await reload(storage, next, windowStart);
+  }, [reload, storage, windowStart]);
 
   const [remoteNewer, setRemoteNewer] = useState<{ name: string; detail: string | null } | null>(null);
   const [remoteRestartNeeded, setRemoteRestartNeeded] = useState(false);
@@ -579,10 +626,9 @@ export function App() {
   // 过了截止/结束时间的条目由日程时间线在展示层判定为「已完成」（会自动进「已完成」分组），
   // 这里不再回写 events.done，避免打开应用就改数据。
 
-  /** 课次所在日期：周视图卡片按查看周与该课星期几算出来。 */
+  /** 课次所在日期：网格里的格子自带日期，直接用它。 */
   function lessonDateOf(cell: LessonCell): string {
-    if (data?.semester != null) return weekDateOf(data.semester, data.viewWeek, cell.dayOfWeek);
-    return data?.today ?? '';
+    return cell.date === '' ? data?.today ?? '' : cell.date;
   }
 
   async function openLesson(cell: LessonCell): Promise<void> {
@@ -622,12 +668,13 @@ export function App() {
     setAdjustOpen(true);
   }
 
-  function openMove(cell: LessonCell, dayOfWeek: number, period: number): void {
+  /** 拖动落点是一列（某一天）的某个节次：一切都按日期算，与查看窗口从哪天开始无关。 */
+  function openMove(cell: LessonCell, date: string, period: number): void {
     if (data === null) return;
-    setMove({ cell, dayOfWeek, period });
-    // 预填默认值：目标周序号默认当前查看周，指定日期默认拖动落到的日期
-    setMoveWeek(data.viewWeek);
-    setMoveDate(weekDateOf(data.semester ?? { start_date: data.weekStartDate }, data.viewWeek, dayOfWeek));
+    setMove({ cell, date, period });
+    // 预填默认值：目标周序号取落点所在周，指定日期预填落点日期
+    setMoveWeek(data.semester === null ? data.viewWeek : weekOfDate(date, data.semester.start_date));
+    setMoveDate(date);
   }
 
   /** 四种作用范围共用的目标校验：夹住节次跨度、算出目标日期、识别空操作。 */
@@ -643,16 +690,18 @@ export function App() {
       return { ok: false, message: '本学期的节次数装不下这门连堂课' };
     }
     const period = Math.min(Math.max(1, move.period), data.slots.length - span);
+    // 拖动落点所在列就是目标那天；「这一次」的调整都以它为原日期
+    const dayOfWeek = nextDayOfWeek(move.date);
     let date: string;
-    let dayOfWeek: number;
+    let resolvedDay: number;
     if (target.kind === 'weeks') {
       const wanted = Math.round(target.week);
       if (!Number.isFinite(wanted) || wanted < 1 || wanted > semester.total_weeks) {
         return { ok: false, message: `目标周要在 1–${semester.total_weeks} 周之间` };
       }
       // 跨周调课：目标周的同一个星期几
-      date = weekDateOf(semester, wanted, move.cell.dayOfWeek);
-      dayOfWeek = move.cell.dayOfWeek;
+      date = weekDateOf(semester, wanted, dayOfWeek);
+      resolvedDay = dayOfWeek;
     } else if (target.kind === 'date') {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(target.date)) return { ok: false, message: '请先选择目标日期' };
       const first = weekStart(semester.start_date);
@@ -661,20 +710,16 @@ export function App() {
         return { ok: false, message: `目标日期要在学期内（${first} 至 ${last}）` };
       }
       date = target.date;
-      dayOfWeek = nextDayOfWeek(target.date);
-    } else if (target.kind === 'week') {
-      // 本周生效：日期仍是本周该天，只改星期/节次
-      date = weekDateOf(semester, data.viewWeek, move.dayOfWeek);
-      dayOfWeek = move.dayOfWeek;
+      resolvedDay = nextDayOfWeek(target.date);
     } else {
-      // 每周生效：改课表本身，星期取拖动落点所在列
-      date = weekDateOf(semester, data.viewWeek, move.dayOfWeek);
-      dayOfWeek = move.dayOfWeek;
+      // 本周生效与每周生效：日期是落点那一列的日期，只改星期/节次
+      date = move.date;
+      resolvedDay = dayOfWeek;
     }
-    if (date === weekDateOf(semester, data.viewWeek, move.cell.dayOfWeek) && period === move.cell.periodStart) {
+    if (date === move.date && period === move.cell.periodStart) {
       return { ok: false, message: '目标位置和现在一样，没有需要调整的' };
     }
-    return { ok: true, date, dayOfWeek, period, span };
+    return { ok: true, date, dayOfWeek: resolvedDay, period, span };
   }
 
   async function applyMove(target: MoveTarget): Promise<void> {
@@ -686,7 +731,8 @@ export function App() {
       return;
     }
     const { date, dayOfWeek, period, span } = resolved;
-    const onDate = weekDateOf(semester, data.viewWeek, move.cell.dayOfWeek);
+    // 停课/调课记录挂在原课次那一天：格子自带日期，不再按查看周推算
+    const onDate = move.date;
     const scheduleId = move.cell.scheduleId;
     const where = `${WEEKDAYS[dayOfWeek - 1] ?? ''} ${formatPeriodLabel(period, period + span)}`;
     // 三个「这一次」的作用范围都走 createReschedule，只是 onDate/newDate 不同
@@ -724,11 +770,12 @@ export function App() {
         );
         if (!done) return;
       } else {
-        const weeks = target.kind === 'weeks' ? Math.round(target.week) : data.viewWeek;
+        const fromWeek = weekOfDate(move.date, semester.start_date);
+        const weeks = target.kind === 'weeks' ? Math.round(target.week) : fromWeek;
         const label =
           target.kind === 'week'
             ? `本周的这节课已改到 ${where}`
-            : `已把第 ${data.viewWeek} 周的这节课改到第 ${weeks} 周 ${formatPeriodLabel(period, period + span)}`;
+            : `已把第 ${fromWeek} 周的这节课改到第 ${weeks} 周 ${formatPeriodLabel(period, period + span)}`;
         const done = await withToast(reschedule, label, '仅调整这一次失败');
         if (!done) return;
       }
@@ -740,7 +787,7 @@ export function App() {
             ? weekOfDate(date, semester.start_date)
             : target.kind === 'always'
               ? null
-              : data.viewWeek;
+              : weekOfDate(move.date, semester.start_date);
       const overlap = overlapAt(data.courses, {
         dayOfWeek,
         period,
@@ -766,7 +813,7 @@ export function App() {
       }
     }
     await updateSemester(storage, id, { is_active: 1 });
-    setViewWeek(null);
+    setWindowStart(null);
     refresh();
   }
 
@@ -821,6 +868,7 @@ export function App() {
         <Toaster mode={resolvedMode} />
         {/* 外部链接确认弹窗在引导页也要挂上，否则「请求适配 / 提交学校信息」点了没反应 */}
         <ExternalLinkConfirm />
+        <BusyOverlay />
       </>
     );
   }
@@ -831,17 +879,16 @@ export function App() {
         (mode === 'week' ? (
           <WeekView
             data={data}
-            viewDays={settings.viewDays}
             showOtherWeeks={settings.showOtherWeeks}
             onSelectLesson={(cell) => void openLesson(cell)}
-            onMoveLesson={(cell, dayOfWeek, period) => openMove(cell, dayOfWeek, period)}
+            onMoveLesson={(cell, date, period) => openMove(cell, date, period)}
             onQuickCreate={(preset) => {
               setEditingCourse(null);
               setQuickCreate(preset);
               setCourseFormOpen(true);
             }}
-            onPrevWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, -1))}
-            onNextWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, 1))}
+            onPrevWindow={() => shiftWindow(-settings.viewDays)}
+            onNextWindow={() => shiftWindow(settings.viewDays)}
           />
         ) : (
           <TodayView data={data} />
@@ -936,25 +983,36 @@ export function App() {
       )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <AppToolbar
-          semester={data.semester}
-          semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
-          onSelectSemester={(id) => void switchSemester(id)}
-          viewWeek={data.viewWeek}
-          currentWeek={data.week}
-          onPrevWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, -1))}
-          onNextWeek={() => setViewWeek((week) => shiftWeek(week ?? data.viewWeek, 1))}
-          onToday={() => setViewWeek(data.week)}
-          mode={mode}
-          onModeChange={setMode}
-          onSearch={() => setSearchOpen(true)}
-          onAdd={() => {
-          setEditingCourse(null);
-          setQuickCreate(null);
-          setCourseFormOpen(true);
-        }}
-          compact={!isDesktop}
-        />
+        {/* 周次标签给的是窗口起点所在周；上面挂窗口覆盖的日期区间，供自检与读屏 */}
+        <div
+          data-role="window-nav"
+          data-window-start={data.windowStart}
+          data-window-days={data.windowDates.length}
+          data-window-range={formatWindowRange(data)}
+          data-window-week={data.viewWeek}
+          data-window-spans-weeks={data.windowSpansWeeks ? 'true' : 'false'}
+          aria-label={`查看窗口 ${formatWindowRange(data)} · 第 ${data.viewWeek} 周`}
+        >
+          <AppToolbar
+            semester={data.semester}
+            semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
+            onSelectSemester={(id) => void switchSemester(id)}
+            viewWeek={data.viewWeek}
+            currentWeek={data.week}
+            onPrevWeek={() => shiftWindow(-settings.viewDays)}
+            onNextWeek={() => shiftWindow(settings.viewDays)}
+            onToday={() => setWindowStart(null)}
+            mode={mode}
+            onModeChange={setMode}
+            onSearch={() => setSearchOpen(true)}
+            onAdd={() => {
+              setEditingCourse(null);
+              setQuickCreate(null);
+              setCourseFormOpen(true);
+            }}
+            compact={!isDesktop}
+          />
+        </div>
         <main
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] tablet:p-4 tablet:pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] desktop:pb-4"
           data-role="app-main"
@@ -1046,7 +1104,7 @@ export function App() {
             move === null
               ? ''
               : `把「${move.cell.name}」(${formatPeriodLabel(move.cell.periodStart, move.cell.periodEnd)}) 移到 ${
-                  WEEKDAYS[move.dayOfWeek - 1] ?? ''
+                  WEEKDAYS[nextDayOfWeek(move.date) - 1] ?? ''
                 } ${formatPeriodLabel(move.period, move.period + (move.cell.periodEnd - move.cell.periodStart))}，请选择生效范围`
           }
         >
@@ -1296,10 +1354,7 @@ export function App() {
 
       <Toaster mode={resolvedMode} />
       <ExternalLinkConfirm />
+      <BusyOverlay />
     </div>
   );
-}
-
-function shiftWeek(week: number, delta: number): number {
-  return Math.max(1, week + delta);
 }

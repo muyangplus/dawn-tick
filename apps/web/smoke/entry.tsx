@@ -56,11 +56,21 @@ export interface SmokeSeed {
   monday: string;
   /** 造好的过期待办 id：用来验证自动完成不回写数据库 */
   overdueTodoId: string;
+  /** 今天：窗口默认从今天开始，断言大量用到 */
+  today: string;
+  /** 多天假期的第一天与第二天：都落在默认窗口里 */
+  holidayStart: string;
+  holidaySecond: string;
 }
 
 /** 造一份固定数据；返回当前周的周一日期，供后续断言推算有课的日期。 */
 async function seed(): Promise<SmokeSeed> {
   const storage = validatedStorage(await openIndexedDbStorage());
+  const now = new Date();
+  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
+  const todayText = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  /** 今天对应的周几（1=周一）：窗口从今天开始，放假列就是这一列 */
+  const nowDayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
   const semester = await createSemester(storage, {
     userId: USER_ID,
     name: '2026-2027 第一学期',
@@ -124,20 +134,19 @@ async function seed(): Promise<SmokeSeed> {
   });
   await createSchedule(storage, {
     courseId: String(probabilityCourse['id']),
-    dayOfWeek: 1,
+    dayOfWeek: nowDayOfWeek,
     periodStart: 5,
     periodEnd: 6,
     weeks: [1, 2],
   });
   // 周视图铺满 7 天，才能验证「高亮当天列」
   await writeSettings(storage, { viewDays: 7 });
-  // 当前周的周一放假，用来验证放假日灰显（跟随当天日期，避免跨周后失效）
-  const now = new Date();
+  // 今天与明天放假：窗口默认从今天开始，必落在窗口里；前一天设为工作日
   const mondayOffset = (now.getDay() + 6) % 7;
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayOffset);
-  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
   const mondayText = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
-  const todayText = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const holidayStartText = todayText;
+  const holidaySecondText = addDays(todayText, 1);
   // 实验条目：覆盖「改实验 → 保存 → 写回」这条链路（曾经静默失败、没有日志）
   await createEvent(storage, {
     userId: USER_ID,
@@ -167,23 +176,23 @@ async function seed(): Promise<SmokeSeed> {
     semesterId: String(semester['id']),
     type: 'holiday',
     title: '国庆节',
-    onDate: mondayText,
+    onDate: holidayStartText,
   });
-  // 把假期前一天设为工作日：保证周一是这段假期的第一天（不受内置节假日表影响）
+  // 把假期前一天设为工作日：保证今天是这段假期的第一天（不受内置节假日表影响）
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
     type: 'workday',
     title: '非假日',
-    onDate: addDays(mondayText, -1),
+    onDate: addDays(holidayStartText, -1),
   });
-  // 周二也放假：形成一段两天假期，用来验证第二天起只显示「放假」
+  // 明天也放假：形成一段两天假期，用来验证第二天起只显示「放假」
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
     type: 'holiday',
     title: '国庆节',
-    onDate: addDays(mondayText, 1),
+    onDate: holidaySecondText,
   });
   // 每个星期几都上的晚课（第 9-10 节，20:40 结束）：日程时间线里「过期的课自动完成」用它，
   // 白天所有空格的交互断言都不受影响（那些都落在第 1-3 节）
@@ -208,7 +217,7 @@ async function seed(): Promise<SmokeSeed> {
     semesterId: String(semester['id']),
     type: 'todo',
     title: '过期待办',
-    onDate: mondayText,
+    onDate: addDays(mondayText, 8),
     dueAt: Date.now() - 3_600_000,
   });
   await createEvent(storage, {
@@ -216,16 +225,30 @@ async function seed(): Promise<SmokeSeed> {
     semesterId: String(semester['id']),
     type: 'todo',
     title: '无时间待办',
-    onDate: addDays(mondayText, -1),
+    onDate: addDays(mondayText, 8),
+  });
+  // 窗口内的那一天：③ 段要看「其他」性质的待办
+  await createEvent(storage, {
+    userId: USER_ID,
+    semesterId: String(semester['id']),
+    type: 'todo',
+    title: '窗口内待办',
+    onDate: addDays(mondayText, 7),
   });
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
     type: 'exam',
     title: '期末模拟考',
-    onDate: mondayText,
+    onDate: addDays(mondayText, 7),
   });
-  return { monday: mondayText, overdueTodoId: String(overdue['id']) };
+  return {
+    monday: mondayText,
+    overdueTodoId: String(overdue['id']),
+    today: todayText,
+    holidayStart: holidayStartText,
+    holidaySecond: holidaySecondText,
+  };
 }
 
 // 冒烟固定把所有设置卡片视为展开，避免折叠记忆影响断言
@@ -603,6 +626,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const seeded = await seed();
   const seededMonday = seeded.monday;
   const overdueTodoId = seeded.overdueTodoId;
+  // 窗口默认从今天开始：后面的断言大量用今天与这两天假期
+  const todayText = seeded.today;
+  const holidayStartText = seeded.holidayStart;
+  const holidaySecondText = seeded.holidaySecond;
   const view = mount(<App />);
   await flush(20);
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
@@ -703,13 +730,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // ④ 多天假期：第一天卡片上显示假期名称，第二天起只显示「放假」
-  const holidayLabelOf = (name: string): string | undefined =>
-    [...view.container.querySelectorAll('[data-tone="holiday"]')]
+  // 窗口从今天开始，假期落在今天与明天，所以按列日期取卡片，而不是取全页第一张
+  const holidayLabelAt = (date: string, name: string): string | undefined =>
+    [...(view.container.querySelector(`[data-date="${date}"]`)?.querySelectorAll('[data-tone="holiday"]') ?? [])]
       .find((item) => (item.textContent ?? '').includes(name))
       ?.querySelector('[data-role="holiday-label"]')
       ?.textContent?.trim();
-  const firstDayLabel = holidayLabelOf('高数');
-  const laterDayLabel = holidayLabelOf('线代');
+  const firstDayLabel = holidayLabelAt(holidayStartText, '线代');
+  const laterDayLabel = holidayLabelAt(holidaySecondText, '往期');
   check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
   check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
 
@@ -1067,13 +1095,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   // ① 时间线课程显示开始–结束；② 行内「调课」按钮移除，改为点课程进详情再调课
   const seededHolidays = new Set<string>(builtinHolidays());
-  seededHolidays.delete(addDays(seededMonday, -1));
-  seededHolidays.add(seededMonday);
-  seededHolidays.add(addDays(seededMonday, 1));
+  seededHolidays.delete(addDays(holidayStartText, -1));
+  seededHolidays.add(holidayStartText);
+  seededHolidays.add(holidaySecondText);
+  // 拖动测试会改高数的排课，这里只挑没被动过的线代：周二 14:00–15:40 与周四 16:00–17:40
   const timelinePicks = [
-    { date: addDays(seededMonday, 7), range: '08:00–09:40', course: '高等数学' },
     { date: addDays(seededMonday, 8), range: '14:00–15:40', course: '线性代数' },
     { date: addDays(seededMonday, 10), range: '16:00–17:40', course: '线性代数' },
+    { date: addDays(seededMonday, 7), range: '08:00–09:40', course: '高等数学' },
   ];
   const picked = timelinePicks.find((item) => !seededHolidays.has(item.date)) ?? timelinePicks[0];
   const dateBox = view.container.querySelector('input[aria-label="查看日期"]');
@@ -1225,8 +1254,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `${allDoneDate}：主 ${rowsIn('timeline-main').length} / 已完成 ${rowsIn('timeline-completed').length} / aria=${allDoneToggle?.getAttribute('aria-expanded') ?? '(无)'}`,
   );
 
-  // ③ 回到本周一：过期的待办自动完成，但没有回写数据库；顺带核对四种性质标签
-  await setViewDate(seededMonday);
+  // ③ 过期待办在线代那天（+8）：自动完成但不回写数据库
+  await setViewDate(addDays(seededMonday, 8));
   const probe = validatedStorage(await openIndexedDbStorage());
   const overdueRow = await probe.collection<Record<string, unknown>>('events').get(overdueTodoId);
   check(
@@ -1237,6 +1266,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       overdueRow['done'] === 0,
     `done=${overdueRow === undefined ? '(未找到)' : String(overdueRow['done'])}`,
   );
+  // 再切到窗口内的周一（调课落点与另外两条种子在那天）核对四种性质标签
+  await setViewDate(addDays(seededMonday, 7));
   const adjustNature = natureOf(view.container.querySelector('[data-kind="adjust"]'));
   const examNature = natureOf(rowIn('timeline-main', '期末模拟考'));
   check(
@@ -1246,7 +1277,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // ④ 停课：日程里默认已完成（进已完成分组、不计入未完成），课表里灰显并标注「停课」
-  const cancelDate = addDays(seededMonday, 2);
+  const cancelDate = addDays(seededMonday, 9);
   await setViewDate(cancelDate);
   if (clickMenu(view.container, '更多操作', '当天全部停课')) await flush(18);
   const cancelledRow = rowIn('timeline-completed', '往期课');
