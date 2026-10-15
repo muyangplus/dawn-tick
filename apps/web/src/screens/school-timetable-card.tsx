@@ -138,7 +138,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
   return (
     <CollapsibleCard id="school-timetable" title="按学校套用作息" icon={CalendarClock} badge={presetLine}>
       <span className="text-xs text-muted">
-        选择一所学校：预设内该校作息存在则按它重排整张时间表，不存在则套用内置通用作息并给出提示。
+        按该校作息重排时间表
       </span>
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -185,7 +185,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent
           title="按学校套用作息"
-          description="选中学校后会按预设里该校的作息重排整张时间表；该校暂无专属作息时套用通用作息。"
+          description="按学校作息重排时间表"
         >
           <SchoolPicker
             context={context}

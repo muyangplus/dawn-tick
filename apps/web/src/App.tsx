@@ -1255,8 +1255,8 @@ export function App() {
           title={notice === NOTICE_BETA ? '测试版提示' : '开发版提示'}
           description={
             notice === NOTICE_BETA
-              ? '测试版可能不稳定，功能与数据格式都可能调整；遇到问题请附日志反馈。'
-              : '开发版随 dev 分支滚动更新，可能频繁变化；日常使用建议切换到测试版或正式版。'
+              ? '测试版可能不稳定，反馈请附日志'
+              : '开发版滚动更新'
           }
         >
           <DialogFooter>

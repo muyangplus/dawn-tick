@@ -428,7 +428,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                 />
               </Field>
             </div>
-            <span className="text-xs text-muted">只加这一次，按该日期所在周记录；可在课程管理里删除</span>
+            <span className="text-xs text-muted">只加这一次，可在课程管理里删除</span>
           </div>
         )}
 

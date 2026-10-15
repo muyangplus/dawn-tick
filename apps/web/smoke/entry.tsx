@@ -634,9 +634,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(20);
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
   check(
-    'dev 构建首次提示开发版可能频繁更新',
+    'dev 构建首次提示开发版滚动更新',
     (document.body.textContent ?? '').includes('开发版提示') &&
-      (document.body.textContent ?? '').includes('建议切换到测试版或正式版'),
+      (document.body.textContent ?? '').includes('开发版滚动更新'),
     (document.body.textContent ?? '').slice(0, 60),
   );
   if (clickByText(document.body, '知道了')) await flush(10);

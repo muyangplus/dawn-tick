@@ -370,8 +370,8 @@ export function TodoForm({
         title={editing === null ? '添加待办' : '待办详情'}
         description={
           editing === null
-            ? '选类型后填对应字段；作业与考试可显示倒计时，实验会排进课表'
-            : '改完点保存写回这一条；「自定义时间」打开后按真实时间显示'
+            ? '选类型后填字段'
+            : '保存写回这一条'
         }
       >
         <Field label="类型">
@@ -474,7 +474,7 @@ export function TodoForm({
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>自定义时间</span>
-            <span className="truncate text-xs text-muted">打开后按真实起止时间显示，不再套节次</span>
+            <span className="truncate text-xs text-muted">按真实起止时间显示</span>
           </span>
           <Switch
             aria-label="自定义时间"
@@ -601,7 +601,7 @@ export function TodoForm({
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>显示在课表上</span>
-            <span className="truncate text-xs text-muted">打开后这条会占课表格子，位置按日期与时间落格</span>
+            <span className="truncate text-xs text-muted">占用课表格子</span>
           </span>
           <Switch
             aria-label="显示在课表上"
