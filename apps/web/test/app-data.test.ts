@@ -67,7 +67,8 @@ test('新建学期并加课后，周视图与今日视图都能看到', async ()
   assert.equal(data.week, week);
   assert.equal(data.todayOfWeek, dow);
 
-  const cells = data.grid.get(`${dow}:1`) ?? [];
+  // 网格按日期键：窗口从今天开始，今天的这一格必须能看到刚建的课
+  const cells = data.grid.get(`${today}:1`) ?? [];
   assert.equal(cells.length, 1);
   assert.equal(cells[0]?.name, '高数');
   assert.equal(cells[0]?.room, '教三-201');
