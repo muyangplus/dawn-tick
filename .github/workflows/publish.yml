@@ -315,13 +315,34 @@ jobs:
 
           NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
 
+          # 发布说明取 CHANGELOG.md：dev 用「未发布」段，其余渠道用该版本段；
+          # 取不到就整体回退 GitHub 自动生成的对比说明（正文首行始终是渠道行，客户端从它读提交号）
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          BODY=""
+          if [[ "$CHANNEL" == "dev" ]]; then
+            BODY=$(node tools/release/changelog.mjs --extract 2>/dev/null || true)
+          else
+            BODY=$(node tools/release/changelog.mjs --extract="${VERSION}" 2>/dev/null || true)
+          fi
+          if [[ -n "$BODY" ]]; then
+            printf '%s\n\n%s\n' "$NOTES" "$BODY" > "$NOTES_FILE"
+            echo "发布说明取自 CHANGELOG.md"
+          else
+            rm -f "$NOTES_FILE"
+            echo "CHANGELOG.md 没有对应段落，回退自动生成"
+          fi
+
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "标签 $TAG 已存在，覆盖产物"
             gh release upload "$TAG" out/* --clobber
-            gh release edit "$TAG" --title "$TITLE" --prerelease=$PRERELEASE
+            edit=(--title "$TITLE" --prerelease=$PRERELEASE)
+            # 覆盖发布时说明也要跟着更新，否则正文还停在上一次的提交号
+            if [[ -s "$NOTES_FILE" ]]; then edit+=(--notes-file "$NOTES_FILE"); else edit+=(--notes "$NOTES"); fi
+            gh release edit "$TAG" "${edit[@]}"
           else
             echo "创建标签 $TAG 并发布，比较基准 ${PREV:-无}"
-            args=(--title "$TITLE" --target "$TARGET" --generate-notes --notes "$NOTES" --prerelease=$PRERELEASE)
+            args=(--title "$TITLE" --target "$TARGET" --prerelease=$PRERELEASE)
+            if [[ -s "$NOTES_FILE" ]]; then args+=(--notes-file "$NOTES_FILE"); else args+=(--generate-notes --notes "$NOTES"); fi
             if [[ -n "$PREV" ]]; then args+=(--notes-start-tag "$PREV"); fi
             gh release create "$TAG" out/* "${args[@]}"
           fi

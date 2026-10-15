@@ -1,6 +1,6 @@
 {
   "name": "dawn-tick",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "Apache-2.0",
   "description": "晓刻 DawnTick：课表与日程提醒工具",
@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "pnpm -r --if-present test && node --test tools/release/plan.test.mjs tools/release/build-stamp.test.mjs tools/release/ci-gate.test.mjs tools/design/check-a11y.test.mjs",
+    "test": "pnpm -r --if-present test && node --test tools/release/plan.test.mjs tools/release/build-stamp.test.mjs tools/release/ci-gate.test.mjs tools/release/changelog.test.mjs tools/design/check-a11y.test.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "version:current": "node tools/release/version.mjs --current",
     "version:set": "node tools/release/version.mjs",
