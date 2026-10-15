@@ -97,7 +97,9 @@ object WidgetRenderer {
         val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 0
         val maxHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT) ?: 0
         val heights = listOf(minHeight, maxHeight).filter { it > 0 }
-        val widgetHeight = if (heights.isEmpty()) dp(context, FALLBACK_WIDGET_HEIGHT_DP) else heights.min()
+        // 系统给的高度是 dp，下面的 used 与 rowHeight 都是 px：先换到 px 再相减
+        val heightDp = if (heights.isEmpty()) FALLBACK_WIDGET_HEIGHT_DP else heights.min()
+        val widgetHeight = dp(context, heightDp)
 
         val used = dp(context, ROOT_PADDING_DP * 2 + HEADER_DP + countDp)
         val rowHeight = dp(context, ROW_DP)
