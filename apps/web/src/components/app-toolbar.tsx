@@ -51,19 +51,19 @@ export function AppToolbar({
       </Select>
 
       <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="上一周" onClick={onPrevWeek}>
+        <Button variant="ghost" size="icon" aria-label="上一屏" onClick={onPrevWeek}>
           <ChevronLeft className="size-4" aria-hidden />
         </Button>
         <span className="tabular min-w-16 text-center text-sm text-ink">
           第 {viewWeek} 周
           {viewWeek === currentWeek && <span className="text-xs text-muted"> · 本周</span>}
         </span>
-        <Button variant="ghost" size="icon" aria-label="下一周" onClick={onNextWeek}>
+        <Button variant="ghost" size="icon" aria-label="下一屏" onClick={onNextWeek}>
           <ChevronRight className="size-4" aria-hidden />
         </Button>
       </div>
 
-      <Button variant="secondary" size="sm" onClick={onToday}>
+      <Button variant="secondary" size="sm" aria-label="回到今天" onClick={onToday}>
         <CalendarRange className="size-4" aria-hidden />
         今天
       </Button>

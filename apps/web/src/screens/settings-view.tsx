@@ -1825,7 +1825,7 @@ export function SettingsView({
             </ExternalLink>
           </span>
           <span className="text-xs text-muted">
-            快捷键：/ 搜索 · ← → 切换周 · T 回到本周 · Esc 关闭弹窗与占位块
+            快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天 · Esc 关闭弹窗与占位块
           </span>
           <span className="text-xs text-muted">
             学校适配与作息在独立仓库 dawn-tick-presets 维护，缺适配时可提交学校信息。

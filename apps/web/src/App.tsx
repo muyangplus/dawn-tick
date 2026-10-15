@@ -472,9 +472,11 @@ export function App() {
   }, [settings.viewDays, windowStart, data?.windowStart]);
 
   useEffect(() => {
-    if (storage === null || windowStart === null || data === null) return;
-    if (windowStart === data.windowStart) return;
-    void reload(storage, settings, windowStart);
+    if (storage === null || data === null) return;
+    // windowStart=null 表示「以今天开头」：要拿今天跟已加载的窗口起点比，否则「回到今天」不会重载
+    const wanted = windowStart ?? data.today;
+    if (wanted === data.windowStart) return;
+    void reload(storage, settings, wanted);
   }, [windowStart, data, storage, settings, reload]);
 
   const patch = useCallback(

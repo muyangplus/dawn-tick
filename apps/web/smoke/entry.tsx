@@ -225,7 +225,7 @@ async function seed(): Promise<SmokeSeed> {
     semesterId: String(semester['id']),
     type: 'todo',
     title: '无时间待办',
-    onDate: addDays(mondayText, 8),
+    onDate: addDays(mondayText, -1),
   });
   // 窗口内的那一天：③ 段要看「其他」性质的待办
   await createEvent(storage, {
@@ -689,6 +689,35 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     text.includes('非本周') && view.container.querySelector('[data-tone="ghost"]') !== null,
     '',
   );
+
+  // 周视图 = 从今天开始的 N 天窗口：列数 = 设置天数，第一列是今天，前后切换按 N 天平移
+  const windowNav = (): HTMLElement | null => view.container.querySelector('[data-role="window-nav"]');
+  const windowStartOf = (): string => windowNav()?.getAttribute('data-window-start') ?? '(无)';
+  const windowDaysOf = (): string => windowNav()?.getAttribute('data-window-days') ?? '(无)';
+  check(
+    '窗口从今天开始且列数等于设置天数',
+    windowStartOf() === todayText &&
+      windowDaysOf() === '7' &&
+      view.container.querySelectorAll('[data-date]').length === 7 &&
+      view.container.querySelector(`[data-date="${todayText}"]`) !== null,
+    `起=${windowStartOf()} 天=${windowDaysOf()} 列=${view.container.querySelectorAll('[data-date]').length}`,
+  );
+  if (clickByLabel(view.container, '下一屏')) await flush(20);
+  check('下一屏按设置天数平移', windowStartOf() === addDays(todayText, 7), windowStartOf());
+  if (clickByLabel(view.container, '上一屏')) await flush(20);
+  check('上一屏回到今天', windowStartOf() === todayText, windowStartOf());
+  if (clickByLabel(view.container, '上一屏')) await flush(20);
+  check('上一屏可以退到今天之前', windowStartOf() === addDays(todayText, -7), windowStartOf());
+  if (clickByLabel(view.container, '回到今天')) await flush(30);
+  check('「回到今天」回到以今天开头的窗口', windowStartOf() === todayText, windowStartOf());
+  // 快捷键在输入框里会被忽略：先失焦再按，避免日期输入框吃掉按键
+  if (document.activeElement instanceof window.HTMLElement) document.activeElement.blur();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  await flush(30);
+  check('快捷键 → 平移一屏', windowStartOf() === addDays(todayText, 7), windowStartOf());
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 't', bubbles: true }));
+  await flush(30);
+  check('快捷键 T 回到以今天开头的窗口', windowStartOf() === todayText, windowStartOf());
   check(
     '放假日课程灰显',
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
