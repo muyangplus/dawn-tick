@@ -20,17 +20,23 @@ test('定时任务发 dev 渠道', () => {
   assert.equal(plan.buildRef, 'dev');
 });
 
-test('beta 渠道按既有标签续号', () => {
+test('beta 渠道在 main 上发版，标签按既有标签续号', () => {
   const plan = planRelease({
-    ref: 'refs/heads/beta',
+    ref: 'refs/heads/main',
     version: V,
     dispatchChannel: 'beta',
     existingTags: ['v0.1.0-beta.1', 'v0.1.0-beta.3', 'v0.0.9-beta.7'],
   });
   assert.equal(plan.tag, 'v0.1.0-beta.4');
-  assert.equal(plan.buildRef, 'beta');
+  assert.equal(plan.buildRef, 'main');
   assert.equal(plan.rolling, false);
   assert.equal(plan.prerelease, true);
+});
+
+test('beta 分支已移除：dev 之外的普通分支按 dev 处理', () => {
+  const plan = planRelease({ ref: 'refs/heads/beta', version: V });
+  assert.equal(plan.channel, 'dev');
+  assert.equal(plan.buildRef, 'dev');
 });
 
 test('版本号变化后 beta 从 1 重新开始', () => {

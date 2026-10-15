@@ -18,8 +18,9 @@ export function nextBetaNumber(existingTags, version) {
 /**
  * 渠道与标签规则：
  * - dev：固定标签 dev-latest，滚动覆盖；由手动触发或定时任务发布，构建自 dev 分支
- * - beta：标签 v<version>-beta.<n>，n 从既有标签续号；手动触发，构建自 beta 分支，保留历史
- * - release：标签 v<version>；由打标签触发自动发布，构建自 main 分支
+ * - beta：标签 v<version>-beta.<n>，n 从既有标签续号；构建自 main，保留历史
+ * - release：标签 v<version>；构建自 main，打标签触发自动发布
+ * beta 与 release 都从 main 发版：改动在 dev 上做，经 PR 合入 main 后再打标签。
  */
 export function planRelease({
   ref,
@@ -48,8 +49,6 @@ export function planRelease({
     channel = dispatchChannel;
   } else if (ref === 'refs/heads/main') {
     channel = 'release';
-  } else if (ref === 'refs/heads/beta') {
-    channel = 'beta';
   } else {
     channel = 'dev';
   }
@@ -62,7 +61,7 @@ export function planRelease({
     buildRef = 'dev';
   } else if (channel === 'beta') {
     tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}-beta.${nextBetaNumber(existingTags, version)}`;
-    buildRef = isTagPush ? tag : 'beta';
+    buildRef = isTagPush ? tag : 'main';
   } else {
     tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}`;
     buildRef = isTagPush ? tag : 'main';
