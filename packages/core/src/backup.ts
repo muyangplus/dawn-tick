@@ -12,6 +12,7 @@ export const BACKUP_META_KEYS: readonly string[] = [
   'view_days',
   'theme',
   'theme_preset',
+  'motion',
   'widget_background',
   'auto_start',
   'start_hidden',

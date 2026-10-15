@@ -25,10 +25,10 @@ export function Sheet({
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange} direction={side}>
       <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 z-40 bg-overlay" />
+        <Drawer.Overlay className="dt-overlay fixed inset-0 z-40 bg-overlay" />
         <Drawer.Content
           className={cn(
-            'fixed z-50 flex flex-col gap-4 border-line bg-surface p-4',
+            'dt-sheet fixed z-50 flex flex-col gap-4 border-line bg-surface p-4',
             side === 'bottom'
               ? 'inset-x-0 bottom-0 max-h-[85vh] rounded-t-lg border-t'
               : 'bottom-0 right-0 top-0 w-[min(28rem,100vw)] rounded-l-lg border-l',

@@ -5,6 +5,8 @@ import {
   BACKUP_MODULE_LABEL,
   IMPORT_MODE_LABEL,
   IMPORT_MODES,
+  MOTION_LABEL,
+  MOTION_MODES,
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
@@ -28,6 +30,7 @@ import {
   type WidgetVariant,
   type TodoSort,
   type LogLevel,
+  type MotionMode,
 } from '@dawn-tick/core';
 import {
   exportConfig,
@@ -89,6 +92,7 @@ import {
   type DavSettings,
 } from '../webdav.ts';
 import { detectPlatform } from '../platform-detect.ts';
+import { runBusy } from '../lib/busy.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
@@ -1091,6 +1095,20 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
+        <Field label="界面动效" hint="页面切换、弹窗与列表的过渡效果；可跟随系统的「减少动态效果」">
+          <Select value={settings.motion} onValueChange={(value) => void onPatch({ motion: value as MotionMode })}>
+            <SelectTrigger aria-label="界面动效">
+              <span>{MOTION_LABEL[settings.motion]}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {MOTION_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {MOTION_LABEL[mode]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>周视图显示非本周课程</span>
@@ -1315,7 +1333,7 @@ export function SettingsView({
                   variant="secondary"
                   aria-label="保存存储位置"
                   disabled={storageBusy}
-                  onClick={() => void saveStorage(storagePathInput)}
+                  onClick={() => void runBusy('正在保存存储位置…', () => saveStorage(storagePathInput))}
                 >
                   保存位置
                 </Button>
@@ -1436,7 +1454,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="立即备份"
               disabled={snapshotBusy}
-              onClick={() => void backupNow()}
+              onClick={() => void runBusy('正在备份…', () => backupNow())}
             >
               立即备份
             </Button>
@@ -1468,7 +1486,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`恢复快照 ${entry.id}`}
                     disabled={snapshotBusy}
-                    onClick={() => void restoreSnapshotNow(entry)}
+                    onClick={() => void runBusy('正在恢复快照…', () => restoreSnapshotNow(entry))}
                   >
                     恢复
                   </Button>
@@ -1477,7 +1495,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`删除快照 ${entry.id}`}
                     disabled={snapshotBusy}
-                    onClick={() => void removeSnapshot(entry)}
+                    onClick={() => void runBusy('正在删除快照…', () => removeSnapshot(entry))}
                   >
                     删除
                   </Button>
@@ -1556,7 +1574,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="测试 WebDAV 连接"
               disabled={davBusy || !davConfigured(dav)}
-              onClick={() => void testDav()}
+              onClick={() => void runBusy('正在测试连接…', () => testDav())}
             >
               测试连接
             </Button>
@@ -1565,7 +1583,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="上传到 WebDAV"
               disabled={davBusy || !davConfigured(dav)}
-              onClick={() => void uploadDav()}
+              onClick={() => void runBusy('正在上传到 WebDAV…', () => uploadDav())}
             >
               立即上传
             </Button>
@@ -1600,7 +1618,7 @@ export function SettingsView({
             导入配置
           </Button>
           {diagnosticsVisible && (
-            <Button size="sm" variant="secondary" onClick={() => void exportLogs()}>
+            <Button size="sm" variant="secondary" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
               导出日志
             </Button>
           )}
@@ -1633,7 +1651,7 @@ export function SettingsView({
             variant="secondary"
             aria-label="检查更新"
             disabled={updateBusy}
-            onClick={() => void runUpdateCheck()}
+            onClick={() => void runBusy('正在检查更新…', () => runUpdateCheck())}
           >
             检查更新
           </Button>
@@ -1698,7 +1716,7 @@ export function SettingsView({
             控制 dawn-tick.log 的输出级别；关闭后不再写文件，控制台仍会输出
           </span>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" aria-label="打开日志" onClick={() => void exportLogs()}>
+            <Button size="sm" variant="secondary" aria-label="打开日志" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
               打开日志
             </Button>
             <span className="text-xs text-muted">导出当前缓冲区；「打开日志文件所在目录」在资源管理器里定位文件</span>
@@ -1752,7 +1770,7 @@ export function SettingsView({
             variant="secondary"
             aria-label="检查预设更新"
             disabled={presetBusy}
-            onClick={() => void runPresetCheck()}
+            onClick={() => void runBusy('正在读取预设更新…', () => runPresetCheck())}
           >
             检查预设更新
           </Button>
@@ -2000,7 +2018,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="下载并只应用设置与预设"
               disabled={davBusy}
-              onClick={() => void downloadDav('settings')}
+              onClick={() => void runBusy('正在下载并应用…', () => downloadDav('settings'))}
             >
               只应用设置与预设
             </Button>
@@ -2008,7 +2026,7 @@ export function SettingsView({
               variant="danger"
               aria-label="下载并恢复整库"
               disabled={davBusy}
-              onClick={() => void downloadDav('all')}
+              onClick={() => void runBusy('正在下载并应用…', () => downloadDav('all'))}
             >
               恢复全部
             </Button>

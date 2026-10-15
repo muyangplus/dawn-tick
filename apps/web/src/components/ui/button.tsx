@@ -1,5 +1,6 @@
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
+import { Loader2 } from 'lucide-react';
 import type { ButtonHTMLAttributes } from 'react';
 import { cn } from '../../lib/cn.ts';
 
@@ -32,11 +33,32 @@ export interface ButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  /** 进行中：按钮自动禁用并显示转圈，防止重复点击 */
+  loading?: boolean;
 }
 
-export function Button({ className, variant, size, asChild = false, ...props }: ButtonProps) {
+export function Button({
+  className,
+  variant,
+  size,
+  asChild = false,
+  loading = false,
+  disabled,
+  children,
+  ...props
+}: ButtonProps) {
   const Component = asChild ? Slot : 'button';
-  return <Component className={cn(buttonVariants({ variant, size }), className)} {...props} />;
+  return (
+    <Component
+      className={cn(buttonVariants({ variant, size }), className)}
+      disabled={asChild ? undefined : disabled === true || loading}
+      aria-busy={loading ? 'true' : undefined}
+      {...props}
+    >
+      {loading && <Loader2 className="dt-spinner size-4 shrink-0" aria-hidden />}
+      {children}
+    </Component>
+  );
 }
 
 export { buttonVariants };

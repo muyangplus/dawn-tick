@@ -1,0 +1,78 @@
+import { useCallback, useEffect, useState } from 'react';
+import { logDebug, logWarn } from '../log.ts';
+
+type Listener = (busy: BusyState | null) => void;
+
+export interface BusyState {
+  /** 正在进行的操作名，展示给用户 */
+  label: string;
+  /** 同时进行的操作数：归零才收起蒙版 */
+  count: number;
+}
+
+let current: BusyState | null = null;
+const listeners = new Set<Listener>();
+
+function publish(next: BusyState | null): void {
+  current = next;
+  for (const listener of listeners) listener(next);
+}
+
+export function busySnapshot(): BusyState | null {
+  return current;
+}
+
+/**
+ * 跑一个慢操作：期间盖蒙版、挡住重复点击，结束后无论成败都收起。
+ * 抛出的错误原样交给调用方处理（蒙版一定要收）。
+ */
+export async function runBusy<T>(label: string, task: () => Promise<T>): Promise<T> {
+  publish({ label, count: (current?.count ?? 0) + 1 });
+  try {
+    return await task();
+  } finally {
+    const left = (current?.count ?? 1) - 1;
+    publish(left > 0 ? { label: current?.label ?? label, count: left } : null);
+  }
+}
+
+/** 订阅蒙版状态。 */
+export function useBusy(): BusyState | null {
+  const [state, setState] = useState<BusyState | null>(() => busySnapshot());
+  useEffect(() => {
+    const listener: Listener = (next) => setState(next);
+    listeners.add(listener);
+    listener(busySnapshot());
+    return () => {
+      listeners.delete(listener);
+    };
+  }, []);
+  return state;
+}
+
+/**
+ * 给按钮/表单一类异步动作用的状态：busy 期间按钮禁用，
+ * 同时把整页蒙版也挂上（长操作看不到进度时至少有反馈）。
+ */
+export function useBusyAction(): {
+  busy: boolean;
+  run: <T>(label: string, task: () => Promise<T>) => Promise<T | undefined>;
+} {
+  const [busy, setBusy] = useState(false);
+  const run = useCallback(async <T,>(label: string, task: () => Promise<T>): Promise<T | undefined> => {
+    if (busySnapshot() !== null) {
+      logDebug('busy', '已有操作进行中，忽略重复触发', { label });
+      return undefined;
+    }
+    setBusy(true);
+    try {
+      return await runBusy(label, task);
+    } catch (cause: unknown) {
+      logWarn('busy', '操作失败', { label, message: cause instanceof Error ? cause.message : String(cause) });
+      throw cause;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  return { busy, run };
+}

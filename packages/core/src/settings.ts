@@ -25,12 +25,23 @@ export const TODO_SORTS: readonly TodoSort[] = ['start', 'type'];
 export type WalMode = 'auto' | 'on' | 'off';
 export const WAL_MODES: readonly WalMode[] = ['auto', 'on', 'off'];
 
+/** 界面动效：system 跟随系统「减少动态效果」，full 始终播放，off 全部关闭。 */
+export type MotionMode = 'system' | 'full' | 'off';
+export const MOTION_MODES: readonly MotionMode[] = ['system', 'full', 'off'];
+export const MOTION_LABEL: Record<MotionMode, string> = {
+  system: '跟随系统',
+  full: '始终播放',
+  off: '关闭动效',
+};
+
 export interface AppSettings {
   timeZone: string;
   autoTimeZone: boolean;
   viewDays: number;
   theme: ThemeMode;
   themePreset: ThemePreset;
+  /** 界面动效：跟随系统 / 始终播放 / 关闭 */
+  motion: MotionMode;
   widgetBackground: WidgetBackground;
   /** 注册开机自启 */
   autoStart: boolean;
@@ -93,6 +104,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   viewDays: 5,
   theme: 'system',
   themePreset: 'vivid',
+  motion: 'system',
   widgetBackground: 'light',
   autoStart: false,
   startHidden: true,
@@ -136,6 +148,7 @@ const KEYS = {
   viewDays: 'view_days',
   theme: 'theme',
   themePreset: 'theme_preset',
+  motion: 'motion',
   widgetBackground: 'widget_background',
   autoStart: 'auto_start',
   startHidden: 'start_hidden',
@@ -179,6 +192,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.viewDays),
     storage.readMeta(KEYS.theme),
     storage.readMeta(KEYS.themePreset),
+    storage.readMeta(KEYS.motion),
     storage.readMeta(KEYS.widgetBackground),
     storage.readMeta(KEYS.autoStart),
     storage.readMeta(KEYS.startHidden),
@@ -214,6 +228,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     viewDays,
     theme,
     themePreset,
+    motion,
     widgetBackground,
     autoStart,
     startHidden,
@@ -257,6 +272,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
       themePreset !== undefined && (THEME_PRESETS as readonly string[]).includes(themePreset)
         ? (themePreset as ThemePreset)
         : DEFAULT_SETTINGS.themePreset,
+    motion:
+      motion !== undefined && (MOTION_MODES as readonly string[]).includes(motion)
+        ? (motion as MotionMode)
+        : DEFAULT_SETTINGS.motion,
     widgetBackground:
       widgetBackground !== undefined && (WIDGET_BACKGROUNDS as readonly string[]).includes(widgetBackground)
         ? (widgetBackground as WidgetBackground)
@@ -331,6 +350,7 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   if (patch.viewDays !== undefined) await storage.writeMeta(KEYS.viewDays, String(patch.viewDays));
   if (patch.theme !== undefined) await storage.writeMeta(KEYS.theme, patch.theme);
   if (patch.themePreset !== undefined) await storage.writeMeta(KEYS.themePreset, patch.themePreset);
+  if (patch.motion !== undefined) await storage.writeMeta(KEYS.motion, patch.motion);
   if (patch.widgetBackground !== undefined) {
     await storage.writeMeta(KEYS.widgetBackground, patch.widgetBackground);
   }
