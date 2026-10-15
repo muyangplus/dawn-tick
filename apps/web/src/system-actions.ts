@@ -7,10 +7,12 @@ function describe(cause: unknown): string {
 
 /**
  * 用系统默认浏览器打开链接。
- * 桌面端交给原生命令，Web 与 Android 交给新窗口，应用自身不导航到该地址。
+ * 桌面端交给原生命令；Android 交给原生 ACTION_VIEW——WebView 的 window.open 在 Android 11+
+ * 会先卡在包可见性判断上，表现为「打开失败」；Web 交给新窗口。应用自身不导航到该地址。
  */
 export async function openExternalUrl(url: string): Promise<boolean> {
-  if (detectPlatform() === 'tauri') {
+  const platform = detectPlatform();
+  if (platform === 'tauri') {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('open_external_url', { url });
@@ -21,6 +23,16 @@ export async function openExternalUrl(url: string): Promise<boolean> {
       return false;
     }
   }
+  if (platform === 'capacitor') {
+    try {
+      if (await openWithSystem(url)) {
+        logInfo('link', '交给系统浏览器打开', { url });
+        return true;
+      }
+    } catch (cause: unknown) {
+      logWarn('link', '原生打开失败，改用新窗口', { url, message: describe(cause) });
+    }
+  }
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
   if (opened === null) {
     logWarn('link', '新窗口被拦截', { url });
@@ -28,6 +40,60 @@ export async function openExternalUrl(url: string): Promise<boolean> {
   }
   logInfo('link', '在新窗口打开', { url });
   return true;
+}
+
+/** 安卓侧的原生系统动作插件（打开链接、电池优化白名单）。 */
+export interface SystemActionsPlugin {
+  openExternal(options: { url: string }): Promise<{ opened: boolean }>;
+  isIgnoringBatteryOptimizations(): Promise<{ ignoring: boolean }>;
+  requestIgnoreBatteryOptimizations(): Promise<{ ignoring?: boolean; requested?: boolean }>;
+}
+
+async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
+  if (detectPlatform() !== 'capacitor') return null;
+  try {
+    const { registerPlugin } = await import('@capacitor/core');
+    return registerPlugin<SystemActionsPlugin>('SystemActions');
+  } catch (cause: unknown) {
+    logWarn('link', '系统动作插件不可用', { message: describe(cause) });
+    return null;
+  }
+}
+
+async function openWithSystem(url: string): Promise<boolean> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return false;
+  const result = await plugin.openExternal({ url });
+  return result.opened === true;
+}
+
+/** 是否已在电池优化白名单：false 表示后台可能被系统限制，提醒会晚点送达。 */
+export async function isIgnoringBatteryOptimizations(): Promise<boolean | null> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return null;
+  try {
+    return (await plugin.isIgnoringBatteryOptimizations()).ignoring === true;
+  } catch (cause: unknown) {
+    logWarn('link', '读取电池优化状态失败', { message: describe(cause) });
+    return null;
+  }
+}
+
+/** 跳系统设置页申请加入电池优化白名单；返回是否已发起跳转。 */
+export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return false;
+  try {
+    const result = await plugin.requestIgnoreBatteryOptimizations();
+    logInfo('link', '已跳转电池优化设置页', {
+      requested: result.requested === true,
+      ignoring: result.ignoring === true,
+    });
+    return true;
+  } catch (cause: unknown) {
+    logWarn('link', '跳转电池优化设置页失败', { message: describe(cause) });
+    return false;
+  }
 }
 
 /** 复制文本：剪贴板接口不可用时退回选区复制。 */

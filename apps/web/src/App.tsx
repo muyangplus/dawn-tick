@@ -42,6 +42,7 @@ import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
 import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
+import { ensureStartupPermissions, type PermissionReport } from './permissions.ts';
 import { attachLogStorage, loadLogs, logDebug, logError, logInfo, logWarn } from './log.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint } from './lib/use-media.ts';
@@ -223,6 +224,10 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   /** 待展示的渠道提示（开发版频繁更新 / 测试版不稳定），按 id 记录已提示过 */
   const [notice, setNotice] = useState<string | null>(null);
+  /** 启动权限检查结果：安卓侧展示在设置页「提醒设置」里 */
+  const [permissionReport, setPermissionReport] = useState<PermissionReport | null>(null);
+  /** 启动权限只申请一次，设置变化不再重复弹系统弹窗 */
+  const startupPermissionsDone = useRef(false);
   /** 发现新版本时的更新信息弹窗 */
   const [updateInfo, setUpdateInfo] = useState<UpdateStatus | null>(null);
   /** 递增触发一次额外的自动检查（切到测试版后） */
@@ -370,6 +375,17 @@ export function App() {
       }
     })();
   }, [settings.devFeatures, settings.logLevel, settings.logEnabled]);
+
+  // 启动时主动索取必要权限：安卓的通知与精确闹钟（课前提醒要靠它们才准点）
+  useEffect(() => {
+    if (startupPermissionsDone.current) return;
+    startupPermissionsDone.current = true;
+    void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then((report) => {
+      setPermissionReport(report);
+    });
+    // 只在首次挂载时跑一次：权限弹窗不该随设置变化重复弹
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 渠道提示：不是初次使用也要弹——只要这条提示没展示过
   useEffect(() => {

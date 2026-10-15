@@ -54,7 +54,14 @@ import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
 import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget, type PinWidgetResult } from '../widget-pin.ts';
-import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
+import {
+  copyText,
+  isIgnoringBatteryOptimizations,
+  openLogDirectory,
+  requestIgnoreBatteryOptimizations,
+  saveTextFile,
+} from '../system-actions.ts';
+import { exactAlarmState, requestExactAlarm, type ExactAlarmState } from '../permissions.ts';
 import {
   canConfigureStorage,
   openDataDirectory,
@@ -588,6 +595,24 @@ export function SettingsView({
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
   /** 诊断入口：dev/beta 可见；dev 关掉开发者特性后与正式版一致地隐藏 */
   const diagnosticsVisible = featureVisible('diagnostics') && (CHANNEL !== 'dev' || settings.devFeatures);
+  /** 安卓侧的系统权限状态：精确闹钟与电池优化白名单 */
+  const [alarmState, setAlarmState] = useState<ExactAlarmState>('unsupported');
+  const [batteryFree, setBatteryFree] = useState<boolean | null>(null);
+  const androidApp = detectPlatform() === 'capacitor';
+  useEffect(() => {
+    if (!androidApp) return;
+    let cancelled = false;
+    void (async () => {
+      const [alarm, ignoring] = await Promise.all([exactAlarmState(), isIgnoringBatteryOptimizations()]);
+      if (!cancelled) {
+        setAlarmState(alarm);
+        setBatteryFree(ignoring);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [androidApp]);
   const next = reminders.upcoming[0];
 
   useEffect(() => {
@@ -920,6 +945,50 @@ export function SettingsView({
           </Button>
         </div>
         <span className="text-xs text-muted">网页关闭后无法提醒；Android 采用系统通知排定，Windows 依赖常驻托盘。</span>
+        {androidApp && (
+          <>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+              <span data-role="exact-alarm-status">
+                精确闹钟：{alarmState === 'granted' ? '已开启' : alarmState === 'denied' ? '未开启' : '不适用'}
+              </span>
+              {alarmState === 'denied' && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label="开启精确闹钟"
+                  onClick={() =>
+                    void (async () => {
+                      await requestExactAlarm();
+                      setAlarmState(await exactAlarmState());
+                    })()
+                  }
+                >
+                  去开启
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+              <span data-role="battery-optimization-status">
+                后台运行：{batteryFree === null ? '读取中…' : batteryFree ? '已加入电池优化白名单' : '受电池优化限制，提醒可能延后'}
+              </span>
+              {batteryFree === false && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label="申请加入电池优化白名单"
+                  onClick={() =>
+                    void (async () => {
+                      await requestIgnoreBatteryOptimizations();
+                      setBatteryFree(await isIgnoringBatteryOptimizations());
+                    })()
+                  }
+                >
+                  去设置
+                </Button>
+              )}
+            </div>
+          </>
+        )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>课前提醒</span>

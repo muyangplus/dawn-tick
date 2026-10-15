@@ -560,41 +560,44 @@ export const examsCard = defineCard({
   defaultZone: 'side',
   defaultOrder: 2,
   defaultVisible: true,
-  render: (ctx) => {
-    if (ctx.scope !== 'schedule') return null;
-    const { data, onAddExam, onOpenEvent, semesterCountdown, holidayCountdown } = ctx;
-    const now = Date.now();
-    const rows = data.countdowns;
-    const daysUntil = (date: string): number =>
-      Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
-    const semesterStart = data.semester?.start_date ?? null;
-    const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
-    const nextHolidayDate =
-      holidayCountdown
-        ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
-        : null;
-    const badges: ReactNode[] = [];
-    if (semesterCountdown && semesterDays !== null && semesterDays > 0) {
-      badges.push(
-        <span
-          key="semester"
-          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
-        >
-          距开学还有 {semesterDays} 天
-        </span>,
-      );
-    }
-    if (nextHolidayDate !== null) {
-      badges.push(
-        <span
-          key="holiday"
-          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
-        >
-          距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
-        </span>,
-      );
-    }
-    return (
+  render: (ctx) => (ctx.scope === 'schedule' ? <CountdownCardBody ctx={ctx} /> : null),
+});
+
+/** 倒计时卡片正文：自带节拍，剩余天数与进度不依赖别处的数据刷新。 */
+function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope: 'schedule' }> }) {
+  const now = useNowTick(15_000);
+  const { data, onAddExam, onOpenEvent, semesterCountdown, holidayCountdown } = ctx;
+  const rows = data.countdowns;
+  const daysUntil = (date: string): number =>
+    Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
+  const semesterStart = data.semester?.start_date ?? null;
+  const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
+  const nextHolidayDate =
+    holidayCountdown
+      ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
+      : null;
+  const badges: ReactNode[] = [];
+  if (semesterCountdown && semesterDays !== null && semesterDays > 0) {
+    badges.push(
+      <span
+        key="semester"
+        className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
+      >
+        距开学还有 {semesterDays} 天
+      </span>,
+    );
+  }
+  if (nextHolidayDate !== null) {
+    badges.push(
+      <span
+        key="holiday"
+        className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
+      >
+        距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
+      </span>,
+    );
+  }
+  return (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-semibold text-ink">倒计时</span>
         {badges.length > 0 && (
@@ -672,8 +675,7 @@ export const examsCard = defineCard({
         )}
       </div>
     );
-  },
-});
+}
 
 /** 倒计时条目的类型文案。 */
 const COUNTDOWN_TYPE_LABEL: Record<string, string> = {
