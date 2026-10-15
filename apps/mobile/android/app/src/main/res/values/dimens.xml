@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      小组件行的固定高度：12sp 文字 ≈ 16dp 行框，留 2dp 余量，再减上下各 2dp 内边距。
+      取 22dp 而非 24dp：最小高度 110dp 的 2×2/4×2 小组件按
+      (110 − 12×2 − 16 − 22) ÷ 22 = 3 行放下三行，各密度取整后仍有余量。
+    -->
+    <dimen name="widget_row_height">22dp</dimen>
+    <!-- 小组件标题行（“今日课表 · 第 3 周”）的高度：11sp 文字 ≈ 16dp。 -->
+    <dimen name="widget_header_height">16dp</dimen>
+    <!-- 倒计时/天数行的高度：16sp 加粗文字 ≈ 22dp。 -->
+    <dimen name="widget_count_height">22dp</dimen>
+    <!-- 小组件根布局的上下内边距，与 widget_*.xml 的 android:padding 保持一致。 -->
+    <dimen name="widget_root_padding">12dp</dimen>
+</resources>
