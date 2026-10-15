@@ -1525,6 +1525,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     settingsText.slice(0, 60),
   );
 
+  // 「?」说明入口：设置项正文只留短句，补充说明点开可见
+  const helpButton = view.container.querySelector<HTMLElement>('[aria-label="说明：周视图天数"]');
+  helpButton?.click();
+  await flush(10);
+  const helpBody = document.querySelector('[data-role="help-body"]');
+  check(
+    '设置项说明收进「?」，点开可见',
+    helpButton !== null && helpBody !== null && (helpBody.textContent ?? '').includes('列宽按屏宽等分'),
+    helpBody?.textContent?.trim() ?? '(未打开)',
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
+
   // —— 预设版本与更新：内置兜底 + 运行时下载缓存 + 失败回退（全程用注入的假 fetch，不联网） ——
   await flush(8);
   const presetVersionLine = (): string =>
