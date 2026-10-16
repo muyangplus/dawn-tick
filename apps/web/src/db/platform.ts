@@ -15,6 +15,7 @@ import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { logWarn } from '../log.ts';
 import { readStorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
+import { isCorruptDatabase } from './health.ts';
 import { setActiveSqlDriver } from './active-driver.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 
@@ -54,6 +55,8 @@ export async function openStorage(): Promise<Storage> {
     try {
       return validatedStorage(await openSqliteStorage(platform));
     } catch (error) {
+      // 损坏不回退到 IndexedDB：回退会掩盖损坏，看起来像数据没了
+      if (isCorruptDatabase(error)) throw error;
       logWarn('storage', '原生 SQLite 不可用，回退到 IndexedDB', {
         platform,
         message: error instanceof Error ? error.message : String(error),

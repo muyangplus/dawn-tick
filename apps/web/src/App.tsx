@@ -31,9 +31,10 @@ import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
 import { Plus } from 'lucide-react';
 import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type LessonCell } from './data.ts';
-import { maybeAutoBackup, createSnapshot, pruneSnapshots } from './backup.ts';
+import { maybeAutoBackup, createSnapshot, pruneSnapshots, takeRecoveryNotice } from './backup.ts';
 import { downloadAndApply, maybeAutoSync, type ApplyMode } from './webdav.ts';
 import { openStorage } from './db/platform.ts';
+import { corruptMessage, isCorruptDatabase } from './db/health.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
@@ -303,8 +304,10 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      let stage = { scope: 'storage', label: '存储初始化' };
       try {
         const opened = await openStorage();
+        stage = { scope: 'data', label: '数据载入' };
         attachLogStorage(opened);
         await loadLogs();
         // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，否则使用内置。
@@ -347,6 +350,8 @@ export function App() {
         setSettings(loaded);
         setResolvedMode(applyTheme(loaded.themePreset, loaded.theme));
         logInfo('storage', '存储就绪', { kind: opened.kind, theme: loaded.themePreset, mode: loaded.theme });
+        const recovered = await takeRecoveryNotice();
+        if (recovered !== null) toast.info(recovered);
         const snapshot = await maybeAutoBackup(opened, loaded, { startup: true });
         if (snapshot !== null) {
           logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
@@ -368,7 +373,12 @@ export function App() {
         }
       } catch (cause: unknown) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        logError('storage', '存储初始化失败', { message });
+        if (isCorruptDatabase(cause)) {
+          logError('storage', '数据库损坏，未载入数据', { message });
+          if (!cancelled) setError(corruptMessage());
+          return;
+        }
+        logError(stage.scope, `${stage.label}失败`, { message });
         if (!cancelled) setError(message);
       }
     })();

@@ -1,0 +1,18 @@
+import { detectPlatform, type Platform } from '../platform-detect.ts';
+
+/** SQLite 的损坏报错都带这些字样。 */
+const CORRUPT_MARKERS = ['malformed', 'corrupt', 'not a database', 'code: 11', 'code: 26'];
+
+/** 是否属于数据库损坏：界面据此换文案，并且不再回退到 IndexedDB。 */
+export function isCorruptDatabase(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const lower = message.toLowerCase();
+  return CORRUPT_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/** 损坏时的界面文案：事实 + 下一步。 */
+export function corruptMessage(platform: Platform = detectPlatform()): string {
+  return platform === 'tauri'
+    ? '数据库文件损坏，重启应用会再试一次恢复'
+    : '数据库文件损坏，请从备份导入恢复';
+}

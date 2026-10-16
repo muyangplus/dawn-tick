@@ -87,7 +87,17 @@ async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
   const driver = activeSqlDriver();
   if (driver === null) throw new Error('数据库尚未打开');
   const target = await invokeTauri<{ name: string; path: string; sqlLiteral: string }>('backup_target');
-  await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
+  try {
+    await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
+  } catch (cause: unknown) {
+    // VACUUM INTO 失败会留下 0 字节文件，清掉；启动时的空快照清理兜底
+    try {
+      await invokeTauri('delete_backup', { name: target.name });
+    } catch {
+      // 清理失败只影响磁盘占用
+    }
+    throw cause;
+  }
   const entries = await listFileSnapshots();
   return (
     entries.find((entry) => entry.id === target.name) ?? {
@@ -97,6 +107,18 @@ async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
       kind: 'file' as const,
     }
   );
+}
+
+/** 启动自检结论：Windows 侧在打开数据库之前自检，读一次后清空。 */
+export async function takeRecoveryNotice(): Promise<string | null> {
+  if (detectPlatform() !== 'tauri') return null;
+  try {
+    const text = await invokeTauri<string | null>('recovery_notice');
+    return typeof text === 'string' && text.trim() !== '' ? text : null;
+  } catch (cause: unknown) {
+    logWarn('backup', '读取启动自检结论失败', { message: describe(cause) });
+    return null;
+  }
 }
 
 /** 做一份快照；失败返回 null 并记日志。 */
