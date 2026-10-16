@@ -19,6 +19,12 @@ REQUIRED_JOBS = {
     'ci.yml': {'node', 'schema', 'rust'},
     'publish.yml': {'plan', 'gate', 'windows', 'android', 'web', 'publish'},
 }
+# 发布说明的比较基准：滚动标签会移动，不能进已发版正文
+PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""', '--notes-start-tag "$PREV"']
+
+
+def check_publish_notes(text: str) -> list[str]:
+    return [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
 
 
 def main() -> int:
@@ -28,8 +34,9 @@ def main() -> int:
         if not path.exists():
             failures.append(f'{name} 不存在')
             continue
+        text = path.read_text(encoding='utf-8')
         try:
-            data = yaml.safe_load(path.read_text(encoding='utf-8'))
+            data = yaml.safe_load(text)
         except yaml.YAMLError as error:
             failures.append(f'{name} 语法错误: {error}')
             continue
@@ -44,6 +51,9 @@ def main() -> int:
         missing_jobs = REQUIRED_JOBS[name] - jobs
         if missing_jobs:
             failures.append(f'{name} 缺少任务: {sorted(missing_jobs)}')
+
+        if name == 'publish.yml':
+            failures.extend(check_publish_notes(text))
 
     if failures:
         for failure in failures:

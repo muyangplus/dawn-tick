@@ -312,6 +312,9 @@ jobs:
               ;;
           esac
           PREV="${PREV//[[:space:]]/}"
+          case "$PREV" in
+            *-latest) PREV="" ;;
+          esac
 
           NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
 
