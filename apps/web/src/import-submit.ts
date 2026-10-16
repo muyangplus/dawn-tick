@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     payload = decodePayload(encoded);
   } catch (cause: unknown) {
     logError('import-window', '内容解码失败', { message: String(cause) });
-    show('内容读取失败', '请回到晓刻，改用浏览器书签或直接粘贴页面内容。');
+    show('内容读取失败', '请回到晓刻，用书签或粘贴页面内容');
     return;
   }
 
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('submit_page_import', { payload });
     logInfo('import-window', '交回页面内容', { bytes: payload.length });
-    show('已交给晓刻', `共 ${payload.length} 字节。可以关闭本窗口，或点下面返回教务页面。`);
+    show('已交给晓刻', `共 ${payload.length} 字节；关闭本窗口或返回教务页面`);
     window.setTimeout(() => window.history.back(), 2000);
   } catch (cause: unknown) {
     logError('import-window', '交回失败', { message: String(cause) });

@@ -339,7 +339,7 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
 
 /** 各平台自带的合法性验证命令，展示给用户核对。 */
 export function verifyHint(channel: UpdateChannel, asset: 'windows' | 'android' | 'web'): string {
-  if (asset === 'android') return '安装前系统会校验 APK 签名；也可用 apksigner verify --print-certs 核对签名者';
-  if (asset === 'windows') return '更新包随附签名，安装前会校验；也可用 gh attestation verify <文件> --repo muyangplus/dawn-tick 核对来源';
+  if (asset === 'android') return '安装前系统会校验 APK 签名（apksigner verify --print-certs）';
+  if (asset === 'windows') return '更新包随附签名，安装前会校验（gh attestation verify <文件> --repo muyangplus/dawn-tick）';
   return `网页版随渠道 ${channel} 自动获取最新构建`;
 }

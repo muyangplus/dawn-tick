@@ -229,7 +229,7 @@ test('正文版本与快照版本不一致：视为缓存不可用，回退内�
 
   const applied = await applyCachedPreset(storage);
   assert.equal(applied.applied, false);
-  assert.match(String(applied.reason), /版本不一致/);
+  assert.match(String(applied.reason), /缺少可用正文/);
   assert.equal(findTimetable('cached-demo'), undefined);
 });
 

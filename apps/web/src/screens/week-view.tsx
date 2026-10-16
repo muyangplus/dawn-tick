@@ -684,7 +684,7 @@ export function WeekView({
               ? `${formatMonthDay(data.windowStart)} 没有课程`
               : `${formatDateRange(data.windowStart, data.windowDates[data.windowDates.length - 1] as string)} 没有课程`
           }
-          description="可通过右上角添加课程，或到导入页从 ICS、CSV/Excel 与教务系统导入"
+          description="从右上角加课，或到导入页导入"
         />
       )}
 

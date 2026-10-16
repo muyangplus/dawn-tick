@@ -80,7 +80,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
           return;
         }
       }
-      setMessage('仍未检测到启动项，请手动以管理员身份运行一次');
+      setMessage('未检测到启动项：请以管理员身份运行一次');
     } finally {
       setBusy(false);
     }

@@ -304,7 +304,7 @@ export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): 
   if (problem !== null) throw new Error(`预设快照不可用：${problem}`);
   const snapshot = parsed as PresetSnapshot;
   if (!verifySnapshot(snapshot)) {
-    throw new Error('预设快照哈希校验未通过（内容与 hash 不一致），已拒绝使用');
+    throw new Error('预设快照哈希校验未通过');
   }
   return snapshot;
 }
@@ -435,13 +435,13 @@ export function describePresetIndexProblem(value: unknown): string | null {
 
     if (nonEmptyText(raw['name']) === null) return `预设索引的学校「${id}」缺少 name`;
     if (!('system' in raw)) {
-      return `预设索引的学校「${id}」缺少 system（不绑定教务系统时应显式写 null）`;
+      return `预设索引的学校「${id}」缺少 system`;
     }
     if (raw['system'] !== null && nonEmptyText(raw['system']) === null) {
       return `预设索引的学校「${id}」的 system 应为非空字符串或 null`;
     }
     if (!('configPath' in raw)) {
-      return `预设索引的学校「${id}」缺少 configPath（没有学校覆盖配置时应显式写 null）`;
+      return `预设索引的学校「${id}」缺少 configPath`;
     }
     if (raw['configPath'] !== null) {
       const problem = describePresetPathProblem(raw['configPath'], `预设索引的学校「${id}」的 configPath`);
@@ -502,7 +502,7 @@ export function presetIndexFromSnapshot(snapshot: PresetSnapshot): PresetIndex {
   const index = (snapshot as { index?: unknown }).index;
   if (index === undefined || index === null) {
     throw new Error(
-      '预设快照不可用：缺少内嵌索引 index（旧结构快照；索引已并入快照，不再有独立的 presets/index.json）',
+      '预设快照不可用：缺少内嵌索引 index',
     );
   }
   return parsePresetIndex(index);
@@ -647,7 +647,7 @@ export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset
         version: BUILTIN_PRESET_VERSION,
         kind: 'builtin',
         applied: false,
-        reason: `缓存 ${source.version} 缺少可用正文（或正文与快照版本不一致），继续使用内置预设`,
+        reason: `缓存 ${source.version} 缺少可用正文，改用内置预设`,
       };
     }
 
