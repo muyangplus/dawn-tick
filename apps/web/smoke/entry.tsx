@@ -759,13 +759,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // ④ 多天假期：第一天卡片上显示假期名称，第二天起只显示「放假」
-  // 窗口从今天开始，假期落在今天与明天，所以按列日期取卡片，而不是取全页第一张
+  // 用每天都有的「往期课」取卡片，否则这条断言只在假期第一天恰好有课时才成立
   const holidayLabelAt = (date: string, name: string): string | undefined =>
     [...(view.container.querySelector(`[data-date="${date}"]`)?.querySelectorAll('[data-tone="holiday"]') ?? [])]
       .find((item) => (item.textContent ?? '').includes(name))
       ?.querySelector('[data-role="holiday-label"]')
       ?.textContent?.trim();
-  const firstDayLabel = holidayLabelAt(holidayStartText, '线代');
+  const firstDayLabel = holidayLabelAt(holidayStartText, '往期');
   const laterDayLabel = holidayLabelAt(holidaySecondText, '往期');
   check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
   check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
