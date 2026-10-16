@@ -6,12 +6,12 @@
 |---|---|
 | Node | 24 及以上 |
 | pnpm | 12 |
-| Python | 3.12 及以上（`pyyaml`、`pynacl`） |
+| Python | 3.13 及以上（`pyyaml`、`pynacl`） |
 | Rust | stable（Windows 需 MSVC 工具链） |
 | JDK | 21（Android 构建） |
-| Android SDK | `platforms;android-35`、`build-tools;35.0.0`、`platform-tools` |
+| Android SDK | `platforms;android-36`、`build-tools;35.0.0`、`platform-tools` |
 
-一键准备脚本见 `tools/setup/`，环境变量见 [docs/08](docs/08-开发环境与验证.md)。
+一键准备脚本见 `tools/setup/`，环境变量见 [平台与构建](docs/03-平台与构建.md)。
 
 ## 2. 日常命令
 
@@ -68,10 +68,10 @@
 | 分支 | 渠道 | 标签 |
 |---|---|---|
 | `dev` | 开发版 | `dev-latest`（滚动） |
-| `beta` | 公测版 | `vX.Y.Z-beta.<n>` |
+| `main` | 公测版 | `vX.Y.Z-beta.<n>` |
 | `main` | 正式版 | `vX.Y.Z` |
 
-版本号以根 `package.json` 为唯一来源，由 `tools/release/version.mjs` 同步到各端。渠道差异见 [docs/07](docs/07-发布与版本规范.md)。
+版本号以根 `package.json` 为唯一来源，由 `tools/release/version.mjs` 同步到各端。渠道差异见 [发布与版本](docs/06-发布与版本.md)。
 
 ## 7. 功能可见性
 
@@ -81,16 +81,15 @@
 
 | 文件 | 内容 |
 |---|---|
-| `docs/00-项目说明与已确认决策.md` | 决策登记（D 编号） |
-| `docs/01-需求说明.md` | 需求 |
-| `docs/02-功能清单.md` | 功能与优先级 |
-| `docs/03-开源组件调研.md` | 依赖选型 |
-| `docs/04-里程碑与范围.md` | 里程碑 |
-| `docs/05-待定事项.md` | 未决问题 |
-| `docs/06-配色方案.md` | 配色与无障碍约束 |
-| `docs/07-发布与版本规范.md` | 渠道、标签、产物 |
-| `docs/08-开发环境与验证.md` | 环境、命令、环境坑 |
-| `docs/records/` | 阶段性记录 |
+| `docs/01-产品与功能.md` | 平台与产物、功能清单、范围边界、术语 |
+| `docs/02-数据与存储.md` | 数据表、时间口径、存储、迁移、备份与恢复 |
+| `docs/03-平台与构建.md` | 环境、目录、各端构建、渠道与产物命名 |
+| `docs/04-界面与文案规范.md` | 设计令牌、配色、断点、动效、文案规范 |
+| `docs/05-验证与质量.md` | 校验入口、逐项检查、提交前清单 |
+| `docs/06-发布与版本.md` | 渠道、标签、升版判定、Release 正文、密钥 |
+| `CHANGELOG.md` | 版本变更记录 |
+
+开发过程记录（决策登记、需求、选型、里程碑、里程碑阶段记录）保存在本地 `local-notes/docs/`，不随仓库分发。
 
 界面文案与文档禁止声明式、解释式表述；注释写给其他开发者，不解释给机器。
 
@@ -102,4 +101,4 @@
 | 类型 | `pnpm typecheck` 无错误 |
 | 无障碍 | 正文对比度 ≥ 4.5:1，触控目标 ≥ 44px，`tools/design/check-a11y.mjs` 通过 |
 | 数据模型 | 改表结构需同时改 `001_init.sql`、`tools/schema-check` 与迁移版本 |
-| 文档 | 决策变更写入 `docs/00`，环境变化写入 `docs/08` |
+| 文档 | 公开行为变化写入 `docs/01`–`docs/06` 与 `CHANGELOG.md` |
