@@ -9,10 +9,7 @@ export interface CourseCardProps {
   teacher?: string | null;
   meta?: string;
   badge?: ReactNode;
-  /**
-   * solid：本周正常课；ghost：非本周课程（虚线框 + 更浅底色）；
-   * holiday：放假日课（灰显）；cancelled：当天停课；movedOut：这节课调走了。
-   */
+  /** tone：solid 本周正常；ghost 非本周；holiday 放假；cancelled 当天停课；movedOut 已调走。 */
   tone?: 'solid' | 'ghost' | 'holiday' | 'cancelled' | 'movedOut';
   /** tone="holiday" 时卡片标签上的文案，默认「放假」；多天假期第一天传节次 */
   holidayLabel?: string;
@@ -22,10 +19,7 @@ export interface CourseCardProps {
   className?: string;
 }
 
-/**
- * 课程块：以表面色混入课程色的底色，左侧用内阴影色条标课程色，块内文字完整换行显示。
- * 宽度统一由外层决定，内部一律 min-w-0；文字不省略、不截断，长课名与长地点都换行显示全。
- */
+/** 底色为表面色混课程色，左侧内阴影色条标课程色；宽度由外层决定，文字换行不截断。 */
 export function CourseCard({
   name,
   color,

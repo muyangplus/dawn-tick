@@ -1,15 +1,4 @@
-/**
- * 「按学校套用作息」：作息设置里与 SchoolPicker 共用的选校入口。
- *
- * 与「作息预设」下拉的分工：下拉列的是内置作息表（与学校无关），本卡片按学校定位作息。
- * 选中学校后：
- *   1. 预设索引里这所学校有 `timetablePath`、快照的作息清单里能定位到它、且生效的预设
- *      里含这套作息正文 → 照抄其节次（`presetToTimeSlots` → `replaceTimeSlots`）；
- *   2. 否则回退内置通用作息，并提示「该校暂无专属作息，已套用通用作息」。
- *
- * 与 `PeriodSettings` 的分工：节次时间的逐节编辑 / 顺延重排在该卡片内，
- * 本卡片只做「按学校一次性套用」，两处都用 core 的 `replaceTimeSlots` 落库。
- */
+/** 「按学校套用作息」选校入口：能定位到 `timetablePath` 且预设含正文则照抄节次，否则回退内置通用作息。 */
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarClock } from 'lucide-react';
 import { listTimeSlots, type Storage, type TimeSlotRow } from '@dawn-tick/core';
@@ -85,10 +74,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
     setPickerOpen(true);
   }
 
-  /**
-   * 选中学校后套用作息：专属作息优先，否则内置通用作息。
-   * 落库失败（节次非法等）只给一句可读提示，不改变现状。
-   */
+  /** 选中学校后套用作息：专属优先，否则内置通用；落库失败只提示，不改现状。 */
   async function applyForSchool(school: School): Promise<void> {
     // 连点两行会并发写 time_slots，第二次覆盖第一次；套用期间直接忽略后续点击
     if (busy) return;

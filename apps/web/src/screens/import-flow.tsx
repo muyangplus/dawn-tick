@@ -173,13 +173,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     };
   }, [storage]);
 
-  /**
-   * 选中一所学校：
-   *   - 内置/自定义教务条目里有同名条目且有地址 → 直接按既有 `entryUrlFor` 生成入口；
-   *   - 条目在但没地址（或目录里的学校还没有条目）→ 用预设索引里的教务系统做初值，
-   *     由用户在「手动填写入口地址」里补域名；
-   * 无论哪条路，`pickedSchoolId` 都会记住这次选择，选择器据此显示「已选」。
-   */
+  /** 选中学校：有条目且有地址按 `entryUrlFor` 生成入口，否则用预设索引教务系统做初值待手填。 */
   function pickSchool(school: School): void {
     setSchoolName(school.name);
     setPickedSchoolId(school.id);

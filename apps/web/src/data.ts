@@ -394,8 +394,8 @@ export async function loadAppData(
     grid.set(key, list);
   }
 
-  // 实验条目：按周次位图（没有位图时只落 on_date 那一周）铺进课表网格
-  // 课表条目：实验默认显示，日程/作业/考试按「显示在课表上」开关决定
+  // 实验按周次位图铺网格，无位图只落 on_date 那周。
+  // 实验默认显示，日程/作业/考试看「显示在课表上」开关。
   const labs = semesterEvents
     .filter((row) => row.show_in_timetable === 1 && row.on_date !== null)
     .sort((left, right) => (left.on_date ?? '').localeCompare(right.on_date ?? ''));

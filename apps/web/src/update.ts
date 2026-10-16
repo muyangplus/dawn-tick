@@ -1,47 +1,27 @@
-/**
- * 更新检查：只负责「有没有新版」，下载与安装由用户在界面确认后触发。
- *
- * 取源顺序：
- *   1. 首选 `api.github.com` 的发布接口（`UPDATE_API_FEEDS`），版本与说明由 tag、资产名与发布正文推出；
- *   2. 该请求网络异常（fetch 抛错）时回退 `version.json` 直连地址（`UPDATE_FEEDS`）；
- *      HTTP 状态错误不回退：404 / 403 / 429 各自有明确文案。
- * 只访问 github.com / raw.githubusercontent.com / api.github.com，不使用第三方镜像与代理，
- * 也不带 token（公开仓库只读，不读取环境变量里的密钥）。
- *
- * 渠道隔离：每个渠道只查自己那张发布记录，dev 永不看 beta/release。
- * release 用户只有在打开「接收测试版更新」后才会去看 beta 源。
- */
+/** 更新检查只判断「有没有新版」，下载与安装由界面触发。 */
+/** 只有 fetch 抛错才从 UPDATE_API_FEEDS 回退 UPDATE_FEEDS，HTTP 状态错误不回退。 */
 
 export type UpdateChannel = 'dev' | 'beta' | 'release';
 
 const OWNER = 'muyangplus';
 const REPO = 'dawn-tick';
 
-/**
- * 各渠道的 `version.json` 直连地址（回退取源，rolling 标签由发布流程维护）。
- * 发布流程当前只上传安装包，不产出 `version.json` 资产，因此这是发布接口不可达时的兜底。
- */
+/** 各渠道的 version.json 直连地址（rolling 标签由发布流程维护），仅发布接口不可达时兜底。 */
 export const UPDATE_FEEDS: Record<UpdateChannel, string> = {
   dev: `https://github.com/${OWNER}/${REPO}/releases/download/dev-latest/version.json`,
   beta: `https://github.com/${OWNER}/${REPO}/releases/download/beta-latest/version.json`,
   release: `https://github.com/${OWNER}/${REPO}/releases/latest/download/version.json`,
 };
 
-/**
- * 各渠道的 GitHub 发布接口地址（**首选**取源）。
- * dev / beta 是滚动标签，release 用 `/releases/latest`（只给非草稿、非预发布的最新正式版）。
- */
+/** 各渠道的 GitHub 发布接口地址（首选取源）：dev / beta 用滚动标签，release 用 /releases/latest。 */
 export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
   dev: `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/dev-latest`,
   beta: `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/beta-latest`,
   release: `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`,
 };
 
-/**
- * beta 渠道用发布列表：beta 是按版本发预发布（`vX.Y.Z-beta.N`）并保留历史的，
- * 没有滚动标签可查；从最近发布里取最新的 beta 预发布，同时也看最新正式版，
- * 谁版本高就用谁——正式版发布后测试版用户能直接更到正式版。
- */
+/** beta 渠道查发布列表：取最新 beta 预发布与最新正式版里较高者。 */
+/** 正式版发布后，beta 用户直接更到正式版。 */
 export const UPDATE_RELEASES_API = `https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=30`;
 
 /** beta 预发布标签与正式版标签。 */
@@ -236,11 +216,7 @@ function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
   return Object.keys(assets).length === 0 ? undefined : assets;
 }
 
-/**
- * 把 GitHub 发布响应转成本模块的清单。
- * `channel` 固定为本次查询的 feed（`isUpdateManifest` 要求清单与查询渠道一致）；
- * 取不到版本或结构不符时返回 null，由调用方给出「更新清单格式不正确」。
- */
+/** 把 GitHub 发布响应转成本模块清单：channel 固定为本次查询的 feed，取不到版本或结构不符时返回 null。 */
 function manifestFromRelease(feed: UpdateChannel, value: unknown): UpdateManifest | null {
   const record = asRecord(value);
   if (record === null) return null;
@@ -265,10 +241,7 @@ function manifestFromRelease(feed: UpdateChannel, value: unknown): UpdateManifes
   return isUpdateManifest(manifest) ? manifest : null;
 }
 
-/**
- * 从发布列表里挑候选：最新的 beta 预发布与最新的正式版比版本，取更高的那个。
- * 草稿、非 beta 的预发布（如 rc）与其他渠道的滚动发布都跳过。
- */
+/** 从发布列表挑候选：最新 beta 预发布与最新正式版取版本较高者；草稿、rc 等非 beta 预发布跳过。 */
 export function pickBetaCandidate(
   releases: unknown,
 ): { record: Record<string, unknown>; channel: 'beta' | 'release' } | null {
@@ -290,10 +263,8 @@ export function pickBetaCandidate(
   return best === null ? null : { record: best.record, channel: best.channel };
 }
 
-/**
- * 检查更新。先查 GitHub 发布接口；只有网络异常才回退 `version.json` 直连。
- * 只接受与来源渠道一致、且更新于当前版本的清单；跨渠道或降级一律视为无更新，避免"串版"。
- */
+/** 先查 GitHub 发布接口，只有网络异常才回退 version.json 直连。 */
+/** 跨渠道或降级的清单一律视为无更新（防串版）。 */
 export async function checkForUpdate(options: CheckUpdateOptions): Promise<UpdateStatus> {
   const feed = resolveFeed(options.channel, options.receiveBeta);
   const base: UpdateStatus = {

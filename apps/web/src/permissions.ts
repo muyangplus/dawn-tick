@@ -41,10 +41,7 @@ export async function requestExactAlarm(): Promise<boolean> {
   }
 }
 
-/**
- * 启动时主动索取必要权限：通知（Android 13+ 运行时权限）。
- * 精确闹钟没开且用户开着课前提醒时，顺带跳一次系统页——不跳的话提醒会被系统降到「大致时间」。
- */
+/** 启动时索取通知权限（Android 13+）；精确闹钟未开且开启课前提醒时跳系统页，否则提醒被降为大致时间。 */
 export async function ensureStartupPermissions(options: { remindersEnabled: boolean }): Promise<PermissionReport> {
   const platform = detectPlatform();
   if (platform !== 'capacitor') {

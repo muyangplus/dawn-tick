@@ -16,10 +16,7 @@ const SCOPE_LABEL: Record<CardScope, string> = {
   settings: '设置页',
 };
 
-/**
- * 卡片布局面板：每张卡片一行，支持显示隐藏、上移下移、主列/侧列切换，以及恢复默认。
- * 只做这三件事，不做像素级拖拽与嵌套布局。
- */
+/** 卡片布局面板：每张卡片一行，可显隐、上移下移、主列/侧列切换、恢复默认。 */
 export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelProps) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);

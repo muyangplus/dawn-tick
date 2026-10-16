@@ -5,11 +5,7 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-/**
- * 用系统默认浏览器打开链接。
- * 桌面端交给原生命令；Android 交给原生 ACTION_VIEW——WebView 的 window.open 在 Android 11+
- * 会先卡在包可见性判断上，表现为「打开失败」；Web 交给新窗口。应用自身不导航到该地址。
- */
+/** 用系统默认浏览器打开链接：桌面端走原生命令，Android 走原生 ACTION_VIEW（WebView 的 window.open 会卡包可见性），Web 开新窗口。 */
 export async function openExternalUrl(url: string): Promise<boolean> {
   const platform = detectPlatform();
   if (platform === 'tauri') {
@@ -148,10 +144,7 @@ export interface SaveTextResult {
   error: string | null;
 }
 
-/**
- * 保存文本：桌面端弹系统保存对话框并写入用户选定的路径；
- * 浏览器与移动端退回浏览器下载（位置由浏览器决定）。
- */
+/** 保存文本：桌面端弹系统保存对话框写入所选路径；浏览器与移动端退回浏览器下载。 */
 export async function saveTextFile(
   name: string,
   content: string,
@@ -205,10 +198,7 @@ export function downloadInBrowser(
   URL.revokeObjectURL(url);
 }
 
-/**
- * 保存二进制：桌面端弹系统保存对话框并按 Base64 交给原生写盘；
- * 浏览器与移动端退回浏览器下载。
- */
+/** 保存二进制：桌面端弹系统保存对话框并按 Base64 交原生写盘；浏览器与移动端退回浏览器下载。 */
 export async function saveBinaryFile(
   name: string,
   content: Uint8Array,

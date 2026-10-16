@@ -105,10 +105,7 @@ export async function writeWidgetSnapshot(
 /** 主窗口数据变更后广播给悬浮窗的事件名。 */
 export const WIDGET_DATA_CHANGED_EVENT = 'widget-data-changed';
 
-/**
- * 通知悬浮窗重新读课表：主窗口每次数据加载完成（新建/编辑/删除课程、排课与日程）后调用，
- * 悬浮窗据此立即刷新，不再等自己的轮询间隔。
- */
+/** 通知悬浮窗重新读课表：主窗口每次数据加载完成后调用，悬浮窗不必等自己的轮询间隔。 */
 export async function notifyWidgetWindows(): Promise<void> {
   if (detectPlatform() !== 'tauri') return;
   try {

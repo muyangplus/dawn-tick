@@ -4,10 +4,7 @@ import type { SchoolEntry } from '@dawn-tick/core';
 
 const URL_KEY = 'dt.import.url';
 
-/**
- * 内嵌教务窗口：桌面端是独立 Tauri 窗口，移动端是应用内 WebView（Capacitor 插件 `SchoolWindow`）。
- * 两端都把页面内容以同一套包裹格式交回，识别逻辑只有一份。
- */
+/** 内嵌教务窗口：桌面端为独立 Tauri 窗口，移动端为 Capacitor 插件 `SchoolWindow`；两端包裹格式一致。 */
 export function canOpenImportWindow(): boolean {
   const platform = detectPlatform();
   return platform === 'tauri' || platform === 'capacitor';

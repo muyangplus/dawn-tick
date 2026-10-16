@@ -66,7 +66,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
     try {
       const requested = await elevateAutoStart();
       if (!requested) {
-        setMessage('申请管理员权限失败，请在系统提示中允许或手动以管理员身份运行一次');
+        setMessage('提权失败，请手动以管理员身份运行一次');
         return;
       }
       for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -80,7 +80,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
           return;
         }
       }
-      setMessage('提权后仍未检测到启动项，请手动以管理员身份运行一次程序');
+      setMessage('仍未检测到启动项，请手动以管理员身份运行一次');
     } finally {
       setBusy(false);
     }
@@ -113,7 +113,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
       <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
         <span className="flex flex-col">
           <span>启动时隐藏窗口</span>
-          <span className="text-xs text-muted">仅开机自启时生效；手动启动始终显示主窗口，只驻留托盘</span>
+          <span className="text-xs text-muted">仅开机自启生效；手动启动显示主窗口</span>
         </span>
         <Switch
           checked={settings.startHidden}

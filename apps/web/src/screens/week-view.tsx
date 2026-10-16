@@ -43,19 +43,14 @@ function formatPeriods(start: number, end: number): string {
   return start === end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
-/**
- * 多天假期的第一天：当天放假、且前一天不放假。
- * 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。
- */
+/** 多天假期第一天：当天放假且前一天不放假。 */
+/** 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。 */
 function isHolidayRunStart(data: AppData, date: string): boolean {
   if (!data.holidayLabels.has(date)) return false;
   return !data.holidayLabels.has(addDays(date, -1));
 }
 
-/**
- * 该格里是否已有课：连堂与「停课」这类占多节的条目，
- * 只要落在它覆盖的节次范围内就算被占用（否则点第 2 节会被当成空白格）。
- */
+/** 连堂与「停课」等占多节的条目：节次落在其覆盖范围内即算该格被占用。 */
 function occupied(data: AppData, date: string, period: number): boolean {
   for (let current = period; current >= 1; current -= 1) {
     const cells = data.grid.get(`${date}:${current}`) ?? [];
@@ -151,10 +146,7 @@ interface DragSession {
 /** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩，空白格按下直接拖出范围。 */
 type EmptyDragMode = 'wheel' | 'body' | 'select';
 
-/**
- * 块本体拖动时哪条边跟着指针走：
- * both 是起始就是单节（上下都算扩展），top / bottom 是按住的位置在上半还是下半。
- */
+/** 块本体拖动时跟着指针的边：both 为上下都扩展，否则按按住位置取 top / bottom。 */
 type EmptyDragEdge = 'both' | 'top' | 'bottom';
 
 interface EmptyDragState {
@@ -366,8 +358,7 @@ export function WeekView({
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [empty !== null]);
 
-  // 拖动占位块期间把 move/up 也挂到 window：按住「＋」开始拖动时被按下的按钮会被
-  // 实时标签盖住，指针一离开块体（或指针捕获没生效）块节点就收不到 pointermove。
+  // 拖动占位块期间 move/up/cancel 挂在 window：指针离开块体或指针捕获未生效时块节点收不到 pointermove。
   useEffect(() => {
     const onMove = (event: PointerEvent): void => moveEmptyDrag(event);
     const onUp = (event: PointerEvent): void => endEmptyDrag(event);
@@ -421,10 +412,7 @@ export function WeekView({
     setEmptyTarget(null);
   }
 
-  /**
-   * 调整占位节次：delta > 0 向下扩展、delta < 0 向上扩展。
-   * 只受节次上下限约束，与已有课重叠时给出提示、仍可继续。
-   */
+  /** 调整占位节次：delta > 0 向下、delta < 0 向上；只受节次上下限约束，重叠仍可继续。 */
   function step(target: EmptyTarget, delta: number): void {
     let start = target.start;
     let end = target.end;
@@ -454,8 +442,7 @@ export function WeekView({
       moved: false,
     };
     if (mode === 'body') showEmptyVisual('body');
-    // 这里刻意不 setPointerCapture：捕获会把后面的兼容鼠标事件也改派到块节点上，
-    // 单击「＋」的 click 就落不到按钮上了；移动/抬手改由拖动期间的 window 监听兜住。
+    // 不 setPointerCapture：会改派兼容鼠标事件，单击「＋」的 click 落不到按钮；move/up 由 window 监听兜住。
   }
 
   function showEmptyVisual(mode: EmptyDragMode | null): void {
@@ -463,10 +450,7 @@ export function WeekView({
     setEmptyDragMode(mode);
   }
 
-  /**
-   * 空白格按下：记下按下的节次，不松手即可上下拖出范围；
-   * 拖动期间沿用块本体的「两边一起扩」口径，松手直接进加课弹窗。
-   */
+  /** 空白格按下：记下按下节次，不松手可上下拖出范围；拖动沿用「两边一起扩」，松手进加课弹窗。 */
   function beginSlotSelect(event: React.PointerEvent<HTMLElement>, period: number): void {
     emptyDrag.current = {
       pointerId: event.pointerId,

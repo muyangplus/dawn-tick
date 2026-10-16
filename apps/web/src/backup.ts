@@ -11,10 +11,7 @@ import { detectPlatform } from './platform-detect.ts';
 import { activeSqlDriver } from './db/active-driver.ts';
 import { logInfo, logWarn } from './log.ts';
 
-/**
- * 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），
- * Web 与 Android 没有可写目录，把 JSON 快照存进库自己的 app_meta。
- */
+/** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
 
 export interface SnapshotEntry {
   /** 文件快照是文件名，JSON 快照是 app_meta 的键 */
@@ -225,10 +222,7 @@ export function snapshotsToday(entries: readonly SnapshotEntry[], now: number): 
   return entries.filter((entry) => localDay(entry.createdAt) === today);
 }
 
-/**
- * 自动备份：启动那次按「启动时备份」开关，运行中按「每天备份」开关。
- * 两份开关都关或总开关关时不做任何事。
- */
+/** 自动备份：「启动时备份」只管启动那一次，「每天备份」管运行中补当天那份。 */
 export async function maybeAutoBackup(
   storage: Storage,
   settings: AppSettings,

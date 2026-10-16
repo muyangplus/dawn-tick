@@ -99,7 +99,7 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
             使用全局配置
           </span>
           <span className="text-xs text-muted">
-            {useGlobal ? '按设置里的课前提醒时间生效，本课程未单独设置。' : '本课程单独设置，不再套用全局默认。'}
+            {useGlobal ? '跟随全局设置' : '本课程单独设置'}
           </span>
         </span>
         <Switch

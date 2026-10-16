@@ -827,7 +827,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       globalSwitch !== null &&
       globalSwitch.getAttribute('aria-checked') === 'true' &&
       reminderSection.querySelector('input[type="checkbox"][aria-label="使用全局配置"]') === null &&
-      (reminderSection.textContent ?? '').includes('本课程未单独设置'),
+      (reminderSection.textContent ?? '').includes('跟随全局设置'),
     `switch=${globalSwitch?.getAttribute('aria-checked') ?? '(无)'}`,
   );
   if (globalSwitch !== null) {
@@ -2420,7 +2420,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '回车只弹一个调整范围对话框并给出顺延时长与课间',
     scopeDialogCount() === 1 &&
-      scopeText().includes('的改动已生效；将按每节 55 分钟、课间 10 分钟从这一节起顺延重排'),
+      scopeText().includes('顺延按每节 55 分钟、课间 10 分钟'),
     scopeText().slice(-60),
   );
   if (clickByText(document.body, '取消')) await flush(8);
@@ -2470,7 +2470,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '锚点顺延重排后第 4 节顺延到 10:50–11:35',
     anchorReordered &&
-      anchorDialogText.includes('将按每节 45 分钟、课间 10 分钟从这一节起顺延重排') &&
+      anchorDialogText.includes('顺延按每节 45 分钟、课间 10 分钟') &&
       thirdStart === '09:55' &&
       thirdEnd === '10:40' &&
       fourthStart === '10:50' &&

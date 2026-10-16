@@ -527,11 +527,7 @@ export function SettingsView({
     })();
   }, []);
 
-  /**
-   * 检查预设更新：提示与下载。
-   * 下载成功的快照写入缓存，下次启动由 resolvePresetSource 读取生效；
-   * 离线、404、哈希不符等失败返回一条提示，界面沿用内置预设。
-   */
+  /** 检查预设更新：快照写入缓存、下次启动由 resolvePresetSource 生效；失败时界面沿用内置预设。 */
   async function runPresetCheck(): Promise<void> {
     setPresetBusy(true);
     try {
@@ -551,8 +547,7 @@ export function SettingsView({
       }
       const snapshot = await fetchSnapshot(status.version);
       await writeCachedSnapshot(storage, snapshot);
-      // 快照是清单；「下次启动生效」还需要正文，这一步把正文一并校验后落盘。
-      // 正文不合法时只记日志：界面提示已下载，下次启动回退内置。
+      // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
       const content = await cacheSnapshotContent(storage, snapshot);
       if (!content.ok) {
         logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {

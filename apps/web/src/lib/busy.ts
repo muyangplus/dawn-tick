@@ -22,10 +22,7 @@ export function busySnapshot(): BusyState | null {
   return current;
 }
 
-/**
- * 跑一个慢操作：期间盖蒙版、挡住重复点击，结束后无论成败都收起。
- * 抛出的错误原样交给调用方处理（蒙版一定要收）。
- */
+/** 跑一个慢操作：盖蒙版、挡住重复点击，结束后无论成败都收起；抛出的错误原样交给调用方。 */
 export async function runBusy<T>(label: string, task: () => Promise<T>): Promise<T> {
   publish({ label, count: (current?.count ?? 0) + 1 });
   try {
@@ -50,10 +47,7 @@ export function useBusy(): BusyState | null {
   return state;
 }
 
-/**
- * 给按钮/表单一类异步动作用的状态：busy 期间按钮禁用，
- * 同时把整页蒙版也挂上（长操作看不到进度时至少有反馈）。
- */
+/** 按钮/表单一类异步动作的状态：busy 期间按钮禁用并挂上整页蒙版。 */
 export function useBusyAction(): {
   busy: boolean;
   run: <T>(label: string, task: () => Promise<T>) => Promise<T | undefined>;

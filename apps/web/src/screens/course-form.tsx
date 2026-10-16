@@ -90,10 +90,7 @@ interface ScheduleShape {
   weeks: readonly number[];
 }
 
-/**
- * 这次要保存的排课与已有课程重叠的第一处。
- * 课程允许重叠，这里只用来给提醒，不阻断写入。
- */
+/** 本次排课与已有课程重叠的第一处；课程允许重叠，这里只用于提醒，不阻断写入。 */
 function findOverlap(
   courses: readonly ManagedCourse[],
   selfId: string,

@@ -1,9 +1,6 @@
 import type { LessonCell } from '../data.ts';
 
-/**
- * 课表网格的分钟换算：节次行统一行高，头部/尾部补白按真实分钟展开。
- * 单独放在这里便于用 node:test 直接量算（jsdom 量不到真实布局）。
- */
+/** 课表网格的分钟换算：节次行统一行高，头/尾补白按真实分钟展开。 */
 
 /** 头部/尾部补白最多各三行：个别写错的作息或时间不会把网格撑得离谱。 */
 export const PAD_MAX_ROWS = 3;
@@ -34,10 +31,7 @@ export function minuteOf(clock: string | null | undefined): number | null {
   return (hour as number) * 60 + (minute as number);
 }
 
-/**
- * 网格按真实分钟向上/向下扩展：头部与尾部补白的多少只由自定义时间条目的伸缩决定，
- * 节次行本身仍是统一的 rowHeight。
- */
+/** 网格按真实分钟上下扩展：补白多少只由自定义时间条目决定，节次行仍是统一 rowHeight。 */
 export function gridMetrics(
   slots: readonly GridSlot[],
   lessons: readonly Pick<LessonCell, 'customStart' | 'customEnd'>[],

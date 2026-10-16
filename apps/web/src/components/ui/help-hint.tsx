@@ -1,10 +1,7 @@
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import type { ReactNode } from 'react';
 
-/**
- * 「?」说明入口：点开显示一两句补充，正文只留动作与状态。
- * 用 Popover 而不是 title：触摸端也能点开，读屏能读到内容。
- */
+/** 「?」说明入口：用 Popover 而非 title，触摸端可点开且读屏可读。 */
 export function HelpHint({ label, children }: { label: string; children: ReactNode }) {
   return (
     <PopoverPrimitive.Root>

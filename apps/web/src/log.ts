@@ -126,10 +126,7 @@ function record(level: LogLevel, scope: string, message: string, detail?: Record
   scheduleFlush();
 }
 
-/**
- * 未捕获的异常与未处理的 Promise 也写进日志：
- * 之前保存失败这类问题会因为异常被吞掉而既不提示也不留痕。
- */
+/** 未捕获的异常与未处理的 Promise 也写进日志。 */
 export function installLogHandlers(): void {
   const target = globalThis as {
     addEventListener?: (type: string, listener: (event: unknown) => void) => void;
@@ -181,10 +178,7 @@ export function logEntries(): readonly LogEntry[] {
   return buffer;
 }
 
-/**
- * 日志时间戳：`2026-10-13 18:01:34.123 +08:00`。
- * 与原生侧 `startup.log` 同一口径（本地时间 + 与 UTC 的偏移，毫秒精度）。
- */
+/** 日志时间戳：`2026-10-13 18:01:34.123 +08:00`；与原生侧 `startup.log` 同口径（本地时间 + UTC 偏移，毫秒）。 */
 export function formatLogTimestamp(at: number): string {
   const date = new Date(at);
   const pad = (value: number, width = 2): string => String(Math.abs(value)).padStart(width, '0');

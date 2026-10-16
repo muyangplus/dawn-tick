@@ -92,10 +92,7 @@ function weekDateOf(semester: { start_date: string }, week: number, dayOfWeek: n
   return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
 }
 
-/**
- * 查看窗口按设置的天数平移一屏：当前 state 为 null（起点是今天）时以已加载的起点为基准。
- * 起点可以早于学期或晚于学期，交给加载侧按周次渲染。
- */
+/** 查看窗口平移一屏；windowStart 为 null（起点是今天）时以已加载起点为基准，起点可越出学期。 */
 function shiftWindowStart(current: string | null, loaded: string, days: number): string {
   return addDays(current ?? loaded, days);
 }
@@ -119,10 +116,7 @@ function formatPeriodLabel(start: number, end: number): string {
   return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
-/**
- * 日程时间线里的课次不是周视图的格子，这里按当天的课次还原一张课程卡需要的信息，
- * 让课程详情（含「调课」入口）用同一份数据打开。
- */
+/** 按当天课次还原课程卡信息：时间线课次不是周视图格子，详情与周视图共用同一份数据。 */
 function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
   const occurrence = (data.lessonsByDate.get(target.date) ?? []).find(
     (item) => item.scheduleId === target.scheduleId,
@@ -155,10 +149,7 @@ function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
   };
 }
 
-/**
- * 目标位置已有的课：课程允许重叠，这里只用来给出提醒。
- * week 为 null 表示不限周次（每周生效），否则只看确实在该周上的课。
- */
+/** 目标位置已有的课：课程允许重叠，只用来提醒；week 为 null 表示不限周次（每周生效）。 */
 function overlapAt(
   courses: readonly ManagedCourse[],
   target: {
@@ -310,9 +301,7 @@ export function App() {
         stage = { scope: 'data', label: '数据载入' };
         attachLogStorage(opened);
         await loadLogs();
-        // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，否则使用内置。
-        // 运行时不替换；设置页下载成功后只提示「下次启动生效」。
-        // 预设是外部数据，异常缓存退回内置，不阻断启动。
+        // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，运行时不替换。
         try {
           const preset = await applyCachedPreset(opened);
           logInfo('preset', '启动套用预设', {
@@ -635,8 +624,7 @@ export function App() {
     });
   }, [data, storage]);
 
-  // 过了截止/结束时间的条目由日程时间线在展示层判定为「已完成」（会自动进「已完成」分组），
-  // 这里不再回写 events.done，避免打开应用就改数据。
+  // 过期条目由日程时间线在展示层判定「已完成」（自动进「已完成」分组），这里不回写 events.done。
 
   /** 课次所在日期：网格里的格子自带日期，直接用它。 */
   function lessonDateOf(cell: LessonCell): string {
@@ -982,8 +970,7 @@ export function App() {
     );
 
   return (
-    // 外壳钉在视口上：窗口改尺寸后高度立即跟随，不依赖 dvh 的重新计算，
-    // 主区自己滚动，避免「内容比窗口高却滑不到底」。
+    // 外壳钉在视口上，主区自己滚动；不依赖 dvh 重新计算高度。
     <div className="fixed inset-0 flex overflow-hidden bg-page text-ink" data-role="app-shell">
       {isDesktop && (
         <AppSidebar

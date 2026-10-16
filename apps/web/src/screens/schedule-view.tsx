@@ -8,8 +8,7 @@ import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } 
 import { readLayout } from './cards/layout-store.ts';
 import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
 
-// 日程页的卡片在注册表里声明：显隐、顺序与区域都可由用户配置。
-// 显式引用这几张卡片，注册先于首次渲染完成。
+// 显式引用这几张卡片，保证注册先于首次渲染完成。
 void [actionsCard, timelineCard, examsCard, tomorrowCard];
 
 export interface ScheduleViewProps {
@@ -28,10 +27,7 @@ export interface ScheduleViewProps {
   holidayCountdown: boolean;
 }
 
-/**
- * 日程页：默认视觉只有「顶部一行 + 主列时间线 + 侧列卡片」。
- * 加日程/加考试/课程调整收进「＋」，设为假日/连续假期/停课/顺延收进「⋯」。
- */
+/** 日程页：默认只有顶部一行 + 主列时间线 + 侧列卡片；加日程/考试/调课收进「＋」，假日类收进「⋯」。 */
 export function ScheduleView({
   data,
   storage,
