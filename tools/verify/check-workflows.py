@@ -23,11 +23,16 @@ REQUIRED_JOBS = {
 PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""', '--notes-start-tag "$PREV"']
 # 标签已存在时不传 --target：附注标签对象不是有效目标
 PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
+# 便携包说明：数据在程序所在目录，不是 %LOCALAPPDATA%
+PUBLISH_PORTABLE_README_REQUIRED = ['数据与日志都在本目录']
+PUBLISH_PORTABLE_README_FORBIDDEN = ['数据与日志目录：%LOCALAPPDATA%']
 
 
 def check_publish_notes(text: str) -> list[str]:
     problems = [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]
+    problems += [f'publish.yml 便携包说明缺少: {item}' for item in PUBLISH_PORTABLE_README_REQUIRED if item not in text]
+    problems += [f'publish.yml 便携包说明写错数据目录: {item}' for item in PUBLISH_PORTABLE_README_FORBIDDEN if item in text]
     return problems
 
 
