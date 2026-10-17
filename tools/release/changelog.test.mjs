@@ -52,6 +52,12 @@ test('结构自检：缺标题、缺未发布段、已发布版本缺日期都�
   assert.equal(problems.some((item) => item.includes('缺少发布日期')), true);
 });
 
+test('发版后留空的「未发布」段仍算结构正常', () => {
+  const text = '# 变更日志\n\n## [未发布]\n\n## [0.2.0] - 2026-10-17\n\n- 首个正式版\n';
+  assert.deepEqual(checkChangelog(text), []);
+  assert.equal(extractUnreleased(text), null, '空段落交给调用方回退自动生成');
+});
+
 test('预发布版本号也能取段', () => {
   const text = '## [0.1.0-beta.1] - 2026-10-14\n\n- 首个公测版\n';
   assert.equal(extractSection(text, '0.1.0-beta.1'), '- 首个公测版');

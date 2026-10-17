@@ -46,13 +46,13 @@ export function releasedVersions(text) {
   return out;
 }
 
-/** 结构自检：要有标题、要有未发布段，已发布版本必须带日期。 */
+/** 结构自检：要有标题、要有未发布段（可为空，发版后留空段）、已发布版本必须带日期。 */
 export function checkChangelog(text) {
   const problems = [];
   if (!/^#\s+变更日志/m.test(text) && !/^#\s+Changelog/m.test(text)) {
     problems.push('缺少一级标题（# 变更日志）');
   }
-  if (extractUnreleased(text) === null) problems.push('缺少「未发布」段或有内容为空');
+  if (!UNRELEASED_PATTERN.test(text)) problems.push('缺少「未发布」段');
   for (const version of releasedVersions(text)) {
     const heading = new RegExp(`^##\\s+\\[?${version.replace(/\./g, '\\.')}\\]?\\s+-\\s+(\\d{4}-\\d{2}-\\d{2})\\s*$`, 'm');
     if (!heading.test(text)) problems.push(`${version} 缺少发布日期（应为「## [${version}] - YYYY-MM-DD」）`);

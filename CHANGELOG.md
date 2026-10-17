@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.2.0] - 2026-10-17
+
 ### 新增
 
 - 加载状态：异步按钮自动禁用并显示转圈；导入导出、备份恢复、WebDAV、检查更新、预设刷新等慢操作盖半透明蒙版，重复点击被忽略
@@ -72,6 +74,7 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.1.0...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.2.0...dev
+[0.2.0]: https://github.com/muyangplus/dawn-tick/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/muyangplus/dawn-tick/compare/v0.1.0-beta.1...v0.1.0
 [0.1.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.1.0-beta.1
