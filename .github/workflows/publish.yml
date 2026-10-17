@@ -296,8 +296,13 @@ jobs:
         run: |
           set -euo pipefail
           REMOTE="https://github.com/${GITHUB_REPOSITORY}.git"
+          # 打 v* 标签触发时标签已存在：此时不传 --target；标签对象要用 ^^{} 解引用成提交
+          TAG_EXISTS=false
           TARGET=$(git ls-remote "$REMOTE" "refs/heads/${BUILD_REF}" | cut -f1 || true)
-          if [[ -z "$TARGET" ]]; then TARGET=$(git ls-remote "$REMOTE" "refs/tags/${BUILD_REF}" | cut -f1 || true); fi
+          if [[ -z "$TARGET" ]]; then
+            TARGET=$(git ls-remote "$REMOTE" "refs/tags/${BUILD_REF}^{}" | cut -f1 || true)
+            if [[ -n "$TARGET" ]]; then TAG_EXISTS=true; fi
+          fi
           if [[ -z "$TARGET" ]]; then TARGET="$GITHUB_SHA"; fi
 
           case "$CHANNEL" in
@@ -344,7 +349,8 @@ jobs:
             gh release edit "$TAG" "${edit[@]}"
           else
             echo "创建标签 $TAG 并发布，比较基准 ${PREV:-无}"
-            args=(--title "$TITLE" --target "$TARGET" --prerelease=$PRERELEASE)
+            args=(--title "$TITLE" --prerelease=$PRERELEASE)
+            if [[ "$TAG_EXISTS" != "true" ]]; then args+=(--target "$TARGET"); fi
             if [[ -s "$NOTES_FILE" ]]; then args+=(--notes-file "$NOTES_FILE"); else args+=(--generate-notes --notes "$NOTES"); fi
             if [[ -n "$PREV" ]]; then args+=(--notes-start-tag "$PREV"); fi
             gh release create "$TAG" out/* "${args[@]}"
