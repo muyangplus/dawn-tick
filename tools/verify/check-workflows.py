@@ -21,10 +21,14 @@ REQUIRED_JOBS = {
 }
 # 发布说明的比较基准：滚动标签会移动，不能进已发版正文
 PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""', '--notes-start-tag "$PREV"']
+# 标签已存在时不传 --target：附注标签对象不是有效目标
+PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
 
 
 def check_publish_notes(text: str) -> list[str]:
-    return [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
+    problems = [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]
+    return problems
 
 
 def main() -> int:
