@@ -8,10 +8,7 @@ export function walEnabledByDefault(portable: boolean, platform: Platform): bool
   return !portable;
 }
 
-/**
- * 把设置里的 wal_mode 解析成开关。
- * 返回 null 表示这一端没有日志模式可设（Web 用 IndexedDB）。
- */
+/** 把设置里的 wal_mode 解析成开关；null 表示这一端没有日志模式可设（Web 用 IndexedDB）。 */
 export function resolveWalEnabled(
   mode: string | undefined,
   options: { portable: boolean; platform: Platform },

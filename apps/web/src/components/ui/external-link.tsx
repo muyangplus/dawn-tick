@@ -45,10 +45,7 @@ export interface ExternalLinkProps {
   dataRole?: string;
 }
 
-/**
- * 应用内置链接：点击不导航，先弹确认框，确认后交给默认浏览器或复制链接。
- * href 与 target 照常保留，右键复制地址等浏览器自身行为不受影响。
- */
+/** 应用内置链接：点击不导航，先弹确认框，确认后交给默认浏览器或复制链接；href 与 target 照常保留。 */
 export function ExternalLink({ href, children, className, ariaLabel, dataRole }: ExternalLinkProps) {
   return (
     <a
@@ -96,7 +93,7 @@ export function ExternalLinkConfirm() {
         if (!open) closeExternalLink();
       }}
     >
-      <DialogContent title="打开外部链接" description="链接交给应用之外处理，应用内不加载该页面">
+      <DialogContent title="打开外部链接" description="应用内不加载该页面，交给系统浏览器">
         <Input
           readOnly
           data-role="external-link-url"
@@ -112,7 +109,7 @@ export function ExternalLinkConfirm() {
             variant="secondary"
             data-role="external-link-copy"
             disabled={busy}
-            onClick={() => void run(() => copyText(url ?? ''), '已复制链接', '复制失败，可选中链接后手动复制')}
+            onClick={() => void run(() => copyText(url ?? ''), '已复制链接', '复制失败，请手动复制链接')}
           >
             复制链接
           </Button>
@@ -121,7 +118,7 @@ export function ExternalLinkConfirm() {
             data-role="external-link-open"
             disabled={busy}
             onClick={() =>
-              void run(() => openExternalUrl(url ?? ''), '已在默认浏览器打开', '打开默认浏览器失败，可改用复制链接')
+              void run(() => openExternalUrl(url ?? ''), '已在默认浏览器打开', '打开浏览器失败，请改用复制链接')
             }
           >
             用默认浏览器打开

@@ -11,15 +11,15 @@ object WidgetRefresher {
         val snapshot = WidgetStore.load(context)
 
         val nextIds = manager.getAppWidgetIds(ComponentName(context, NextLessonWidget::class.java))
-        for (id in nextIds) manager.updateAppWidget(id, WidgetRenderer.buildNext(context, snapshot))
+        for (id in nextIds) manager.updateAppWidget(id, WidgetRenderer.buildNext(context, snapshot, id))
 
         val todayIds = manager.getAppWidgetIds(ComponentName(context, TodayWidget::class.java))
-        for (id in todayIds) manager.updateAppWidget(id, WidgetRenderer.buildToday(context, snapshot))
+        for (id in todayIds) manager.updateAppWidget(id, WidgetRenderer.buildToday(context, snapshot, id))
 
         val weekIds = manager.getAppWidgetIds(ComponentName(context, WeekOverviewWidget::class.java))
-        for (id in weekIds) manager.updateAppWidget(id, WidgetRenderer.buildWeekOverview(context, snapshot))
+        for (id in weekIds) manager.updateAppWidget(id, WidgetRenderer.buildWeekOverview(context, snapshot, id))
 
         val examIds = manager.getAppWidgetIds(ComponentName(context, ExamCountdownWidget::class.java))
-        for (id in examIds) manager.updateAppWidget(id, WidgetRenderer.buildExamCountdown(context, snapshot))
+        for (id in examIds) manager.updateAppWidget(id, WidgetRenderer.buildExamCountdown(context, snapshot, id))
     }
 }

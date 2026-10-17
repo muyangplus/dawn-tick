@@ -17,6 +17,7 @@ import {
   type TimeSlotRow,
 } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
+import { HelpHint } from './ui/help-hint.tsx';
 import { CollapsibleCard } from './ui/collapsible-card.tsx';
 import { Combobox } from './ui/combobox.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
@@ -37,11 +38,7 @@ const DEFAULT_BREAK = 10;
 /** 「本次启动期间不再询问」的勾选框文案 */
 const SCOPE_OPT_OUT_LABEL = '本次启动期间不再询问';
 
-/**
- * 本进程内是否已经勾选「本次启动期间不再询问」。
- * 只放在模块级变量里：不写 localStorage、不落盘、不进数据库，
- * 所以组件重新挂载（切页面再回来）仍然有效，重启应用后恢复询问。
- */
+/** 「本次启动期间不再询问」只放模块级变量，不写 localStorage、不落盘；重新挂载仍有效，重启后恢复询问。 */
 let scopeOptOut = false;
 
 export interface PeriodSettingsProps {
@@ -62,10 +59,7 @@ interface RerollDraft {
   durationFromEdit: boolean;
 }
 
-/**
- * 一次「已经落库、但还没询问作用范围」的编辑。
- * 输入过程中只把它记下来（不弹窗），等到失焦或回车时才拿它去问一次。
- */
+/** 一次「已经落库、但还没问作用范围」的编辑：输入时只记下，失焦或回车才问一次。 */
 interface PendingEdit {
   /** 字段 + 本次落库的值的签名：同一次编辑只问一次 */
   signature: string;
@@ -119,11 +113,7 @@ function mostFrequent(counts: ReadonlyMap<number, number>): number | null {
   return best;
 }
 
-/**
- * 从预设的课次推算要同步到输入框的每节时长与课间：都取出现次数最多的那个值
- * （苏科大作息 14 节里，45 分钟的课与 10 分钟的课间最常见，于是得到 45 / 10）。
- * 某一项推算不出可用值时返回 null，调用方就保持该输入框不动。
- */
+/** 从预设课次推算每节时长与课间，都取出现次数最多的值；推不出可用值时返回 null。 */
 function presetSpacing(periods: readonly { start: string; end: string }[]): {
   durationMinutes: number | null;
   breakMinutes: number | null;
@@ -161,10 +151,10 @@ function within(value: number, min: number, max: number): boolean {
 /** 重排参数越界时的说明，null 表示可以顺延重排。 */
 function paramError(durationMinutes: number, breakMinutes: number): string | null {
   if (!within(durationMinutes, MIN_DURATION, MAX_DURATION)) {
-    return `每节时长需在 ${MIN_DURATION}–${MAX_DURATION} 分钟之间，当前是 ${durationMinutes} 分钟`;
+    return `每节时长 ${MIN_DURATION}–${MAX_DURATION} 分钟，当前 ${durationMinutes} 分钟`;
   }
   if (!within(breakMinutes, MIN_BREAK, MAX_BREAK)) {
-    return `课间需在 ${MIN_BREAK}–${MAX_BREAK} 分钟之间，当前是 ${breakMinutes} 分钟`;
+    return `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟，当前 ${breakMinutes} 分钟`;
   }
   return null;
 }
@@ -201,7 +191,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const selectedPreset = findTimetable(presetId);
   const presetHint =
     selectedPreset === undefined
-      ? '内置作息：套用后整张时间表按该作息重排'
+      ? '套用后整表按该作息重排'
       : `${selectedPreset.periods.length} 节${
           selectedPreset.source !== undefined && selectedPreset.source.length > 0
             ? ` · ${selectedPreset.source}`
@@ -229,10 +219,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     void reload();
   }, [reload]);
 
-  /**
-   * 单节改动已经写库生效，接着询问这次改动的范围。
-   * 手改了结束时间时，把推算出的时长同步到界面上，顺延重排就按它来。
-   */
+  /** 单节改动已写库生效，接着询问范围；手改结束时间时把推算出的时长同步到界面，顺延按它算。 */
   function askScope(next: RerollDraft): void {
     if (next.durationFromEdit && within(next.durationMinutes, MIN_DURATION, MAX_DURATION)) {
       setDuration(next.durationMinutes);
@@ -240,20 +227,12 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setDraft(next);
   }
 
-  /**
-   * 记下一次「已经落库、但还没问范围」的编辑。
-   * 输入过程中只调用它（所以打字时不会弹窗），弹窗留给失焦或回车。
-   */
+  /** 记下一次「已落库、但还没问范围」的编辑；输入时只调用它，弹窗留给失焦或回车。 */
   function markPending(signature: string, next: RerollDraft, commit: Promise<boolean>): void {
     pendingEdit.current = { signature, draft: next, commit };
   }
 
-  /**
-   * 失焦或回车时才真正询问范围。
-   * 同一个签名只问一次，所以「回车之后紧接着失焦」也只会弹一个对话框；
-   * 落库失败（commit 为 false）时保持沉默，与改动前的行为一致。
-   * 本次启动已经勾选「不再询问」时直接跳过：这次编辑保持已生效的「只改这一节」。
-   */
+  /** 失焦或回车才询问范围：同一签名只问一次，落库失败保持沉默；已勾选「不再询问」时跳过。 */
   function flushPending(): void {
     const pending = pendingEdit.current;
     if (pending === null || askedEdit.current === pending.signature) return;
@@ -284,10 +263,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setDraft(null);
   }
 
-  /**
-   * 时间输入框共用的触发：失焦或回车时才把挂起的改动拿去问范围。
-   * 输入框里的 onChange 只负责落库，所以连输多位数时不会中途弹窗抢焦点。
-   */
+  /** 时间输入框共用：失焦或回车才把挂起的改动拿去问范围，onChange 只负责落库。 */
   const scopeTriggers = {
     onBlur: () => {
       flushPending();
@@ -387,10 +363,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     }
   }
 
-  /**
-   * 单节课次改起止时间：先只改这一节并立即生效（不弹窗）。
-   * 改了结束时间（或起止一起改）时，把推算出的时长当作重排用的新时长。
-   */
+  /** 单节改起止时间先只改这一节并立即生效；改了结束时间的推算时长即重排用的新时长。 */
   async function saveTime(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): Promise<boolean> {
     setMessage(null);
     try {
@@ -425,10 +398,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     markPending(`time:${slot.id}:${field}=${value}`, timeDraft(slot, changes), saveTime(slot, changes));
   }
 
-  /**
-   * 从被改动的那一节起顺延重排：以它为锚点，按界面上的每节时长与课间把后面的课次整体顺延。
-   * 锚点之前的课次、每一节原有的时段与备注（label）都原样保留。
-   */
+  /** 从改动的这一节起顺延重排；锚点之前的课次与各节原有的时段、备注原样保留。 */
   async function reflowFromAnchor(): Promise<void> {
     const current = draft;
     if (current === null) return;
@@ -438,7 +408,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     try {
       const rows = await listTimeSlots(storage, semesterId);
       if (rows.length === 0) {
-        setMessage('还没有可重排的课次，请先生成课次');
+        setMessage('没有可重排的课次，请先生成课次');
         return;
       }
       const anchor = current.periodNo;
@@ -472,7 +442,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         duration,
         breakMinutes,
       });
-      toast.success(`已按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟从第 ${anchor} 节起顺延重排`);
+      toast.success(`第 ${anchor} 节起已顺延：每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`);
       await reload();
       onChanged();
     } catch (cause: unknown) {
@@ -490,7 +460,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       if (!result.deleted) {
         setMessage(
           result.usedBy > 0
-            ? `第 ${periodNo} 节被 ${result.usedBy} 条排课使用，请先调整这些课程的节次`
+            ? `第 ${periodNo} 节被 ${result.usedBy} 条排课占用，请先调整`
             : `第 ${periodNo} 节不存在`,
         );
         return;
@@ -658,8 +628,11 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         ))}
         {slots.length === 0 && <li className="text-xs text-muted">还没有课次，请先生成课次</li>}
       </ul>
-      <span className="text-xs text-muted">
-        每节起止时间可单独修改。改完会问一次作用范围：可以只保留这一节，也可以按每节时长与课间从这一节起顺延重排后面的课次。
+      <span className="flex items-center gap-1 text-xs text-muted">
+        每节起止时间可单独修改
+        <HelpHint label="改课次时间">
+          改完会问一次作用范围：只改这一节，或按每节时长与课间从这一节起顺延后面的课次。
+        </HelpHint>
       </span>
 
       {draft !== null && (
@@ -676,7 +649,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           >
             <div className="flex flex-col gap-1 text-xs text-muted">
               <span>
-                {`第 ${draft.periodNo} 节（${SECTION_LABEL[draft.section]}）的改动已生效；将按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟从这一节起顺延重排。`}
+                {`第 ${draft.periodNo} 节已改；顺延按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`}
               </span>
               {draftError !== null && <span className="text-danger-strong">{draftError}</span>}
             </div>

@@ -11,12 +11,7 @@ export interface MiniShellProps {
   children: ReactNode;
 }
 
-/**
- * 悬浮窗外壳。
- * `data-tauri-drag-region="deep"` 让整窗（含文字节点）都能按住拖动；
- * 按钮等可点元素自身仍按普通点击处理，不触发拖动。
- * 背景按设置里的「小组件背景」切换，与 Android 小组件的三种底色同一口径。
- */
+/** 悬浮窗外壳：`data-tauri-drag-region="deep"` 让整窗（含文字）可拖动；底色与 Android 小组件三态同口径。 */
 export function MiniShell({
   variant,
   onHide,

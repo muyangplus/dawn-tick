@@ -10,10 +10,7 @@ export interface SettingsSectionCardDef {
   defaultZone: CardZone;
 }
 
-/**
- * 设置页的 6 张卡片：显隐、顺序与区域交给注册表，
- * 具体内容由 settings-view 按相同 id 填进 CollapsibleCard。
- */
+/** 设置页的 6 张卡片：显隐、顺序与区域由注册表管，内容由 settings-view 按相同 id 填入。 */
 export const SETTINGS_SECTIONS: readonly SettingsSectionCardDef[] = [
   { id: 'semesters', title: '学期设置', icon: BadgeCheck, order: 0, defaultZone: 'main' },
   { id: 'reminders', title: '提醒设置', icon: Bell, order: 1, defaultZone: 'main' },

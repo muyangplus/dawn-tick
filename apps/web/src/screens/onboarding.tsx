@@ -200,7 +200,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <span className="text-xs text-muted" data-role="onboarding-school-picked">
                 {school === null
-                  ? '未选学校：只按总周数建学期，作息在「设置 → 学期设置」里再套用'
+                  ? '未选学校：作息可在设置里套用'
                   : `已选：${school.name}`}
               </span>
               <Button

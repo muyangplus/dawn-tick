@@ -13,7 +13,8 @@
     <string name="widget_today_empty">今天没有课</string>
     <string name="widget_week_label">本周课表</string>
     <string name="widget_week_header">本周课表 · 第 %1$d 周</string>
-    <string name="widget_week_empty_row">%1$s 无课</string>
+    <string name="widget_week_no_lesson">本周没有课</string>
+    <string name="widget_cancelled_suffix">（停课）</string>
     <string name="widget_exam_label">考试倒计时</string>
     <string name="widget_exam_none">暂无考试</string>
 </resources>

@@ -15,11 +15,8 @@ import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './preset-upda
 import { logInfo, logWarn } from './log.ts';
 import { pickBackupText, readZipEntries } from './zip-read.ts';
 
-/**
- * WebDAV 同步：整库快照 + 设置与预设打成一个 zip 传到远端目录。
- * Windows 走 Tauri 官方 http 插件（不受 CORS 限制），Android 由 Capacitor 接管 fetch，
- * Web 用浏览器 fetch（需要服务端允许跨域）。
- */
+/** WebDAV 同步：整库快照 + 设置与预设打成一个 zip 传到远端目录。 */
+/** Windows 走 Tauri 官方 http 插件，Android 由 Capacitor 接管 fetch，Web 用浏览器 fetch。 */
 
 const FIXED_NAME = 'DawnTick-backup.zip';
 /** 上次上传时间：判断远端是不是更新的依据 */
@@ -322,10 +319,7 @@ export async function downloadAndApply(
   return { ok: outcome.ok, error: outcome.error, outcome };
 }
 
-/**
- * 自动同步：远端有更新的备份就提示下载，否则把本机状态传上去。
- * 只上传、不自动下载，避免静默覆盖本机数据。
- */
+/** 自动同步：远端更新则提示下载，否则把本机状态传上去；只上传、不自动下载。 */
 export async function maybeAutoSync(
   storage: Storage,
   settings: AppSettings,

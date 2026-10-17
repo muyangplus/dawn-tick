@@ -35,10 +35,7 @@ import { ActionMenu } from './card-actions.tsx';
 import { defineCard, type ScheduleCardContext } from './registry.ts';
 import { buildTimeline, dateLabel, groupTimeline, splitTimeline, type TimelineItem, type TimelineNature } from './timeline.ts';
 
-/**
- * 打开课程详情的桥：日程卡片的渲染上下文（registry.ts）里没有这一项，
- * 由 App 用 Provider 注入（App 自己渲染课程详情）；没有 Provider 时点击不响应。
- */
+/** 打开课程详情的桥：日程卡片上下文里没有，由 App 用 Provider 注入；没有 Provider 时点击不响应。 */
 export const LessonDetailOpener = createContext<((target: AdjustTarget) => void) | null>(null);
 
 /** 顶部一行：日期选择器 + 加号菜单 + 溢出菜单 */
@@ -272,12 +269,7 @@ function ScheduleTimeline({
   const openLessonDetail = useContext(LessonDetailOpener);
   const tomorrow = addDays(viewDate, 1);
   const tomorrowItems = buildTimeline(data, tomorrow, now).length;
-  /**
-   * 已完成分组的展开状态：
-   * 默认「主列表还有未完成条目 → 收起；全部条目都已完成 → 展开」；
-   * 手动点过标题之后以手动为准（按日期记住，切到别的日期再回到默认），
-   * 这样自动判定与手动操作不会互相打架。
-   */
+  /** 已完成分组的展开状态：默认主列表为空才展开；手动点过标题后按日期以手动为准。 */
   const [manualCompleted, setManualCompleted] = useState<{ date: string; open: boolean } | null>(null);
   const completedOpen =
     manualCompleted !== null && manualCompleted.date === viewDate ? manualCompleted.open : main.length === 0;
@@ -391,11 +383,7 @@ interface TimelineRowProps {
   onOpenEvent: (event: EventRow) => void;
 }
 
-/**
- * 一条时间线，格式固定为：
- * 左侧竖排时间列（开始 / – / 结束）+ 颜色竖条 + 右侧两行（标题、地点）。
- * 已完成的条目整行更灰（opacity-40），并去掉勾选框改成「到点自动完成」标记。
- */
+/** 一条时间线：左侧竖排时间列（开始 / – / 结束）+ 颜色竖条 + 右侧标题与地点；自动完成的整行更灰。 */
 function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenEvent }: TimelineRowProps) {
   const lessonTarget = item.lessonTarget ?? null;
   const marker =
@@ -560,41 +548,44 @@ export const examsCard = defineCard({
   defaultZone: 'side',
   defaultOrder: 2,
   defaultVisible: true,
-  render: (ctx) => {
-    if (ctx.scope !== 'schedule') return null;
-    const { data, onAddExam, onOpenEvent, semesterCountdown, holidayCountdown } = ctx;
-    const now = Date.now();
-    const rows = data.countdowns;
-    const daysUntil = (date: string): number =>
-      Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
-    const semesterStart = data.semester?.start_date ?? null;
-    const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
-    const nextHolidayDate =
-      holidayCountdown
-        ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
-        : null;
-    const badges: ReactNode[] = [];
-    if (semesterCountdown && semesterDays !== null && semesterDays > 0) {
-      badges.push(
-        <span
-          key="semester"
-          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
-        >
-          距开学还有 {semesterDays} 天
-        </span>,
-      );
-    }
-    if (nextHolidayDate !== null) {
-      badges.push(
-        <span
-          key="holiday"
-          className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
-        >
-          距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
-        </span>,
-      );
-    }
-    return (
+  render: (ctx) => (ctx.scope === 'schedule' ? <CountdownCardBody ctx={ctx} /> : null),
+});
+
+/** 倒计时卡片正文：自带节拍，剩余天数与进度不依赖别处的数据刷新。 */
+function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope: 'schedule' }> }) {
+  const now = useNowTick(15_000);
+  const { data, onAddExam, onOpenEvent, semesterCountdown, holidayCountdown } = ctx;
+  const rows = data.countdowns;
+  const daysUntil = (date: string): number =>
+    Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
+  const semesterStart = data.semester?.start_date ?? null;
+  const semesterDays = semesterStart === null ? null : daysUntil(semesterStart);
+  const nextHolidayDate =
+    holidayCountdown
+      ? [...data.holidayLabels.keys()].filter((date) => date > data.today).sort()[0] ?? null
+      : null;
+  const badges: ReactNode[] = [];
+  if (semesterCountdown && semesterDays !== null && semesterDays > 0) {
+    badges.push(
+      <span
+        key="semester"
+        className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
+      >
+        距开学还有 {semesterDays} 天
+      </span>,
+    );
+  }
+  if (nextHolidayDate !== null) {
+    badges.push(
+      <span
+        key="holiday"
+        className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
+      >
+        距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
+      </span>,
+    );
+  }
+  return (
       <div className="flex flex-col gap-2">
         <span className="text-sm font-semibold text-ink">倒计时</span>
         {badges.length > 0 && (
@@ -607,7 +598,7 @@ export const examsCard = defineCard({
             <EmptyState
               icon={GraduationCap}
               title="暂无倒计时条目"
-              description="在「加待办」里打开「开启倒计时」，作业与考试会显示剩余天数"
+              description="打开「开启倒计时」显示剩余天数"
               action={
                 <Button size="sm" variant="secondary" onClick={onAddExam}>
                   加待办
@@ -672,8 +663,7 @@ export const examsCard = defineCard({
         )}
       </div>
     );
-  },
-});
+}
 
 /** 倒计时条目的类型文案。 */
 const COUNTDOWN_TYPE_LABEL: Record<string, string> = {

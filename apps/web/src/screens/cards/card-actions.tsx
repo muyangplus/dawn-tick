@@ -23,10 +23,7 @@ export interface ActionMenuProps {
   className?: string;
 }
 
-/**
- * 顶部一行用的轻量下拉菜单：原生 details/summary，无第三方依赖。
- * 选择任一项后自动收起。
- */
+/** 顶部一行用的轻量下拉菜单：原生 details/summary，无第三方依赖；选中任一项后自动收起。 */
 export function ActionMenu({ label, icon: Icon, iconOnly = true, items, className }: ActionMenuProps) {
   const root = useRef<HTMLDetailsElement>(null);
 

@@ -5,6 +5,8 @@ import {
   BACKUP_MODULE_LABEL,
   IMPORT_MODE_LABEL,
   IMPORT_MODES,
+  MOTION_LABEL,
+  MOTION_MODES,
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
@@ -28,6 +30,7 @@ import {
   type WidgetVariant,
   type TodoSort,
   type LogLevel,
+  type MotionMode,
 } from '@dawn-tick/core';
 import {
   exportConfig,
@@ -54,7 +57,14 @@ import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
 import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget, type PinWidgetResult } from '../widget-pin.ts';
-import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
+import {
+  copyText,
+  isIgnoringBatteryOptimizations,
+  openLogDirectory,
+  requestIgnoreBatteryOptimizations,
+  saveTextFile,
+} from '../system-actions.ts';
+import { exactAlarmState, requestExactAlarm, type ExactAlarmState } from '../permissions.ts';
 import {
   canConfigureStorage,
   openDataDirectory,
@@ -82,6 +92,7 @@ import {
   type DavSettings,
 } from '../webdav.ts';
 import { detectPlatform } from '../platform-detect.ts';
+import { runBusy } from '../lib/busy.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
@@ -360,7 +371,7 @@ export function SettingsView({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      // 启动时决定用哪份预设：缓存比内置新且哈希可信才用缓存，否则回退内置
+      // 缓存比内置新且哈希可信才用缓存
       const source = await resolvePresetSource(storage);
       if (!cancelled) setPresetSource(source);
     })();
@@ -413,7 +424,7 @@ export function SettingsView({
     }
   }
 
-  /** 下载并应用：先自动备份本机，再按所选模式覆盖。 */
+  /** 下载并应用：先备份本机再覆盖 */
   async function downloadDav(mode: ApplyMode): Promise<void> {
     setDavBusy(true);
     setDavConfirmOpen(false);
@@ -516,11 +527,7 @@ export function SettingsView({
     })();
   }, []);
 
-  /**
-   * 检查预设更新：提示与下载。
-   * 下载成功的快照写入缓存，下次启动由 resolvePresetSource 读取生效；
-   * 离线、404、哈希不符等失败返回一条提示，界面沿用内置预设。
-   */
+  /** 检查预设更新：快照写入缓存、下次启动由 resolvePresetSource 生效；失败时界面沿用内置预设。 */
   async function runPresetCheck(): Promise<void> {
     setPresetBusy(true);
     try {
@@ -540,8 +547,7 @@ export function SettingsView({
       }
       const snapshot = await fetchSnapshot(status.version);
       await writeCachedSnapshot(storage, snapshot);
-      // 快照是清单；「下次启动生效」还需要正文，这一步把正文一并校验后落盘。
-      // 正文不合法时只记日志：界面提示已下载，下次启动回退内置。
+      // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
       const content = await cacheSnapshotContent(storage, snapshot);
       if (!content.ok) {
         logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
@@ -588,6 +594,24 @@ export function SettingsView({
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
   /** 诊断入口：dev/beta 可见；dev 关掉开发者特性后与正式版一致地隐藏 */
   const diagnosticsVisible = featureVisible('diagnostics') && (CHANNEL !== 'dev' || settings.devFeatures);
+  /** 安卓权限状态：精确闹钟、电池优化白名单 */
+  const [alarmState, setAlarmState] = useState<ExactAlarmState>('unsupported');
+  const [batteryFree, setBatteryFree] = useState<boolean | null>(null);
+  const androidApp = detectPlatform() === 'capacitor';
+  useEffect(() => {
+    if (!androidApp) return;
+    let cancelled = false;
+    void (async () => {
+      const [alarm, ignoring] = await Promise.all([exactAlarmState(), isIgnoringBatteryOptimizations()]);
+      if (!cancelled) {
+        setAlarmState(alarm);
+        setBatteryFree(ignoring);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [androidApp]);
   const next = reminders.upcoming[0];
 
   useEffect(() => {
@@ -653,7 +677,7 @@ export function SettingsView({
     }
   }
 
-  /** 保存文本：桌面端弹系统保存对话框，浏览器与移动端退回下载。 */
+  /** 桌面端走系统保存对话框，其余端下载 */
   async function saveText(name: string, content: string, extension: string, filterName: string): Promise<boolean> {
     const result = await saveTextFile(name, content, { extension, filterName });
     if (result.cancelled) {
@@ -678,7 +702,7 @@ export function SettingsView({
     }
   }
 
-  /** 桌面端：让资源管理器打开日志目录，便于直接查看 startup.log。 */
+  /** 桌面端：资源管理器定位日志目录 */
   async function showLogDirectory(): Promise<void> {
     const dir = await openLogDirectory();
     setBackupMessage(dir === null ? '当前平台不支持打开日志目录' : `日志目录：${dir}`);
@@ -816,7 +840,7 @@ export function SettingsView({
     }
   }
 
-  /** 卡片布局独立成一个对话框，从设置页顶部按钮进入：不再受「外观」卡片显隐影响 */
+  /** 卡片布局对话框：由设置页顶部按钮进入，与「外观」卡片显隐无关 */
   const layoutGroups: ReactNode = <CardLayoutPanel layout={layout} onChange={setLayout} storage={storage} />;
 
   const bodies: Record<string, ReactNode> = {
@@ -919,7 +943,51 @@ export function SettingsView({
             申请通知权限
           </Button>
         </div>
-        <span className="text-xs text-muted">网页关闭后无法提醒；Android 采用系统通知排定，Windows 依赖常驻托盘。</span>
+        <span className="text-xs text-muted">关闭后不再提醒</span>
+        {androidApp && (
+          <>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+              <span data-role="exact-alarm-status">
+                精确闹钟：{alarmState === 'granted' ? '已开启' : alarmState === 'denied' ? '未开启' : '不适用'}
+              </span>
+              {alarmState === 'denied' && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label="开启精确闹钟"
+                  onClick={() =>
+                    void (async () => {
+                      await requestExactAlarm();
+                      setAlarmState(await exactAlarmState());
+                    })()
+                  }
+                >
+                  去开启
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+              <span data-role="battery-optimization-status">
+                后台运行：{batteryFree === null ? '读取中…' : batteryFree ? '已加入电池优化白名单' : '受电池优化限制，提醒可能延后'}
+              </span>
+              {batteryFree === false && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  aria-label="申请加入电池优化白名单"
+                  onClick={() =>
+                    void (async () => {
+                      await requestIgnoreBatteryOptimizations();
+                      setBatteryFree(await isIgnoringBatteryOptimizations());
+                    })()
+                  }
+                >
+                  去设置
+                </Button>
+              )}
+            </div>
+          </>
+        )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>课前提醒</span>
@@ -967,7 +1035,7 @@ export function SettingsView({
           {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
         </span>
         <span className="text-xs text-muted">
-          想单独改某门课，在课程详情里打开「单独设置这门课的提醒」再调。
+          单课可在课程详情里单独设置
         </span>
       </>
     ),
@@ -1008,7 +1076,7 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="周视图天数" hint="1–7 天任意一天；窄屏会按列宽压缩，不需要左右滑动">
+        <Field label="周视图天数" hint="1–7 天" help="列宽按屏宽等分，不横向滚动">
           <Select value={String(settings.viewDays)} onValueChange={(value) => void onPatch({ viewDays: Number(value) })}>
             <SelectTrigger aria-label="周视图天数">
               <span>{settings.viewDays} 天</span>
@@ -1017,6 +1085,20 @@ export function SettingsView({
               {VIEW_DAY_OPTIONS.map((days) => (
                 <SelectItem key={days} value={String(days)}>
                   {days} 天
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="界面动效" hint="页面与弹窗过渡" help="跟随系统时遵守系统的「减少动态效果」">
+          <Select value={settings.motion} onValueChange={(value) => void onPatch({ motion: value as MotionMode })}>
+            <SelectTrigger aria-label="界面动效">
+              <span>{MOTION_LABEL[settings.motion]}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {MOTION_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {MOTION_LABEL[mode]}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1037,7 +1119,7 @@ export function SettingsView({
           <div className="flex flex-col gap-2" data-role="mobile-widget-guide">
             <span className="text-sm text-ink">桌面小组件</span>
             <span className="text-xs text-muted">
-              长按桌面空白处 → 小组件 → 找到「晓刻 DawnTick」；支持一键添加的启动器可直接点下面的按钮。
+              桌面长按 → 小组件 → 晓刻
             </span>
             {MOBILE_WIDGETS.map((widget) => (
               <div
@@ -1118,7 +1200,7 @@ export function SettingsView({
         </Field>
           </>
         )}
-        <Field label="卡片布局" hint="已独立成顶部「卡片布局」按钮，隐藏卡片后也能随时改回来">
+        <Field label="卡片布局" hint="顶部按钮进入">
           <Button size="sm" variant="secondary" aria-label="打开卡片布局" onClick={() => setLayoutOpen(true)}>
             打开卡片布局
           </Button>
@@ -1129,7 +1211,7 @@ export function SettingsView({
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>空日程提示明日预告</span>
-            <span className="truncate text-xs text-muted">当天没课或课都上完时，日程页与悬浮窗都显示明天的课</span>
+            <span className="truncate text-xs text-muted">无课时显示明日课程</span>
           </span>
           <Switch
             checked={settings.tomorrowPreview}
@@ -1232,7 +1314,7 @@ export function SettingsView({
                 存储位置：{storageInfo === null ? '读取中' : storageInfo.dir}
                 {storageInfo === null ? '' : storageInfo.portable ? '（便携版）' : '（安装版）'}
               </span>
-              <Field label="自定义存储位置" hint="留空用默认位置；相对路径以程序所在目录为基准，改完重启生效">
+              <Field label="自定义存储位置" hint="留空用默认" help="相对路径相对程序目录；改完重启生效">
                 <Input
                   data-role="storage-path"
                   value={storagePathInput}
@@ -1246,7 +1328,7 @@ export function SettingsView({
                   variant="secondary"
                   aria-label="保存存储位置"
                   disabled={storageBusy}
-                  onClick={() => void saveStorage(storagePathInput)}
+                  onClick={() => void runBusy('正在保存存储位置…', () => saveStorage(storagePathInput))}
                 >
                   保存位置
                 </Button>
@@ -1316,9 +1398,9 @@ export function SettingsView({
           </div>
         )}
         <span className="text-xs text-muted">
-          本期无服务端，同步协议已就绪但未启用；跨设备迁移用 JSON、Base64 文本或整包 zip 备份。
+          跨设备迁移用导出导入
         </span>
-        <span className="text-xs text-muted">预设来源：独立仓库 dawn-tick-presets；更新于下次启动生效。</span>
+        <span className="text-xs text-muted">预设来源：dawn-tick-presets</span>
         <div className="flex flex-col gap-1" data-role="backup-settings">
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
             <span>自动备份</span>
@@ -1367,7 +1449,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="立即备份"
               disabled={snapshotBusy}
-              onClick={() => void backupNow()}
+              onClick={() => void runBusy('正在备份…', () => backupNow())}
             >
               立即备份
             </Button>
@@ -1399,7 +1481,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`恢复快照 ${entry.id}`}
                     disabled={snapshotBusy}
-                    onClick={() => void restoreSnapshotNow(entry)}
+                    onClick={() => void runBusy('正在恢复快照…', () => restoreSnapshotNow(entry))}
                   >
                     恢复
                   </Button>
@@ -1408,7 +1490,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`删除快照 ${entry.id}`}
                     disabled={snapshotBusy}
-                    onClick={() => void removeSnapshot(entry)}
+                    onClick={() => void runBusy('正在删除快照…', () => removeSnapshot(entry))}
                   >
                     删除
                   </Button>
@@ -1487,7 +1569,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="测试 WebDAV 连接"
               disabled={davBusy || !davConfigured(dav)}
-              onClick={() => void testDav()}
+              onClick={() => void runBusy('正在测试连接…', () => testDav())}
             >
               测试连接
             </Button>
@@ -1496,7 +1578,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="上传到 WebDAV"
               disabled={davBusy || !davConfigured(dav)}
-              onClick={() => void uploadDav()}
+              onClick={() => void runBusy('正在上传到 WebDAV…', () => uploadDav())}
             >
               立即上传
             </Button>
@@ -1531,7 +1613,7 @@ export function SettingsView({
             导入配置
           </Button>
           {diagnosticsVisible && (
-            <Button size="sm" variant="secondary" onClick={() => void exportLogs()}>
+            <Button size="sm" variant="secondary" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
               导出日志
             </Button>
           )}
@@ -1564,7 +1646,7 @@ export function SettingsView({
             variant="secondary"
             aria-label="检查更新"
             disabled={updateBusy}
-            onClick={() => void runUpdateCheck()}
+            onClick={() => void runBusy('正在检查更新…', () => runUpdateCheck())}
           >
             检查更新
           </Button>
@@ -1611,7 +1693,7 @@ export function SettingsView({
             <span className="flex min-w-0 flex-col">
               <span>开发者特性</span>
               <span className="truncate text-xs text-muted">
-                关闭后按正式版特性运行：不记 debug 日志、禁用右键菜单、不显示日志控制台；更新仍随 dev
+                关闭后按正式版运行
               </span>
             </span>
             <Switch
@@ -1626,13 +1708,13 @@ export function SettingsView({
         <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="log-settings">
           <span className="text-sm font-medium text-ink">应用诊断日志</span>
           <span className="text-xs text-muted">
-            控制 dawn-tick.log 的输出级别；关闭后不再写文件，控制台仍会输出
+            写入文件的门槛
           </span>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" aria-label="打开日志" onClick={() => void exportLogs()}>
+            <Button size="sm" variant="secondary" aria-label="打开日志" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
               打开日志
             </Button>
-            <span className="text-xs text-muted">导出当前缓冲区；「打开日志文件所在目录」在资源管理器里定位文件</span>
+            <span className="text-xs text-muted">导出当前缓冲区</span>
           </div>
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
             <span>启用应用诊断日志</span>
@@ -1683,7 +1765,7 @@ export function SettingsView({
             variant="secondary"
             aria-label="检查预设更新"
             disabled={presetBusy}
-            onClick={() => void runPresetCheck()}
+            onClick={() => void runBusy('正在读取预设更新…', () => runPresetCheck())}
           >
             检查预设更新
           </Button>
@@ -1709,7 +1791,7 @@ export function SettingsView({
             </Button>
           </div>
         )}
-        <span className="text-xs text-muted">应用内只检查版本与说明；下载与安装到发布页完成。</span>
+        <span className="text-xs text-muted">只在应用内检查版本</span>
       </>
     ),
 
@@ -1738,7 +1820,7 @@ export function SettingsView({
             </ExternalLink>
           </span>
           <span className="text-xs text-muted">
-            快捷键：/ 搜索 · ← → 切换周 · T 回到本周 · Esc 关闭弹窗与占位块
+            快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天 · Esc 关闭弹窗与占位块
           </span>
           <span className="text-xs text-muted">
             学校适配与作息在独立仓库 dawn-tick-presets 维护，缺适配时可提交学校信息。
@@ -1841,7 +1923,7 @@ export function SettingsView({
       >
         <DialogContent
           title="卡片布局"
-          description="显示 / 隐藏、上移下移、主列 / 侧列；「全部显示」可把所有卡片一次改回可见"
+          description="显示与排序卡片"
         >
           {layoutGroups}
           <DialogFooter>
@@ -1900,7 +1982,7 @@ export function SettingsView({
           description={
             removing === null
               ? ''
-              : `将删除「${removing.name}」及其课程、排课、节次、日程与提醒，本操作不可撤销`
+              : `将删除「${removing.name}」及课程、日程与提醒，不可撤销`
           }
         >
           <DialogFooter>
@@ -1921,7 +2003,7 @@ export function SettingsView({
       >
         <DialogContent
           title="从 WebDAV 下载"
-          description="下载前会先给本机做一份快照；「恢复全部」会覆盖本机数据，需重启后完全生效"
+          description="「恢复全部」会覆盖本机数据，需重启生效"
         >
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDavConfirmOpen(false)}>
@@ -1931,7 +2013,7 @@ export function SettingsView({
               variant="secondary"
               aria-label="下载并只应用设置与预设"
               disabled={davBusy}
-              onClick={() => void downloadDav('settings')}
+              onClick={() => void runBusy('正在下载并应用…', () => downloadDav('settings'))}
             >
               只应用设置与预设
             </Button>
@@ -1939,7 +2021,7 @@ export function SettingsView({
               variant="danger"
               aria-label="下载并恢复整库"
               disabled={davBusy}
-              onClick={() => void downloadDav('all')}
+              onClick={() => void runBusy('正在下载并应用…', () => downloadDav('all'))}
             >
               恢复全部
             </Button>
@@ -2120,7 +2202,7 @@ export function SettingsView({
           if (!open) setPendingImport(null);
         }}
       >
-        <DialogContent title="导入配置" description="勾选要导入的模块，并选择遇到已有数据时的处理方式">
+        <DialogContent title="导入配置" description="选模块与冲突处理">
           <div className="flex flex-col gap-1">
             {summarizeBackup(pendingImport ?? { format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} })
               .filter((item) => item.rows > 0)

@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [dev, beta, main]
+    branches: [dev, main]
     tags: ['v*']
   pull_request:
-    branches: [dev, beta, main]
+    branches: [dev, main]
   workflow_dispatch:
 
 concurrency:

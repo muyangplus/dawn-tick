@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Plus } from 'lucide-react';
-import { addDays } from '@dawn-tick/core';
+import { addDays, dayOfWeek as nextDayOfWeek, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
@@ -23,17 +23,19 @@ const MOVE_TOLERANCE = 8;
 /** 拖动占位块松手后，抑制紧随那次 click 的时间窗（毫秒）。 */
 const SUPPRESS_SLOT_CLICK_MS = 500;
 
-/** 查看周里第 day 天的日期（周一为第 1 天）。 */
-function weekDayDate(weekStartDate: string, day: number): string {
-  const base = Date.parse(`${weekStartDate}T00:00:00Z`);
-  if (Number.isNaN(base)) return weekStartDate;
-  return new Date(base + (day - 1) * 86_400_000).toISOString().slice(0, 10);
-}
-
 /** 表头显示月日。 */
 function formatMonthDay(date: string): string {
   const [, month, day] = date.split('-');
   return `${Number(month)}/${Number(day)}`;
+}
+
+/** 日期区间文案：同月省略重复的月份，例如 8/19–23。 */
+function formatDateRange(from: string, to: string): string {
+  if (from === to) return formatMonthDay(from);
+  const [fromYear, fromMonth] = from.split('-');
+  const [toYear, toMonth] = to.split('-');
+  if (fromYear === toYear && fromMonth === toMonth) return `${formatMonthDay(from)}–${Number(to.split('-')[2])}`;
+  return `${formatMonthDay(from)}–${formatMonthDay(to)}`;
 }
 
 /** 节次范围文案：单节显示「第 3 节」，连堂显示「第 3–4 节」。 */
@@ -41,22 +43,17 @@ function formatPeriods(start: number, end: number): string {
   return start === end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
-/**
- * 多天假期的第一天：当天放假、且前一天不放假。
- * 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。
- */
+/** 多天假期第一天：当天放假且前一天不放假。 */
+/** 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。 */
 function isHolidayRunStart(data: AppData, date: string): boolean {
   if (!data.holidayLabels.has(date)) return false;
   return !data.holidayLabels.has(addDays(date, -1));
 }
 
-/**
- * 该格里是否已有课：连堂与「停课」这类占多节的条目，
- * 只要落在它覆盖的节次范围内就算被占用（否则点第 2 节会被当成空白格）。
- */
-function occupied(data: AppData, day: number, period: number): boolean {
+/** 连堂与「停课」等占多节的条目：节次落在其覆盖范围内即算该格被占用。 */
+function occupied(data: AppData, date: string, period: number): boolean {
   for (let current = period; current >= 1; current -= 1) {
-    const cells = data.grid.get(`${day}:${current}`) ?? [];
+    const cells = data.grid.get(`${date}:${current}`) ?? [];
     if (cells.some((cell) => period >= current && period <= Math.max(cell.periodStart, cell.periodEnd))) return true;
   }
   return false;
@@ -74,12 +71,12 @@ function periodAt(
 }
 
 /** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
-function clashingLessons(data: AppData, day: number, start: number, end: number): LessonCell[] {
+function clashingLessons(data: AppData, date: string, start: number, end: number): LessonCell[] {
   const out: LessonCell[] = [];
   const seen = new Set<string>();
   for (const list of data.grid.values()) {
     for (const cell of list) {
-      if (!cell.inWeek || cell.dayOfWeek !== day) continue;
+      if (!cell.inWeek || cell.date !== date) continue;
       if (cell.periodEnd < start || cell.periodStart > end) continue;
       if (seen.has(cell.scheduleId)) continue;
       seen.add(cell.scheduleId);
@@ -96,8 +93,8 @@ interface Clash {
 }
 
 /** 范围里第一门重叠的课，用课程全名，提示文案更清楚。 */
-function firstClash(data: AppData, day: number, start: number, end: number): Clash | null {
-  const cell = clashingLessons(data, day, start, end)[0];
+function firstClash(data: AppData, date: string, start: number, end: number): Clash | null {
+  const cell = clashingLessons(data, date, start, end)[0];
   if (cell === undefined) return null;
   const name = data.courses.find((course) => course.id === cell.courseId)?.name ?? cell.name;
   return { name, start: cell.periodStart, end: cell.periodEnd };
@@ -121,14 +118,15 @@ function emptyDragEdgeOf(
 }
 
 interface EmptyTarget {
-  day: number;
+  /** 目标日期（YYYY-MM-DD）：空白格与拖动落点都按日期定位 */
+  date: string;
   start: number;
   end: number;
 }
 
 interface DragState {
   cell: LessonCell;
-  day: number;
+  date: string;
   period: number;
   x: number;
   y: number;
@@ -148,10 +146,7 @@ interface DragSession {
 /** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩，空白格按下直接拖出范围。 */
 type EmptyDragMode = 'wheel' | 'body' | 'select';
 
-/**
- * 块本体拖动时哪条边跟着指针走：
- * both 是起始就是单节（上下都算扩展），top / bottom 是按住的位置在上半还是下半。
- */
+/** 块本体拖动时跟着指针的边：both 为上下都扩展，否则按按住位置取 top / bottom。 */
 type EmptyDragEdge = 'both' | 'top' | 'bottom';
 
 interface EmptyDragState {
@@ -177,15 +172,15 @@ export interface QuickCreatePreset {
 
 export interface WeekViewProps {
   data: AppData;
-  viewDays: number;
   /** 非本周课程是否用虚线显示 */
   showOtherWeeks: boolean;
   onSelectLesson: (cell: LessonCell) => void;
-  onMoveLesson: (cell: LessonCell, dayOfWeek: number, period: number) => void;
+  /** 拖动落点的日期与节次 */
+  onMoveLesson: (cell: LessonCell, date: string, period: number) => void;
   /** 点击空白格后，确认在这里新建课程 */
   onQuickCreate: (preset: QuickCreatePreset) => void;
-  onPrevWeek: () => void;
-  onNextWeek: () => void;
+  onPrevWindow: () => void;
+  onNextWindow: () => void;
 }
 
 function lessonsOf(data: AppData): LessonCell[] {
@@ -216,13 +211,12 @@ function measureCardFit(): { cards: number; clipped: boolean; overflow: number }
 
 export function WeekView({
   data,
-  viewDays,
   showOtherWeeks,
   onSelectLesson,
   onMoveLesson,
   onQuickCreate,
-  onPrevWeek,
-  onNextWeek,
+  onPrevWindow,
+  onNextWindow,
 }: WeekViewProps) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
@@ -233,8 +227,8 @@ export function WeekView({
   const touchStart = useRef<number | null>(null);
   const session = useRef<DragSession | null>(null);
   const suppressNextClick = useRef(false);
-  const columns = useRef(new Map<number, HTMLElement>());
-  const dropRef = useRef<{ day: number; period: number } | null>(null);
+  const columns = useRef(new Map<string, HTMLElement>());
+  const dropRef = useRef<{ date: string; period: number } | null>(null);
   const emptyRef = useRef<EmptyTarget | null>(null);
   const wheelAt = useRef(0);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -257,9 +251,14 @@ export function WeekView({
     [data.slots],
   );
   const lessons = useMemo(() => lessonsOf(data), [data]);
+  /** 补白只由真正画出来的格子决定：非本周课程按设置隐藏时不参与 */
+  const shownLessons = useMemo(
+    () => lessons.filter((lesson) => lesson.inWeek || showOtherWeeks),
+    [lessons, showOtherWeeks],
+  );
   const periodCount = slots.length;
   /** 头部/尾部补白随自定义时间条目伸缩：节次轴、时间线与拖动换算都跟着平移 */
-  const metrics = useMemo(() => gridMetrics(slots, lessons, rowHeight), [slots, lessons, rowHeight]);
+  const metrics = useMemo(() => gridMetrics(slots, shownLessons, rowHeight), [slots, shownLessons, rowHeight]);
   const gridHeight = metrics.padTop + periodCount * rowHeight + metrics.padBottom;
   const nowMinute = localMinuteOfDay(nowTick, data.timeZone);
   const ratio =
@@ -359,8 +358,7 @@ export function WeekView({
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [empty !== null]);
 
-  // 拖动占位块期间把 move/up 也挂到 window：按住「＋」开始拖动时被按下的按钮会被
-  // 实时标签盖住，指针一离开块体（或指针捕获没生效）块节点就收不到 pointermove。
+  // 拖动占位块期间 move/up/cancel 挂在 window：指针离开块体或指针捕获未生效时块节点收不到 pointermove。
   useEffect(() => {
     const onMove = (event: PointerEvent): void => moveEmptyDrag(event);
     const onUp = (event: PointerEvent): void => endEmptyDrag(event);
@@ -382,50 +380,47 @@ export function WeekView({
     emptyRef.current = next;
     setEmpty(next);
     // 换了一天或关掉占位块后，同一处重叠可以再提示一次
-    if (next === null || previous === null || next.day !== previous.day) lastClash.current = '';
+    if (next === null || previous === null || next.date !== previous.date) lastClash.current = '';
   }
 
   /** 点到空白格：先给出一个「目标节次 + 单节」的虚线占位块。 */
-  function pickEmpty(day: number, period: number): void {
-    if (occupied(data, day, period)) {
+  function pickEmpty(date: string, period: number): void {
+    if (occupied(data, date, period)) {
       setEmptyTarget(null);
       return;
     }
-    setEmptyTarget({ day, start: period, end: period });
+    setEmptyTarget({ date, start: period, end: period });
   }
 
   /** 范围落进已有课时提醒一次：课程允许重叠，这里只提示、不拦截。 */
-  function warnClash(day: number, start: number, end: number): void {
-    const clash = firstClash(data, day, start, end);
+  function warnClash(date: string, start: number, end: number): void {
+    const clash = firstClash(data, date, start, end);
     const key = clash === null ? '' : `${clash.name}:${clash.start}-${clash.end}`;
     if (key === lastClash.current) return;
     lastClash.current = key;
     if (clash !== null) toast.info(`${clashLabel(clash)}，仍可继续新建`);
   }
 
-  /** 带当前范围打开加课弹窗：点「＋」与拖动松手共用。 */
+  /** 带当前范围打开加课弹窗：点「＋」与拖动松手共用；预填的周次取该列日期所在的周。 */
   function openQuickCreate(target: EmptyTarget): void {
     onQuickCreate({
-      dayOfWeek: target.day,
+      dayOfWeek: nextDayOfWeek(target.date),
       periodStart: Math.min(target.start, target.end),
       periodEnd: Math.max(target.start, target.end),
-      weeks: [data.viewWeek],
+      weeks: [data.semester === null ? data.viewWeek : weekOfDate(target.date, data.semester.start_date)],
     });
     setEmptyTarget(null);
   }
 
-  /**
-   * 调整占位节次：delta > 0 向下扩展、delta < 0 向上扩展。
-   * 只受节次上下限约束，与已有课重叠时给出提示、仍可继续。
-   */
+  /** 调整占位节次：delta > 0 向下、delta < 0 向上；只受节次上下限约束，重叠仍可继续。 */
   function step(target: EmptyTarget, delta: number): void {
     let start = target.start;
     let end = target.end;
     if (delta > 0) end = Math.min(periodCount, end + delta);
     else if (start > 1) start = start - 1;
     start = Math.max(1, Math.min(start, end));
-    setEmptyTarget({ day: target.day, start, end });
-    warnClash(target.day, start, end);
+    setEmptyTarget({ date: target.date, start, end });
+    warnClash(target.date, start, end);
   }
 
   /** 按下占位块（滚轮条或块本体）：记录起点，之后由 pointermove 改范围。 */
@@ -447,8 +442,7 @@ export function WeekView({
       moved: false,
     };
     if (mode === 'body') showEmptyVisual('body');
-    // 这里刻意不 setPointerCapture：捕获会把后面的兼容鼠标事件也改派到块节点上，
-    // 单击「＋」的 click 就落不到按钮上了；移动/抬手改由拖动期间的 window 监听兜住。
+    // 不 setPointerCapture：会改派兼容鼠标事件，单击「＋」的 click 落不到按钮；move/up 由 window 监听兜住。
   }
 
   function showEmptyVisual(mode: EmptyDragMode | null): void {
@@ -456,10 +450,7 @@ export function WeekView({
     setEmptyDragMode(mode);
   }
 
-  /**
-   * 空白格按下：记下按下的节次，不松手即可上下拖出范围；
-   * 拖动期间沿用块本体的「两边一起扩」口径，松手直接进加课弹窗。
-   */
+  /** 空白格按下：记下按下节次，不松手可上下拖出范围；拖动沿用「两边一起扩」，松手进加课弹窗。 */
   function beginSlotSelect(event: React.PointerEvent<HTMLElement>, period: number): void {
     emptyDrag.current = {
       pointerId: event.pointerId,
@@ -489,8 +480,8 @@ export function WeekView({
       active.moved = true;
     }
     const range = active.mode === 'wheel' ? wheelRangeOf(active, rows) : bodyRangeOf(active, rows);
-    setEmptyTarget({ day: current.day, start: range.start, end: range.end });
-    warnClash(current.day, range.start, range.end);
+    setEmptyTarget({ date: current.date, start: range.start, end: range.end });
+    warnClash(current.date, range.start, range.end);
   }
 
   /** 滚轮条：整段上下平移。 */
@@ -549,11 +540,11 @@ export function WeekView({
     lastClash.current = '';
   }
 
-  function targetCellOf(clientX: number, clientY: number): { day: number; period: number } | null {
-    for (const [day, element] of columns.current) {
+  function targetCellOf(clientX: number, clientY: number): { date: string; period: number } | null {
+    for (const [date, element] of columns.current) {
       const bounds = element.getBoundingClientRect();
       if (clientX < bounds.left || clientX > bounds.right) continue;
-      return { day, period: periodAt(clientY, bounds.top, periodCount, rowHeight, metrics.padTop) };
+      return { date, period: periodAt(clientY, bounds.top, periodCount, rowHeight, metrics.padTop) };
     }
     return null;
   }
@@ -599,7 +590,7 @@ export function WeekView({
       dropRef.current = targetCellOf(active.startX, active.startY);
       setDrag({
         cell: lesson,
-        day: dropRef.current?.day ?? lesson.dayOfWeek,
+        date: dropRef.current?.date ?? lesson.date,
         period: dropRef.current?.period ?? lesson.periodStart,
         x: active.startX,
         y: active.startY,
@@ -624,7 +615,7 @@ export function WeekView({
         ? null
         : {
             ...current,
-            day: drop?.day ?? current.day,
+            date: drop?.date ?? current.date,
             period: drop?.period ?? current.period,
             x: event.clientX,
             y: event.clientY,
@@ -645,10 +636,11 @@ export function WeekView({
     const drop = targetCellOf(event.clientX, event.clientY) ?? dropRef.current;
     dropRef.current = null;
     if (drop === null || periodCount === 0) return;
-    if (drop.day === lesson.dayOfWeek && drop.period === lesson.periodStart) return;
+    // 落回原处（同一天同一节）不算调整
+    if (drop.date === lesson.date && drop.period === lesson.periodStart) return;
     const span = lesson.periodEnd - lesson.periodStart + 1;
     const period = Math.min(periodCount - span + 1, Math.max(1, drop.period));
-    onMoveLesson(lesson, drop.day, period);
+    onMoveLesson(lesson, drop.date, period);
   }
 
   function onLessonPointerCancel(event: React.PointerEvent<HTMLDivElement>): void {
@@ -681,14 +673,18 @@ export function WeekView({
         if (start === null || end === null) return;
         const delta = end - start;
         if (Math.abs(delta) < 60) return;
-        if (delta > 0) onPrevWeek();
-        else onNextWeek();
+        if (delta > 0) onPrevWindow();
+        else onNextWindow();
       }}
     >
       {!data.hasLessons && (
         <EmptyState
-          title={`第 ${data.viewWeek} 周没有课程`}
-          description="可通过右上角添加课程，或到导入页从 ICS、CSV/Excel 与教务系统导入"
+          title={
+            data.windowDates.length <= 1
+              ? `${formatMonthDay(data.windowStart)} 没有课程`
+              : `${formatDateRange(data.windowStart, data.windowDates[data.windowDates.length - 1] as string)} 没有课程`
+          }
+          description="从右上角加课，或到导入页导入"
         />
       )}
 
@@ -697,17 +693,16 @@ export function WeekView({
         <div>
           <div
             className="grid border-b border-line"
-            style={{ gridTemplateColumns: `var(--dt-axis) repeat(${viewDays}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: `var(--dt-axis) repeat(${data.windowDates.length}, minmax(0, 1fr))` }}
           >
             <div className="px-2 py-2 text-center text-xs text-muted">节次</div>
-            {WEEKDAYS.slice(0, viewDays).map((label, index) => {
-              const day = index + 1;
-              const isToday = data.viewWeek === data.week && day === data.todayOfWeek;
-              const date = weekDayDate(data.weekStartDate, day);
+            {data.windowDates.map((date) => {
+              const label = WEEKDAYS[nextDayOfWeek(date) - 1] ?? '';
+              const isToday = date === data.today;
               const isHoliday = data.holidayLabels.has(date);
               return (
                 <div
-                  key={label}
+                  key={date}
                   className={cn(
                     'px-1 py-2 text-center text-[10px] tablet:px-2 tablet:text-xs',
                     isToday ? 'font-semibold text-primary-strong' : isHoliday ? 'text-muted' : 'text-ink',
@@ -727,7 +722,7 @@ export function WeekView({
           <div
             className="relative grid"
             style={{
-              gridTemplateColumns: `var(--dt-axis) repeat(${viewDays}, minmax(0, 1fr))`,
+              gridTemplateColumns: `var(--dt-axis) repeat(${data.windowDates.length}, minmax(0, 1fr))`,
               height: `${gridHeight}px`,
             }}
           >
@@ -767,28 +762,26 @@ export function WeekView({
               </div>
             )}
 
-            {Array.from({ length: viewDays }, (_, index) => {
-              const day = index + 1;
-              const isToday = data.viewWeek === data.week && day === data.todayOfWeek;
-              const columnDate = weekDayDate(data.weekStartDate, day);
+            {data.windowDates.map((columnDate) => {
+              const isToday = columnDate === data.today;
               // 放假优先于非本周；多天假期只有第一天显示假期名称，之后只显示「放假」
               const holidayFirstDay = isHolidayRunStart(data, columnDate);
               const holidayName = data.holidayLabels.get(columnDate);
               const dayLessons = lessons
-                .filter((lesson) => lesson.dayOfWeek === day)
+                .filter((lesson) => lesson.date === columnDate)
                 .filter((lesson) => lesson.inWeek || showOtherWeeks);
-              const isDropColumn = drag !== null && drag.day === day;
-              const placeholder = empty !== null && empty.day === day ? empty : null;
+              const isDropColumn = drag !== null && drag.date === columnDate;
+              const placeholder = empty !== null && empty.date === columnDate ? empty : null;
               const placeholderClash =
                 placeholder === null
                   ? null
-                  : firstClash(data, placeholder.day, placeholder.start, placeholder.end);
+                  : firstClash(data, placeholder.date, placeholder.start, placeholder.end);
               return (
                 <div
-                  key={`column-${day}`}
+                  key={`column-${columnDate}`}
                   ref={(element) => {
-                    if (element === null) columns.current.delete(day);
-                    else columns.current.set(day, element);
+                    if (element === null) columns.current.delete(columnDate);
+                    else columns.current.set(columnDate, element);
                   }}
                   className={cn(
                     'relative border-r border-line last:border-r-0',
@@ -800,7 +793,8 @@ export function WeekView({
                       : undefined
                   }
                   data-today={isToday ? 'true' : undefined}
-                  data-day={day}
+                  data-date={columnDate}
+                  data-day={nextDayOfWeek(columnDate)}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return;
                     // 每次按下都复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次点击
@@ -810,11 +804,11 @@ export function WeekView({
                     const bounds = event.currentTarget.getBoundingClientRect();
                     const period = periodAt(event.clientY, bounds.top, periodCount, rowHeight, metrics.padTop);
                     // 已占用的格只清掉占位块，不进入拖动
-                    if (occupied(data, day, period)) {
+                    if (occupied(data, columnDate, period)) {
                       setEmptyTarget(null);
                       return;
                     }
-                    pickEmpty(day, period);
+                    pickEmpty(columnDate, period);
                     // 空白格按下即进入范围拖动：不松手拖过去就定范围，松手直接开加课弹窗
                     beginSlotSelect(event, period);
                   }}
@@ -829,12 +823,12 @@ export function WeekView({
                     if (target.closest('[data-role="empty-slot"]') !== null) return;
                     if (target.closest('[data-tone]') !== null) return;
                     const bounds = event.currentTarget.getBoundingClientRect();
-                    pickEmpty(day, periodAt(event.clientY, bounds.top, periodCount, rowHeight, metrics.padTop));
+                    pickEmpty(columnDate, periodAt(event.clientY, bounds.top, periodCount, rowHeight, metrics.padTop));
                   }}
                 >
                   {Array.from({ length: periodCount }, (_, rowIndex) => (
                     <div
-                      key={`line-${day}-${rowIndex}`}
+                      key={`line-${columnDate}-${rowIndex}`}
                       className="absolute inset-x-0 border-b border-line"
                       style={{ top: `${metrics.padTop + rowIndex * rowHeight}px`, height: `${rowHeight}px` }}
                     />
@@ -1047,7 +1041,7 @@ export function WeekView({
               );
             })}
 
-            {ratio !== null && data.viewWeek === data.week && (
+            {ratio !== null && data.windowDates.includes(data.today) && (
               <NowIndicator ratio={ratio} className="left-[var(--dt-axis)]" />
             )}
           </div>

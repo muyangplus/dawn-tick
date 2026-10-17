@@ -1,9 +1,12 @@
 package com.dawntick.app.widget
 
 import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Bundle
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import com.dawntick.app.MainActivity
@@ -14,9 +17,30 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+/**
+ * 小组件每行文案顺序（与日程页日程时间线一致）：
+ * 「时间 标题」，课程再加「 · 地点」；正在上课、下一节课与今日课表用「起–止」，本周概览用节次，
+ * 考试用日期；停课在标题后加「（停课）」。
+ * 例：08:00–09:40 高等数学 · A101；周一  1-2 高等数学 · A101；2026-01-08 数据结构（停课）；2026-01-08 大学英语
+ *
+ * 不出现省略号：每行高度固定为 widget_row_height，一行能放几行由小组件可用高度除行高向下取整得出，
+ * 只渲染前 N 行，放不下的整行不渲染；标题放不下由系统换行，换行顶出的部分由根布局裁掉。
+ */
 object WidgetRenderer {
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val weekdays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    private const val TIME_SEPARATOR = "–"
+
+    /** 与 widget_*.xml 的 android:padding 一致。 */
+    private const val ROOT_PADDING_DP = 12
+    /** 与 @dimen/widget_header_height 一致。 */
+    private const val HEADER_DP = 16
+    /** 与 @dimen/widget_count_height 一致，不含倒计时行的布局传 0。 */
+    private const val COUNT_DP = 22
+    /** 与 @dimen/widget_row_height 一致。 */
+    private const val ROW_DP = 22
+    /** 与 appwidget-provider 的 minHeight 一致，系统未给出高度时按它算行数。 */
+    private const val FALLBACK_WIDGET_HEIGHT_DP = 110
 
     private const val INK_LIGHT = 0xFF1F1B24.toInt()
     private const val MUTED_LIGHT = 0xFF6B6475.toInt()
@@ -54,80 +78,105 @@ object WidgetRenderer {
         for (id in accentIds) views.setTextColor(id, accent)
     }
 
-    fun buildNext(context: Context, snapshot: WidgetSnapshot?): RemoteViews {
+    private fun dp(context: Context, value: Int): Int = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP,
+        value.toFloat(),
+        context.resources.displayMetrics,
+    ).toInt()
+
+    /**
+     * 小组件能放下的行数 =（可用高度 − 上下内边距 − 标题行 − 倒计时行）÷ 行高，向下取整。
+     * 行数再受布局里写死的行槽上限 maxRows 限制。
+     * 高度取 minHeight/maxHeight 里小的那个，避免按拉大后的高度多算行。
+     */
+    private fun rowCapacity(context: Context, appWidgetId: Int, maxRows: Int, countDp: Int): Int {
+        val manager = AppWidgetManager.getInstance(context)
+        val options: Bundle? =
+            if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) null
+            else manager.getAppWidgetOptions(appWidgetId)
+        val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 0
+        val maxHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT) ?: 0
+        val heights = listOf(minHeight, maxHeight).filter { it > 0 }
+        // 系统给的高度是 dp，下面的 used 与 rowHeight 都是 px：先换到 px 再相减
+        val heightDp = if (heights.isEmpty()) FALLBACK_WIDGET_HEIGHT_DP else heights.min()
+        val widgetHeight = dp(context, heightDp)
+
+        val used = dp(context, ROOT_PADDING_DP * 2 + HEADER_DP + countDp)
+        val rowHeight = dp(context, ROW_DP)
+        if (rowHeight <= 0) return 0
+        return ((widgetHeight - used) / rowHeight).coerceIn(0, maxRows)
+    }
+
+    /** 按行数上限写行文本；超出上限的行整行不渲染，没有内容的行也不渲染。 */
+    private fun fillRows(views: RemoteViews, rowIds: IntArray, capacity: Int, texts: List<String>) {
+        for ((index, rowId) in rowIds.withIndex()) {
+            val text = texts.getOrNull(index)
+            if (index >= capacity || text.isNullOrEmpty()) {
+                views.setViewVisibility(rowId, View.GONE)
+            } else {
+                views.setViewVisibility(rowId, View.VISIBLE)
+                views.setTextViewText(rowId, text)
+            }
+        }
+    }
+
+    fun buildNext(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_next)
         applyTheme(
             views,
             context,
             snapshot,
-            primaryIds = intArrayOf(R.id.widget_title),
-            mutedIds = intArrayOf(R.id.widget_label, R.id.widget_meta),
+            primaryIds = intArrayOf(R.id.widget_row1, R.id.widget_row2, R.id.widget_row3),
+            mutedIds = intArrayOf(R.id.widget_label),
+            accentIds = intArrayOf(R.id.widget_count),
         )
+        val capacity = rowCapacity(context, appWidgetId, maxRows = 3, countDp = COUNT_DP)
         val current = snapshot?.current
-        if (current != null) {
-            views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_in_class))
-            views.setTextViewText(R.id.widget_title, current.title)
-            views.setTextViewText(R.id.widget_count, remaining(current.endsAt))
-            val meta = buildString {
-                append(timeFormat.format(Date(current.startsAt)))
-                append('–')
-                append(timeFormat.format(Date(current.endsAt)))
-                if (!current.room.isNullOrEmpty()) append(" · ").append(current.room)
-            }
-            views.setTextViewText(R.id.widget_meta, meta)
+        val next = snapshot?.next
+        val primary = current?.takeIf { it.startsAt > 0 } ?: next?.takeIf { it.startsAt > 0 }
+        views.setTextViewText(
+            R.id.widget_label,
+            context.getString(if (current != null) R.string.widget_in_class else R.string.widget_next_label),
+        )
+        val texts = if (primary == null) {
+            views.setTextViewText(R.id.widget_count, "")
+            listOf(context.getString(R.string.widget_no_lesson))
         } else {
-            views.setTextViewText(R.id.widget_label, context.getString(R.string.widget_next_label))
-            val next = snapshot?.next
-            if (next == null) {
-                views.setTextViewText(R.id.widget_title, context.getString(R.string.widget_no_lesson))
-                views.setTextViewText(R.id.widget_count, "")
-                views.setTextViewText(R.id.widget_meta, "")
-            } else {
-                views.setTextViewText(R.id.widget_title, next.title)
-                views.setTextViewText(R.id.widget_count, countdown(next.startsAt))
-                val meta = buildString {
-                    append(timeFormat.format(Date(next.startsAt)))
-                    if (!next.room.isNullOrEmpty()) append(" · ").append(next.room)
-                }
-                views.setTextViewText(R.id.widget_meta, meta)
-            }
+            views.setTextViewText(
+                R.id.widget_count,
+                if (current != null) remaining(current.endsAt) else countdown(primary.startsAt),
+            )
+            listOf(lessonLine(primary.startsAt, primary.endsAt, primary.title, primary.room))
         }
+        fillRows(views, intArrayOf(R.id.widget_row1, R.id.widget_row2, R.id.widget_row3), capacity, texts)
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views
     }
 
-    fun buildToday(context: Context, snapshot: WidgetSnapshot?): RemoteViews {
+    fun buildToday(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_today)
-        applyTheme(
-            views,
-            context,
-            snapshot,
-            primaryIds = intArrayOf(
-                R.id.widget_row1,
-                R.id.widget_row2,
-                R.id.widget_row3,
-                R.id.widget_row4,
-                R.id.widget_row5,
-            ),
-            mutedIds = intArrayOf(R.id.widget_header, R.id.widget_empty),
-        )
-        val rows = intArrayOf(
+        val rowIds = intArrayOf(
             R.id.widget_row1,
             R.id.widget_row2,
             R.id.widget_row3,
             R.id.widget_row4,
             R.id.widget_row5,
         )
+        applyTheme(
+            views,
+            context,
+            snapshot,
+            primaryIds = rowIds,
+            mutedIds = intArrayOf(R.id.widget_header, R.id.widget_empty),
+        )
+        val capacity = rowCapacity(context, appWidgetId, maxRows = rowIds.size, countDp = 0)
         val lessons = snapshot?.today.orEmpty()
-        for ((index, rowId) in rows.withIndex()) {
-            val lesson = lessons.getOrNull(index)
-            if (lesson == null) {
-                views.setViewVisibility(rowId, View.GONE)
-            } else {
-                views.setViewVisibility(rowId, View.VISIBLE)
-                views.setTextViewText(rowId, lessonLine(lesson.startsAt, lesson.title, lesson.room))
-            }
-        }
+        fillRows(
+            views,
+            rowIds,
+            capacity,
+            lessons.map { lessonLine(it.startsAt, it.endsAt, it.title, it.room) },
+        )
         views.setTextViewText(
             R.id.widget_header,
             if (snapshot == null) context.getString(R.string.widget_no_data)
@@ -138,8 +187,8 @@ object WidgetRenderer {
         return views
     }
 
-    /** 4×4 一周概览：每天一行，最多显示三节。 */
-    fun buildWeekOverview(context: Context, snapshot: WidgetSnapshot?): RemoteViews {
+    /** 4×4 一周概览：一节课一行，放不下的整行不渲染。 */
+    fun buildWeekOverview(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_week)
         val rowIds = intArrayOf(
             R.id.widget_week_row1,
@@ -151,20 +200,25 @@ object WidgetRenderer {
             R.id.widget_week_row7,
         )
         applyTheme(views, context, snapshot, primaryIds = rowIds, mutedIds = intArrayOf(R.id.widget_week_header))
+        val capacity = rowCapacity(context, appWidgetId, maxRows = rowIds.size, countDp = 0)
         val grid = snapshot?.grid.orEmpty()
-        for ((index, rowId) in rowIds.withIndex()) {
-            val day = index + 1
-            val lessons = grid.filter { it.dayOfWeek == day }.sortedBy { it.periodStart }
-            if (lessons.isEmpty()) {
-                views.setTextViewText(rowId, context.getString(R.string.widget_week_empty_row, weekdays[index]))
-            } else {
-                val text = lessons.take(3).joinToString(" · ") { lesson ->
-                    val title = if (lesson.cancelled) "${lesson.title}（停课）" else lesson.title
-                    "${lesson.periodStart} $title"
-                }
-                views.setTextViewText(rowId, "${weekdays[index]}  $text")
-            }
+        // 先按周几、再按节次排，取能放下的前 capacity 行；放不下的整行与空行都不渲染
+        val texts = weekdays.flatMapIndexed { index, weekday ->
+            grid.filter { it.dayOfWeek == index + 1 }
+                .sortedBy { it.periodStart }
+                .map { lesson -> weekLessonLine(context, weekday, lesson) }
         }
+        fillRows(
+            views,
+            rowIds,
+            capacity,
+            texts.ifEmpty {
+                listOf(
+                    if (snapshot == null) context.getString(R.string.widget_no_data)
+                    else context.getString(R.string.widget_week_no_lesson),
+                )
+            },
+        )
         views.setTextViewText(
             R.id.widget_week_header,
             if (snapshot == null) context.getString(R.string.widget_no_data)
@@ -174,37 +228,65 @@ object WidgetRenderer {
         return views
     }
 
-    /** 2×2 考试倒计时：取最近一场未开始的考试。 */
-    fun buildExamCountdown(context: Context, snapshot: WidgetSnapshot?): RemoteViews {
+    /** 一周概览的一行：周几 + 节次 + 标题 + 地点；停课在标题后加后缀。 */
+    private fun weekLessonLine(context: Context, weekday: String, lesson: WidgetGridLesson): String {
+        val period =
+            if (lesson.periodEnd > lesson.periodStart) "${lesson.periodStart}-${lesson.periodEnd}"
+            else "${lesson.periodStart}"
+        val suffix = if (lesson.cancelled) context.getString(R.string.widget_cancelled_suffix) else ""
+        val room = if (lesson.room.isNullOrEmpty()) "" else " · ${lesson.room}"
+        return "$weekday  $period ${lesson.title}$suffix$room"
+    }
+
+    /** 2×2 考试倒计时：按开考时间列出未开始的考试，天数单独一行。 */
+    fun buildExamCountdown(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_exam)
         applyTheme(
             views,
             context,
             snapshot,
-            primaryIds = intArrayOf(R.id.widget_exam_title),
-            mutedIds = intArrayOf(R.id.widget_exam_label, R.id.widget_exam_date),
+            primaryIds = intArrayOf(R.id.widget_row1, R.id.widget_row2),
+            mutedIds = intArrayOf(R.id.widget_exam_label),
             accentIds = intArrayOf(R.id.widget_exam_days),
         )
+        val capacity = rowCapacity(context, appWidgetId, maxRows = 2, countDp = COUNT_DP)
         val now = System.currentTimeMillis()
-        val exam = snapshot?.exams.orEmpty().filter { it.startAt > now }.minByOrNull { it.startAt }
-        if (exam == null) {
-            views.setTextViewText(R.id.widget_exam_title, context.getString(R.string.widget_exam_none))
-            views.setTextViewText(R.id.widget_exam_days, "")
-            views.setTextViewText(R.id.widget_exam_date, "")
+        val exams = snapshot?.exams.orEmpty().filter { it.startAt > now }.sortedBy { it.startAt }
+        val nearest = exams.firstOrNull()
+        views.setTextViewText(
+            R.id.widget_exam_days,
+            if (nearest == null) "" else daysLeft(nearest.startAt),
+        )
+        val texts = if (exams.isEmpty()) {
+            listOf(context.getString(R.string.widget_exam_none))
         } else {
-            views.setTextViewText(R.id.widget_exam_title, exam.title)
-            views.setTextViewText(R.id.widget_exam_days, daysLeft(exam.startAt))
-            views.setTextViewText(R.id.widget_exam_date, exam.date)
+            exams.map { exam -> examLine(exam.date, exam.title) }
         }
+        fillRows(views, intArrayOf(R.id.widget_row1, R.id.widget_row2), capacity, texts)
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views
     }
 
-    private fun lessonLine(startsAt: Long, title: String, room: String?): String = buildString {
-        append(timeFormat.format(Date(startsAt)))
+    /** 课程行：08:00–09:40 高等数学 · A101。 */
+    private fun lessonLine(startsAt: Long, endsAt: Long, title: String, room: String?): String = buildString {
+        append(timeText(startsAt, endsAt))
         append(' ')
         append(title)
         if (!room.isNullOrEmpty()) append(" · ").append(room)
+    }
+
+    /** 考试行：2026-01-08 大学英语。 */
+    private fun examLine(date: String, title: String): String = buildString {
+        if (date.isNotEmpty()) append(date).append(' ')
+        append(title)
+    }
+
+    private fun timeText(startsAt: Long, endsAt: Long): String = buildString {
+        append(timeFormat.format(Date(startsAt)))
+        if (endsAt > startsAt) {
+            append(TIME_SEPARATOR)
+            append(timeFormat.format(Date(endsAt)))
+        }
     }
 
     private fun countdown(startsAt: Long): String {

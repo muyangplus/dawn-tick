@@ -340,8 +340,8 @@ struct PendingRestore {
     name: String,
 }
 
-/// 快照文件名：dawn-tick-<yyyyMMdd-HHmmss>.db，按名字排序即为时间顺序。
-fn backup_name(unix_ms: i64) -> String {
+/// 本地时间戳 yyyyMMdd-HHmmss；快照名与损坏留存名共用。
+fn local_stamp(unix_ms: i64) -> String {
     let offset = local_offset_minutes();
     let shifted = unix_ms + i64::from(offset) * 60_000;
     let days = shifted.div_euclid(86_400_000);
@@ -350,7 +350,12 @@ fn backup_name(unix_ms: i64) -> String {
     let hour = rest / 3_600_000;
     let minute = (rest % 3_600_000) / 60_000;
     let second = (rest % 60_000) / 1000;
-    format!("dawn-tick-{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}.db")
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}{second:02}")
+}
+
+/// 快照文件名：dawn-tick-<yyyyMMdd-HHmmss>.db，按名字排序即为时间顺序。
+fn backup_name(unix_ms: i64) -> String {
+    format!("dawn-tick-{}.db", local_stamp(unix_ms))
 }
 
 fn now_ms() -> i64 {
@@ -397,19 +402,22 @@ fn backup_target() -> Result<BackupTarget, String> {
     })
 }
 
-fn list_backup_entries() -> Result<Vec<BackupEntry>, String> {
-    let dir = backups_dir();
+/// 快照条目：跳过 0 字节残留（VACUUM INTO 失败时留下的空文件）。
+fn list_backup_entries_in(dir: &std::path::Path) -> Result<Vec<BackupEntry>, String> {
     if !dir.exists() {
         return Ok(Vec::new());
     }
     let mut entries = Vec::new();
-    for item in std::fs::read_dir(&dir).map_err(|error| format!("读取备份目录失败: {error}"))? {
+    for item in std::fs::read_dir(dir).map_err(|error| format!("读取备份目录失败: {error}"))? {
         let Ok(item) = item else { continue };
         let name = item.file_name().to_string_lossy().to_string();
         if !name.starts_with("dawn-tick-") || !name.ends_with(".db") {
             continue;
         }
         let Ok(meta) = item.metadata() else { continue };
+        if meta.len() == 0 {
+            continue;
+        }
         let created_at = meta
             .modified()
             .ok()
@@ -424,6 +432,10 @@ fn list_backup_entries() -> Result<Vec<BackupEntry>, String> {
     }
     entries.sort_by(|left, right| right.name.cmp(&left.name));
     Ok(entries)
+}
+
+fn list_backup_entries() -> Result<Vec<BackupEntry>, String> {
+    list_backup_entries_in(&backups_dir())
 }
 
 /// 列出全部快照，最新的排在最前。
@@ -459,10 +471,18 @@ fn prune_backups(keep: usize) -> Result<usize, String> {
 
 /// 排队一份恢复请求：重启时在打开数据库之前用快照覆盖当前库。
 #[tauri::command]
-fn restore_backup(name: String) -> Result<String, String> {
+async fn restore_backup(name: String) -> Result<String, String> {
     let safe = safe_backup_name(&name)?;
-    if !backups_dir().join(&safe).is_file() {
+    let source = backups_dir().join(&safe);
+    if !source.is_file() {
         return Err("快照不存在".to_string());
+    }
+    let bytes = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+    if bytes == 0 {
+        return Err("快照是空文件，无法恢复".to_string());
+    }
+    if !database_healthy_async(&source).await {
+        return Err("快照已损坏，无法恢复".to_string());
     }
     write_json(&pending_restore_file(), &PendingRestore { name: safe.clone() })
         .then_some(())
@@ -487,6 +507,15 @@ fn apply_pending_restore() {
         append_log(&format!("恢复请求的快照不存在，已忽略: {safe}"));
         return;
     }
+    let bytes = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
+    if bytes == 0 {
+        append_log(&format!("恢复请求的快照是空文件，已忽略: {safe}"));
+        return;
+    }
+    if !database_healthy(&source) {
+        append_log(&format!("恢复请求的快照未通过自检，已忽略: {safe}"));
+        return;
+    }
     let dir = data_dir();
     let _ = create_dir_all(&dir);
     let db = database_file(&dir);
@@ -502,6 +531,148 @@ fn apply_pending_restore() {
         Ok(bytes) => append_log(&format!("已套用快照 {safe}（{bytes} 字节）")),
         Err(error) => append_log(&format!("套用快照失败: {error}")),
     }
+}
+
+/// SQLite 的损坏报错都带这些字样；锁冲突、权限不足等不算损坏。
+fn is_corrupt_message(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("malformed")
+        || lower.contains("corrupt")
+        || lower.contains("not a database")
+        || lower.contains("code: 11")
+        || lower.contains("code: 26")
+}
+
+/// 自检：`quick_check` 返回的行全是 ok 才算健康；打不开或锁冲突按健康处理，避免误判。
+/// 只读打开：判定损坏的文件不能被顺手 checkpoint 或改写。
+async fn database_healthy_async(file: &std::path::Path) -> bool {
+    if !file.is_file() {
+        return true;
+    }
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(file)
+        .create_if_missing(false)
+        .read_only(true);
+    let pool = match sqlx::SqlitePool::connect_with(options).await {
+        Ok(pool) => pool,
+        Err(error) => return !is_corrupt_message(&error.to_string()),
+    };
+    let rows = sqlx::query_as::<_, (String,)>("PRAGMA quick_check")
+        .fetch_all(&pool)
+        .await;
+    let _ = pool.close().await;
+    match rows {
+        Ok(rows) => rows.is_empty() || rows.iter().all(|row| row.0.trim().eq_ignore_ascii_case("ok")),
+        Err(error) => !is_corrupt_message(&error.to_string()),
+    }
+}
+
+/// 同步版本：只在事件循环启动之前调用。
+fn database_healthy(file: &std::path::Path) -> bool {
+    tauri::async_runtime::block_on(database_healthy_async(file))
+}
+
+/// 损坏文件改名留存：主库搬走后再搬 -wal / -shm / -journal。
+/// Windows 上句柄释放有延迟，改名重试约 2 秒；仍失败则退化为复制后删除。
+fn move_corrupt_aside(dir: &std::path::Path, stamp: &str) -> Result<String, String> {
+    let db = dir.join(DATABASE_FILE_NAME);
+    let saved = format!("{DATABASE_FILE_NAME}.corrupt-{stamp}");
+    let target = dir.join(&saved);
+    let mut last = String::new();
+    for attempt in 0..10 {
+        match std::fs::rename(&db, &target) {
+            Ok(()) => {
+                move_sidecars(dir, &saved);
+                return Ok(saved);
+            }
+            Err(error) => {
+                last = error.to_string();
+                if attempt < 9 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+            }
+        }
+    }
+    if std::fs::copy(&db, &target).is_ok() && std::fs::remove_file(&db).is_ok() {
+        move_sidecars(dir, &saved);
+        return Ok(saved);
+    }
+    Err(last)
+}
+
+/// 把附带文件搬到与主库同一个留存名下。
+fn move_sidecars(dir: &std::path::Path, saved: &str) {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let side = dir.join(format!("{DATABASE_FILE_NAME}{suffix}"));
+        if side.is_file() {
+            let _ = std::fs::rename(&side, dir.join(format!("{saved}{suffix}")));
+        }
+    }
+}
+
+/// 最近一份通过自检的快照；空文件不参与（列表已过滤）。
+fn newest_healthy_snapshot(dir: &std::path::Path) -> Option<(String, PathBuf)> {
+    for entry in list_backup_entries_in(dir).ok()? {
+        let path = dir.join(&entry.name);
+        if database_healthy(&path) {
+            return Some((entry.name, path));
+        }
+    }
+    None
+}
+
+/// 清掉 0 字节快照：VACUUM INTO 失败会留下这种残留。
+fn cleanup_empty_backups_in(dir: &std::path::Path) -> usize {
+    let Ok(items) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for item in items.flatten() {
+        let name = item.file_name().to_string_lossy().to_string();
+        if !name.starts_with("dawn-tick-") || !name.ends_with(".db") {
+            continue;
+        }
+        let Ok(meta) = item.metadata() else { continue };
+        if meta.len() == 0 && std::fs::remove_file(item.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// 启动自检：数据库损坏时留存损坏文件，并用最近一份通过自检的快照恢复。
+/// 只在打开数据库之前调用；没有可用快照时保持无库状态，由插件新建空库。
+fn repair_database(dir: &std::path::Path) -> Option<String> {
+    let db = dir.join(DATABASE_FILE_NAME);
+    if !db.is_file() || database_healthy(&db) {
+        return None;
+    }
+    let stamp = local_stamp(now_ms());
+    let saved = match move_corrupt_aside(dir, &stamp) {
+        Ok(saved) => saved,
+        Err(error) => return Some(format!("数据库损坏，暂时无法留存原文件（{error}），重启后再试")),
+    };
+    match newest_healthy_snapshot(&dir.join("backups")) {
+        Some((name, path)) => match std::fs::copy(&path, &db) {
+            Ok(_) => Some(format!("数据库损坏，已留存 {saved}，并用快照 {name} 恢复")),
+            Err(error) => Some(format!("数据库损坏，已留存 {saved}，恢复快照失败（{error}）")),
+        },
+        None => Some(format!("数据库损坏，已留存 {saved}，未找到可用快照")),
+    }
+}
+
+/// 启动自检的结论，界面读一次（读后清空）。
+static RECOVERY_NOTICE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn set_recovery_notice(text: String) {
+    if let Ok(mut slot) = RECOVERY_NOTICE.lock() {
+        *slot = Some(text);
+    }
+}
+
+#[tauri::command]
+fn recovery_notice() -> Option<String> {
+    RECOVERY_NOTICE.lock().ok().and_then(|mut slot| slot.take())
 }
 
 
@@ -2505,6 +2676,16 @@ pub fn run() {
     // 先套用排队的恢复请求：必须在打开数据库之前完成
     apply_pending_restore();
 
+    // 打开数据库之前的自检：先清掉空快照，再处理损坏的数据库
+    let empty = cleanup_empty_backups_in(&backups_dir());
+    if empty > 0 {
+        append_log(&format!("已清理 {empty} 份空快照"));
+    }
+    if let Some(notice) = repair_database(&data_dir()) {
+        append_log(&notice);
+        set_recovery_notice(notice);
+    }
+
     // 旧的 window.json 不再使用（窗口几何改存数据库），顺手清掉
     let legacy_geometry = data_dir().join("window.json");
     if legacy_geometry.is_file() && std::fs::remove_file(&legacy_geometry).is_ok() {
@@ -2561,6 +2742,7 @@ pub fn run() {
             delete_backup,
             prune_backups,
             restore_backup,
+            recovery_notice,
             open_import_window,
             close_import_window,
             submit_page_import,
@@ -3223,6 +3405,129 @@ mod tests {
         assert_eq!(std::fs::read(to.join(DATABASE_FILE_NAME)).expect("读回数据库"), b"db");
         assert_eq!(std::fs::read(to.join(LOG_FILE_NAME)).expect("读回日志"), b"keep");
         assert!(copy_data_files(&to, &to).is_empty(), "同一个目录不复制");
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// 建一个正常的 SQLite 库，供自检与恢复的测试当样本。
+    #[cfg(desktop)]
+    fn write_sqlite_file(path: &std::path::Path, sql: &str) {
+        tauri::async_runtime::block_on(async {
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(true);
+            let pool = sqlx::SqlitePool::connect_with(options).await.expect("建库");
+            sqlx::query(sql).execute(&pool).await.expect("执行 SQL");
+            pool.close().await;
+        });
+    }
+
+    /// 自检不能占着数据库文件：检查完要能立刻改名留存。
+    #[cfg(desktop)]
+    #[test]
+    fn health_check_releases_database_file() {
+        let temp = scratch_dir(&format!("dawntick-handle-test-{}", std::process::id()));
+        let db = temp.join(DATABASE_FILE_NAME);
+        write_sqlite_file(&db, "CREATE TABLE t (a INTEGER)");
+        assert!(database_healthy(&db), "样本库应健康");
+        let moved = temp.join("moved.db");
+        std::fs::rename(&db, &moved).expect("自检后数据库文件应能改名");
+        assert!(moved.is_file());
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// 自检口径：损坏文件不通过，正常库与不存在的文件通过。
+    #[cfg(desktop)]
+    #[test]
+    fn database_health_check_classifies_files() {
+        let temp = scratch_dir(&format!("dawntick-health-test-{}", std::process::id()));
+        let broken = temp.join(DATABASE_FILE_NAME);
+        std::fs::write(&broken, b"not a sqlite database").expect("写损坏文件");
+        assert!(!database_healthy(&broken), "损坏文件应判为不健康");
+
+        let good = temp.join("good.db");
+        write_sqlite_file(&good, "CREATE TABLE t (a INTEGER)");
+        assert!(database_healthy(&good), "正常库应判为健康");
+        assert!(database_healthy(&temp.join("missing.db")), "没有文件按健康处理");
+        assert!(!is_corrupt_message("database is locked"), "锁冲突不算损坏");
+        assert!(is_corrupt_message("file is not a database"));
+        assert!(is_corrupt_message("error returned from database: (code: 11) database disk image is malformed"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// 损坏时留存损坏文件，并用最新一份通过自检的快照恢复。
+    #[cfg(desktop)]
+    #[test]
+    fn repair_database_restores_newest_healthy_snapshot() {
+        let temp = scratch_dir(&format!("dawntick-repair-test-{}", std::process::id()));
+        let backups = temp.join("backups");
+        std::fs::create_dir_all(&backups).expect("建备份目录");
+        let db = temp.join(DATABASE_FILE_NAME);
+        std::fs::write(&db, b"broken").expect("写损坏库");
+        std::fs::write(temp.join(format!("{DATABASE_FILE_NAME}-wal")), b"wal").expect("写 wal");
+
+        let healthy = backups.join("dawn-tick-20260101-000000.db");
+        write_sqlite_file(&healthy, "CREATE TABLE t (a INTEGER)");
+        // 更新的空快照与损坏快照都不该被选中
+        std::fs::write(backups.join("dawn-tick-20260102-000000.db"), b"").expect("写空快照");
+        std::fs::write(backups.join("dawn-tick-20260103-000000.db"), b"broken").expect("写损坏快照");
+
+        let notice = repair_database(&temp).expect("损坏库应给出结论");
+        assert!(notice.contains("dawn-tick.db.corrupt-"), "结论要带留存名: {notice}");
+        assert!(notice.contains("dawn-tick-20260101-000000.db"), "结论要带快照名: {notice}");
+        assert!(database_healthy(&db), "恢复后的库应健康");
+        assert_eq!(
+            std::fs::read(&db).expect("读回数据库"),
+            std::fs::read(&healthy).expect("读快照"),
+            "恢复内容应等于快照"
+        );
+        let names: Vec<String> = std::fs::read_dir(&temp)
+            .expect("列目录")
+            .flatten()
+            .map(|item| item.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("dawn-tick.db.corrupt-"))
+            .collect();
+        assert!(
+            names.iter().any(|name| !name.ends_with("-wal") && !name.ends_with("-shm")),
+            "损坏库本身应留存: {names:?}"
+        );
+        assert!(names.iter().any(|name| name.ends_with("-wal")), "附带文件应一起留存: {names:?}");
+        assert!(
+            !list_backup_entries_in(&backups).expect("列快照").iter().any(|entry| entry.bytes == 0),
+            "空快照不进列表"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// 库健康时不动任何文件。
+    #[cfg(desktop)]
+    #[test]
+    fn repair_database_keeps_healthy_database() {
+        let temp = scratch_dir(&format!("dawntick-repair-ok-test-{}", std::process::id()));
+        let db = temp.join(DATABASE_FILE_NAME);
+        write_sqlite_file(&db, "CREATE TABLE t (a INTEGER)");
+        assert!(repair_database(&temp).is_none(), "健康库不该有结论");
+        assert!(repair_database(&temp.join("missing")).is_none(), "没有库时不该有结论");
+        assert_eq!(
+            std::fs::read_dir(&temp).expect("列目录").flatten().count(),
+            1,
+            "只应有数据库本身"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// 空快照会被清掉，非空快照与无关文件保留。
+    #[cfg(desktop)]
+    #[test]
+    fn cleanup_empty_backups_only_removes_empty_snapshots() {
+        let temp = scratch_dir(&format!("dawntick-empty-backup-test-{}", std::process::id()));
+        std::fs::write(temp.join("dawn-tick-20260101-000000.db"), b"").expect("写空快照");
+        std::fs::write(temp.join("dawn-tick-20260102-000000.db"), b"db").expect("写非空快照");
+        std::fs::write(temp.join("keep.txt"), b"").expect("写无关文件");
+        assert_eq!(cleanup_empty_backups_in(&temp), 1);
+        assert!(!temp.join("dawn-tick-20260101-000000.db").exists(), "空快照应删除");
+        assert!(temp.join("dawn-tick-20260102-000000.db").exists(), "非空快照保留");
+        assert!(temp.join("keep.txt").exists(), "无关文件不动");
+        assert_eq!(cleanup_empty_backups_in(&temp.join("missing")), 0, "目录不存在按 0 处理");
         let _ = std::fs::remove_dir_all(&temp);
     }
 }

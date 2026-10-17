@@ -1,9 +1,6 @@
 declare const __DT_CHANNEL__: string | undefined;
 
-/**
- * 开发者特性开关：dev 渠道默认开启，可在设置里关掉，让 dev 构建按正式版特性运行。
- * 只影响界面与日志行为，不改更新渠道。
- */
+/** 开发者特性开关：dev 渠道默认开启，设置里可关；只影响界面与日志，不改更新渠道。 */
 const CHANNEL = typeof __DT_CHANNEL__ === 'string' ? __DT_CHANNEL__ : 'dev';
 
 let enabled = CHANNEL === 'dev';

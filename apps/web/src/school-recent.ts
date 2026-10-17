@@ -9,9 +9,7 @@ export interface RecentSchool {
 }
 
 /**
- * 读上次选的学校。
- * 优先按 id 回目录取全量条目；id 对不上时按校名精确匹配；
- * 都找不到时退化成一个只有 id 与校名的条目，保证仍能置顶显示。
+ * 读上次选的学校：优先按 id 回目录取；id 对不上按校名精确匹配；都找不到则只回 id 与校名。
  */
 export async function readRecentSchool(storage: Storage): Promise<School | null> {
   const raw = await storage.readMeta(RECENT_SCHOOL_META_KEY);

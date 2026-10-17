@@ -1,13 +1,13 @@
 {
   "name": "@dawn-tick/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts test/reminder-flow.test.ts test/timeline.test.ts test/channel.test.ts test/log.test.ts test/journal.test.ts test/storage-config.test.ts test/data-management.test.ts test/backup.test.ts test/webdav.test.ts test/grid-metrics.test.ts test/bookmarklet.test.ts test/import-injection.test.ts test/update.test.ts test/preset-update.test.ts test/preset-startup.test.ts test/school-picker.test.ts",
+    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts test/reminder-flow.test.ts test/timeline.test.ts test/channel.test.ts test/log.test.ts test/journal.test.ts test/health.test.ts test/storage-config.test.ts test/data-management.test.ts test/backup.test.ts test/webdav.test.ts test/grid-metrics.test.ts test/bookmarklet.test.ts test/import-injection.test.ts test/update.test.ts test/preset-update.test.ts test/preset-startup.test.ts test/school-picker.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

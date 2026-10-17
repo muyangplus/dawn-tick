@@ -10,6 +10,7 @@ import {
   currentOccurrence,
   formatDate,
   formatTime,
+  hasWeek,
   listManagedCourses,
   listSemesters,
   listTimeSlots,
@@ -19,7 +20,6 @@ import {
   resolveTimeZone,
   weekOfDate,
   weekStart,
-  weekView,
   type AppSettings,
   type CourseRow,
   type CourseScheduleRow,
@@ -76,11 +76,13 @@ export interface LessonCell {
   room: string | null;
   color: string;
   dayOfWeek: number;
+  /** 该格所在日期（YYYY-MM-DD）：网格按「日期:节次」建键，一列就是窗口里的一天 */
+  date: string;
   periodStart: number;
   periodEnd: number;
   startTime: string;
   endTime: string;
-  /** 该排课是否落在当前查看的周次；false 表示非本周课程，按设置虚线显示 */
+  /** 该课次所在日期是否落在查看窗口内；false 表示窗口外的周次，按设置虚线显示 */
   inWeek: boolean;
   /** 该课所在日期是否放假，放假则灰显 */
   holiday: boolean;
@@ -110,7 +112,13 @@ export interface AppData {
   week: number;
   viewWeek: number;
   weekStartDate: string;
-  /** 当前查看周内是否有课，含只在别周上的课程（inWeek = false） */
+  /** 查看窗口的起始日期（YYYY-MM-DD，默认今天） */
+  windowStart: string;
+  /** 查看窗口里的每一天，长度 = 设置的周视图天数，连续日期 */
+  windowDates: string[];
+  /** 查看窗口覆盖到多个周次时为 true，供日志与自检 */
+  windowSpansWeeks: boolean;
+  /** 当前查看窗口内是否有课，含只在别周上的课程（inWeek = false） */
   hasLessons: boolean;
   /** 当前学期的课程（含各条排课），供调课与临时加课选择 */
   courses: ManagedCourse[];
@@ -154,10 +162,16 @@ export function weekDateOf(semester: SemesterRow, week: number, dayOfWeek: numbe
   return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
 }
 
+/** 排课落在哪些周次：没有位图时只有 fallback 那一周。 */
+function weeksOf(mask: number | null, totalWeeks: number, fallback: number): number[] {
+  if (mask === null || mask === undefined) return [fallback];
+  return maskToWeeks(mask, totalWeeks);
+}
+
 export async function loadAppData(
   storage: Storage,
   settings: AppSettings,
-  options: { viewWeek?: number } = {},
+  options: { viewWeek?: number; windowStart?: string | null } = {},
 ): Promise<AppData> {
   const timeZone = resolveTimeZone(settings.timeZone, settings.autoTimeZone);
   const today = formatDate(Date.now(), timeZone);
@@ -172,6 +186,9 @@ export async function loadAppData(
       week: 0,
       viewWeek: 0,
       weekStartDate: today,
+      windowStart: today,
+      windowDates: [today],
+      windowSpansWeeks: false,
       semester: null,
       semesters: [],
       slots: [],
@@ -182,8 +199,8 @@ export async function loadAppData(
       workdayDates: [],
       lessonsByDate: new Map(),
       todayLessons: [],
-    todoSort: 'start',
-    tomorrowLessons: [],
+      todoSort: 'start',
+      tomorrowLessons: [],
       currentLesson: undefined,
       nextLesson: undefined,
       exams: [],
@@ -197,7 +214,16 @@ export async function loadAppData(
   const slots = await listTimeSlots(storage, semester.id);
   const slotByPeriod = new Map(slots.map((slot) => [slot.period_no, slot]));
   const currentWeek = Math.max(1, weekOfDate(today, semester.start_date));
-  const viewWeek = Math.min(Math.max(1, options.viewWeek ?? currentWeek), semester.total_weeks);
+  // 查看窗口的起点：显式给了就用它，只给了周次就退回「那一周的周一」，都没有就从今天开始
+  const windowStart =
+    options.windowStart ??
+    (options.viewWeek === undefined ? today : weekDateOf(semester, options.viewWeek, 1));
+  const viewDays = Math.max(1, settings.viewDays);
+  const windowDates = Array.from({ length: viewDays }, (_, index) => addDays(windowStart, index));
+  /** 窗口里每一天所属的周次：早于第 1 周为 0，晚于总周次则超出学期 */
+  const weekOfDay = windowDates.map((date) => weekOfDate(date, semester.start_date));
+  const viewWeek = Math.min(Math.max(1, weekOfDay[0] ?? currentWeek), semester.total_weeks);
+  const windowSpansWeeks = new Set(weekOfDay).size > 1;
 
   const [courses, schedules, events] = await Promise.all([
     storage.collection<CourseRow>('courses').getAll(),
@@ -252,10 +278,6 @@ export async function loadAppData(
       room: row.new_room,
     });
   }
-  const viewWeekStart = weekDateOf(semester, viewWeek, 1);
-  const viewWeekEnd = addDays(viewWeekStart, 6);
-  const dateOfDay = (day: number): string => addDays(viewWeekStart, day - 1);
-
   const grid = new Map<string, LessonCell[]>();
   const cellOf = (input: {
     scheduleId: string;
@@ -282,6 +304,7 @@ export async function loadAppData(
       room: input.room ?? course?.location ?? null,
       color: input.color,
       dayOfWeek: input.day,
+      date,
       periodStart: input.periodStart,
       periodEnd: input.periodEnd,
       startTime: slotByPeriod.get(input.periodStart)?.start_time ?? '',
@@ -303,41 +326,54 @@ export async function loadAppData(
       .filter((row) => row.start_time !== null && row.end_time !== null)
       .map((row) => [row.id, { start: row.start_time as string, end: row.end_time as string }]),
   );
+  const customOf = (scheduleId: string): { start: string | null; end: string | null } => {
+    const custom = scheduleCustomById.get(scheduleId);
+    return { start: custom?.start ?? null, end: custom?.end ?? null };
+  };
 
-  for (let day = 1; day <= 7; day += 1) {
-    for (const row of await weekView(storage, semester.id, day, viewWeek)) {
-      const key = `${day}:${row.period_start}`;
+  // 主课次：逐列按该列日期所属的周次判定，窗口跨两周时两周的课都进网格
+  const activeIds = new Set(activeCourses.map((row) => row.id));
+  const scheduleById = new Map(schedules.map((row) => [row.id, row]));
+  for (let index = 0; index < windowDates.length; index += 1) {
+    const date = windowDates[index] as string;
+    const week = weekOfDay[index] as number;
+    const day = dayOfWeek(date);
+    for (const schedule of schedules) {
+      if (schedule.deleted_at !== null || !activeIds.has(schedule.course_id)) continue;
+      if (schedule.day_of_week !== day || !hasWeek(schedule.weeks_mask, week)) continue;
+      const course = courseById.get(schedule.course_id);
+      if (course === undefined) continue;
+      const custom = customOf(schedule.id);
+      const key = `${date}:${schedule.period_start}`;
       const list = grid.get(key) ?? [];
       list.push(
         cellOf({
-          scheduleId: row.schedule_id,
-          courseId: row.course_id,
-          fallbackName: row.name,
-          color: row.color,
-          room: row.room,
-          periodStart: row.period_start,
-          periodEnd: row.period_end,
+          scheduleId: schedule.id,
+          courseId: schedule.course_id,
+          fallbackName: course.name,
+          color: course.color,
+          room: schedule.room,
+          periodStart: schedule.period_start,
+          periodEnd: schedule.period_end,
           day,
-          date: dateOfDay(day),
+          date,
           inWeek: true,
-          customStart: scheduleCustomById.get(row.schedule_id)?.start ?? null,
-          customEnd: scheduleCustomById.get(row.schedule_id)?.end ?? null,
+          customStart: custom.start,
+          customEnd: custom.end,
         }),
       );
       grid.set(key, list);
     }
   }
 
-  // 调课的落点：目标日期落在这一周时，把课次画到落点格上并标「调课」
-  const activeIds = new Set(activeCourses.map((row) => row.id));
-  const scheduleById = new Map(schedules.map((row) => [row.id, row]));
+  // 调课的落点：目标日期落在窗口里时，把课次画到落点格上并标「调课」
   for (const move of movedIn) {
-    if (move.newDate < viewWeekStart || move.newDate > viewWeekEnd) continue;
+    if (!windowDates.includes(move.newDate)) continue;
     const schedule = scheduleById.get(move.scheduleId);
     if (schedule === undefined || schedule.deleted_at !== null || !activeIds.has(schedule.course_id)) continue;
     const course = courseById.get(schedule.course_id);
     if (course === undefined) continue;
-    const key = `${move.dayOfWeek}:${move.periodStart}`;
+    const key = `${move.newDate}:${move.periodStart}`;
     const list = grid.get(key) ?? [];
     if (list.some((cell) => cell.scheduleId === move.scheduleId && cell.movedIn)) continue;
     list.push(
@@ -358,14 +394,14 @@ export async function loadAppData(
     grid.set(key, list);
   }
 
-  // 实验条目：按周次位图（没有位图时只落 on_date 那一周）铺进课表网格
-  // 课表条目：实验默认显示，日程/作业/考试按「显示在课表上」开关决定
+  // 实验按周次位图铺网格，无位图只落 on_date 那周。
+  // 实验默认显示，日程/作业/考试看「显示在课表上」开关。
   const labs = semesterEvents
     .filter((row) => row.show_in_timetable === 1 && row.on_date !== null)
     .sort((left, right) => (left.on_date ?? '').localeCompare(right.on_date ?? ''));
   for (const entry of labs) {
-    const date = entry.on_date;
-    if (date === null) continue;
+    const entryDate = entry.on_date;
+    if (entryDate === null) continue;
     // 节次：实验直接存了节次；日程/作业/考试按开始时间落到重叠的节次上
     const clockStart = entry.start_time ?? (entry.start_at === null ? null : formatTime(entry.start_at, timeZone));
     const clockEnd =
@@ -378,67 +414,76 @@ export async function loadAppData(
     const periodStart = entry.period_start ?? periodAtClock(clockStart, slots);
     if (periodStart === null) continue;
     const periodEnd = Math.max(periodStart, entry.period_end ?? periodAtClock(clockEnd, slots) ?? periodStart);
-    const weekday = entry.as_day_of_week ?? dayOfWeek(date);
-    const weeks =
+    const weekday = entry.as_day_of_week ?? dayOfWeek(entryDate);
+    // 条目所在周次；有位图时按位图在各周的同一天再铺一次
+    const entryWeeks =
       entry.weeks_mask === null || entry.weeks_mask === undefined
-        ? [weekOfDate(date, semester.start_date)]
+        ? weeksOf(entry.weeks_mask, semester.total_weeks, weekOfDate(entryDate, semester.start_date))
         : maskToWeeks(entry.weeks_mask, semester.total_weeks);
-    if (!weeks.includes(viewWeek)) continue;
-    const key = `${weekday}:${periodStart}`;
-    const list = grid.get(key) ?? [];
-    if (list.some((cell) => cell.eventId === entry.id)) continue;
-    list.push({
-      scheduleId: entry.id,
-      courseId: entry.subject ?? '',
-      name: entry.title,
-      teacher: null,
-      room: entry.location,
-      color: entry.type === 'lab' ? (entry.nature === 'course' ? '#4F8DFD' : '#8E7CC3') : '#E08A3C',
-      dayOfWeek: weekday,
-      periodStart,
-      periodEnd,
-      startTime: slotByPeriod.get(periodStart)?.start_time ?? '',
-      endTime: slotByPeriod.get(periodEnd)?.end_time ?? '',
-      inWeek: true,
-      holiday: holidayDates.has(dateOfDay(weekday)),
-      cancelled: false,
-      movedOut: false,
-      movedIn: false,
-      lab: true,
-      eventLabel: EVENT_LABEL[entry.type] ?? '日程',
-      courseLabel: entry.subject === null ? null : courseById.get(entry.subject)?.name ?? null,
-      eventId: entry.id,
-      customStart: clockStart,
-      customEnd: clockEnd,
-    });
-    grid.set(key, list);
+    for (let index = 0; index < windowDates.length; index += 1) {
+      const date = windowDates[index] as string;
+      if (dayOfWeek(date) !== weekday) continue;
+      if (!entryWeeks.includes(weekOfDay[index] as number)) continue;
+      const key = `${date}:${periodStart}`;
+      const list = grid.get(key) ?? [];
+      if (list.some((cell) => cell.eventId === entry.id)) continue;
+      list.push({
+        scheduleId: entry.id,
+        courseId: entry.subject ?? '',
+        name: entry.title,
+        teacher: null,
+        room: entry.location,
+        color: entry.type === 'lab' ? (entry.nature === 'course' ? '#4F8DFD' : '#8E7CC3') : '#E08A3C',
+        dayOfWeek: weekday,
+        date,
+        periodStart,
+        periodEnd,
+        startTime: slotByPeriod.get(periodStart)?.start_time ?? '',
+        endTime: slotByPeriod.get(periodEnd)?.end_time ?? '',
+        inWeek: true,
+        holiday: holidayDates.has(date),
+        cancelled: false,
+        movedOut: false,
+        movedIn: false,
+        lab: true,
+        eventLabel: EVENT_LABEL[entry.type] ?? '日程',
+        courseLabel: entry.subject === null ? null : courseById.get(entry.subject)?.name ?? null,
+        eventId: entry.id,
+        customStart: clockStart,
+        customEnd: clockEnd,
+      });
+      grid.set(key, list);
+    }
   }
 
-  // 非本周课程：仍在课表中，但这一周不上，按设置虚线显示
-  for (const row of schedules) {
-    if (row.deleted_at !== null || !activeIds.has(row.course_id)) continue;
-    if (maskToWeeks(row.weeks_mask, semester.total_weeks).includes(viewWeek)) continue;
-    const course = courseById.get(row.course_id);
+  // 窗口外的周次：课程仍在课表里，但那一周不上，按设置虚线显示
+  for (const schedule of schedules) {
+    if (schedule.deleted_at !== null || !activeIds.has(schedule.course_id)) continue;
+    const course = courseById.get(schedule.course_id);
     if (course === undefined) continue;
-    const day = row.day_of_week;
-    const key = `${day}:${row.period_start}`;
-    const list = grid.get(key) ?? [];
-    if (list.some((cell) => cell.scheduleId === row.id)) continue;
-    list.push(
-      cellOf({
-        scheduleId: row.id,
-        courseId: row.course_id,
-        fallbackName: course.name,
-        color: course.color,
-        room: row.room,
-        periodStart: row.period_start,
-        periodEnd: row.period_end,
-        day,
-        date: dateOfDay(day),
-        inWeek: false,
-      }),
-    );
-    grid.set(key, list);
+    for (let index = 0; index < windowDates.length; index += 1) {
+      const date = windowDates[index] as string;
+      if (dayOfWeek(date) !== schedule.day_of_week) continue;
+      if (hasWeek(schedule.weeks_mask, weekOfDay[index] as number)) continue;
+      const key = `${date}:${schedule.period_start}`;
+      const list = grid.get(key) ?? [];
+      if (list.some((cell) => cell.scheduleId === schedule.id)) continue;
+      list.push(
+        cellOf({
+          scheduleId: schedule.id,
+          courseId: schedule.course_id,
+          fallbackName: course.name,
+          color: course.color,
+          room: schedule.room,
+          periodStart: schedule.period_start,
+          periodEnd: schedule.period_end,
+          day: schedule.day_of_week,
+          date,
+          inWeek: false,
+        }),
+      );
+      grid.set(key, list);
+    }
   }
 
   const input = await loadExpandInput(storage, semester.id, addDays(today, -45), addDays(today, 60));
@@ -481,6 +526,9 @@ export async function loadAppData(
     week: currentWeek,
     viewWeek,
     weekStartDate: weekDateOf(semester, viewWeek, 1),
+    windowStart,
+    windowDates,
+    windowSpansWeeks,
     semester,
     semesters: semesters.filter((row) => row.is_active === 0 || row.id === semester.id),
     slots,

@@ -9,7 +9,7 @@ class ExamCountdownWidget : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         val snapshot = WidgetStore.load(context)
         for (id in appWidgetIds) {
-            manager.updateAppWidget(id, WidgetRenderer.buildExamCountdown(context, snapshot))
+            manager.updateAppWidget(id, WidgetRenderer.buildExamCountdown(context, snapshot, id))
         }
     }
 }

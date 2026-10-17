@@ -130,7 +130,7 @@ test('适配徽标：预设索引里有该系统且有解析脚本才算「已�
   const missing = adapterInfo(context, qinghua);
   assert.equal(missing.adapted, false);
   assert.equal(adapterBadgeText(missing, context.version), '暂未适配');
-  assert.match(missing.reason, /没有这所学校/);
+  assert.match(missing.reason, /没有该校教务系统/);
 
   // 系统存在但没有解析脚本 → 仍然暂未适配，原因说清楚
   const urpSchool: School = { id: 'x1', name: '某校', tags: [], system: 'urp' };

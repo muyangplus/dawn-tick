@@ -41,10 +41,7 @@ function hashKey(key: string): number {
   return hash;
 }
 
-/**
- * 未单独设置提醒的课程按全局默认值提醒。
- * 只要这门课有任意一条提醒记录（即使被关掉），就不再套用全局默认，用户可以逐课退出。
- */
+/** 未单独设置提醒的课程按全局默认提醒；有任意一条提醒记录（即使已关闭）就不再套用默认。 */
 function withGlobalDefaults(rows: readonly ReminderRow[], defaults: ClassReminderDefaults, courseIds: Set<string>): ReminderRow[] {
   if (!defaults.enabled) return [...rows];
   const decided = new Set(rows.map((row) => row.target_id));
@@ -95,11 +92,7 @@ async function collect(
   });
 }
 
-/**
- * 提醒调度：
- * - Android 用原生排定，应用关闭后仍可送达；
- * - Web 与 Windows 由页面内循环触发（页面关闭后 Web 端无法提醒，见 D71）。
- */
+/** 提醒调度：Android 用原生排定，应用关闭后仍可送达；Web 与 Windows 由页面内循环触发。 */
 export function useReminders(
   storage: Storage | null,
   semesterId: string | null,

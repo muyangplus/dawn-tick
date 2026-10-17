@@ -11,10 +11,7 @@ import { detectPlatform } from './platform-detect.ts';
 import { activeSqlDriver } from './db/active-driver.ts';
 import { logInfo, logWarn } from './log.ts';
 
-/**
- * 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），
- * Web 与 Android 没有可写目录，把 JSON 快照存进库自己的 app_meta。
- */
+/** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
 
 export interface SnapshotEntry {
   /** 文件快照是文件名，JSON 快照是 app_meta 的键 */
@@ -87,7 +84,17 @@ async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
   const driver = activeSqlDriver();
   if (driver === null) throw new Error('数据库尚未打开');
   const target = await invokeTauri<{ name: string; path: string; sqlLiteral: string }>('backup_target');
-  await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
+  try {
+    await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
+  } catch (cause: unknown) {
+    // VACUUM INTO 失败会留下 0 字节文件，清掉；启动时的空快照清理兜底
+    try {
+      await invokeTauri('delete_backup', { name: target.name });
+    } catch {
+      // 清理失败只影响磁盘占用
+    }
+    throw cause;
+  }
   const entries = await listFileSnapshots();
   return (
     entries.find((entry) => entry.id === target.name) ?? {
@@ -97,6 +104,18 @@ async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
       kind: 'file' as const,
     }
   );
+}
+
+/** 启动自检结论：Windows 侧在打开数据库之前自检，读一次后清空。 */
+export async function takeRecoveryNotice(): Promise<string | null> {
+  if (detectPlatform() !== 'tauri') return null;
+  try {
+    const text = await invokeTauri<string | null>('recovery_notice');
+    return typeof text === 'string' && text.trim() !== '' ? text : null;
+  } catch (cause: unknown) {
+    logWarn('backup', '读取启动自检结论失败', { message: describe(cause) });
+    return null;
+  }
 }
 
 /** 做一份快照；失败返回 null 并记日志。 */
@@ -203,10 +222,7 @@ export function snapshotsToday(entries: readonly SnapshotEntry[], now: number): 
   return entries.filter((entry) => localDay(entry.createdAt) === today);
 }
 
-/**
- * 自动备份：启动那次按「启动时备份」开关，运行中按「每天备份」开关。
- * 两份开关都关或总开关关时不做任何事。
- */
+/** 自动备份：「启动时备份」只管启动那一次，「每天备份」管运行中补当天那份。 */
 export async function maybeAutoBackup(
   storage: Storage,
   settings: AppSettings,

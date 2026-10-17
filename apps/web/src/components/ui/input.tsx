@@ -1,5 +1,6 @@
-import type { InputHTMLAttributes, LabelHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import type { InputHTMLAttributes, LabelHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react';
 import { cn } from '../../lib/cn.ts';
+import { HelpHint } from './help-hint.tsx';
 
 const fieldBase =
   'w-full rounded-md border border-line bg-surface px-3 text-sm text-ink placeholder:text-muted ' +
@@ -18,10 +19,24 @@ export function Label({ className, ...props }: LabelHTMLAttributes<HTMLLabelElem
   return <label className={cn('text-xs font-medium text-muted', className)} {...props} />;
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+/** `hint` 是正文说明（≤20 字）；更长的补充放 `help`，收进「?」里。 */
+export function Field({
+  label,
+  hint,
+  help,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  help?: ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1">
-      <Label>{label}</Label>
+      <span className="flex items-center gap-1">
+        <Label>{label}</Label>
+        {help !== undefined && <HelpHint label={label}>{help}</HelpHint>}
+      </span>
       {children}
       {hint !== undefined && <span className="text-xs text-muted">{hint}</span>}
     </div>

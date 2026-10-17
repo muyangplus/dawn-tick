@@ -5,13 +5,7 @@ import { formatDayCountdown } from '../../lib/format.ts';
 
 export const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-/**
- * 条目性质标签，映射规则（都以现有数据字段为准）：
- * - `data.lessonsByDate` 里的课次（来自 schedule）→ 课程
- * - `data.reschedules` 里的调课 / 调休 / 停课 → 调整
- * - `data.todos` 里 `type === 'exam'` 的考试（没有开考时间，进不了考试倒计时卡）→ 考试
- * - `data.todos` 里 `type === 'todo' | 'temp'` 的待办 → 其他
- */
+/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→其他。 */
 export type TimelineNature = '课程' | '调整' | '其他' | '作业' | '考试' | '实验';
 
 export interface TimelineItem {
@@ -87,10 +81,7 @@ function clockEpoch(date: string, time: string, timeZone: string): number {
   }
 }
 
-/**
- * 自动完成的阈值：有结束/截止时间、且这个时间已经过去（含正好等于当前时刻）。
- * 没有时间的条目永远不会自动完成；这里只做展示层判定，不回写数据库。
- */
+/** 自动完成阈值：有结束/截止时间且已到点；无时间的条目不自动完成，此处只判定不回写数据库。 */
 function isOverdue(endEpoch: number | null, now: number): boolean {
   return endEpoch !== null && endEpoch <= now;
 }
@@ -288,10 +279,7 @@ export interface TimelineSections {
   completed: TimelineItem[];
 }
 
-/**
- * 已完成（手动勾选 或 到点自动完成）的条目从主时间线移出，单独成组。
- * 全部条目都已完成时 main 为空，调用方据此自动展开已完成分组。
- */
+/** 已完成条目从主时间线移出单独成组；main 为空时调用方据此自动展开已完成分组。 */
 export function splitTimeline(items: readonly TimelineItem[]): TimelineSections {
   const main: TimelineItem[] = [];
   const completed: TimelineItem[] = [];

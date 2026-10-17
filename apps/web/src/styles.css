@@ -332,3 +332,76 @@
     padding-top: 4px;
   }
 }
+
+/* 动效：根节点按设置写 data-motion，「关闭动效」与系统「减少动态效果」都落到同一套停用规则 */
+@layer components {
+  @keyframes dt-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes dt-pop-in {
+    from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+    to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  }
+
+  @keyframes dt-rise-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes dt-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .dt-overlay[data-state='open'] {
+    animation: dt-fade-in 150ms ease-out;
+  }
+
+  .dt-panel[data-state='open'] {
+    animation: dt-pop-in 170ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .dt-sheet[data-state='open'] {
+    animation: dt-rise-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .dt-view-enter {
+    animation: dt-rise-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .dt-spinner {
+    animation: dt-spin 700ms linear infinite;
+  }
+
+  /* 关闭动效：只停「动画与过渡」，不动布局 */
+  [data-motion='off'] *,
+  [data-motion='off'] *::before,
+  [data-motion='off'] *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-motion='system'] *,
+    [data-motion='system'] *::before,
+    [data-motion='system'] *::after {
+      animation-duration: 1ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 1ms !important;
+    }
+  }
+
+  /* 慢操作蒙版：盖住整页并挡住重复点击 */
+  .dt-busy-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--dt-overlay);
+    cursor: progress;
+  }
+}
