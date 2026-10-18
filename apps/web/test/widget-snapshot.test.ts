@@ -150,3 +150,21 @@ test('快照可被 JSON 序列化并原样还原', () => {
   const restored = JSON.parse(JSON.stringify(snapshot)) as typeof snapshot;
   assert.deepEqual(restored, snapshot);
 });
+
+test('不显示周末时一周概览的快照不含周六日课程', () => {
+  const saturday: LessonCell = { ...cell, scheduleId: 's-6', dayOfWeek: 6, date: '2026-09-26' };
+  const sunday: LessonCell = { ...cell, scheduleId: 's-7', dayOfWeek: 7, date: '2026-09-27' };
+  const data = appData({
+    grid: new Map([
+      ['2026-09-21:1', [cell]],
+      ['2026-09-26:1', [saturday]],
+      ['2026-09-27:1', [sunday]],
+    ]),
+  });
+
+  const hidden = buildWidgetSnapshot(data, { ...DEFAULT_SETTINGS, hideWeekends: true }, 1);
+  assert.deepEqual([...new Set(hidden.grid.map((item) => item.dayOfWeek))].sort(), [1]);
+
+  const shown = buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1);
+  assert.equal(shown.grid.length, 3);
+});

@@ -57,6 +57,8 @@ export function buildWidgetSnapshot(
   const grid: WidgetGridLesson[] = [];
   for (const lessons of data.grid.values()) {
     for (const lesson of lessons) {
+      // 「始终不显示周末」也作用于一周概览：周末课不进快照
+      if (settings.hideWeekends && lesson.dayOfWeek >= 6) continue;
       grid.push({
         title: lesson.name,
         room: lesson.room,

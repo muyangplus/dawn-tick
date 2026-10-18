@@ -2041,6 +2041,70 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+  // 课表视图开关：今天为第一天（默认开）、始终不显示周末（默认关）
+  const switchOf = (label: string): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`);
+  check(
+    '课表视图开关默认：今天为第一天开、不显示周末关',
+    switchOf('今天为第一天')?.getAttribute('aria-checked') === 'true' &&
+      switchOf('始终不显示周末')?.getAttribute('aria-checked') === 'false',
+    `${switchOf('今天为第一天')?.getAttribute('aria-checked')} / ${switchOf('始终不显示周末')?.getAttribute('aria-checked')}`,
+  );
+  // 打开「始终不显示周末」：列数仍按天数，但列里不再出现周六/周日
+  switchOf('始终不显示周末')?.click();
+  await flush(16);
+  clickByText(view.container, '课表');
+  await flush(16);
+  const columnDays = [...view.container.querySelectorAll('[data-day]')].map((node) =>
+    node.getAttribute('data-day'),
+  );
+  check(
+    '不显示周末后课表列里没有周六日',
+    columnDays.length === 7 && !columnDays.includes('6') && !columnDays.includes('7'),
+    `列=${columnDays.join(',')}`,
+  );
+  clickByText(view.container, '设置');
+  await flush(16);
+  check(
+    '回到设置页可见两个视图开关',
+    switchOf('始终不显示周末') !== null && switchOf('今天为第一天') !== null,
+    `${switchOf('始终不显示周末') === null ? '无周末开关' : '有'} / ${switchOf('今天为第一天') === null ? '无首日开关' : '有'}`,
+  );
+  switchOf('始终不显示周末')?.click();
+  await flush(16);
+  check(
+    '关掉不显示周末后开关状态回关',
+    switchOf('始终不显示周末')?.getAttribute('aria-checked') === 'false',
+    `${switchOf('始终不显示周末')?.getAttribute('aria-checked')}`,
+  );
+  // 关掉「今天为第一天」：窗口从本周周一开头
+  switchOf('今天为第一天')?.click();
+  await flush(16);
+  check(
+    '关掉今天为第一天后开关状态回关',
+    switchOf('今天为第一天')?.getAttribute('aria-checked') === 'false',
+    `${switchOf('今天为第一天')?.getAttribute('aria-checked')}`,
+  );
+  clickByText(view.container, '课表');
+  await flush(16);
+  check(
+    '关掉今天为第一天后窗口从本周周一开头',
+    windowStartOf() === seededMonday,
+    `${windowStartOf()} / 本周周一 ${seededMonday}`,
+  );
+  clickByText(view.container, '设置');
+  await flush(16);
+  switchOf('今天为第一天')?.click();
+  await flush(16);
+  clickByText(view.container, '课表');
+  await flush(16);
+  check(
+    '恢复默认后窗口重新从今天开头',
+    windowStartOf() === todayText,
+    windowStartOf(),
+  );
+  clickByText(view.container, '设置');
+  await flush(16);
   check(
     '课次时间可逐节编辑',
     view.container.querySelector('input[aria-label="第 1 节开始时间"]') !== null &&

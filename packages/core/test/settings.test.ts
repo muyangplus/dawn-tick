@@ -26,6 +26,23 @@ test('周视图天数超出范围被拒绝', async () => {
   assert.equal((await readSettings(storage)).viewDays, DEFAULT_SETTINGS.viewDays);
 });
 
+test('课表视图开关：今天为第一天默认开、不显示周末默认关', async () => {
+  const storage = createStorage();
+  const defaults = await readSettings(storage);
+  assert.equal(defaults.weekStartsToday, true);
+  assert.equal(defaults.hideWeekends, false);
+
+  const changed = await writeSettings(storage, { weekStartsToday: false, hideWeekends: true });
+  assert.equal(changed.weekStartsToday, false);
+  assert.equal(changed.hideWeekends, true);
+  assert.equal(await storage.readMeta('week_starts_today'), '0');
+  assert.equal(await storage.readMeta('hide_weekends'), '1');
+
+  const reloaded = await readSettings(storage);
+  assert.equal(reloaded.weekStartsToday, false);
+  assert.equal(reloaded.hideWeekends, true);
+});
+
 test('日志模式默认跟随存储位置，可手动开或关', async () => {
   assert.deepEqual([...WAL_MODES], ['auto', 'on', 'off']);
   const storage = createStorage();

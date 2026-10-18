@@ -11,12 +11,14 @@ import {
   formatDate,
   formatTime,
   hasWeek,
+  isWeekend,
   listManagedCourses,
   listSemesters,
   listTimeSlots,
   loadExpandInput,
   maskToWeeks,
   nextOccurrence,
+  nextWorkday,
   resolveTimeZone,
   weekOfDate,
   weekStart,
@@ -162,6 +164,16 @@ export function weekDateOf(semester: SemesterRow, week: number, dayOfWeek: numbe
   return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
 }
 
+/** 没指定窗口起点时的默认起点：今天为第一天，或本周周一；跳过周末时顺延到下一个工作日。 */
+export function defaultWindowStart(today: string, settings: AppSettings): string {
+  return resolveWindowStart(settings.weekStartsToday ? today : weekStart(today), settings);
+}
+
+/** 窗口起点落到周末时顺延到下一个工作日；没开「不显示周末」时原样返回。 */
+export function resolveWindowStart(date: string, settings: AppSettings): string {
+  return settings.hideWeekends ? nextWorkday(date) : date;
+}
+
 /** 排课落在哪些周次：没有位图时只有 fallback 那一周。 */
 function weeksOf(mask: number | null, totalWeeks: number, fallback: number): number[] {
   if (mask === null || mask === undefined) return [fallback];
@@ -214,12 +226,19 @@ export async function loadAppData(
   const slots = await listTimeSlots(storage, semester.id);
   const slotByPeriod = new Map(slots.map((slot) => [slot.period_no, slot]));
   const currentWeek = Math.max(1, weekOfDate(today, semester.start_date));
-  // 查看窗口的起点：显式给了就用它，只给了周次就退回「那一周的周一」，都没有就从今天开始
-  const windowStart =
+  // 窗口起点：显式给了就用它；只给了周次就用那一周的周一；都没有按设置取今天或本周周一
+  const windowStart = resolveWindowStart(
     options.windowStart ??
-    (options.viewWeek === undefined ? today : weekDateOf(semester, options.viewWeek, 1));
+      (options.viewWeek === undefined ? defaultWindowStart(today, settings) : weekDateOf(semester, options.viewWeek, 1)),
+    settings,
+  );
   const viewDays = Math.max(1, settings.viewDays);
-  const windowDates = Array.from({ length: viewDays }, (_, index) => addDays(windowStart, index));
+  const windowDates: string[] = [];
+  for (let offset = 0; windowDates.length < viewDays && offset < viewDays * 3 + 7; offset += 1) {
+    const date = addDays(windowStart, offset);
+    if (settings.hideWeekends && isWeekend(date)) continue;
+    windowDates.push(date);
+  }
   /** 窗口里每一天所属的周次：早于第 1 周为 0，晚于总周次则超出学期 */
   const weekOfDay = windowDates.map((date) => weekOfDate(date, semester.start_date));
   const viewWeek = Math.min(Math.max(1, weekOfDay[0] ?? currentWeek), semester.total_weeks);

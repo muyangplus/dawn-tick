@@ -38,6 +38,10 @@ export interface AppSettings {
   timeZone: string;
   autoTimeZone: boolean;
   viewDays: number;
+  /** 课表窗口以今天为第一天；关闭后从本周周一开头 */
+  weekStartsToday: boolean;
+  /** 课表窗口与一周概览跳过周六与周日 */
+  hideWeekends: boolean;
   theme: ThemeMode;
   themePreset: ThemePreset;
   /** 界面动效：跟随系统 / 始终播放 / 关闭 */
@@ -102,6 +106,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   timeZone: DEFAULT_TIME_ZONE,
   autoTimeZone: false,
   viewDays: 5,
+  weekStartsToday: true,
+  hideWeekends: false,
   theme: 'system',
   themePreset: 'vivid',
   motion: 'system',
@@ -146,6 +152,8 @@ const KEYS = {
   timeZone: 'time_zone',
   autoTimeZone: 'auto_time_zone',
   viewDays: 'view_days',
+  weekStartsToday: 'week_starts_today',
+  hideWeekends: 'hide_weekends',
   theme: 'theme',
   themePreset: 'theme_preset',
   motion: 'motion',
@@ -190,6 +198,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.timeZone),
     storage.readMeta(KEYS.autoTimeZone),
     storage.readMeta(KEYS.viewDays),
+    storage.readMeta(KEYS.weekStartsToday),
+    storage.readMeta(KEYS.hideWeekends),
     storage.readMeta(KEYS.theme),
     storage.readMeta(KEYS.themePreset),
     storage.readMeta(KEYS.motion),
@@ -226,6 +236,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     timeZone,
     autoTimeZone,
     viewDays,
+    weekStartsToday,
+    hideWeekends,
     theme,
     themePreset,
     motion,
@@ -266,6 +278,8 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     timeZone: timeZone ?? DEFAULT_SETTINGS.timeZone,
     autoTimeZone: parseBoolean(autoTimeZone, DEFAULT_SETTINGS.autoTimeZone),
     viewDays: VIEW_DAY_OPTIONS.includes(parsedDays) ? parsedDays : DEFAULT_SETTINGS.viewDays,
+    weekStartsToday: parseBoolean(weekStartsToday, DEFAULT_SETTINGS.weekStartsToday),
+    hideWeekends: parseBoolean(hideWeekends, DEFAULT_SETTINGS.hideWeekends),
     theme:
       theme === 'light' || theme === 'dark' || theme === 'system' ? theme : DEFAULT_SETTINGS.theme,
     themePreset:
@@ -348,6 +362,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
     await storage.writeMeta(KEYS.autoTimeZone, patch.autoTimeZone ? '1' : '0');
   }
   if (patch.viewDays !== undefined) await storage.writeMeta(KEYS.viewDays, String(patch.viewDays));
+  if (patch.weekStartsToday !== undefined) {
+    await storage.writeMeta(KEYS.weekStartsToday, patch.weekStartsToday ? '1' : '0');
+  }
+  if (patch.hideWeekends !== undefined) {
+    await storage.writeMeta(KEYS.hideWeekends, patch.hideWeekends ? '1' : '0');
+  }
   if (patch.theme !== undefined) await storage.writeMeta(KEYS.theme, patch.theme);
   if (patch.themePreset !== undefined) await storage.writeMeta(KEYS.themePreset, patch.themePreset);
   if (patch.motion !== undefined) await storage.writeMeta(KEYS.motion, patch.motion);

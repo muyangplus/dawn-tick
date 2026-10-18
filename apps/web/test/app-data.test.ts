@@ -118,3 +118,59 @@ test('软删除的课程不再出现在周视图', async () => {
   await deleteCourse(storage, String(course['id']));
   assert.equal((await loadAppData(storage, DEFAULT_SETTINGS)).todayLessons.length, 0);
 });
+
+test('窗口起点：今天为第一天，关掉后从本周周一开头', async () => {
+  const storage = await open('flow-window-start');
+  const today = formatDate(Date.now(), TIME_ZONE);
+  await createSemester(storage, {
+    userId: USER_ID,
+    name: '窗口学期',
+    startDate: weekStart(today),
+    totalWeeks: 20,
+    timeZone: TIME_ZONE,
+  });
+
+  assert.equal((await loadAppData(storage, DEFAULT_SETTINGS)).windowStart, today);
+  const fromMonday = await loadAppData(storage, { ...DEFAULT_SETTINGS, weekStartsToday: false });
+  assert.equal(fromMonday.windowStart, weekStart(today));
+  assert.equal(fromMonday.windowDates[0], weekStart(today));
+});
+
+test('不显示周末：列数按天数、日期里没有周六日', async () => {
+  const storage = await open('flow-window-weekend');
+  const today = formatDate(Date.now(), TIME_ZONE);
+  await createSemester(storage, {
+    userId: USER_ID,
+    name: '周末学期',
+    startDate: weekStart(today),
+    totalWeeks: 20,
+    timeZone: TIME_ZONE,
+  });
+
+  const data = await loadAppData(storage, { ...DEFAULT_SETTINGS, viewDays: 5, hideWeekends: true });
+  assert.equal(data.windowDates.length, 5);
+  assert.equal(
+    data.windowDates.every((date) => dayOfWeek(date) <= 5),
+    true,
+    `出现了周末：${data.windowDates.join(',')}`,
+  );
+  assert.equal(data.windowStart, data.windowDates[0]);
+});
+
+test('默认窗口起点的纯函数：周末顺延到下一个工作日', async () => {
+  const { defaultWindowStart, resolveWindowStart } = await import('../src/data.ts');
+  const saturday = '2026-10-17';
+  const sunday = '2026-10-18';
+  assert.equal(defaultWindowStart(saturday, DEFAULT_SETTINGS), saturday);
+  assert.equal(
+    defaultWindowStart(saturday, { ...DEFAULT_SETTINGS, hideWeekends: true }),
+    '2026-10-19',
+  );
+  assert.equal(
+    defaultWindowStart(saturday, { ...DEFAULT_SETTINGS, weekStartsToday: false }),
+    '2026-10-12',
+  );
+  assert.equal(defaultWindowStart(sunday, { ...DEFAULT_SETTINGS, hideWeekends: true }), '2026-10-19');
+  assert.equal(resolveWindowStart('2026-10-16', { ...DEFAULT_SETTINGS, hideWeekends: true }), '2026-10-16');
+  assert.equal(resolveWindowStart(sunday, DEFAULT_SETTINGS), sunday);
+});

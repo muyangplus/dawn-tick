@@ -30,7 +30,15 @@ import { Field, Input } from './components/ui/input.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
 import { Plus } from 'lucide-react';
-import { loadAppData, loadCourseDetail, type AppData, type CourseDetail, type LessonCell } from './data.ts';
+import {
+  defaultWindowStart,
+  loadAppData,
+  loadCourseDetail,
+  resolveWindowStart,
+  type AppData,
+  type CourseDetail,
+  type LessonCell,
+} from './data.ts';
 import { maybeAutoBackup, createSnapshot, pruneSnapshots, takeRecoveryNotice } from './backup.ts';
 import { downloadAndApply, maybeAutoSync, type ApplyMode } from './webdav.ts';
 import { openStorage } from './db/platform.ts';
@@ -60,6 +68,8 @@ import './styles.css';
 
 const USER_ID = 'u1';
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+/** 改变课表窗口排法的设置：改完后窗口回到默认起点。 */
+const VIEW_SETTING_KEYS: readonly (keyof AppSettings)[] = ['viewDays', 'weekStartsToday', 'hideWeekends'];
 
 const STORAGE_LABEL: Record<Storage['kind'], string> = {
   indexeddb: '浏览器 IndexedDB',
@@ -92,9 +102,14 @@ function weekDateOf(semester: { start_date: string }, week: number, dayOfWeek: n
   return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
 }
 
-/** 查看窗口平移一屏；windowStart 为 null（起点是今天）时以已加载起点为基准，起点可越出学期。 */
-function shiftWindowStart(current: string | null, loaded: string, days: number): string {
-  return addDays(current ?? loaded, days);
+/** 查看窗口平移一屏；windowStart 为 null（默认起点）时以已加载起点为基准，起点可越出学期。 */
+function shiftWindowStart(
+  current: string | null,
+  loaded: string,
+  days: number,
+  settings: AppSettings,
+): string {
+  return resolveWindowStart(addDays(current ?? loaded, days), settings);
 }
 
 /** 窗口覆盖的日期区间文案，例如 8/19–8/23。 */
@@ -260,9 +275,11 @@ export function App() {
   const reload = useCallback(
     async (target: Storage | null, current: AppSettings, start?: string | null) => {
       if (target === null) return;
-      const next = await loadAppData(target, current, start === undefined || start === null ? {} : { windowStart: start });
+      const explicit = start !== undefined && start !== null && start !== '';
+      const next = await loadAppData(target, current, explicit ? { windowStart: start } : {});
       setData(next);
-      setWindowStart(next.windowStart);
+      // 只记显式起点：null 表示跟随设置里的默认起点，设置一变窗口才会跟着动
+      if (explicit) setWindowStart(start);
       logInfo('data', '加载课表', {
         week: next.week,
         viewWeek: next.viewWeek,
@@ -286,10 +303,10 @@ export function App() {
       setWindowStart((current) => {
         const loaded = data?.windowStart;
         if (current === null && (loaded === undefined || loaded === '')) return current;
-        return shiftWindowStart(current, loaded ?? '', days);
+        return shiftWindowStart(current, loaded ?? '', days, settings);
       });
     },
-    [data?.windowStart],
+    [data?.windowStart, settings],
   );
 
   useEffect(() => {
@@ -457,7 +474,7 @@ export function App() {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-      // ←/→ 平移一屏（设置里的天数），T 回到以今天开头的窗口
+      // ←/→ 平移一屏（设置里的天数），T 回到默认起点（今天或本周周一）
       if (event.key === 'ArrowLeft') shiftWindow(-settings.viewDays);
       else if (event.key === 'ArrowRight') shiftWindow(settings.viewDays);
       else if (event.key === 't' || event.key === 'T') setWindowStart(null);
@@ -472,8 +489,8 @@ export function App() {
 
   useEffect(() => {
     if (storage === null || data === null) return;
-    // windowStart=null 表示「以今天开头」：要拿今天跟已加载的窗口起点比，否则「回到今天」不会重载
-    const wanted = windowStart ?? data.today;
+    // windowStart=null 表示「用默认起点」：要拿默认起点跟已加载的窗口起点比，否则「回到今天」不会重载
+    const wanted = windowStart ?? defaultWindowStart(data.today, settings);
     if (wanted === data.windowStart) return;
     void reload(storage, settings, wanted);
   }, [windowStart, data, storage, settings, reload]);
@@ -483,7 +500,10 @@ export function App() {
       if (storage === null) return;
       const next = await writeSettings(storage, partial);
       setSettings(next);
-      await reload(storage, next, windowStart);
+      // 视图相关设置变了就回到默认起点（今天或本周周一），否则保持用户当前翻到的位置
+      const viewChanged = VIEW_SETTING_KEYS.some((key) => partial[key] !== undefined);
+      if (viewChanged) setWindowStart(null);
+      await reload(storage, next, viewChanged ? null : windowStart);
     },
     [storage, reload, windowStart],
   );

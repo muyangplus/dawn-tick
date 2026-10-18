@@ -1090,6 +1090,28 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>今天为第一天</span>
+            <span className="truncate text-xs text-muted">关掉从本周周一开头</span>
+          </span>
+          <Switch
+            checked={settings.weekStartsToday}
+            aria-label="今天为第一天"
+            onCheckedChange={(checked) => void onPatch({ weekStartsToday: checked })}
+          />
+        </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+          <span className="flex min-w-0 flex-col">
+            <span>始终不显示周末</span>
+            <span className="truncate text-xs text-muted">跳过周六日，列数按天数</span>
+          </span>
+          <Switch
+            checked={settings.hideWeekends}
+            aria-label="始终不显示周末"
+            onCheckedChange={(checked) => void onPatch({ hideWeekends: checked })}
+          />
+        </label>
         <Field label="界面动效" hint="页面与弹窗过渡" help="跟随系统时遵守系统的「减少动态效果」">
           <Select value={settings.motion} onValueChange={(value) => void onPatch({ motion: value as MotionMode })}>
             <SelectTrigger aria-label="界面动效">

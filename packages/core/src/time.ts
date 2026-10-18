@@ -134,6 +134,20 @@ export function weekStart(date: string): string {
   return addDays(date, -(dayOfWeek(date) - 1));
 }
 
+/** 周六或周日。 */
+export function isWeekend(date: string): boolean {
+  return dayOfWeek(date) >= 6;
+}
+
+/** 下一个工作日：周末顺延到周一，工作日原样返回。 */
+export function nextWorkday(date: string): string {
+  let cursor = date;
+  for (let step = 0; step < 7 && isWeekend(cursor); step += 1) {
+    cursor = addDays(cursor, 1);
+  }
+  return cursor;
+}
+
 /** 含首含尾的日期序列。 */
 export function dateRange(from: string, to: string): string[] {
   const out: string[] = [];

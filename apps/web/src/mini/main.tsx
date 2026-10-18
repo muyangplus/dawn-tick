@@ -2,6 +2,8 @@ import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   WIDGET_VARIANTS,
+  addDays,
+  dayOfWeek,
   formatDate,
   formatTime,
   readSettings,
@@ -16,7 +18,7 @@ import { installWebviewGuards } from '../webview-guard.ts';
 import { logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { MiniShell } from './shell.tsx';
-import { shouldShowTomorrow, tomorrowPreviewLessons } from './tomorrow.ts';
+import { shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
 import '../styles.css';
 
 installWebviewGuards();
@@ -24,6 +26,8 @@ installLogHandlers();
 
 /** 兜底轮询间隔：主窗口的数据变更会主动通知，这里只防窗口漏掉通知。 */
 const REFRESH_MS = 15_000;
+/** 星期标签：1=周一，与 dayOfWeek 对齐。 */
+const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 async function hideWindow(): Promise<void> {
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -79,6 +83,7 @@ function Mini() {
       const latest = await readSettings(storage);
       if (
         latest.tomorrowPreview !== current.tomorrowPreview ||
+        latest.hideWeekends !== current.hideWeekends ||
         latest.widgetVariant !== current.widgetVariant ||
         latest.widgetBackground !== current.widgetBackground
       ) {
@@ -178,10 +183,21 @@ function Mini() {
   const todayLessons = data?.todayLessons ?? [];
   const tomorrowLessons = data?.tomorrowLessons ?? [];
   const tomorrowEnabled = settings?.tomorrowPreview !== false;
+  // 「始终不显示周末」时预告看下一个工作日：周五看周一，不显示周末
+  const tomorrowDate = data === null ? '' : addDays(data.today, 1);
+  const previewDate = data === null ? '' : previewDateFor(data.today, settings?.hideWeekends === true);
+  const previewLessons =
+    data === null || previewDate === tomorrowDate
+      ? tomorrowLessons
+      : (data.lessonsByDate.get(previewDate) ?? []);
+  const previewLabel =
+    data === null || previewDate === tomorrowDate
+      ? '明日课程预告'
+      : `${WEEKDAY_LABELS[dayOfWeek(previewDate) - 1] ?? ''}课程预告`;
   const showTomorrow = shouldShowTomorrow({
     enabled: tomorrowEnabled,
     todayEnds: todayLessons.map((lesson) => lesson.endAt),
-    tomorrowCount: tomorrowLessons.length,
+    tomorrowCount: previewLessons.length,
     now,
   });
   const nextIsTomorrow =
@@ -232,14 +248,14 @@ function Mini() {
   }
 
   if (variant === 'today') {
-    // 明日预告最多列 3 节，且不再插入独立标签行，避免把课程名挤出悬浮窗
-    const lessons = showTomorrow ? tomorrowPreviewLessons(tomorrowLessons).slice(0, 3) : todayLessons;
+    // 预告最多列 3 节，且不再插入独立标签行，避免把课程名挤出悬浮窗
+    const lessons = showTomorrow ? tomorrowPreviewLessons(previewLessons).slice(0, 3) : todayLessons;
     return (
       <MiniShell
         variant={variant}
         onHide={hide}
         background={background}
-        label={showTomorrow ? '明日课程预告' : undefined}
+        label={showTomorrow ? previewLabel : undefined}
       >
         {lessons.length === 0 ? (
           <div className="mini-empty">今天没有课啦</div>
