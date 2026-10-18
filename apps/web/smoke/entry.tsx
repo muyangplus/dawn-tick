@@ -1071,12 +1071,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
 
   // 只按一下不动（轻微抖动也算单击）：保留单节占位块，不弹加课弹窗
-  clickGridCell(view.container, 7, 5);
+  // 选一个第 5 节一定空着、又不是今天的列：今天有概率论、周二与周四有线代（第 5–8 节）
+  const todayDayOfWeek = new Date().getDay() === 0 ? 7 : new Date().getDay();
+  const emptyDay = [1, 2, 3, 4, 5, 6, 7].find(
+    (day) => day !== todayDayOfWeek && day !== 2 && day !== 4,
+  ) ?? 1;
+  clickGridCell(view.container, emptyDay, 5);
   await flush(8);
   check(
     '空白格单击（未拖动）只留单节占位块',
     slotRange(view.container) === '第 5 节' && document.querySelector('[aria-label="起始节"]') === null,
-    `${slotRange(view.container)}`,
+    `${slotRange(view.container)} @ 周${emptyDay}`,
   );
   // 清掉占位块，避免影响后面的拖动调课断言
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
