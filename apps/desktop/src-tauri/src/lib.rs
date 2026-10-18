@@ -539,6 +539,7 @@ fn is_corrupt_message(message: &str) -> bool {
     lower.contains("malformed")
         || lower.contains("corrupt")
         || lower.contains("not a database")
+        || lower.contains("unsupported file format")
         || lower.contains("code: 11")
         || lower.contains("code: 26")
 }
@@ -696,15 +697,27 @@ fn log_dirs() -> &'static [PathBuf] {
 }
 
 /// 以追加方式打开某个候选目录里的日志文件；不可写返回 None。
+/// 目标是数据库文件（含硬链、软链造成的别名）时返回 None：日志文本不写进数据库。
 fn open_log_file(dir: &std::path::Path) -> Option<std::fs::File> {
     if create_dir_all(dir).is_err() {
         return None;
     }
-    OpenOptions::new()
+    let path = dir.join(LOG_FILE_NAME);
+    if same_path(&path, &database_file(dir)) {
+        return None;
+    }
+    let mut file = OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
-        .open(dir.join(LOG_FILE_NAME))
-        .ok()
+        .open(&path)
+        .ok()?;
+    // 头部是 SQLite 魔数就放弃这一处
+    let mut header = [0u8; 16];
+    if std::io::Read::read_exact(&mut file, &mut header).is_ok() && header == *b"SQLite format 3\0" {
+        return None;
+    }
+    Some(file)
 }
 
 /// 日志实际落盘的目录：第一个写得进去的候选。
@@ -3435,6 +3448,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp);
     }
 
+    /// 日志目标若是 SQLite 文件就放弃写入：日志文本不写进数据库。
+    #[cfg(desktop)]
+    #[test]
+    fn log_writer_refuses_sqlite_target() {
+        let temp = scratch_dir(&format!("dawntick-log-guard-test-{}", std::process::id()));
+        let db = temp.join(DATABASE_FILE_NAME);
+        write_sqlite_file(&db, "CREATE TABLE t (a INTEGER)");
+        std::fs::copy(&db, temp.join(LOG_FILE_NAME)).expect("用 SQLite 库冒充日志文件");
+        assert!(open_log_file(&temp).is_none(), "SQLite 文件不能当日志目标");
+
+        std::fs::remove_file(temp.join(LOG_FILE_NAME)).expect("删除冒充文件");
+        assert!(open_log_file(&temp).is_some(), "普通日志文件应可写");
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
     /// 自检口径：损坏文件不通过，正常库与不存在的文件通过。
     #[cfg(desktop)]
     #[test]
@@ -3450,6 +3478,7 @@ mod tests {
         assert!(database_healthy(&temp.join("missing.db")), "没有文件按健康处理");
         assert!(!is_corrupt_message("database is locked"), "锁冲突不算损坏");
         assert!(is_corrupt_message("file is not a database"));
+        assert!(is_corrupt_message("error returned from database: (code: 1) unsupported file format"));
         assert!(is_corrupt_message("error returned from database: (code: 11) database disk image is malformed"));
         let _ = std::fs::remove_dir_all(&temp);
     }

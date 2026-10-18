@@ -12,6 +12,10 @@ test('损坏判定认 SQLite 的损坏报错', () => {
   assert.equal(isCorruptDatabase(new Error('database disk image is malformed')), true);
   assert.equal(isCorruptDatabase(new Error('file is not a database')), true);
   assert.equal(isCorruptDatabase(new Error('(code: 26) file is not a database')), true);
+  assert.equal(
+    isCorruptDatabase(new Error('error returned from database: (code: 1) unsupported file format')),
+    true,
+  );
 });
 
 test('锁冲突与权限问题不算损坏', () => {
