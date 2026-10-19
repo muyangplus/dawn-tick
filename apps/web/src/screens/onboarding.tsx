@@ -4,7 +4,6 @@ import {
   addDays,
   createSemester,
   formatDate,
-  importBackup,
   summarizeBackup,
   weekStart,
   type BackupPayload,
@@ -16,6 +15,13 @@ import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { SchoolPickerDialog } from '../components/school-picker-dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
+import {
+  importConfig,
+  parseImportText,
+  presentModules,
+  readImportFile,
+  type PackageExtras,
+} from '../data-management.ts';
 import { applySchoolTimetable, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 
@@ -36,8 +42,13 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   const [startDate, setStartDate] = useState(() => weekStart(today));
   const [totalWeeks, setTotalWeeks] = useState(20);
   const [error, setError] = useState<string | null>(null);
+  /** 导入自己的错误：显示在导入分区里，不跟建学期的错误混在一起 */
+  const [importError, setImportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<BackupPayload | null>(null);
+  /** 整包 zip 里的预设与日志；JSON / Base64 输入为 null */
+  const [pendingExtras, setPendingExtras] = useState<PackageExtras | null>(null);
+  const [importText, setImportText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   /** 首次使用时选的学校：创建学期后按该校作息排课次，之后在作息设置里可一键再套用 */
   const [school, setSchool] = useState<School | null>(null);
@@ -59,18 +70,33 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     };
   }, [storage]);
 
+  /** 读备份文件：JSON / Base64 文本 / 整包 zip 都走设置页同一套解析与错误文案。 */
   async function pickFile(file: File): Promise<void> {
-    setError(null);
-    try {
-      const parsed = JSON.parse(await file.text()) as BackupPayload;
-      if (parsed.format !== 'dawn-tick-backup') {
-        setError('这个文件不是晓刻的备份');
-        return;
-      }
-      setPending(parsed);
-    } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+    setImportError(null);
+    const { payload, extras, error: readError } = await readImportFile(file);
+    if (payload === null) {
+      setImportError(readError ?? '读取备份文件失败');
+      return;
     }
+    setPending(payload);
+    setPendingExtras(extras);
+  }
+
+  /** 粘贴的文本：JSON 与 Base64 都接受；整包 zip 只能选文件。 */
+  function pickText(): void {
+    setImportError(null);
+    try {
+      setPending(parseImportText(importText));
+      setPendingExtras(null);
+    } catch (cause: unknown) {
+      setImportError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  function clearPending(): void {
+    setPending(null);
+    setPendingExtras(null);
+    setImportError(null);
   }
 
   async function applyImport(): Promise<void> {
@@ -82,13 +108,23 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     });
     if (!ok) return;
     setBusy(true);
-    setError(null);
+    setImportError(null);
     try {
-      const result = await importBackup(storage, pending, { mode: 'overwrite' });
-      toast.success(`已导入 ${result.imported} 条数据`);
+      const modules = presentModules(pending);
+      // 整包可能只带预设快照、没有设置行：补上 settings 才会写回预设
+      const hasPresets =
+        pendingExtras !== null &&
+        (pendingExtras.presets.snapshot !== null || pendingExtras.presets.content !== null);
+      if (hasPresets && !modules.includes('settings')) modules.push('settings');
+      const result = await importConfig(storage, pending, {
+        mode: 'overwrite',
+        modules,
+        extras: pendingExtras,
+      });
+      toast.success(`已导入 ${result.imported} 条记录${result.presets ? '，已恢复预设' : ''}`);
       onDone();
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setImportError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
@@ -237,15 +273,19 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">
             <span className="text-xs font-semibold text-ink">已有数据：直接导入</span>
-            <span className="text-xs text-muted">选择晓刻导出的备份文件并导入</span>
+            <span className="text-xs text-muted">选择备份文件，或直接粘贴 JSON / Base64 文本</span>
+            <span className="text-xs text-muted" data-role="onboarding-import-formats">
+              支持晓刻导出的 JSON、Base64 文本与整包 zip
+            </span>
             <input
               ref={fileRef}
               type="file"
-              accept="application/json,.json"
+              accept="application/json,text/plain,application/zip,.json,.txt,.zip"
               className="hidden"
               aria-label="选择备份文件"
               onChange={(event) => {
                 const file = event.target.files?.[0];
+                event.target.value = '';
                 if (file !== undefined) void pickFile(file);
               }}
             />
@@ -253,26 +293,52 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               <Button variant="secondary" aria-label="选择备份文件" disabled={busy} onClick={() => fileRef.current?.click()}>
                 选择备份文件
               </Button>
-              {pending !== null && (
-                <>
-                  <span className="text-xs text-muted">
-                    {summarizeBackup(pending)
-                      .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
-                      .join('、')}
-                  </span>
+            </div>
+            <textarea
+              data-role="onboarding-import-text"
+              aria-label="配置文本"
+              placeholder="或在此粘贴 JSON / Base64 配置文本"
+              className="h-20 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
+              value={importText}
+              onChange={(event) => setImportText(event.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                aria-label="从文本导入"
+                disabled={busy || importText.trim().length === 0}
+                onClick={pickText}
+              >
+                从文本导入
+              </Button>
+            </div>
+            {pending !== null && (
+              <>
+                <span className="text-xs text-muted">
+                  {summarizeBackup(pending)
+                    .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
+                    .join('、')}
+                </span>
+                <span className="text-xs text-danger-strong" data-role="onboarding-overwrite-hint">
+                  将覆盖设备上的现有数据，不可撤销
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
                   <Button variant="primary" aria-label="确认导入" disabled={busy} onClick={() => void applyImport()}>
                     确认导入
                   </Button>
-                  <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>
+                  <Button variant="ghost" aria-label="取消导入" disabled={busy} onClick={clearPending}>
                     取消
                   </Button>
-                </>
-              )}
-            </div>
-            {pending !== null && (
-              <span className="text-xs text-muted">
-                导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
-              </span>
+                </div>
+                <span className="text-xs text-muted">
+                  导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
+                </span>
+              </>
+            )}
+            {importError !== null && (
+              <p className="text-xs text-danger-strong" data-role="onboarding-import-error">
+                {importError}
+              </p>
             )}
           </div>
         </Card>
