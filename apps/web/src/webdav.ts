@@ -2,8 +2,6 @@ import {
   BACKUP_MODULES,
   exportBackup,
   importBackup,
-  parseBackup,
-  zipStore,
   type AppSettings,
   type BackupModule,
   type BackupPayload,
@@ -11,9 +9,13 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { detectPlatform } from './platform-detect.ts';
-import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './preset-update.ts';
 import { logInfo, logWarn } from './log.ts';
-import { pickBackupText, readZipEntries } from './zip-read.ts';
+import {
+  applyPackageEntries,
+  buildPackageBytes,
+  readPackageEntries,
+  readPresetExtras,
+} from './package.ts';
 
 /** WebDAV 同步：整库快照 + 设置与预设打成一个 zip 传到远端目录。 */
 /** Windows 走 Tauri 官方 http 插件，Android 由 Capacitor 接管 fetch，Web 用浏览器 fetch。 */
@@ -150,17 +152,13 @@ export async function buildPackage(
   now = Date.now(),
 ): Promise<{ bytes: Uint8Array; payload: BackupPayload }> {
   const payload = await exportBackup(storage, { now, modules: BACKUP_MODULES });
-  const encoder = new TextEncoder();
-  const entries = [{ name: 'backup.json', data: encoder.encode(JSON.stringify(payload, null, 2)) }];
-  const snapshot = await storage.readMeta(PRESET_SNAPSHOT_META_KEY);
-  if (snapshot !== undefined) {
-    entries.push({ name: 'presets/snapshot.json', data: encoder.encode(snapshot) });
-  }
-  const content = await storage.readMeta(PRESET_CONTENT_META_KEY);
-  if (content !== undefined) {
-    entries.push({ name: 'presets/content.json', data: encoder.encode(content) });
-  }
-  return { bytes: zipStore(entries, { date: new Date(now) }), payload };
+  const presets = await readPresetExtras(storage);
+  const bytes = buildPackageBytes({
+    backupJson: JSON.stringify(payload, null, 2),
+    presets,
+    now,
+  });
+  return { bytes, payload };
 }
 
 export async function uploadPackage(
@@ -248,12 +246,7 @@ export async function applyPackage(
   mode: ApplyMode,
 ): Promise<ApplyOutcome> {
   try {
-    const entries = await readZipEntries(bytes);
-    const text = pickBackupText(entries);
-    if (text === null) {
-      return { ok: false, error: '同步包里没有 backup.json', full: null, settings: null, presets: false };
-    }
-    const payload = parseBackup(text);
+    const { payload, extras } = await readPackageEntries(bytes);
     const modules: readonly BackupModule[] = mode === 'all' ? BACKUP_MODULES : ['settings'];
     const result = await importBackup(storage, payload, {
       mode: mode === 'all' ? 'clear' : 'overwrite',
@@ -261,17 +254,8 @@ export async function applyPackage(
       now: Date.now(),
     });
 
-    let presets = false;
-    const snapshot = entries.get('presets/snapshot.json');
-    if (snapshot !== undefined) {
-      await storage.writeMeta(PRESET_SNAPSHOT_META_KEY, new TextDecoder().decode(snapshot));
-      presets = true;
-    }
-    const content = entries.get('presets/content.json');
-    if (content !== undefined) {
-      await storage.writeMeta(PRESET_CONTENT_META_KEY, new TextDecoder().decode(content));
-      presets = true;
-    }
+    const applied = await applyPackageEntries(storage, extras, { restorePresets: true });
+    const presets = applied.presets;
     logInfo('webdav', '已应用同步包', {
       mode,
       imported: result.imported,

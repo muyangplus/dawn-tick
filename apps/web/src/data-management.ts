@@ -6,7 +6,6 @@ import {
   summarizeBackup,
   toBase64Utf8,
   fromBase64Utf8,
-  zipStore,
   type BackupModule,
   type BackupPayload,
   type ImportMode,
@@ -14,9 +13,17 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { logInfo, logWarn, logsText } from './log.ts';
-import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './preset-update.ts';
 import { saveBinaryFile, saveTextFile } from './system-actions.ts';
-import { pickBackupText, readZipEntries } from './zip-read.ts';
+import {
+  applyPackageEntries,
+  buildPackageBytes,
+  buildPackageEntries,
+  readPackageEntries,
+  readPresetExtras,
+  type PackageExtras,
+} from './package.ts';
+
+export type { PackageExtras } from './package.ts';
 
 /** 数据管理：本地配置数据的导出与导入（JSON / Base64 / 整包 zip）。 */
 
@@ -102,22 +109,10 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
   }
 
   if (request.format === 'zip') {
-    const encoder = new TextEncoder();
-    const entries = [{ name: 'backup.json', data: encoder.encode(json) }];
-    if (request.bundlePresets) {
-      const snapshot = await storage.readMeta(PRESET_SNAPSHOT_META_KEY);
-      if (snapshot !== undefined) {
-        entries.push({ name: 'presets/snapshot.json', data: encoder.encode(snapshot) });
-      }
-      const content = await storage.readMeta(PRESET_CONTENT_META_KEY);
-      if (content !== undefined) {
-        entries.push({ name: 'presets/content.json', data: encoder.encode(content) });
-      }
-    }
-    if (request.bundleLogs) {
-      entries.push({ name: 'logs/dawn-tick.log', data: encoder.encode(logsText()) });
-    }
-    const bytes = zipStore(entries, { date: new Date(now) });
+    const presets = request.bundlePresets ? await readPresetExtras(storage) : undefined;
+    const logs = request.bundleLogs ? logsText() : undefined;
+    const entries = buildPackageEntries({ backupJson: json, presets, logs });
+    const bytes = buildPackageBytes({ backupJson: json, presets, logs, now });
     const saved = await saveBinaryFile(name, bytes, { extension: 'zip', filterName: 'ZIP 整包' });
     const outcome = {
       ...base,
@@ -168,26 +163,29 @@ export function parseImportText(text: string): BackupPayload {
 
 export interface ImportFileResult {
   payload: BackupPayload | null;
+  /** 整包里带的预设与日志；JSON / Base64 输入为 null */
+  extras: PackageExtras | null;
   error: string | null;
 }
 
-/** 读入备份文件：.json / .base64.txt 直接读文本，.zip 取包里的 backup.json。 */
+/** 读入备份文件：.json / .base64.txt 直接读文本，.zip 走整包读取（含预设与日志）。 */
 export async function readImportFile(file: File): Promise<ImportFileResult> {
   try {
     if (file.name.toLowerCase().endsWith('.zip')) {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const entries = await readZipEntries(bytes);
-      const text = pickBackupText(entries);
-      if (text === null) return { payload: null, error: '整包里没有 backup.json' };
-      const payload = parseBackup(text);
-      logInfo('backup', '读取整包', { name: file.name, entries: entries.size });
-      return { payload, error: null };
+      const { payload, extras } = await readPackageEntries(bytes);
+      logInfo('backup', '读取整包', {
+        name: file.name,
+        presets: extras.presets.snapshot !== null || extras.presets.content !== null,
+        logs: extras.logs !== null,
+      });
+      return { payload, extras, error: null };
     }
-    return { payload: parseImportText(await file.text()), error: null };
+    return { payload: parseImportText(await file.text()), extras: null, error: null };
   } catch (cause: unknown) {
     const error = cause instanceof Error ? cause.message : String(cause);
     logWarn('backup', '读取备份文件失败', { name: file.name, error });
-    return { payload: null, error };
+    return { payload: null, extras: null, error };
   }
 }
 
@@ -199,26 +197,45 @@ export function presentModules(payload: BackupPayload): BackupModule[] {
   return present.length > 0 ? present : [...BACKUP_MODULES];
 }
 
+export interface ImportConfigResult extends ImportResult {
+  /** 整包里带了预设且已写回 */
+  presets: boolean;
+  /** 整包里带了日志但未覆盖本机日志 */
+  logsSkipped: boolean;
+}
+
 export async function importConfig(
   storage: Storage,
   payload: BackupPayload,
-  options: { modules: readonly BackupModule[]; mode: ImportMode },
-): Promise<ImportResult> {
+  options: { modules: readonly BackupModule[]; mode: ImportMode; extras?: PackageExtras | null },
+): Promise<ImportConfigResult> {
   const result = await importBackup(storage, payload, {
     mode: options.mode,
     modules: options.modules,
   });
+  const extras = options.extras ?? null;
+  let presets = false;
+  if (extras !== null && options.modules.includes('settings')) {
+    const applied = await applyPackageEntries(storage, extras, { restorePresets: true });
+    presets = applied.presets;
+  }
+  const logsSkipped = extras !== null && extras.logs !== null;
   logInfo('backup', '导入备份', {
     mode: options.mode,
     modules: [...options.modules],
     imported: result.imported,
     skipped: result.skipped,
     removed: result.removed,
+    presets,
+    logsSkipped,
   });
-  return result;
+  return { ...result, presets, logsSkipped };
 }
 
-export function importResultText(result: ImportResult, mode: ImportMode): string {
+export function importResultText(
+  result: ImportResult & { presets?: boolean; logsSkipped?: boolean },
+  mode: ImportMode,
+): string {
   const head =
     mode === 'skip'
       ? '保留现有数据'
@@ -228,5 +245,7 @@ export function importResultText(result: ImportResult, mode: ImportMode): string
           ? '先清空所选模块再导入'
           : '按修改时间合并';
   const removed = result.removed > 0 ? `，清空 ${result.removed} 条` : '';
-  return `${head}：写入 ${result.imported} 条，跳过 ${result.skipped} 条${removed}`;
+  const presets = result.presets === true ? '，已恢复预设' : '';
+  const logs = result.logsSkipped === true ? '，日志未覆盖' : '';
+  return `${head}：写入 ${result.imported} 条，跳过 ${result.skipped} 条${removed}${presets}${logs}`;
 }

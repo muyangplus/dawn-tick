@@ -11,6 +11,7 @@ import {
   readImportFile,
 } from '../src/data-management.ts';
 import { readZipEntries } from '../src/zip-read.ts';
+import { buildPackageBytes, readPresetExtras } from '../src/package.ts';
 
 function createStorage(): MemoryStorage {
   return new MemoryStorage();
@@ -174,4 +175,54 @@ test('导出的设置能导入回来', async () => {
   });
   assert.equal(result.imported, Object.keys(payload.meta).length);
   assert.equal((await readSettings(target)).themePreset, 'mono');
+});
+
+test('整包导入恢复预设且不覆盖日志', async () => {
+  const source = createStorage();
+  await writeSettings(source, { theme: 'dark' });
+  await source.writeMeta('presets_snapshot_v1', '{"version":"2026.10.1"}');
+  await source.writeMeta('presets_content_v1', '{"schools":[]}');
+  const payload = await exportBackup(source);
+  const presets = await readPresetExtras(source);
+  const bytes = buildPackageBytes({
+    backupJson: JSON.stringify(payload, null, 2),
+    presets,
+    logs: '本机日志',
+    now: 1,
+  });
+  const file = new File([bytes], 'DawnTick-backup.zip');
+  const read = await readImportFile(file);
+  assert.ok(read.payload);
+  assert.deepEqual(read.extras?.presets, presets);
+  assert.equal(read.extras?.logs, '本机日志');
+
+  const target = createStorage();
+  const result = await importConfig(target, read.payload!, {
+    modules: ['settings'],
+    mode: 'overwrite',
+    extras: read.extras,
+  });
+  assert.equal(result.presets, true);
+  assert.equal(result.logsSkipped, true);
+  assert.equal(await target.readMeta('presets_snapshot_v1'), '{"version":"2026.10.1"}');
+  assert.equal(await target.readMeta('presets_content_v1'), '{"schools":[]}');
+  assert.match(importResultText(result, 'overwrite'), /已恢复预设/);
+  assert.match(importResultText(result, 'overwrite'), /日志未覆盖/);
+});
+
+test('没带预设的整包导入不改本机预设', async () => {
+  const payload = await exportBackup(createStorage());
+  const bytes = buildPackageBytes({ backupJson: JSON.stringify(payload), now: 1 });
+  const file = new File([bytes], 'DawnTick-backup.zip');
+  const read = await readImportFile(file);
+  const target = createStorage();
+  await target.writeMeta('presets_snapshot_v1', 'keep-me');
+  const result = await importConfig(target, read.payload!, {
+    modules: ['settings'],
+    mode: 'overwrite',
+    extras: read.extras,
+  });
+  assert.equal(result.presets, false);
+  assert.equal(result.logsSkipped, false);
+  assert.equal(await target.readMeta('presets_snapshot_v1'), 'keep-me');
 });

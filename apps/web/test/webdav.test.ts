@@ -228,3 +228,21 @@ test('坏包给出可读错误且不改数据', async () => {
   assert.ok((outcome.error ?? '').length > 0);
   assert.equal((await readSettings(target)).theme, 'light');
 });
+
+test('整包带上预设并在应用时恢复', async () => {
+  const source = new MemoryStorage();
+  await writeSettings(source, { theme: 'dark' });
+  await source.writeMeta('presets_snapshot_v1', '{"version":"1"}');
+  await source.writeMeta('presets_content_v1', '{"schools":[]}');
+  const { bytes } = await buildPackage(source, 1_793_000_000_000);
+  const entries = await readZipEntries(bytes);
+  assert.ok(entries.has('presets/snapshot.json'));
+  assert.ok(entries.has('presets/content.json'));
+
+  const target = new MemoryStorage();
+  const outcome = await applyPackage(target, bytes, 'all');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.presets, true);
+  assert.equal(await target.readMeta('presets_snapshot_v1'), '{"version":"1"}');
+  assert.equal(await target.readMeta('presets_content_v1'), '{"schools":[]}');
+});

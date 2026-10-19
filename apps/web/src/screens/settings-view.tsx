@@ -40,6 +40,7 @@ import {
   presentModules,
   readImportFile,
   type ExportFormat,
+  type PackageExtras,
 } from '../data-management.ts';
 import { PRESETS } from '../design/tokens.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
@@ -629,6 +630,8 @@ export function SettingsView({
   const [importOpen, setImportOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
+  /** 整包里带出的预设与日志：导入时随设置一起恢复，JSON 粘贴输入为 null */
+  const [pendingImportExtras, setPendingImportExtras] = useState<PackageExtras | null>(null);
   const [importModules, setImportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [importMode, setImportMode] = useState<ImportMode>('skip');
   const [editing, setEditing] = useState<SemesterRow | null>(null);
@@ -849,6 +852,7 @@ export function SettingsView({
     try {
       const payload = parseImportText(text);
       setPendingImport(payload);
+      setPendingImportExtras(null);
       setImportModules(new Set(presentModules(payload)));
       setImportMode('skip');
       setImportOpen(false);
@@ -859,12 +863,13 @@ export function SettingsView({
   }
 
   async function chooseBackupFile(file: File): Promise<void> {
-    const { payload, error } = await readImportFile(file);
+    const { payload, extras, error } = await readImportFile(file);
     if (payload === null) {
       setBackupMessage(error ?? '读取备份文件失败');
       return;
     }
     setPendingImport(payload);
+    setPendingImportExtras(extras);
     setImportModules(new Set(presentModules(payload)));
     setImportMode('skip');
     setImportOpen(false);
@@ -879,9 +884,14 @@ export function SettingsView({
         setBackupMessage('请至少勾选一个模块');
         return;
       }
-      const result = await importConfig(storage, pendingImport, { mode: importMode, modules });
+      const result = await importConfig(storage, pendingImport, {
+        mode: importMode,
+        modules,
+        extras: pendingImportExtras,
+      });
       setBackupMessage(importResultText(result, importMode));
       setPendingImport(null);
+      setPendingImportExtras(null);
       onChanged();
     } finally {
       setBusy(false);
