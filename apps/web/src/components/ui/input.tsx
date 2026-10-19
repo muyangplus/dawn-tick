@@ -10,6 +10,7 @@ import {
   type InputHTMLAttributes,
   type LabelHTMLAttributes,
   type ReactNode,
+  type Ref,
   type TextareaHTMLAttributes,
 } from 'react';
 import { cn } from '../../lib/cn.ts';
@@ -38,11 +39,16 @@ export function useRegisterFieldControl(field: FieldControlContextValue | null):
   useEffect(() => field?.register(), [field]);
 }
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({
+  className,
+  ref,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   const field = useFieldControl();
   useRegisterFieldControl(field);
   return (
     <input
+      ref={ref}
       className={cn(fieldBase, 'min-h-tap', className)}
       {...props}
       id={props.id ?? field?.id}
