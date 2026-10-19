@@ -298,20 +298,21 @@ test('网络与格式异常都有可读原因', async () => {
   assert.equal(httpError.error, '该渠道还没有发布记录');
 });
 
-test('各渠道更新源各自独立', () => {
-  assert.match(UPDATE_FEEDS.dev, /dev-latest/);
-  assert.match(UPDATE_FEEDS.beta, /beta-latest/);
-  assert.match(UPDATE_FEEDS.release, /releases\/latest\/download/);
-  assert.equal(new Set(Object.values(UPDATE_FEEDS)).size, 3);
+test('各渠道更新源各自独立：beta 只查发布列表', () => {
+  assert.match(UPDATE_FEEDS.dev ?? '', /dev-latest/);
+  assert.equal(UPDATE_FEEDS.beta, undefined, 'beta 标签带版本号，没有固定直连源');
+  assert.match(UPDATE_FEEDS.release ?? '', /releases\/latest\/download/);
+  assert.equal(
+    Object.values(UPDATE_FEEDS).filter((url) => url !== undefined).length,
+    2,
+    '只有 dev 与 release 有直连兜底',
+  );
 
   assert.equal(
     UPDATE_API_FEEDS.dev,
     'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest',
   );
-  assert.equal(
-    UPDATE_API_FEEDS.beta,
-    'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/beta-latest',
-  );
+  assert.equal(UPDATE_API_FEEDS.beta, UPDATE_RELEASES_API, 'beta 首选取发布列表');
   assert.equal(UPDATE_API_FEEDS.release, 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest');
   assert.equal(new Set(Object.values(UPDATE_API_FEEDS)).size, 3);
 });
@@ -508,6 +509,50 @@ test('API 网络异常时回退 version.json 直连', async () => {
   assert.equal(status.latest, '0.2.0');
   assert.equal(status.available, true);
   assert.equal(status.manifest?.notes, '回退清单');
+});
+
+test('release 网络异常时回退发布内的 version.json，额外字段不影响解析', async () => {
+  const seen: string[] = [];
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async (input) => {
+      const url = String(input);
+      seen.push(url);
+      if (isGitHubApi(url)) throw new Error('fetch failed');
+      return manifestResponse({
+        channel: 'release',
+        version: '0.2.0',
+        tag: 'v0.2.0',
+        notes: '回退清单',
+        artifacts: ['DawnTick-0.2.0-release-web.zip'],
+      });
+    },
+  });
+  assert.deepEqual(seen, [UPDATE_API_FEEDS.release, UPDATE_FEEDS.release], '先 API，再回退 releases/latest 直连');
+  assert.equal(status.error, null);
+  assert.equal(status.latest, '0.2.0');
+  assert.equal(status.available, true);
+  assert.equal(status.manifest?.channel, 'release');
+});
+
+test('beta 没有固定直连兜底：只查发布列表，网络异常时交回原始错误', async () => {
+  const seen: string[] = [];
+  const status = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.2.0-beta.1',
+    fetchImpl: async (input) => {
+      seen.push(String(input));
+      throw new Error('fetch failed: api.github.com');
+    },
+  });
+  assert.deepEqual(seen, [UPDATE_RELEASES_API], 'beta 只查发布列表，不再回退到不存在的滚动标签');
+  assert.equal(status.available, false);
+  assert.equal(status.latest, null);
+  assert.equal(status.manifest, null);
+  assert.match(String(status.error), /fetch failed: api\.github\.com/);
 });
 
 test('回退源也失败时把 API 的原始网络错误交出去', async () => {

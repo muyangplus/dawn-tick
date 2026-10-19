@@ -254,6 +254,26 @@ jobs:
         with:
           path: artifacts
 
+      - name: 准备发布说明
+        run: |
+          set -euo pipefail
+          # 正文首行始终是渠道行，客户端从它读提交号；CHANGELOG 段落取不到时只留这一行
+          NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
+          echo "NOTES=${NOTES}" >> "$GITHUB_ENV"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          if [[ "$CHANNEL" == "dev" ]]; then
+            BODY=$(node tools/release/changelog.mjs --extract 2>/dev/null || true)
+          else
+            BODY=$(node tools/release/changelog.mjs --extract="${VERSION}" 2>/dev/null || true)
+          fi
+          if [[ -n "$BODY" ]]; then
+            printf '%s\n\n%s\n' "$NOTES" "$BODY" > "$NOTES_FILE"
+            echo "发布说明取自 CHANGELOG.md"
+          else
+            rm -f "$NOTES_FILE"
+            echo "CHANGELOG.md 没有对应段落，回退自动生成"
+          fi
+
       - name: 重命名并生成校验和
         run: |
           set -euo pipefail
@@ -282,8 +302,27 @@ jobs:
 
           (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 
+          # 更新兜底清单：渠道、版本、标签、发布说明与产物名一致，客户端网络异常时直连读取
+          # 版本取标签里的语义化值（beta 带预发布号）；dev 的滚动标签没有版本，用构建版本
+          if [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+            MANIFEST_VERSION="${BASH_REMATCH[1]}"
+          else
+            MANIFEST_VERSION="$VERSION"
+          fi
+          if [[ -s "$RUNNER_TEMP/release-notes.md" ]]; then
+            notes_arg=("--notes-file=$RUNNER_TEMP/release-notes.md")
+          else
+            notes_arg=("--notes=$NOTES")
+          fi
+          node tools/release/version-json.mjs \
+            --channel="$CHANNEL" \
+            --version="$MANIFEST_VERSION" \
+            --tag="$TAG" \
+            "${notes_arg[@]}" \
+            --out=out
+
           cd out
-          for file in $(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.apk' -o -name '*.zip' \) -printf '%f\n'); do
+          for file in $(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.apk' -o -name '*.zip' -o -name 'version.json' \) -printf '%f\n'); do
             sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
           done
           ls -l
@@ -322,24 +361,7 @@ jobs:
             *-latest) PREV="" ;;
           esac
 
-          NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
-
-          # 发布说明取 CHANGELOG.md：dev 用「未发布」段，其余渠道用该版本段；
-          # 取不到就整体回退 GitHub 自动生成的对比说明（正文首行始终是渠道行，客户端从它读提交号）
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
-          BODY=""
-          if [[ "$CHANNEL" == "dev" ]]; then
-            BODY=$(node tools/release/changelog.mjs --extract 2>/dev/null || true)
-          else
-            BODY=$(node tools/release/changelog.mjs --extract="${VERSION}" 2>/dev/null || true)
-          fi
-          if [[ -n "$BODY" ]]; then
-            printf '%s\n\n%s\n' "$NOTES" "$BODY" > "$NOTES_FILE"
-            echo "发布说明取自 CHANGELOG.md"
-          else
-            rm -f "$NOTES_FILE"
-            echo "CHANGELOG.md 没有对应段落，回退自动生成"
-          fi
 
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "标签 $TAG 已存在，覆盖产物"
