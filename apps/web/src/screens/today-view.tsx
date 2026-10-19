@@ -1,5 +1,5 @@
 import { MapPin, Timer } from 'lucide-react';
-import { formatTime } from '@dawn-tick/core';
+import { formatTime, weekOfDate } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { Countdown } from '../components/countdown.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
@@ -7,28 +7,28 @@ import { cn } from '../lib/cn.ts';
 import { formatRemaining } from '../lib/format.ts';
 import { useNowTick } from '../lib/use-now.ts';
 
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-
-function dateLabel(date: string, timeZone: string): string {
-  const [year, month, day] = date.split('-').map(Number);
-  const weekday = WEEKDAYS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7];
-  return `${month} 月 ${day} 日 ${weekday}`;
+export interface TodayViewProps {
+  data: AppData;
+  /** 日模式查看的日期（YYYY-MM-DD）：顶部日期翻页决定 */
+  date: string;
+  /** 查看的是不是今天：只有今天才显示「正在上课」「下一节课」 */
+  isToday: boolean;
 }
 
-export function TodayView({ data }: { data: AppData }) {
+export function TodayView({ data, date, isToday }: TodayViewProps) {
   const now = useNowTick(1000);
-  const current = data.currentLesson;
-  const next = data.nextLesson;
-  const nextIsToday = next !== undefined && data.todayLessons.some((item) => item.startAt === next.startAt);
+  const lessons = data.lessonsByDate.get(date) ?? [];
+  const current = isToday ? data.currentLesson : undefined;
+  const next = isToday ? data.nextLesson : undefined;
+  const nextIsToday = next !== undefined && lessons.some((item) => item.startAt === next.startAt);
+  const week = data.semester === null ? 0 : weekOfDate(date, data.semester.start_date);
+  const inSemester = data.semester !== null && week >= 1 && week <= data.semester.total_weeks;
 
   return (
-    <section className="flex flex-col gap-3" aria-label="今日视图">
-      <div className="flex flex-col gap-1">
-        <span className="text-lg font-semibold text-ink">今天 {dateLabel(data.today, data.timeZone)}</span>
-        <span className="text-xs text-muted">
-          第 {data.week} 周 · {data.todayLessons.length} 节课
-        </span>
-      </div>
+    <section className="flex flex-col gap-3" aria-label="日视图">
+      <span className="text-xs text-muted">
+        {inSemester ? `第 ${week} 周 · ${lessons.length} 节课` : `${lessons.length} 节课`}
+      </span>
 
       {current !== undefined && (
         <div
@@ -69,11 +69,14 @@ export function TodayView({ data }: { data: AppData }) {
         </div>
       )}
 
-      {data.todayLessons.length === 0 ? (
-        <EmptyState title="今天没有课" description="可切换到周视图查看本周安排" />
+      {lessons.length === 0 ? (
+        <EmptyState
+          title={isToday ? '今天没有课' : '这一天没有课'}
+          description="可切换到周视图查看本周安排"
+        />
       ) : (
         <ul className="flex flex-col gap-2">
-          {data.todayLessons.map((lesson) => {
+          {lessons.map((lesson) => {
             const isNext = nextIsToday && next !== undefined && next.startAt === lesson.startAt;
             const running = lesson.startAt <= now && lesson.endAt > now;
             const finished = lesson.endAt <= now;

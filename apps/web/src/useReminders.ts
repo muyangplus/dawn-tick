@@ -11,6 +11,7 @@ import {
 import {
   currentNotifyPermission,
   ensureNotifyPermission,
+  markNotifyAsked,
   notifyNow,
   scheduleNotify,
   type NotifyPermission,
@@ -150,7 +151,9 @@ export function useReminders(
     upcoming,
     permission,
     request: async () => {
-      setPermission(await ensureNotifyPermission());
+      const next = await ensureNotifyPermission();
+      setPermission(next);
+      if (storage !== null) await markNotifyAsked(storage);
     },
   };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { addDays, dayOfWeek as nextDayOfWeek, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
@@ -9,13 +9,13 @@ import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
+import { ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, nextRowHeight, rowHeightFor, type CardMeasurement } from '../lib/row-height.ts';
 import { logDebug, logWarn } from '../log.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-const ROW_HEIGHT = 56;
-/** 行高自适应范围：内容挤不下就整体加高，但不超过上限。 */
-const ROW_HEIGHT_MIN = 56;
-const ROW_HEIGHT_MAX = 96;
+/** 同一宽度下最多连调两次行高：滚动条出现/消失会让宽度抖动，再调就会来回跳。 */
+const MAX_ROW_HEIGHT_ADJUSTS = 2;
+const ROW_HEIGHT_ADJUST_WINDOW_MS = 3000;
 /** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
 const LONG_PRESS_MS = 350;
 /** 长按期间允许的手指/鼠标抖动半径（像素），超过就取消长按。 */
@@ -189,24 +189,18 @@ function lessonsOf(data: AppData): LessonCell[] {
   return out;
 }
 
-/** 量一次课表卡片是否被裁：卡片本身与所有后代 span 都要看（truncate/line-clamp 量不到卡片）。 */
-function measureCardFit(): { cards: number; clipped: boolean; overflow: number } {
+/** 量一次课表卡片：卡片内容高度 + 它占几节，交给行高换算。 */
+function measureCards(): CardMeasurement[] {
   const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]')).filter(
-    (card) => card.closest('[data-role="drag-ghost"]') === null,
+    (card) => card.closest('[data-role="drag-ghost"]') === null && card.closest('[data-custom-time]') === null,
   );
-  let overflow = 0;
-  let clipped = false;
-  for (const card of cards) {
-    const cardOverflow = card.scrollHeight - card.clientHeight;
-    if (cardOverflow > overflow) overflow = cardOverflow;
-    if (cardOverflow > 2) clipped = true;
-    for (const node of Array.from(card.querySelectorAll<HTMLElement>('span'))) {
-      const spanOverflow = node.scrollHeight - node.clientHeight;
-      if (spanOverflow > overflow) overflow = spanOverflow;
-      if (spanOverflow > 2) clipped = true;
-    }
-  }
-  return { cards: cards.length, clipped, overflow };
+  return cards.map((card) => {
+    const cell = card.closest<HTMLElement>('[data-role="lesson-cell"]');
+    return {
+      span: Number(cell?.dataset.span ?? '0'),
+      contentHeight: card.scrollHeight,
+    };
+  });
 }
 
 export function WeekView({
@@ -222,8 +216,14 @@ export function WeekView({
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
   const [emptyDragMode, setEmptyDragMode] = useState<EmptyDragMode | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  /** 行高：内容显示不全时整体加高，范围 56–96，避免个别长标题把整页撑开 */
+  /** 行高：按卡片内容量一次直接定高，范围 56–96，避免个别长标题把整页撑开 */
   const [rowHeight, setRowHeight] = useState(ROW_HEIGHT_MIN);
+  const rowHeightRef = useRef(ROW_HEIGHT_MIN);
+  /** 上次量行高时的容器宽度：宽度没变就不重复量，避免滚动条宽度抖动引起反复调整 */
+  const measuredWidth = useRef<number | null>(null);
+  /** 同一宽度下的连续调整次数与起始时刻：超过上限就停在当前值 */
+  const adjustCount = useRef(0);
+  const adjustStart = useRef(0);
   const touchStart = useRef<number | null>(null);
   const session = useRef<DragSession | null>(null);
   const suppressNextClick = useRef(false);
@@ -264,48 +264,85 @@ export function WeekView({
   const ratio =
     gridHeight === 0 ? null : minuteToY(nowMinute, slots, rowHeight, metrics) / gridHeight;
 
-  // 内容自适应行高：卡片被裁就整体加高（上限 ROW_HEIGHT_MAX），变宽不挤了逐级收回
+  /** 量一次卡片内容并直接定行高：只有内容挤不下才加高，收回要留余量，不会来回跳。 */
+  const applyRowHeight = useCallback((force: boolean): void => {
+    const section = sectionRef.current;
+    if (section === null) return;
+    const width = Math.round(section.getBoundingClientRect().width);
+    if (!force && measuredWidth.current === width) return;
+    measuredWidth.current = width;
+    const cards = measureCards();
+    if (cards.length === 0) return;
+    const current = rowHeightRef.current;
+    const next = nextRowHeight(current, cards);
+    if (next === current) return;
+    const now = Date.now();
+    if (now - adjustStart.current > ROW_HEIGHT_ADJUST_WINDOW_MS) {
+      adjustStart.current = now;
+      adjustCount.current = 0;
+    }
+    adjustCount.current += 1;
+    if (adjustCount.current > MAX_ROW_HEIGHT_ADJUSTS) {
+      logWarn('layout', '行高反复调整，停在当前值', { rowHeight: current, target: next, cards: cards.length });
+      return;
+    }
+    logDebug('layout', '行高按内容定一次', { from: current, to: next, cards: cards.length });
+    rowHeightRef.current = next;
+    setRowHeight(next);
+  }, []);
+
+  // 课表数据变化后量一次（内容变了可能要加高）
   useEffect(() => {
-    if (typeof globalThis.requestAnimationFrame !== 'function') return;
-    const handle = globalThis.requestAnimationFrame(() => {
-      const { cards, clipped, overflow } = measureCardFit();
-      if (cards === 0) return;
-      logDebug('layout', '行高自适应', { rowHeight, cards, clipped, overflow });
-      if (clipped && rowHeight >= ROW_HEIGHT_MAX) {
-        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight, overflow, cards });
-        return;
-      }
-      if (clipped) {
-        setRowHeight((current) => Math.min(ROW_HEIGHT_MAX, current + 8));
-      } else if (rowHeight > ROW_HEIGHT_MIN) {
-        setRowHeight((current) => Math.max(ROW_HEIGHT_MIN, current - 4));
-      }
+    measuredWidth.current = null;
+    const handle = globalThis.requestAnimationFrame(() => applyRowHeight(true));
+    return () => globalThis.cancelAnimationFrame(handle);
+  }, [data, applyRowHeight]);
+
+  // 容器宽度变化后重量一次（窗口缩放、桌面侧栏开关都会改变换行）
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (section === null || typeof globalThis.ResizeObserver !== 'function') return;
+    let frame = 0;
+    const observer = new globalThis.ResizeObserver(() => {
+      if (frame !== 0) globalThis.cancelAnimationFrame(frame);
+      frame = globalThis.requestAnimationFrame(() => {
+        frame = 0;
+        applyRowHeight(false);
+      });
+    });
+    observer.observe(section);
+    return () => {
+      observer.disconnect();
+      if (frame !== 0) globalThis.cancelAnimationFrame(frame);
+    };
+  }, [applyRowHeight]);
+
+  // 字体加载完成后重量一次：字体替换会改变换行与内容高度
+  useEffect(() => {
+    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
+    if (fonts?.ready === undefined) return;
+    let cancelled = false;
+    void fonts.ready.then(() => {
+      if (!cancelled) applyRowHeight(true);
     });
     return () => {
-      if (typeof globalThis.cancelAnimationFrame === 'function') globalThis.cancelAnimationFrame(handle);
+      cancelled = true;
     };
-  }, [rowHeight, data, lessons]);
+  }, [applyRowHeight]);
 
   // 真实窗口里的行高自检：启动时日志级别还没同步到原生，等布局稳定后再量一次并留痕
   useEffect(() => {
     const timer = setTimeout(() => {
-      const fit = measureCardFit();
-      if (fit.cards === 0) return;
-      logDebug('layout', '行高自检', {
-        rowHeight,
-        cards: fit.cards,
-        clipped: fit.clipped,
-        overflow: fit.overflow,
-        height: gridHeight,
-        padTop: metrics.padTop,
-        padBottom: metrics.padBottom,
-      });
-      if (fit.clipped && rowHeight >= ROW_HEIGHT_MAX) {
-        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight, overflow: fit.overflow, cards: fit.cards });
+      const cards = measureCards();
+      if (cards.length === 0) return;
+      const target = rowHeightFor(cards);
+      logDebug('layout', '行高自检', { rowHeight: rowHeightRef.current, target, cards: cards.length });
+      if (target !== null && target >= ROW_HEIGHT_MAX) {
+        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight: rowHeightRef.current, target, cards: cards.length });
       }
     }, 2500);
     return () => clearTimeout(timer);
-    // 只在挂载后量一次：后续行高变化由上面的自适应逻辑负责
+    // 只在挂载后量一次：后续行高变化由上面的测量逻辑负责
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -966,6 +1003,8 @@ export function WeekView({
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}
                       className={cn('absolute inset-x-1 min-w-0', drag?.cell === lesson && 'opacity-40')}
+                      data-role="lesson-cell"
+                      data-span={Math.max(1, lesson.periodEnd - lesson.periodStart + 1)}
                       data-custom-time={custom ? 'true' : undefined}
                       style={{
                         top: `${top}px`,
@@ -1006,14 +1045,14 @@ export function WeekView({
                         badge={
                           lesson.lab ? (
                             <span
-                              className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-accent-strong"
+                              className="inline-block rounded-sm bg-surface px-1 text-[10px] text-accent-strong"
                               data-role="lab-label"
                             >
                               {lesson.eventLabel ?? '日程'}
                             </span>
                           ) : lesson.movedIn ? (
                             <span
-                              className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
+                              className="inline-block rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
                               data-role="moved-in-label"
                             >
                               调课

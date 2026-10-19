@@ -56,15 +56,29 @@ import {
 import { logWarn } from '../log.ts';
 import { clearLogs, logsText, logInfo } from '../log.ts';
 import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
-import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget, type PinWidgetResult } from '../widget-pin.ts';
+import {
+  MOBILE_WIDGETS,
+  hasMobileWidgets,
+  pinWidget,
+  readMobileWidgetStates,
+  type MobileWidgetState,
+  type PinWidgetStatus,
+} from '../widget-pin.ts';
 import {
   copyText,
   isIgnoringBatteryOptimizations,
   openLogDirectory,
+  openNotifySettings,
   requestIgnoreBatteryOptimizations,
   saveTextFile,
 } from '../system-actions.ts';
-import { exactAlarmState, requestExactAlarm, type ExactAlarmState } from '../permissions.ts';
+import {
+  exactAlarmState,
+  readNotifyStatus,
+  requestExactAlarm,
+  type ExactAlarmState,
+  type NotifyStatus,
+} from '../permissions.ts';
 import {
   canConfigureStorage,
   openDataDirectory,
@@ -122,6 +136,36 @@ const PERMISSION_LABEL: Record<ReminderView['permission'], string> = {
   granted: '已授权',
   denied: '已被拒绝',
 };
+
+/** 一键添加的结果文案：先给事实，再给下一步。 */
+const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = {
+  added: '已添加到桌面',
+  'already-added': '已在桌面上',
+  cancelled: '没收到系统确认，请长按桌面添加',
+  unsupported: '启动器不支持，请长按桌面添加',
+  disabled: '小组件被停用，请在系统设置启用',
+  rejected: '系统没接受请求，请长按桌面添加',
+  error: '添加失败，请长按桌面添加',
+};
+
+/** 通知状态：区分「没问过」「拒绝过」「永久拒绝」「被静音」，并给出可点的下一步。 */
+function notifyStateOf(status: NotifyStatus | null): { text: string; action: 'request' | 'settings' | null } {
+  if (status === null) return { text: '读取中…', action: null };
+  if (!status.appEnabled) return { text: '通知已关闭', action: 'settings' };
+  if (status.channelMuted) return { text: '通知渠道已静音', action: 'settings' };
+  switch (status.runtime) {
+    case 'granted':
+      return { text: '已允许', action: null };
+    case 'prompt':
+      return { text: '未申请', action: 'request' };
+    case 'denied':
+      return { text: '已拒绝', action: 'request' };
+    case 'permanently-denied':
+      return { text: '已拒绝，不再弹窗', action: 'settings' };
+    default:
+      return { text: '当前环境不支持通知', action: null };
+  }
+}
 
 const THEME_LABEL: Record<ThemePreset, string> = {
   vivid: '青春活力',
@@ -576,8 +620,12 @@ export function SettingsView({
   const [bundleLogs, setBundleLogs] = useState(false);
   const [exportText, setExportText] = useState('');
   const [importText, setImportText] = useState('');
-  /** 手机端添加小组件的结果提示 */
-  const [pinNote, setPinNote] = useState<PinWidgetResult | null>(null);
+  /** 手机端添加小组件的结果：每种尺寸各留一条 */
+  const [pinNotes, setPinNotes] = useState<Partial<Record<MobileWidgetState['id'], PinWidgetStatus>>>({});
+  /** 正在等系统确认的尺寸：按钮转圈，避免重复点 */
+  const [pinPending, setPinPending] = useState<MobileWidgetState['id'] | null>(null);
+  /** 每种尺寸在桌面上的状态（已添加 / 被停用） */
+  const [pinStates, setPinStates] = useState<MobileWidgetState[] | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
@@ -594,24 +642,63 @@ export function SettingsView({
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
   /** 诊断入口：dev/beta 可见；dev 关掉开发者特性后与正式版一致地隐藏 */
   const diagnosticsVisible = featureVisible('diagnostics') && (CHANNEL !== 'dev' || settings.devFeatures);
-  /** 安卓权限状态：精确闹钟、电池优化白名单 */
+  /** 安卓权限状态：精确闹钟、电池优化白名单、通知权限与小组件 */
   const [alarmState, setAlarmState] = useState<ExactAlarmState>('unsupported');
   const [batteryFree, setBatteryFree] = useState<boolean | null>(null);
+  /** 通知状态：应用级开关、运行时权限、渠道静音分开报 */
+  const [notifyStatus, setNotifyStatus] = useState<NotifyStatus | null>(null);
   const androidApp = detectPlatform() === 'capacitor';
   useEffect(() => {
     if (!androidApp) return;
     let cancelled = false;
     void (async () => {
-      const [alarm, ignoring] = await Promise.all([exactAlarmState(), isIgnoringBatteryOptimizations()]);
+      const [alarm, ignoring, states, status] = await Promise.all([
+        exactAlarmState(),
+        isIgnoringBatteryOptimizations(),
+        readMobileWidgetStates(),
+        readNotifyStatus(storage),
+      ]);
       if (!cancelled) {
         setAlarmState(alarm);
         setBatteryFree(ignoring);
+        setPinStates(states);
+        setNotifyStatus(status);
       }
     })();
+    // 从系统设置页回到应用时重新读一次：用户可能刚开了通知或改了权限
+    const refreshNotify = (): void => {
+      void readNotifyStatus(storage).then((status) => {
+        if (!cancelled) setNotifyStatus(status);
+      });
+    };
+    globalThis.addEventListener('focus', refreshNotify);
     return () => {
       cancelled = true;
+      globalThis.removeEventListener('focus', refreshNotify);
     };
-  }, [androidApp]);
+  }, [androidApp, storage]);
+  /** 通知状态对应的按钮：申请权限或跳系统设置页。 */
+  const notifyState = notifyStateOf(notifyStatus);
+  async function runNotifyAction(action: 'request' | 'settings'): Promise<void> {
+    if (action === 'request') {
+      await reminders.request();
+    } else {
+      await openNotifySettings(notifyStatus?.channelMuted === true ? notifyStatus.channelId : null);
+    }
+    setNotifyStatus(await readNotifyStatus(storage));
+  }
+  /** 请求把一种尺寸的小组件添加到桌面：等系统确认后再给结果。 */
+  async function addWidget(id: MobileWidgetState['id']): Promise<void> {
+    setPinPending(id);
+    setPinNotes((current) => ({ ...current, [id]: undefined }));
+    const result = await pinWidget(id);
+    setPinPending(null);
+    setPinNotes((current) => ({ ...current, [id]: result.status }));
+    if (result.status === 'added' || result.status === 'already-added') {
+      const states = await readMobileWidgetStates();
+      if (states !== null) setPinStates(states);
+    }
+  }
   const next = reminders.upcoming[0];
 
   useEffect(() => {
@@ -933,15 +1020,30 @@ export function SettingsView({
     reminders: (
       <>
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-          <span>通知权限：{PERMISSION_LABEL[reminders.permission]}</span>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={reminders.permission === 'unsupported' || reminders.permission === 'granted'}
-            onClick={() => void reminders.request()}
-          >
-            申请通知权限
-          </Button>
+          <span data-role="notify-permission">
+            通知权限：{androidApp ? notifyState.text : PERMISSION_LABEL[reminders.permission]}
+          </span>
+          {androidApp ? (
+            notifyState.action !== null && (
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={notifyState.action === 'request' ? '申请通知权限' : '去系统设置'}
+                onClick={() => void runNotifyAction(notifyState.action as 'request' | 'settings')}
+              >
+                {notifyState.action === 'request' ? '申请通知权限' : '去系统设置'}
+              </Button>
+            )
+          ) : (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={reminders.permission === 'unsupported' || reminders.permission === 'granted'}
+              onClick={() => void reminders.request()}
+            >
+              申请通知权限
+            </Button>
+          )}
         </div>
         <span className="text-xs text-muted">关闭后不再提醒</span>
         {androidApp && (
@@ -1143,36 +1245,54 @@ export function SettingsView({
             <span className="text-xs text-muted">
               桌面长按 → 小组件 → 晓刻
             </span>
-            {MOBILE_WIDGETS.map((widget) => (
-              <div
-                key={widget.id}
-                className="flex items-center justify-between gap-3 rounded-md border border-line bg-surface p-2"
-                data-role="mobile-widget-row"
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm text-ink">
-                    {widget.label}
-                    <span className="ml-1 text-xs text-muted">{widget.size}</span>
-                  </span>
-                  <span className="truncate text-xs text-muted">{widget.description}</span>
-                </span>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  aria-label={`添加小组件到桌面：${widget.label}`}
-                  onClick={() => void pinWidget(widget.id).then((result) => setPinNote(result))}
+            {MOBILE_WIDGETS.map((widget) => {
+              const state = pinStates?.find((item) => item.id === widget.id) ?? null;
+              const note = pinNotes[widget.id];
+              return (
+                <div
+                  key={widget.id}
+                  className="flex flex-col gap-1 rounded-md border border-line bg-surface p-2"
+                  data-role="mobile-widget-row"
                 >
-                  添加到桌面
-                </Button>
-              </div>
-            ))}
-            {pinNote !== null && (
-              <span className="text-xs text-muted" data-role="mobile-widget-note">
-                {pinNote.ok && pinNote.supported
-                  ? '已请求添加，请在系统弹窗里确认'
-                  : `一键添加不可用：${pinNote.reason ?? '请在小组件列表里手动添加'}`}
-              </span>
-            )}
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm text-ink">
+                        {widget.label}
+                        <span className="ml-1 text-xs text-muted">{widget.size}</span>
+                      </span>
+                      <span className="truncate text-xs text-muted">{widget.description}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {state?.added === true && (
+                        <span className="text-xs text-muted" data-role="widget-added">
+                          已添加
+                        </span>
+                      )}
+                      {state?.disabled === true && (
+                        <span className="text-xs text-danger-strong" data-role="widget-disabled">
+                          已停用
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        aria-label={`添加小组件到桌面：${widget.label}`}
+                        loading={pinPending === widget.id}
+                        disabled={pinPending !== null && pinPending !== widget.id}
+                        onClick={() => void addWidget(widget.id)}
+                      >
+                        添加到桌面
+                      </Button>
+                    </span>
+                  </div>
+                  {note !== undefined && (
+                    <span className="text-xs text-muted" data-role="mobile-widget-note">
+                      {PIN_STATUS_LABEL[note]}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <>

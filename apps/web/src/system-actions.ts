@@ -38,11 +38,68 @@ export async function openExternalUrl(url: string): Promise<boolean> {
   return true;
 }
 
-/** 安卓侧的原生系统动作插件（打开链接、电池优化白名单）。 */
+/** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
 export interface SystemActionsPlugin {
   openExternal(options: { url: string }): Promise<{ opened: boolean }>;
   isIgnoringBatteryOptimizations(): Promise<{ ignoring: boolean }>;
   requestIgnoreBatteryOptimizations(): Promise<{ ignoring?: boolean; requested?: boolean }>;
+  notificationStatus(options: { asked: boolean }): Promise<{
+    appEnabled?: boolean;
+    runtime?: string;
+    channelId?: string;
+    channelName?: string;
+    channelMuted?: boolean;
+  }>;
+  openNotificationSettings(options: { channelId?: string }): Promise<{ opened: boolean }>;
+}
+
+/** 原生读到的通知状态：应用级开关 + 运行时权限 + 渠道静音。 */
+export interface NotifyStatusDetail {
+  appEnabled: boolean;
+  runtime: 'granted' | 'denied' | 'prompt' | 'permanently-denied';
+  channelId: string | null;
+  channelName: string | null;
+  channelMuted: boolean;
+}
+
+function runtimeOf(value: string | undefined): NotifyStatusDetail['runtime'] {
+  if (value === 'granted' || value === 'denied' || value === 'prompt' || value === 'permanently-denied') {
+    return value;
+  }
+  return 'granted';
+}
+
+/** 通知状态：安卓走原生精确查询，其它平台返回 null 由调用方兜底。 */
+export async function readNativeNotifyStatus(asked: boolean): Promise<NotifyStatusDetail | null> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return null;
+  try {
+    const result = await plugin.notificationStatus({ asked });
+    return {
+      appEnabled: result?.appEnabled !== false,
+      runtime: runtimeOf(result?.runtime),
+      channelId: typeof result?.channelId === 'string' && result.channelId !== '' ? result.channelId : null,
+      channelName: typeof result?.channelName === 'string' && result.channelName !== '' ? result.channelName : null,
+      channelMuted: result?.channelMuted === true,
+    };
+  } catch (cause: unknown) {
+    logWarn('permission', '读取通知状态失败', { message: describe(cause) });
+    return null;
+  }
+}
+
+/** 跳系统通知设置页；给了渠道 id 就直达该渠道。 */
+export async function openNotifySettings(channelId?: string | null): Promise<boolean> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return false;
+  try {
+    const result = await plugin.openNotificationSettings(channelId === null || channelId === undefined ? {} : { channelId });
+    logInfo('permission', '已跳转通知设置页', { channelId: channelId ?? null, opened: result?.opened === true });
+    return true;
+  } catch (cause: unknown) {
+    logWarn('permission', '跳转通知设置页失败', { message: describe(cause) });
+    return false;
+  }
 }
 
 async function loadSystemActions(): Promise<SystemActionsPlugin | null> {

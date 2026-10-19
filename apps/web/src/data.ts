@@ -34,6 +34,7 @@ import {
   type TimeSlotRow,
   type TodoSort,
 } from '@dawn-tick/core';
+import { dayRangeOf } from './lib/day-nav.ts';
 
 /** 课表里条目的角标文案。 */
 const EVENT_LABEL: Record<string, string> = {
@@ -505,7 +506,11 @@ export async function loadAppData(
     }
   }
 
-  const input = await loadExpandInput(storage, semester.id, addDays(today, -45), addDays(today, 60));
+  const range = dayRangeOf(semester);
+  // 课次按日期查（日视图、日程页翻日期）：范围至少覆盖整个学期，学期外保留今天前后各一段
+  const occurrenceFrom = addDays(today, -45) < range.first ? addDays(today, -45) : range.first;
+  const occurrenceTo = addDays(today, 60) > range.last ? addDays(today, 60) : range.last;
+  const input = await loadExpandInput(storage, semester.id, occurrenceFrom, occurrenceTo);
   const occurrences = input === undefined ? [] : expand(input);
   const lessonsByDate = new Map<string, Occurrence[]>();
   for (const item of occurrences) {

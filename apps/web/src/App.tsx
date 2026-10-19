@@ -53,9 +53,11 @@ import { TodoForm } from './screens/todo-form.tsx';
 import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
 import { ensureStartupPermissions, type PermissionReport } from './permissions.ts';
+import { markNotifyAsked } from './notify.ts';
 import { attachLogStorage, loadLogs, logDebug, logError, logInfo, logWarn } from './log.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint } from './lib/use-media.ts';
+import { clampDayDate, dayRangeOf, defaultDayDate, stepDay } from './lib/day-nav.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
 import { relaunchApplication } from './storage-config.ts';
@@ -236,6 +238,8 @@ export function App() {
   const [mode, setMode] = useState<'week' | 'today'>('week');
   /** 查看窗口的起始日期；null 表示从今天开始（默认）。窗口里的周次由 data.viewWeek 给出 */
   const [windowStart, setWindowStart] = useState<string | null>(null);
+  /** 日模式查看的日期；null 表示今天（开「不显示周末」时顺延到下一个工作日） */
+  const [dayDate, setDayDate] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjust, setAdjust] = useState<AdjustTarget | null>(null);
@@ -267,6 +271,8 @@ export function App() {
   const [checkTick, setCheckTick] = useState(0);
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
+  /** 课表页的日模式：←/→ 翻一天，顶部换日期翻页 */
+  const dayMode = view === 'timetable' && mode === 'today';
   const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
     enabled: settings.classReminderEnabled,
     minutes: settings.classReminderMinutes,
@@ -308,6 +314,24 @@ export function App() {
     },
     [data?.windowStart, settings],
   );
+
+  /** 日模式翻一天：跳过周末、停在学期边界。 */
+  const stepDayBy = useCallback(
+    (delta: -1 | 1) => {
+      if (data === null || data.semester === null) return;
+      const range = dayRangeOf(data.semester);
+      const current = clampDayDate(dayDate ?? defaultDayDate(data.today, settings.hideWeekends), range);
+      const next = stepDay(current, delta, { hideWeekends: settings.hideWeekends, range });
+      if (next !== null) setDayDate(next);
+    },
+    [data, dayDate, settings.hideWeekends],
+  );
+
+  /** 回到今天：周模式回默认起点，日模式回今天。 */
+  const backToToday = useCallback(() => {
+    setWindowStart(null);
+    setDayDate(null);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -435,14 +459,16 @@ export function App() {
 
   // 启动时主动索取必要权限：安卓的通知与精确闹钟（课前提醒要靠它们才准点）
   useEffect(() => {
-    if (startupPermissionsDone.current) return;
+    if (storage === null || startupPermissionsDone.current) return;
     startupPermissionsDone.current = true;
-    void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then((report) => {
+    void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then(async (report) => {
       setPermissionReport(report);
+      // 记下「申请过」：之后才能区分「还没问过」与「被永久拒绝」
+      await markNotifyAsked(storage);
     });
-    // 只在首次挂载时跑一次：权限弹窗不该随设置变化重复弹
+    // 存储就绪后只跑一次：权限弹窗不该随设置变化重复弹
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [storage]);
 
   // 动效设置落到根节点：CSS 按 data-motion 统一停用
   useEffect(() => {
@@ -474,10 +500,14 @@ export function App() {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
-      // ←/→ 平移一屏（设置里的天数），T 回到默认起点（今天或本周周一）
-      if (event.key === 'ArrowLeft') shiftWindow(-settings.viewDays);
-      else if (event.key === 'ArrowRight') shiftWindow(settings.viewDays);
-      else if (event.key === 't' || event.key === 'T') setWindowStart(null);
+      // 日模式 ←/→ 翻一天；周模式平移一屏（设置里的天数）。T 回到今天
+      if (event.key === 'ArrowLeft') {
+        if (dayMode) stepDayBy(-1);
+        else shiftWindow(-settings.viewDays);
+      } else if (event.key === 'ArrowRight') {
+        if (dayMode) stepDayBy(1);
+        else shiftWindow(settings.viewDays);
+      } else if (event.key === 't' || event.key === 'T') backToToday();
       else if (event.key === '/') {
         event.preventDefault();
         setSearchOpen(true);
@@ -485,7 +515,7 @@ export function App() {
     };
     globalThis.addEventListener('keydown', onKeyDown);
     return () => globalThis.removeEventListener('keydown', onKeyDown);
-  }, [settings.viewDays, windowStart, data?.windowStart]);
+  }, [settings.viewDays, shiftWindow, stepDayBy, backToToday, dayMode]);
 
   useEffect(() => {
     if (storage === null || data === null) return;
@@ -834,6 +864,7 @@ export function App() {
     }
     await updateSemester(storage, id, { is_active: 1 });
     setWindowStart(null);
+    setDayDate(null);
     refresh();
   }
 
@@ -893,6 +924,13 @@ export function App() {
     );
   }
 
+  const semester = data.semester;
+  /** 日模式显示的日期：默认今天（开「不显示周末」时顺延到下一个工作日），夹在学期内 */
+  const dayRange = dayRangeOf(semester);
+  const viewDay = clampDayDate(dayDate ?? defaultDayDate(data.today, settings.hideWeekends), dayRange);
+  const canPrevDay = stepDay(viewDay, -1, { hideWeekends: settings.hideWeekends, range: dayRange }) !== null;
+  const canNextDay = stepDay(viewDay, 1, { hideWeekends: settings.hideWeekends, range: dayRange }) !== null;
+
   const content = (
     <>
       {view === 'timetable' &&
@@ -911,7 +949,7 @@ export function App() {
             onNextWindow={() => shiftWindow(settings.viewDays)}
           />
         ) : (
-          <TodayView data={data} />
+          <TodayView data={data} date={viewDay} isToday={viewDay === data.today} />
         ))}
       {view === 'schedule' && (
         <LessonDetailOpener.Provider value={(target) => void openLessonFromSchedule(target)}>
@@ -1003,35 +1041,46 @@ export function App() {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* 周次标签给的是窗口起点所在周；上面挂窗口覆盖的日期区间，供自检与读屏 */}
-        <div
-          data-role="window-nav"
-          data-window-start={data.windowStart}
-          data-window-days={data.windowDates.length}
-          data-window-range={formatWindowRange(data)}
-          data-window-week={data.viewWeek}
-          data-window-spans-weeks={data.windowSpansWeeks ? 'true' : 'false'}
-          aria-label={`查看窗口 ${formatWindowRange(data)} · 第 ${data.viewWeek} 周`}
-        >
-          <AppToolbar
-            semester={data.semester}
-            semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
-            onSelectSemester={(id) => void switchSemester(id)}
-            viewWeek={data.viewWeek}
-            currentWeek={data.week}
-            onPrevWeek={() => shiftWindow(-settings.viewDays)}
-            onNextWeek={() => shiftWindow(settings.viewDays)}
-            onToday={() => setWindowStart(null)}
-            mode={mode}
-            onModeChange={setMode}
-            onSearch={() => setSearchOpen(true)}
-            onAdd={() => {
-              setEditingCourse(null);
-              setQuickCreate(null);
-              setCourseFormOpen(true);
-            }}
-            compact={!isDesktop}
-          />
-        </div>
+        {view === 'timetable' && (
+          <div
+            data-role="window-nav"
+            data-window-start={data.windowStart}
+            data-window-days={data.windowDates.length}
+            data-window-range={formatWindowRange(data)}
+            data-window-week={data.viewWeek}
+            data-window-spans-weeks={data.windowSpansWeeks ? 'true' : 'false'}
+            aria-label={`查看窗口 ${formatWindowRange(data)} · 第 ${data.viewWeek} 周`}
+          >
+            <AppToolbar
+              semester={data.semester}
+              semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
+              onSelectSemester={(id) => void switchSemester(id)}
+              mode={mode}
+              onModeChange={setMode}
+              week={{
+                viewWeek: data.viewWeek,
+                currentWeek: data.week,
+                onPrev: () => shiftWindow(-settings.viewDays),
+                onNext: () => shiftWindow(settings.viewDays),
+              }}
+              day={{
+                date: viewDay,
+                canPrev: canPrevDay,
+                canNext: canNextDay,
+                onPrev: () => stepDayBy(-1),
+                onNext: () => stepDayBy(1),
+              }}
+              onToday={backToToday}
+              onSearch={() => setSearchOpen(true)}
+              onAdd={() => {
+                setEditingCourse(null);
+                setQuickCreate(null);
+                setCourseFormOpen(true);
+              }}
+              compact={!isDesktop}
+            />
+          </div>
+        )}
         <main
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] tablet:p-4 tablet:pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] desktop:pb-4"
           data-role="app-main"

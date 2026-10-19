@@ -1,36 +1,58 @@
 import { CalendarRange, ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
-import type { SemesterRow } from '@dawn-tick/core';
+import { dayOfWeek, type SemesterRow } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs.tsx';
+
+const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+/** 周模式的翻页信息：第几周、本周是第几周。 */
+export interface WeekNavProps {
+  viewWeek: number;
+  currentWeek: number;
+  onPrev: () => void;
+  onNext: () => void;
+}
+
+/** 日模式的翻页信息：查看的日期与能否前后翻。 */
+export interface DayNavProps {
+  date: string;
+  canPrev: boolean;
+  canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+}
 
 export interface AppToolbarProps {
   semester: SemesterRow;
   semesters: readonly SemesterRow[];
   onSelectSemester: (id: string) => void;
-  viewWeek: number;
-  currentWeek: number;
-  onPrevWeek: () => void;
-  onNextWeek: () => void;
-  onToday: () => void;
   mode: 'week' | 'today';
   onModeChange: (mode: 'week' | 'today') => void;
+  week: WeekNavProps;
+  day: DayNavProps;
+  /** 回到今天：周模式回默认起点，日模式回今天 */
+  onToday: () => void;
   onSearch: () => void;
   onAdd: () => void;
   compact: boolean;
+}
+
+/** 日模式的日期文案：10/19 周一。 */
+function dayLabel(date: string): string {
+  const [, month, day] = date.split('-');
+  return `${Number(month)}/${Number(day)} ${WEEKDAYS[dayOfWeek(date) - 1] ?? ''}`;
 }
 
 export function AppToolbar({
   semester,
   semesters,
   onSelectSemester,
-  viewWeek,
-  currentWeek,
-  onPrevWeek,
-  onNextWeek,
-  onToday,
   mode,
   onModeChange,
+  week,
+  day,
+  onToday,
   onSearch,
   onAdd,
   compact,
@@ -50,18 +72,32 @@ export function AppToolbar({
         </SelectContent>
       </Select>
 
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" aria-label="上一屏" onClick={onPrevWeek}>
-          <ChevronLeft className="size-4" aria-hidden />
-        </Button>
-        <span className="tabular min-w-16 text-center text-sm text-ink">
-          第 {viewWeek} 周
-          {viewWeek === currentWeek && <span className="text-xs text-muted"> · 本周</span>}
-        </span>
-        <Button variant="ghost" size="icon" aria-label="下一屏" onClick={onNextWeek}>
-          <ChevronRight className="size-4" aria-hidden />
-        </Button>
-      </div>
+      {mode === 'week' ? (
+        <div className="flex items-center gap-1" data-role="week-nav">
+          <Button variant="ghost" size="icon" aria-label="上一屏" onClick={week.onPrev}>
+            <ChevronLeft className="size-4" aria-hidden />
+          </Button>
+          <span className="tabular min-w-16 text-center text-sm text-ink">
+            第 {week.viewWeek} 周
+            {week.viewWeek === week.currentWeek && <span className="text-xs text-muted"> · 本周</span>}
+          </span>
+          <Button variant="ghost" size="icon" aria-label="下一屏" onClick={week.onNext}>
+            <ChevronRight className="size-4" aria-hidden />
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1" data-role="day-nav">
+          <Button variant="ghost" size="icon" aria-label="前一天" disabled={!day.canPrev} onClick={day.onPrev}>
+            <ChevronLeft className="size-4" aria-hidden />
+          </Button>
+          <span className="tabular min-w-24 text-center text-sm text-ink" data-role="day-date">
+            {dayLabel(day.date)}
+          </span>
+          <Button variant="ghost" size="icon" aria-label="后一天" disabled={!day.canNext} onClick={day.onNext}>
+            <ChevronRight className="size-4" aria-hidden />
+          </Button>
+        </div>
+      )}
 
       <Button variant="secondary" size="sm" aria-label="回到今天" onClick={onToday}>
         <CalendarRange className="size-4" aria-hidden />

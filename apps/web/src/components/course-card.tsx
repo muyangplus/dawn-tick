@@ -37,31 +37,30 @@ export function CourseCard({
   const label =
     badge ??
     (resolvedTone === 'ghost' ? (
-      <span className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted">非本周</span>
+      <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted">非本周</span>
     ) : resolvedTone === 'cancelled' ? (
       <span
-        className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted"
+        className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted"
         data-role="cancelled-label"
       >
         停课
       </span>
     ) : resolvedTone === 'movedOut' ? (
-      <span className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted" data-role="moved-out-label">
+      <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted" data-role="moved-out-label">
         已调课
       </span>
     ) : resolvedTone === 'holiday' ? (
       // 假期名称完整显示，长名称换行，不省略
-      <span className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-muted" data-role="holiday-label">
+      <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted" data-role="holiday-label">
         {holidayLabel ?? '放假'}
       </span>
     ) : undefined);
   const content = (
     <>
-      <span className="flex w-full min-w-0 flex-wrap items-start justify-between gap-1">
-        <span className="min-w-0 flex-1 whitespace-normal break-words text-[10px] font-semibold text-ink [overflow-wrap:anywhere] tablet:text-xs">
-          {name}
-        </span>
-        {label}
+      {/* 标签跟在课程名后面：列窄时名字先占满整行、标签自己折到下一行，不会被挤成一竖列 */}
+      <span className="w-full min-w-0 whitespace-normal break-words text-[10px] font-semibold text-ink [overflow-wrap:anywhere] tablet:text-xs">
+        {name}
+        {label !== undefined && <> {label}</>}
       </span>
       {meta !== undefined && (
         <span className="tabular w-full whitespace-normal break-words text-[9px] text-ink/80 [overflow-wrap:anywhere] tablet:text-[11px]">

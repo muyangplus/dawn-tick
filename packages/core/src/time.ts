@@ -148,6 +148,15 @@ export function nextWorkday(date: string): string {
   return cursor;
 }
 
+/** 上一个工作日：周末回退到周五，工作日原样返回。 */
+export function previousWorkday(date: string): string {
+  let cursor = date;
+  for (let step = 0; step < 7 && isWeekend(cursor); step += 1) {
+    cursor = addDays(cursor, -1);
+  }
+  return cursor;
+}
+
 /** 含首含尾的日期序列。 */
 export function dateRange(from: string, to: string): string[] {
   const out: string[] = [];

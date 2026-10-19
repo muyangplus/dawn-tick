@@ -22,7 +22,7 @@ import { App } from '../src/App.tsx';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
-import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets } from '../src/widget-pin.ts';
+import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
   PRESET_CONTENT_META_KEY,
@@ -148,14 +148,15 @@ async function seed(): Promise<SmokeSeed> {
   const holidayStartText = todayText;
   const holidaySecondText = addDays(todayText, 1);
   // 实验条目：覆盖「改实验 → 保存 → 写回」这条链路（曾经静默失败、没有日志）
+  // 排在第 7-8 节：周一第 3 节要留空给空白格拖动用例（今天正好是周一时也不冲突）
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
     type: 'lab',
     title: '物理实验',
     onDate: todayText,
-    periodStart: 3,
-    periodEnd: 4,
+    periodStart: 7,
+    periodEnd: 8,
     nature: 'lab',
     showInTimetable: true,
   });
@@ -290,6 +291,17 @@ function clickByLabel(container: HTMLElement, prefix: string): boolean {
   const button = container.querySelector(`button[aria-label^="${prefix}"]`);
   if (!(button instanceof HTMLElement)) return false;
   button.click();
+  return true;
+}
+
+/** 点顶部的「周 / 日」页签：Radix Tabs 在 mousedown 时切页，光 click 不生效。 */
+function clickTab(container: HTMLElement, label: string): boolean {
+  const tab = [...container.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+    (item) => (item.textContent ?? '').trim() === label,
+  );
+  if (tab === undefined) return false;
+  tab.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, button: 0 }));
+  tab.click();
   return true;
 }
 
@@ -2103,6 +2115,65 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     windowStartOf() === todayText,
     windowStartOf(),
   );
+  // 顶部栏只属于课表页；日模式把「第 N 周」换成日期翻页
+  check('课表页顶部栏是周次翻页', view.container.querySelector('[data-role="week-nav"]') !== null, '');
+  // 课程标签跟在课程名后面：同一个文本容器里既有课名又有「非本周」
+  const ghostNameLine = view.container.querySelector('[data-tone="ghost"]')?.firstElementChild ?? null;
+  check(
+    '课程卡标签紧跟课程名',
+    ghostNameLine !== null &&
+      ghostNameLine.tagName === 'SPAN' &&
+      (ghostNameLine.textContent ?? '').includes('大物') &&
+      (ghostNameLine.textContent ?? '').includes('非本周') &&
+      ghostNameLine.querySelector('span') !== null &&
+      !ghostNameLine.className.includes('justify-between'),
+    (ghostNameLine?.textContent ?? '(无)').trim(),
+  );
+  // 行高按卡片内容一次定高：卡片要带节次数，行高才量得出来
+  const lessonCells = [...view.container.querySelectorAll('[data-role="lesson-cell"]')];
+  check(
+    '课表卡片带节次数供行高换算',
+    lessonCells.length > 0 &&
+      lessonCells.every((cell) => Number(cell.getAttribute('data-span') ?? '0') >= 1),
+    `${lessonCells.length} 张`,
+  );
+  clickTab(view.container, '日');
+  await flush(12);
+  const dayDateText = (): string => (view.container.querySelector('[data-role="day-date"]')?.textContent ?? '').trim();
+  check(
+    '日模式换成日期翻页',
+    view.container.querySelector('[data-role="day-nav"]') !== null &&
+      view.container.querySelector('[data-role="week-nav"]') === null &&
+      dayDateText() === '10/18 周日',
+    dayDateText(),
+  );
+  if (clickByLabel(view.container, '后一天')) await flush(12);
+  check('日模式翻到下一天', dayDateText() === '10/19 周一', dayDateText());
+  if (clickByLabel(view.container, '前一天')) await flush(12);
+  check('日模式翻回前一天', dayDateText() === '10/18 周日', dayDateText());
+  check(
+    '日视图按查看日期显示课表',
+    (view.container.querySelector('[aria-label="日视图"]')?.textContent ?? '').includes('节课'),
+    (view.container.querySelector('[aria-label="日视图"]')?.textContent ?? '(无)').slice(0, 40),
+  );
+  if (clickByLabel(view.container, '回到今天')) await flush(12);
+  check('日模式回到今天', dayDateText() === '10/18 周日', dayDateText());
+  clickTab(view.container, '周');
+  await flush(12);
+  check(
+    '切回周模式恢复周次翻页',
+    view.container.querySelector('[data-role="week-nav"]') !== null &&
+      view.container.querySelector('[data-role="day-nav"]') === null,
+    '',
+  );
+  clickByText(view.container, '日程');
+  await flush(12);
+  check('日程页不显示课表顶部栏', view.container.querySelector('[data-role="window-nav"]') === null, '');
+  clickByText(view.container, '设置');
+  await flush(12);
+  check('设置页不显示课表顶部栏', view.container.querySelector('[data-role="window-nav"]') === null, '');
+  clickByText(view.container, '课表');
+  await flush(12);
   clickByText(view.container, '设置');
   await flush(16);
   check(
@@ -2226,6 +2297,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[data-role="mobile-widget-guide"]') === null &&
       view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
     `组件 ${MOBILE_WIDGETS.map((item) => item.size).join(' / ')}；Web 平台=${hasMobileWidgets() ? '手机' : '桌面/浏览器'}`,
+  );
+  const desktopPin = await pinWidget('next');
+  check(
+    '非安卓平台请求小组件按不支持处理',
+    desktopPin.status === 'unsupported',
+    desktopPin.status,
   );
   // 卡片布局入口固定在设置页顶部，面板在对话框里：隐藏卡片后仍能改回来
   const layoutOpened = clickByLabel(view.container, '卡片布局');

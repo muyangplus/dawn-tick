@@ -10,6 +10,9 @@ import {
   formatDate,
   formatDateTime,
   formatTime,
+  isWeekend,
+  nextWorkday,
+  previousWorkday,
   resolveTimeZone,
   weekOfDate,
   weekStart,
@@ -57,6 +60,15 @@ test('纯日期运算不受时区影响', () => {
     '2026-09-08',
     '2026-09-09',
   ]);
+});
+
+test('周末与工作日翻页', () => {
+  assert.equal(isWeekend('2026-10-17'), true);
+  assert.equal(isWeekend('2026-10-19'), false);
+  assert.equal(nextWorkday('2026-10-16'), '2026-10-16');
+  assert.equal(nextWorkday('2026-10-17'), '2026-10-19');
+  assert.equal(previousWorkday('2026-10-19'), '2026-10-19');
+  assert.equal(previousWorkday('2026-10-18'), '2026-10-16');
 });
 
 test('非法输入被拒绝', () => {

@@ -148,6 +148,7 @@ if (-not (Test-Path $apk)) {
             'com/dawntick/app/widget/WidgetRefresher',
             'com/dawntick/app/widget/WidgetRefreshPlugin',
             'com/dawntick/app/widget/WidgetPinPlugin',
+            'com/dawntick/app/widget/WidgetPinResultReceiver',
             'com/dawntick/app/widget/WidgetStore',
             'com/dawntick/app/widget/WidgetRenderer'
         )
@@ -177,6 +178,7 @@ if (-not (Test-Path $apk)) {
             'com.dawntick.app.widget.WeekOverviewWidget',
             'com.dawntick.app.widget.ExamCountdownWidget',
             'com.dawntick.app.widget.WidgetRefreshReceiver',
+            'com.dawntick.app.widget.WidgetPinResultReceiver',
             'android.appwidget.action.APPWIDGET_UPDATE',
             'android.intent.action.USER_PRESENT',
             'android.permission.POST_NOTIFICATIONS',

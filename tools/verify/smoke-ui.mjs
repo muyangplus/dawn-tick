@@ -9,6 +9,26 @@ const webDir = join(repo, 'apps/web');
 const outDir = join(webDir, 'smoke-dist');
 const entryUrl = pathToFileURL(join(outDir, 'entry.js')).href;
 
+/** 冒烟固定在当前时钟上：断言按「今天」推算日期，真实日期一变就会飘。 */
+const FIXED_NOW = Date.parse('2026-10-18T18:30:00+08:00');
+
+function freezeClock() {
+  const RealDate = Date;
+  class FrozenDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(FIXED_NOW);
+      else super(...args);
+    }
+    static now() {
+      return FIXED_NOW;
+    }
+  }
+  Object.defineProperty(globalThis, 'Date', { value: FrozenDate, configurable: true, writable: true });
+  if (typeof globalThis.window === 'object' && globalThis.window !== null) {
+    Object.defineProperty(globalThis.window, 'Date', { value: FrozenDate, configurable: true, writable: true });
+  }
+}
+
 function build() {
   execSync('pnpm exec vite build --ssr smoke/entry.tsx --outDir smoke-dist --emptyOutDir', {
     cwd: webDir,
@@ -97,6 +117,7 @@ async function main() {
   build();
 
   const dom = setupDom();
+  freezeClock();
   const rejections = [];
   process.on('unhandledRejection', (reason) => rejections.push(reason));
 

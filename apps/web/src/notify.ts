@@ -1,6 +1,26 @@
 import { detectPlatform } from './platform-detect.ts';
+import type { Storage } from '@dawn-tick/core';
 
 export type NotifyPermission = 'granted' | 'denied' | 'default' | 'unsupported';
+
+/** 是否已向系统申请过通知权限：用来区分「没问过」与「问过但被拒绝」。 */
+const ASKED_KEY = 'notify_permission_asked';
+
+export async function markNotifyAsked(storage: Storage): Promise<void> {
+  try {
+    await storage.writeMeta(ASKED_KEY, '1');
+  } catch {
+    // 写标记失败不影响权限流程
+  }
+}
+
+export async function readNotifyAsked(storage: Storage): Promise<boolean> {
+  try {
+    return (await storage.readMeta(ASKED_KEY)) === '1';
+  } catch {
+    return false;
+  }
+}
 
 export async function ensureNotifyPermission(): Promise<NotifyPermission> {
   const platform = detectPlatform();
