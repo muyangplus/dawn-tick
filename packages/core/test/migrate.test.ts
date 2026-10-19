@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openNodeSqlite } from '../src/drivers/node-sqlite.ts';
-import { migrate, readMeta, readSchemaVersion, writeMeta } from '../src/migrate.ts';
+import {
+  inspectSqlxBaseline,
+  LEGACY_SQLX_BASELINE_KEY,
+  migrate,
+  readMeta,
+  readSchemaVersion,
+  writeLegacySqlxBaseline,
+  writeMeta,
+} from '../src/migrate.ts';
 import { createSqlite, eventKindsSql, initSql, migrations, tableNames } from './helpers.ts';
 
 test('迁移建立全部表并记录版本', async () => {
@@ -111,4 +119,46 @@ test('app_meta 读写', async () => {
   await writeMeta(db, 'time_zone', 'America/New_York');
   assert.equal(await readMeta(db, 'time_zone'), 'America/New_York');
   assert.equal(await readMeta(db, 'missing'), undefined);
+});
+
+test('有 users 缺 _sqlx_migrations 的旧库能被识别并补写基线', async () => {
+  // 早期纯 JS 迁移建库：表齐全、app_meta 有版本，但没有 sqlx 的记账表
+  const db = openNodeSqlite(':memory:');
+  await migrate(db, migrations());
+  const state = await inspectSqlxBaseline(db);
+  assert.equal(state.hasUsers, true);
+  assert.equal(state.hasSqlxMigrations, false);
+  assert.equal(state.legacy, true);
+  assert.equal(state.schemaVersion, '005_due_at_any');
+  assert.equal(await writeLegacySqlxBaseline(db, state.schemaVersion), true);
+  assert.equal(await readMeta(db, LEGACY_SQLX_BASELINE_KEY), '005_due_at_any');
+  // 重复调用幂等：基线已记过就不再写
+  assert.equal(await writeLegacySqlxBaseline(db, state.schemaVersion), false);
+  assert.equal(await inspectSqlxBaseline(db).then((next) => next.legacy), true);
+});
+
+test('有 _sqlx_migrations 的库不算旧库，空库也不触发', async () => {
+  const db = await createSqlite();
+  await db.exec(
+    `CREATE TABLE _sqlx_migrations (
+      version BIGINT PRIMARY KEY,
+      description TEXT NOT NULL,
+      installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      success BOOLEAN NOT NULL,
+      checksum BLOB NOT NULL,
+      execution_time BIGINT NOT NULL
+    )`,
+  );
+  const migrated = await inspectSqlxBaseline(db);
+  assert.equal(migrated.legacy, false);
+  assert.equal(await writeLegacySqlxBaseline(db, ''), false);
+  assert.equal(await readMeta(db, LEGACY_SQLX_BASELINE_KEY), undefined);
+
+  const empty = openNodeSqlite(':memory:');
+  assert.deepEqual(await inspectSqlxBaseline(empty), {
+    hasUsers: false,
+    hasSqlxMigrations: false,
+    schemaVersion: '',
+    legacy: false,
+  });
 });
