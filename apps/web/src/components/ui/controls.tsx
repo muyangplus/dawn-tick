@@ -4,6 +4,7 @@ import * as SwitchPrimitive from '@radix-ui/react-switch';
 import { Check, ChevronDown } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import { cn } from '../../lib/cn.ts';
+import { useFieldControl, useRegisterFieldControl } from './input.tsx';
 
 export function Checkbox({ className, ...props }: ComponentProps<typeof CheckboxPrimitive.Root>) {
   return (
@@ -46,6 +47,8 @@ export function SelectTrigger({
   children,
   ...props
 }: ComponentProps<typeof SelectPrimitive.Trigger>) {
+  const field = useFieldControl();
+  useRegisterFieldControl(field);
   return (
     <SelectPrimitive.Trigger
       className={cn(
@@ -54,6 +57,8 @@ export function SelectTrigger({
         className,
       )}
       {...props}
+      id={props.id ?? field?.id}
+      aria-describedby={props['aria-describedby'] ?? field?.describedBy}
     >
       {children}
       <SelectPrimitive.Icon asChild>

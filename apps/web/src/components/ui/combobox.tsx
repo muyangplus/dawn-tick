@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../../lib/cn.ts';
+import { useFieldControl, useRegisterFieldControl } from './input.tsx';
 
 export interface ComboboxProps<T> {
   items: readonly T[];
@@ -31,6 +32,8 @@ export function Combobox<T>({
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listId = useId();
+  const field = useFieldControl();
+  useRegisterFieldControl(field);
 
   useEffect(() => {
     if (!open) return;
@@ -56,6 +59,8 @@ export function Combobox<T>({
     <div ref={rootRef} className={cn('relative flex flex-col', className)}>
       <input
         type="text"
+        id={field?.id}
+        aria-describedby={field?.describedBy}
         role="combobox"
         aria-expanded={open}
         aria-controls={listId}

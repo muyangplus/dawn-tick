@@ -634,6 +634,23 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (empty.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
     (empty.container.textContent ?? '').slice(0, 60),
   );
+  const onboardingLabel = [...empty.container.querySelectorAll('label')].find(
+    (item) => (item.textContent ?? '').trim() === '开学日期',
+  );
+  const onboardingControl =
+    onboardingLabel?.htmlFor === undefined || onboardingLabel.htmlFor === ''
+      ? null
+      : document.getElementById(onboardingLabel.htmlFor);
+  const onboardingHintId = onboardingControl?.getAttribute('aria-describedby') ?? '';
+  const onboardingHint = onboardingHintId === '' ? null : document.getElementById(onboardingHintId);
+  check(
+    'Field 的 label 通过 for/id 关联控件并带上说明',
+    onboardingLabel !== null &&
+      onboardingControl instanceof window.HTMLInputElement &&
+      onboardingHint !== null &&
+      (onboardingHint.textContent ?? '').includes('该周记为第 1 周'),
+    `for=${onboardingLabel?.htmlFor ?? '(无)'}`,
+  );
   empty.root.unmount();
 
   const seeded = await seed();
@@ -656,6 +673,23 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
   const text = view.container.textContent ?? '';
   check('课表渲染课程', text.includes('高数'), text.slice(0, 80));
+  const firstColumn = view.container.querySelector<HTMLElement>('[data-date]');
+  check(
+    '周视图每列带日期分组标签',
+    firstColumn !== null &&
+      firstColumn.getAttribute('role') === 'group' &&
+      /^周[一二三四五六日] \d{1,2}\/\d{1,2}$/.test(firstColumn.getAttribute('aria-label') ?? ''),
+    firstColumn?.getAttribute('aria-label') ?? '(无)',
+  );
+  const namedLessonCard = [
+    ...view.container.querySelectorAll<HTMLElement>('[data-role="course-card"][aria-label]'),
+  ].find((item) => (item.getAttribute('aria-label') ?? '').includes('第 1–2 节'));
+  check(
+    '课程卡播报星期、节次、课程名与周次',
+    namedLessonCard !== null &&
+      /^周[一二三四五六日] 第 \d+(?:–\d+)? 节 .+ 第 \d+ 周/.test(namedLessonCard.getAttribute('aria-label') ?? ''),
+    namedLessonCard?.getAttribute('aria-label') ?? '(无)',
+  );
   // 卡片无论是可点击的 button 还是只读 div，都要带 data-role：行高自适应靠它量布局
   check(
     '课表卡片带可测量的 data-role',
