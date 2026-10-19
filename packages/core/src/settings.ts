@@ -187,6 +187,12 @@ const KEYS = {
   webdavHistory: 'webdav_history',
 } as const;
 
+/** 设置项的全部存储键；备份键清单由它派生，避免两处手抄漂移。 */
+export const SETTING_META_KEYS: readonly string[] = Object.values(KEYS);
+
+/** 不进备份导出的设置键：备份文件可能被分享出去。 */
+export const EXPORT_EXCLUDED_KEYS: readonly string[] = ['webdav_password'];
+
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === '1' || value === 'true') return true;
   if (value === '0' || value === 'false') return false;

@@ -1,46 +1,17 @@
 import { STORE_NAMES, type Storage, type StoreName } from './storage.ts';
 import { collectViolations } from './validation.ts';
+import { EXPORT_EXCLUDED_KEYS, SETTING_META_KEYS } from './settings.ts';
 
 export const BACKUP_FORMAT = 'dawn-tick-backup';
 export const BACKUP_VERSION = 1;
 
-/** 参与备份的设置项；排除 device_id 与 sync_cursor（见 D73）。 */
+/**
+ * 参与备份的设置项：由 settings.ts 的键清单派生，再拼 schema_version。
+ * 排除 device_id 与 sync_cursor（见 D73），以及 EXPORT_EXCLUDED_KEYS 里的 WebDAV 密码。
+ */
 export const BACKUP_META_KEYS: readonly string[] = [
   'schema_version',
-  'time_zone',
-  'auto_time_zone',
-  'view_days',
-  'theme',
-  'theme_preset',
-  'motion',
-  'widget_background',
-  'auto_start',
-  'start_hidden',
-  'show_other_weeks',
-  'class_reminder_enabled',
-  'class_reminder_minutes',
-  'tomorrow_preview',
-  'semester_countdown',
-  'holiday_countdown',
-  'widget_variant',
-  'receive_beta',
-  'auto_check_update',
-  'todo_sort',
-  'dev_features',
-  'log_enabled',
-  'log_level',
-  'wal_mode',
-  'auto_backup',
-  'backup_on_start',
-  'backup_daily',
-  'backup_keep',
-  // WebDAV 密码不进导出：备份文件可能被分享出去
-  'webdav_url',
-  'webdav_user',
-  'webdav_auto',
-  'webdav_on_start',
-  'webdav_daily',
-  'webdav_history',
+  ...SETTING_META_KEYS.filter((key) => !EXPORT_EXCLUDED_KEYS.includes(key)),
 ];
 
 /** 备份模块：界面按模块勾选，导出与导入共用同一分组。 */
