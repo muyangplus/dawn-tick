@@ -56,7 +56,7 @@ import { ensureStartupPermissions, type PermissionReport } from './permissions.t
 import { markNotifyAsked } from './notify.ts';
 import { attachLogStorage, loadLogs, logDebug, logError, logInfo, logWarn } from './log.ts';
 import { applyCachedPreset } from './preset-update.ts';
-import { useBreakpoint } from './lib/use-media.ts';
+import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
 import { clampDayDate, dayRangeOf, defaultDayDate, stepDay } from './lib/day-nav.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
@@ -271,6 +271,8 @@ export function App() {
   const [checkTick, setCheckTick] = useState(0);
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
+  /** ≥1440 才把课程详情并排成第三栏；1024–1439 用右侧覆盖层，避免把课表列宽压到不可读 */
+  const wideEnoughForSidePanel = useMediaQuery('(min-width: 1440px)');
   /** 课表页的日模式：←/→ 翻一天，顶部换日期翻页 */
   const dayMode = view === 'timetable' && mode === 'today';
   const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
@@ -497,9 +499,18 @@ export function App() {
   }, [settings.theme, settings.themePreset]);
 
   useEffect(() => {
+    // 切页时收起课程详情：桌面侧栏不跨页常驻
+    setDetail(null);
+  }, [view]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
       if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (event.key === 'Escape' && detail !== null) {
+        setDetail(null);
+        return;
+      }
       // 日模式 ←/→ 翻一天；周模式平移一屏（设置里的天数）。T 回到今天
       if (event.key === 'ArrowLeft') {
         if (dayMode) stepDayBy(-1);
@@ -515,7 +526,7 @@ export function App() {
     };
     globalThis.addEventListener('keydown', onKeyDown);
     return () => globalThis.removeEventListener('keydown', onKeyDown);
-  }, [settings.viewDays, shiftWindow, stepDayBy, backToToday, dayMode]);
+  }, [settings.viewDays, shiftWindow, stepDayBy, backToToday, dayMode, detail]);
 
   useEffect(() => {
     if (storage === null || data === null) return;
@@ -1084,12 +1095,16 @@ export function App() {
         <main
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] tablet:p-4 tablet:pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] desktop:pb-4"
           data-role="app-main"
+          onClick={(event) => {
+            // 点主区空白处收起课程详情；卡片、按钮等子元素点击不受影响
+            if (event.target === event.currentTarget) setDetail(null);
+          }}
         >
           {content}
         </main>
       </div>
 
-      {isDesktop && detail !== null && (
+      {isDesktop && wideEnoughForSidePanel && detail !== null && (
         <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label="课程详情">
           {detailPanel}
         </aside>
@@ -1109,11 +1124,11 @@ export function App() {
       )}
 
       <Sheet
-        open={!isDesktop && detail !== null}
+        open={detail !== null && !(isDesktop && wideEnoughForSidePanel)}
         onOpenChange={(open) => {
           if (!open) setDetail(null);
         }}
-        side={breakpoint === 'tablet' ? 'right' : 'bottom'}
+        side={isDesktop || breakpoint === 'tablet' ? 'right' : 'bottom'}
         title="课程详情"
       >
         {detailPanel}

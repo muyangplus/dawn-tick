@@ -1,6 +1,16 @@
-import { CalendarDays, ListChecks, Settings, Sun, UserRound } from 'lucide-react';
+import { useState } from 'react';
+import {
+  CalendarDays,
+  ListChecks,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  Sun,
+  UserRound,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
+import { isCollapsed, rememberCollapsed } from '../lib/collapse-store.ts';
 
 export type NavId = 'timetable' | 'schedule' | 'settings' | 'mine';
 
@@ -31,13 +41,44 @@ export function AppSidebar({
   appName: string;
   subtitle: string;
 }) {
+  // 折叠状态按设备记在本地，不进数据库与同步
+  const [collapsed, setCollapsed] = useState(() => isCollapsed('sidebar'));
+  const toggle = (): void => {
+    const next = !collapsed;
+    setCollapsed(next);
+    rememberCollapsed('sidebar', next);
+  };
   return (
-    <aside className="flex w-60 shrink-0 flex-col gap-4 border-r border-line bg-surface p-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-base font-semibold text-ink">{appName}</span>
-        <span className="text-xs text-muted">{subtitle}</span>
+    <aside
+      className={cn(
+        'flex shrink-0 flex-col gap-4 border-r border-line bg-surface p-2 transition-[width] duration-150',
+        collapsed ? 'w-16 items-center' : 'w-60 p-4',
+      )}
+      data-role="app-sidebar"
+      data-collapsed={collapsed ? 'true' : 'false'}
+    >
+      <div className={cn('flex w-full items-center gap-2', collapsed && 'flex-col')}>
+        {!collapsed && (
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <span className="text-base font-semibold text-ink">{appName}</span>
+            <span className="truncate text-xs text-muted">{subtitle}</span>
+          </div>
+        )}
+        <button
+          type="button"
+          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+          aria-expanded={!collapsed}
+          onClick={toggle}
+          className="flex size-tap shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-muted"
+        >
+          {collapsed ? (
+            <PanelLeftOpen className="size-4" aria-hidden />
+          ) : (
+            <PanelLeftClose className="size-4" aria-hidden />
+          )}
+        </button>
       </div>
-      <nav className="flex flex-col gap-1" aria-label="主导航">
+      <nav className={cn('flex w-full flex-col gap-1', collapsed && 'items-center')} aria-label="主导航">
         {DESKTOP_NAV.map((item) => {
           const Icon = item.icon;
           const active = item.id === current;
@@ -46,22 +87,26 @@ export function AppSidebar({
               key={item.id}
               type="button"
               aria-current={active}
+              aria-label={collapsed ? item.label : undefined}
               onClick={() => onSelect(item.id)}
               className={cn(
                 'flex min-h-tap items-center gap-3 rounded-md px-3 text-sm',
+                collapsed && 'w-11 justify-center px-0',
                 active ? 'bg-surface-muted font-medium text-primary-strong' : 'text-ink hover:bg-surface-muted',
               )}
             >
               <Icon className="size-4" aria-hidden />
-              {item.label}
+              {!collapsed && item.label}
             </button>
           );
         })}
       </nav>
-      <div className="mt-auto flex items-center gap-1 text-xs text-muted">
-        <Sun className="size-3" aria-hidden />
-        快捷键 ← → 切周，T 回今天，/ 搜索
-      </div>
+      {!collapsed && (
+        <div className="mt-auto flex items-center gap-1 text-xs text-muted">
+          <Sun className="size-3" aria-hidden />
+          快捷键 ← → 切周，T 回今天，/ 搜索
+        </div>
+      )}
     </aside>
   );
 }

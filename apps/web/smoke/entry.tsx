@@ -854,9 +854,31 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     globalSwitch.click();
     await flush(8);
   }
-  // 关掉详情面板，避免影响后续断言
+  // P0-03：详情关闭出口（✕ / Esc / 切页清空）
+  const closeDetailButton = document.querySelector<HTMLElement>('[aria-label="关闭课程详情"]');
+  check('课程详情有关闭按钮', closeDetailButton !== null, closeDetailButton?.tagName ?? '(无)');
+  closeDetailButton?.click();
+  await flush(8);
+  check('点关闭按钮收起课程详情', document.querySelector('[data-role="reminder-section"]') === null, '');
+
+  await tapLessonCard(view.container, '高数');
+  await flush(6);
+  check('重新打开详情后可再次关闭', document.querySelector('[data-role="reminder-section"]') !== null, '');
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(8);
+  check('Esc 关闭课程详情', document.querySelector('[data-role="reminder-section"]') === null, '');
+
+  await tapLessonCard(view.container, '高数');
+  await flush(6);
+  clickByText(document.body, '设置');
+  await flush(10);
+  clickByText(document.body, '课表');
+  await flush(10);
+  check(
+    '切到设置再回课表不残留详情',
+    document.querySelector('[data-role="reminder-section"]') === null,
+    '',
+  );
 
   // C2：点空白格 → 虚线占位块 → 滚轮改节次 → 进课程表单预填（周二第 1 节是空的）
   const clickInfo = clickGridCell(view.container, 2);

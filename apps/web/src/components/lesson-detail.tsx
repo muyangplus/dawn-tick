@@ -1,4 +1,4 @@
-import { CalendarClock, MapPin, PencilLine, Trash2, User } from 'lucide-react';
+import { CalendarClock, MapPin, PencilLine, Trash2, User, X } from 'lucide-react';
 import { deleteCourse, deleteSchedule, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
@@ -46,25 +46,30 @@ export function LessonDetail({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <span className="text-base font-semibold text-ink">{detail.course?.name ?? cell.name}</span>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-          {(detail.course?.teacher ?? cell.teacher) !== null && (
-            <span className="flex items-center gap-1">
-              <User className="size-3" aria-hidden />
-              {detail.course?.teacher ?? cell.teacher}
-            </span>
-          )}
-          {(detail.course?.location ?? cell.room) !== null && (
-            <span className="flex items-center gap-1">
-              <MapPin className="size-3" aria-hidden />
-              {detail.course?.location ?? cell.room}
-            </span>
-          )}
-          {detail.course?.credits !== null && detail.course?.credits !== undefined && (
-            <span>{detail.course.credits} 学分</span>
-          )}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-base font-semibold text-ink">{detail.course?.name ?? cell.name}</span>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+            {(detail.course?.teacher ?? cell.teacher) !== null && (
+              <span className="flex items-center gap-1">
+                <User className="size-3" aria-hidden />
+                {detail.course?.teacher ?? cell.teacher}
+              </span>
+            )}
+            {(detail.course?.location ?? cell.room) !== null && (
+              <span className="flex items-center gap-1">
+                <MapPin className="size-3" aria-hidden />
+                {detail.course?.location ?? cell.room}
+              </span>
+            )}
+            {detail.course?.credits !== null && detail.course?.credits !== undefined && (
+              <span>{detail.course.credits} 学分</span>
+            )}
+          </div>
         </div>
+        <Button size="icon" variant="ghost" aria-label="关闭课程详情" onClick={onClose}>
+          <X className="size-4" aria-hidden />
+        </Button>
       </div>
 
       <section className="flex flex-col gap-2" aria-label="排课时段">
