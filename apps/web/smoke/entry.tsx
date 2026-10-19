@@ -3024,11 +3024,85 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     const importPaste = importApp.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="粘贴课表页面内容"]',
     );
+
+    // P2-02：识别失败就地给出手动映射入口，点了会展开并把焦点放到表头行
+    if (importPaste instanceof window.HTMLTextAreaElement) {
+      setInputValue(importPaste, '<html><body>没有可识别的课表</body></html>');
+      await flush(6);
+      if (clickByText(importApp.container, '识别并预览')) await flush(22);
+    }
+    const failureBlock = importApp.container.querySelector('[data-role="import-recognize-error"]');
+    const manualButton = [
+      ...(failureBlock?.querySelectorAll<HTMLButtonElement>('button') ?? []),
+    ].find((item) => (item.textContent ?? '').trim() === '改用手动指定表格');
+    check(
+      '识别失败就地出现手动指定表格入口',
+      failureBlock !== null &&
+        (failureBlock.textContent ?? '').includes('识别失败') &&
+        manualButton !== undefined,
+      failureBlock?.textContent?.trim() ?? '(无)',
+    );
+    manualButton?.click();
+    await flush(10);
+    const mappingDetails = importApp.container.querySelector<HTMLDetailsElement>(
+      '[data-role="manual-mapping"]',
+    );
+    const headerRowBox = mappingDetails?.querySelector<HTMLInputElement>('input[aria-label="表头行"]');
+    check(
+      '手动指定表格入口展开并聚焦表头行',
+      mappingDetails?.open === true &&
+        headerRowBox !== null &&
+        document.activeElement === headerRowBox,
+      `open=${mappingDetails?.open ?? '(无)'} focus=${
+        document.activeElement instanceof window.HTMLInputElement
+          ? document.activeElement.getAttribute('aria-label')
+          : '(非输入框)'
+      }`,
+    );
+
     if (importPaste instanceof window.HTMLTextAreaElement) {
       setInputValue(importPaste, PAGE_SAMPLE);
       await flush(6);
       if (clickByText(importApp.container, '识别并预览')) await flush(22);
     }
+    // P2-02：预览支持全选 / 清空 / 反选
+    const preview = importApp.container.querySelector('[data-role="import-preview"]');
+    const previewBoxes = (): HTMLInputElement[] => [
+      ...(preview?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []),
+    ];
+    const previewText = (): string => preview?.textContent ?? '';
+    let batchOk =
+      preview !== null && previewBoxes().length > 0 && previewBoxes().every((box) => box.checked);
+    const batchBar = preview?.querySelector<HTMLElement>('[data-role="import-batch"]');
+    if (batchBar !== null && batchBar !== undefined) {
+      clickByText(batchBar, '清空');
+      await flush(8);
+      batchOk =
+        batchOk &&
+        previewBoxes().every((box) => !box.checked) &&
+        previewText().includes('已选 0 条');
+      clickByText(batchBar, '全选');
+      await flush(8);
+      batchOk =
+        batchOk &&
+        previewBoxes().length > 0 &&
+        previewBoxes().every((box) => box.checked) &&
+        previewText().includes(`已选 ${previewBoxes().length} 条`);
+      clickByText(batchBar, '反选');
+      await flush(8);
+      batchOk =
+        batchOk &&
+        previewBoxes().every((box) => !box.checked) &&
+        previewText().includes('已选 0 条');
+      clickByText(batchBar, '全选');
+      await flush(8);
+    }
+    check(
+      '预览支持全选 / 清空 / 反选',
+      batchOk,
+      `勾选=${previewBoxes().filter((box) => box.checked).length}/${previewBoxes().length} ${previewText().slice(0, 24)}`,
+    );
+
     if (clickByText(importApp.container, '确认导入')) await flush(30);
     const importFinished = (importApp.container.textContent ?? '').includes('导入完成');
     if (clickByText(importApp.container, '完成')) await flush(12);

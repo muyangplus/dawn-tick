@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, LabelHTMLAttributes, ReactNode, TextareaHTMLAttributes } from 'react';
+import type { InputHTMLAttributes, LabelHTMLAttributes, ReactNode, Ref, TextareaHTMLAttributes } from 'react';
 import { cn } from '../../lib/cn.ts';
 import { HelpHint } from './help-hint.tsx';
 
@@ -7,7 +7,10 @@ const fieldBase =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 ' +
   'focus-visible:ring-offset-page disabled:opacity-50';
 
-export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({
+  className,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
   return <input className={cn(fieldBase, 'min-h-tap', className)} {...props} />;
 }
 

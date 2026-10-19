@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bookmark, FileSpreadsheet, FileText, PencilLine, SlidersHorizontal } from 'lucide-react';
+import { Bookmark, FileSpreadsheet, FileText, PencilLine, SlidersHorizontal, Upload } from 'lucide-react';
 import {
   BUILTIN_SCHOOLS,
   PAGE_BOOKMARKLET,
@@ -48,6 +48,9 @@ import { cn } from '../lib/cn.ts';
 type Method = 'page' | 'file' | 'ics' | 'manual';
 type Step = 1 | 2 | 3 | 4;
 
+/** 失败来源决定错误块挂在哪个操作旁：识别失败挨着粘贴框，映射失败挨着映射按钮。 */
+type ImportFailure = { source: 'page' | 'mapping' | 'file' | 'clipboard'; reason: string };
+
 const METHODS: Array<{ id: Method; label: string; icon: typeof Bookmark; hint: string }> = [
   { id: 'page', label: '网页课表', icon: Bookmark, hint: '自己登录后粘贴课表页' },
   { id: 'file', label: 'CSV / Excel', icon: FileSpreadsheet, hint: '二维矩阵' },
@@ -89,8 +92,10 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [warnings, setWarnings] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ImportFailure | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const mappingDetails = useRef<HTMLDetailsElement>(null);
+  const headerRowInput = useRef<HTMLInputElement>(null);
 
   const [pageText, setPageText] = useState('');
   const [bookmarkCopied, setBookmarkCopied] = useState(false);
@@ -124,7 +129,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
 
   /** 手动映射：识别不准时由用户指定表头行、星期列与节次列。 */
   function runMapped(): void {
-    setError(null);
+    setFailure(null);
     const html = stripPageMarkers(pageText);
     const result = extractTimetableFromHtml(html, {
       mapping: {
@@ -135,7 +140,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       },
     });
     if (result.schedules.length === 0) {
-      setError(result.warnings.join('；'));
+      setFailure({ source: 'mapping', reason: result.warnings.join('；') || '没有识别到排课' });
       return;
     }
     logInfo('page-import', '按手动映射解析', {
@@ -153,7 +158,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       setBookmarkCopied(true);
       toast.success('已复制，粘贴到浏览器书签的地址栏');
     } catch {
-      setError('浏览器未允许写入剪贴板，请手动复制下方代码');
+      setFailure({ source: 'clipboard', reason: '浏览器未允许写入剪贴板，请手动复制下方代码' });
     }
   }
 
@@ -208,7 +213,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   /** 教务窗口回传的页面内容，直接走识别。桌面端走事件，移动端由打开调用直接返回。 */
   function handleImportPayload(payload: string): void {
     setPageText(payload);
-    setError(null);
+    setFailure(null);
     const result = extractTimetableFromHtml(payload);
     if (result.schedules.length === 0) {
       setWindowNote(result.warnings.join('；'));
@@ -240,11 +245,11 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
 
   /** 通用网页导入：识别粘贴进来的课表页面，不绑定具体学校。 */
   function runPage(): void {
-    setError(null);
+    setFailure(null);
     const html = stripPageMarkers(pageText);
     const result = extractTimetableFromHtml(html);
     if (result.schedules.length === 0) {
-      setError(result.warnings.join('；'));
+      setFailure({ source: 'page', reason: result.warnings.join('；') || '没有识别到排课' });
       logError('page-import', '未识别到课表', {
         shape: result.shape,
         tables: result.tables,
@@ -262,15 +267,44 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   }
 
   function accept(next: ImportedSchedule[], nextWarnings: string[]): void {
+    setFailure(null);
     setSchedules(next);
     setWarnings(nextWarnings);
     setSelected(new Set(next.map((_, index) => index)));
     setStep(3);
   }
 
+  /** 识别失败的就近入口：展开手动映射并读出表格，焦点落到表头行输入。 */
+  function openManualMapping(): void {
+    setInspection(inspectPage(stripPageMarkers(pageText)));
+    if (mappingDetails.current !== null) mappingDetails.current.open = true;
+    requestAnimationFrame(() => {
+      headerRowInput.current?.focus();
+      headerRowInput.current?.scrollIntoView({ block: 'nearest' });
+    });
+  }
+
+  function selectAll(): void {
+    setSelected(new Set(schedules.map((_, index) => index)));
+  }
+
+  function clearSelection(): void {
+    setSelected(new Set());
+  }
+
+  function invertSelection(): void {
+    setSelected((current) => {
+      const next = new Set<number>();
+      schedules.forEach((_, index) => {
+        if (!current.has(index)) next.add(index);
+      });
+      return next;
+    });
+  }
+
   async function runFile(file: File): Promise<void> {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     try {
       const semester = await loadSemester(storage, semesterId);
       if (semester === undefined) throw new Error('学期不存在');
@@ -308,7 +342,10 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         parsed.warnings,
       );
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setFailure({
+        source: 'file',
+        reason: cause instanceof Error ? cause.message : String(cause),
+      });
     } finally {
       setBusy(false);
     }
@@ -383,6 +420,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                 type="button"
                 onClick={() => {
                   setMethod(item.id);
+                  setFailure(null);
                   if (item.id === 'manual') {
                     onManual?.();
                     return;
@@ -565,7 +603,27 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             </Button>
           </div>
 
-          <details className="flex flex-col gap-2">
+          {failure?.source === 'page' && (
+            <div
+              role="alert"
+              data-role="import-recognize-error"
+              className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 p-3"
+            >
+              <span className="text-xs text-danger-strong">
+                识别失败：{failure.reason}。请换一种导入方式，或手动添加课程。
+              </span>
+              <Button size="sm" variant="secondary" onClick={openManualMapping}>
+                改用手动指定表格
+              </Button>
+            </div>
+          )}
+          {failure?.source === 'clipboard' && (
+            <p role="alert" className="text-xs text-danger-strong">
+              {failure.reason}
+            </p>
+          )}
+
+          <details ref={mappingDetails} data-role="manual-mapping" className="flex flex-col gap-2">
             <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm text-ink">
               <SlidersHorizontal className="size-4" aria-hidden />
               手动指定表格
@@ -603,8 +661,10 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                   <div className="flex flex-wrap items-end gap-2">
                     <Field label="表头行">
                       <Input
+                        ref={headerRowInput}
                         type="number"
                         min={0}
+                        aria-label="表头行"
                         className="w-16"
                         value={mapHeaderRow}
                         onChange={(event) => setMapHeaderRow(Number(event.target.value))}
@@ -642,6 +702,11 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                       按此映射识别
                     </Button>
                   </div>
+                  {failure?.source === 'mapping' && (
+                    <p role="alert" className="text-xs text-danger-strong">
+                      识别失败：{failure.reason}。请调整表头行、星期列或节次列后重试。
+                    </p>
+                  )}
                 </>
               )}
             </div>
@@ -658,22 +723,56 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             ref={fileInput}
             type="file"
             accept={method === 'ics' ? '.ics' : '.csv,.xlsx,.txt'}
+            hidden
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file !== undefined) void runFile(file);
+              event.target.value = '';
             }}
           />
-          <Button variant="ghost" onClick={() => setStep(1)}>
-            返回
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => fileInput.current?.click()}
+            >
+              <Upload className="size-4" aria-hidden />
+              选择文件
+            </Button>
+            <Button variant="ghost" onClick={() => setStep(1)}>
+              返回
+            </Button>
+          </div>
+          {failure?.source === 'file' && (
+            <p role="alert" className="text-xs text-danger-strong">
+              识别失败：{failure.reason}。请检查文件格式，或改用其他导入方式。
+            </p>
+          )}
         </Card>
       )}
 
       {step === 3 && (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3" data-role="import-preview">
           <span className="text-sm text-ink">
             解析到 {schedules.length} 条排课，已选 {selected.size} 条
           </span>
+          <div className="flex flex-wrap items-center gap-2" data-role="import-batch">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={schedules.length === 0 || selected.size === schedules.length}
+              onClick={selectAll}
+            >
+              全选
+            </Button>
+            <Button size="sm" variant="secondary" disabled={selected.size === 0} onClick={clearSelection}>
+              清空
+            </Button>
+            <Button size="sm" variant="secondary" disabled={schedules.length === 0} onClick={invertSelection}>
+              反选
+            </Button>
+          </div>
           <div className="max-h-72 overflow-auto rounded-md border border-line">
             <table className="w-full text-left text-xs">
               <thead className="bg-surface-muted text-muted">
@@ -740,6 +839,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                 setStep(1);
                 setSchedules([]);
                 setSelected(new Set());
+                setFailure(null);
               }}
             >
               继续导入
@@ -750,8 +850,6 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
           </div>
         </div>
       )}
-
-      {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
     </div>
   );
 }
