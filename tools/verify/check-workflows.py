@@ -26,6 +26,15 @@ PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
 # 便携包说明：数据在程序所在目录，不是 %LOCALAPPDATA%
 PUBLISH_PORTABLE_README_REQUIRED = ['数据与日志都在本目录']
 PUBLISH_PORTABLE_README_FORBIDDEN = ['数据与日志目录：%LOCALAPPDATA%']
+# 更新兜底：发布产物必须带 version.json（渠道 / 版本 / 标签 / 发布说明 / 产物名）
+PUBLISH_VERSION_JSON_REQUIRED = [
+    'node tools/release/version-json.mjs',
+    '--channel="$CHANNEL"',
+    '--version="$MANIFEST_VERSION"',
+    '--tag="$TAG"',
+    '--out=out',
+    "-name 'version.json'",
+]
 
 
 def check_publish_notes(text: str) -> list[str]:
@@ -33,6 +42,7 @@ def check_publish_notes(text: str) -> list[str]:
     problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明缺少: {item}' for item in PUBLISH_PORTABLE_README_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明写错数据目录: {item}' for item in PUBLISH_PORTABLE_README_FORBIDDEN if item in text]
+    problems += [f'publish.yml 缺少更新兜底清单的约束: {item}' for item in PUBLISH_VERSION_JSON_REQUIRED if item not in text]
     return problems
 
 

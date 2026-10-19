@@ -6,23 +6,25 @@ export type UpdateChannel = 'dev' | 'beta' | 'release';
 const OWNER = 'muyangplus';
 const REPO = 'dawn-tick';
 
-/** 各渠道的 version.json 直连地址（rolling 标签由发布流程维护），仅发布接口不可达时兜底。 */
-export const UPDATE_FEEDS: Record<UpdateChannel, string> = {
-  dev: `https://github.com/${OWNER}/${REPO}/releases/download/dev-latest/version.json`,
-  beta: `https://github.com/${OWNER}/${REPO}/releases/download/beta-latest/version.json`,
-  release: `https://github.com/${OWNER}/${REPO}/releases/latest/download/version.json`,
-};
-
-/** 各渠道的 GitHub 发布接口地址（首选取源）：dev / beta 用滚动标签，release 用 /releases/latest。 */
-export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
-  dev: `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/dev-latest`,
-  beta: `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/beta-latest`,
-  release: `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`,
-};
-
 /** beta 渠道查发布列表：取最新 beta 预发布与最新正式版里较高者。 */
 /** 正式版发布后，beta 用户直接更到正式版。 */
 export const UPDATE_RELEASES_API = `https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=30`;
+
+/**
+ * 各渠道的 version.json 直连地址（发布标签由发布流程维护），仅发布接口不可达时兜底。
+ * beta 的标签带版本号（vX.Y.Z-beta.N），没有可静态取到的固定地址，因此不做直连兜底。
+ */
+export const UPDATE_FEEDS: Partial<Record<UpdateChannel, string>> = {
+  dev: `https://github.com/${OWNER}/${REPO}/releases/download/dev-latest/version.json`,
+  release: `https://github.com/${OWNER}/${REPO}/releases/latest/download/version.json`,
+};
+
+/** 各渠道的 GitHub 发布接口地址（首选取源）：dev 用滚动标签，beta 查发布列表，release 用 /releases/latest。 */
+export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
+  dev: `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/dev-latest`,
+  beta: UPDATE_RELEASES_API,
+  release: `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`,
+};
 
 /** beta 预发布标签与正式版标签。 */
 const BETA_RELEASE_TAG = /^v?\d+\.\d+\.\d+-beta\.\d+$/;
@@ -167,7 +169,7 @@ function isPrereleaseOrDraft(value: unknown): boolean {
   return record !== null && (record['prerelease'] === true || record['draft'] === true);
 }
 
-/** 版本优先取 tag；滚动标签（dev-latest / beta-latest）取不到，再从资产名取。 */
+/** 版本优先取 tag；滚动标签（dev-latest）取不到，再从资产名取。 */
 function versionFromTag(tag: unknown): string | null {
   if (typeof tag !== 'string') return null;
   const matched = TAG_VERSION.exec(tag.trim());
@@ -281,8 +283,7 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
   // ① 首选：GitHub 发布接口。状态错误与格式错误就地给文案，不回退。
   let networkError: string | null = null;
   try {
-    const url = feed === 'beta' ? UPDATE_RELEASES_API : UPDATE_API_FEEDS[feed];
-    const response = await doFetch(url, { headers: { accept: GITHUB_API_ACCEPT } });
+    const response = await doFetch(UPDATE_API_FEEDS[feed], { headers: { accept: GITHUB_API_ACCEPT } });
     if (!response.ok) return { ...base, error: describeApiStatus(response.status) };
     let parsed: unknown;
     try {
@@ -316,9 +317,11 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
     networkError = cause instanceof Error ? cause.message : String(cause);
   }
 
-  // ② 回退：version.json 直连（github.com 资产）。
+  // ② 回退：version.json 直连（github.com 资产）。beta 没有固定直连地址，直接交回原始网络错误。
+  const fallbackUrl = UPDATE_FEEDS[feed];
+  if (fallbackUrl === undefined) return { ...base, error: networkError };
   try {
-    const response = await doFetch(UPDATE_FEEDS[feed], { headers: { accept: 'application/json' } });
+    const response = await doFetch(fallbackUrl, { headers: { accept: 'application/json' } });
     if (!response.ok) return { ...base, error: networkError };
     const parsed: unknown = await response.json();
     if (!isUpdateManifest(parsed)) return { ...base, error: networkError };
