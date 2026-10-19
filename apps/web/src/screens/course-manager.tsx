@@ -14,6 +14,8 @@ import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
+import { DELETE } from '../copy/zh.ts';
+import { countForCourse, type CourseCounts } from '../delete-counts.ts';
 import { CourseForm } from './course-form.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { logInfo } from '../log.ts';
@@ -76,6 +78,8 @@ export function CourseManager({
   const [courses, setCourses] = useState<ManagedCourse[]>([]);
   const [editing, setEditing] = useState<ManagedCourse | null>(null);
   const [removing, setRemoving] = useState<ManagedCourse | null>(null);
+  /** 删除课程确认句里的排课与提醒条数 */
+  const [removeCounts, setRemoveCounts] = useState<CourseCounts | null>(null);
   /** 复制课程：先选只复制课程信息，还是连排课一起复制 */
   const [copying, setCopying] = useState<ManagedCourse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -91,6 +95,12 @@ export function CourseManager({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /** 删除前先数一遍排课与提醒，确认句里给数量 */
+  async function requestRemove(course: ManagedCourse): Promise<void> {
+    setRemoveCounts(await countForCourse(storage, course.id));
+    setRemoving(course);
+  }
 
   /** 复制课程：可选只复制课程信息，或连同全部排课一起复制。 */
   async function confirmCopy(withSchedules: boolean): Promise<void> {
@@ -195,7 +205,7 @@ export function CourseManager({
                 variant="ghost"
                 aria-label={`删除课程 ${course.name}`}
                 disabled={busy}
-                onClick={() => setRemoving(course)}
+                onClick={() => void requestRemove(course)}
               >
                 <Trash2 className="size-4 text-danger-strong" aria-hidden />
               </Button>
@@ -297,7 +307,10 @@ export function CourseManager({
           description={
             removing === null
               ? ''
-              : `将删除「${removing.name}」及其 ${removing.schedules.length} 条排课与相关提醒，本操作不可撤销`
+              : DELETE(removing.name, [
+                  `${removeCounts?.schedules ?? removing.schedules.length} 条排课`,
+                  `${removeCounts?.reminders ?? 0} 条提醒`,
+                ])
           }
         >
           <DialogFooter>

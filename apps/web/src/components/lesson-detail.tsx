@@ -2,6 +2,8 @@ import { CalendarClock, MapPin, PencilLine, Trash2, User, X } from 'lucide-react
 import { deleteCourse, deleteSchedule, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
+import { confirmAction } from './ui/confirm-dialog.tsx';
+import { DELETE } from '../copy/zh.ts';
 import { ReminderForm } from './reminder-form.tsx';
 import { toast } from './ui/toaster.tsx';
 
@@ -30,16 +32,28 @@ export function LessonDetail({
   onEditCourse,
   onAdjust,
 }: LessonDetailProps) {
-  async function removeSchedule(id: string): Promise<void> {
+  async function removeSchedule(id: string, label: string): Promise<void> {
+    const ok = await confirmAction({
+      title: '删除排课',
+      description: `将删除${label}的排课，不可撤销`,
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
     await deleteSchedule(storage, id);
     toast.success('已删除该排课');
     onChanged();
     onClose();
   }
 
-  async function removeCourse(id: string): Promise<void> {
+  async function removeCourse(id: string, name: string): Promise<void> {
+    const ok = await confirmAction({
+      title: '删除课程',
+      description: DELETE(name, [`${detail.schedules.length} 条排课`, `${detail.reminder === undefined ? 0 : 1} 条提醒`]),
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
     await deleteCourse(storage, id);
-    toast.success('已删除整门课');
+    toast.success(`已删除「${name}」`);
     onChanged();
     onClose();
   }
@@ -103,7 +117,12 @@ export function LessonDetail({
                 size="icon"
                 variant="ghost"
                 aria-label="删除该排课"
-                onClick={() => void removeSchedule(row.id)}
+                onClick={() =>
+                  void removeSchedule(
+                    row.id,
+                    `${WEEKDAYS[row.day_of_week - 1]} 第 ${row.period_start}–${row.period_end} 节`,
+                  )
+                }
               >
                 <Trash2 className="size-4" aria-hidden />
               </Button>
@@ -138,7 +157,12 @@ export function LessonDetail({
         )}
         <Button
           variant="ghost"
-          onClick={() => void removeCourse(detail.course?.id ?? cell.courseId)}
+          onClick={() =>
+            void removeCourse(
+              detail.course?.id ?? cell.courseId,
+              detail.course?.name ?? cell.name,
+            )
+          }
         >
           <Trash2 className="size-4" aria-hidden />
           删除整门课

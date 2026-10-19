@@ -116,7 +116,10 @@ import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { ExternalLink } from '../components/ui/external-link.tsx';
+import { DELETE } from '../copy/zh.ts';
+import { countForSemester, type SemesterCounts } from '../delete-counts.ts';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -383,6 +386,32 @@ export function SettingsView({
     }
   }
 
+  /** 恢复/删除快照与删除学期都要先确认；句式统一走 copy/zh.ts。 */
+  async function confirmRestoreSnapshot(entry: SnapshotEntry): Promise<void> {
+    const ok = await confirmAction({
+      title: '恢复快照',
+      description: '将用该快照覆盖本机数据，重启后生效，不可撤销',
+      confirmLabel: '确认恢复',
+    });
+    if (!ok) return;
+    await restoreSnapshotNow(entry);
+  }
+
+  async function confirmRemoveSnapshot(entry: SnapshotEntry): Promise<void> {
+    const ok = await confirmAction({
+      title: '删除快照',
+      description: DELETE('该快照'),
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
+    await removeSnapshot(entry);
+  }
+
+  async function requestRemoveSemester(semester: SemesterRow): Promise<void> {
+    setRemoveCounts(await countForSemester(storage, semester.id));
+    setRemoving(semester);
+  }
+
   /** 恢复：文件快照排队到重启后套用，JSON 快照当场覆盖数据。 */
   async function restoreSnapshotNow(entry: SnapshotEntry): Promise<void> {
     setSnapshotBusy(true);
@@ -640,6 +669,8 @@ export function SettingsView({
   const [editWeeks, setEditWeeks] = useState(20);
   const [editZone, setEditZone] = useState('');
   const [removing, setRemoving] = useState<SemesterRow | null>(null);
+  /** 删除学期确认句里的逐类行数 */
+  const [removeCounts, setRemoveCounts] = useState<SemesterCounts | null>(null);
   const [layout, setLayout] = useState<LayoutConfig>({});
   const [layoutOpen, setLayoutOpen] = useState(false);
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
@@ -975,7 +1006,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`删除学期 ${semester.name}`}
                     disabled={busy}
-                    onClick={() => setRemoving(semester)}
+                    onClick={() => void requestRemoveSemester(semester)}
                   >
                     <Trash2 className="size-4 text-danger-strong" aria-hidden />
                   </Button>
@@ -1633,7 +1664,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`恢复快照 ${entry.id}`}
                     disabled={snapshotBusy}
-                    onClick={() => void runBusy('正在恢复快照…', () => restoreSnapshotNow(entry))}
+                    onClick={() => void confirmRestoreSnapshot(entry)}
                   >
                     恢复
                   </Button>
@@ -1642,7 +1673,7 @@ export function SettingsView({
                     variant="ghost"
                     aria-label={`删除快照 ${entry.id}`}
                     disabled={snapshotBusy}
-                    onClick={() => void runBusy('正在删除快照…', () => removeSnapshot(entry))}
+                    onClick={() => void confirmRemoveSnapshot(entry)}
                   >
                     删除
                   </Button>
@@ -2134,7 +2165,12 @@ export function SettingsView({
           description={
             removing === null
               ? ''
-              : `将删除「${removing.name}」及课程、日程与提醒，不可撤销`
+              : DELETE(removing.name, [
+                  `${removeCounts?.courses ?? 0} 门课程`,
+                  `${removeCounts?.schedules ?? 0} 条排课`,
+                  `${removeCounts?.events ?? 0} 条日程`,
+                  `${removeCounts?.reminders ?? 0} 条提醒`,
+                ])
           }
         >
           <DialogFooter>

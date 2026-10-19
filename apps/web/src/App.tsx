@@ -26,6 +26,7 @@ import { Button } from './components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
 import { BusyOverlay } from './components/ui/busy-overlay.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
+import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
 import { Field, Input } from './components/ui/input.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
@@ -930,6 +931,7 @@ export function App() {
         <Toaster mode={resolvedMode} />
         {/* 外部链接确认弹窗在引导页也要挂上，否则「请求适配 / 提交学校信息」点了没反应 */}
         <ExternalLinkConfirm />
+        <ConfirmDialogHost />
         <BusyOverlay />
       </>
     );
@@ -1402,7 +1404,7 @@ export function App() {
       >
         <DialogContent
           title="远端有较新的备份"
-          description={`${remoteNewer?.name ?? ''}${remoteNewer?.detail == null ? '' : ` · ${remoteNewer.detail}`}；下载前会先给本机做一份快照`}
+          description={`${remoteNewer?.name ?? ''}${remoteNewer?.detail == null ? '' : ` · ${remoteNewer.detail}`}；恢复全部将覆盖本机数据（下载前会先备份本机），不可撤销`}
         >
           <DialogFooter>
             <Button variant="ghost" onClick={() => setRemoteNewer(null)}>
@@ -1437,6 +1439,7 @@ export function App() {
 
       <Toaster mode={resolvedMode} />
       <ExternalLinkConfirm />
+      <ConfirmDialogHost />
       <BusyOverlay />
     </div>
   );

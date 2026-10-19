@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BellRing, Trash2 } from 'lucide-react';
 import { deleteReminder, listRemindersFor, setReminder, type Storage } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
+import { confirmAction } from './ui/confirm-dialog.tsx';
 import { Switch } from './ui/controls.tsx';
 import { Input, Label } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
@@ -76,6 +77,12 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
 
   async function remove(): Promise<void> {
     if (reminderId === null) return;
+    const ok = await confirmAction({
+      title: '删除提醒',
+      description: '将删除这节课的课前提醒，不可撤销',
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await deleteReminder(storage, reminderId);

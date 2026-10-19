@@ -829,6 +829,29 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       detailText.includes('删除整门课'),
     detailText.slice(-60),
   );
+  // P0-02：删除排课先弹确认，取消后数据仍在
+  const removeScheduleButton = document.querySelector<HTMLElement>('[aria-label="删除该排课"]');
+  check(
+    '课程详情提供删除排课入口',
+    removeScheduleButton !== null,
+    removeScheduleButton?.tagName ?? '(无)',
+  );
+  removeScheduleButton?.click();
+  await flush(8);
+  const confirmText = document.body.textContent ?? '';
+  check(
+    '删除排课先弹确认并说明后果',
+    confirmText.includes('将删除') && confirmText.includes('不可撤销'),
+    confirmText.slice(-80),
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
+  check(
+    '取消删除后排课仍在',
+    document.querySelector('[data-role="reminder-section"]') !== null &&
+      (view.container.textContent ?? '').includes('高数'),
+    '',
+  );
+
   // 课前提醒：区块标题 + 「使用全局配置」子项开关（不再是标题态的复选框）
   const reminderSection = document.querySelector('[data-role="reminder-section"]');
   const globalSwitch = reminderSection?.querySelector<HTMLElement>('[role="switch"][aria-label="使用全局配置"]');

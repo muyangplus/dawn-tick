@@ -24,6 +24,8 @@ import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { logInfo } from '../../log.ts';
 import { Card } from '../../components/ui/card.tsx';
 import { Button } from '../../components/ui/button.tsx';
+import { confirmAction } from '../../components/ui/confirm-dialog.tsx';
+import { DELETE } from '../../copy/zh.ts';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
 import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
@@ -281,6 +283,12 @@ function ScheduleTimeline({
 
   /** 删除一条调课/调休（沿用原来的软删除方式）。 */
   async function deleteAdjust(event: EventRow): Promise<void> {
+    const ok = await confirmAction({
+      title: '删除调课记录',
+      description: DELETE('这次调课记录'),
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
     await updateEvent(storage, event.id, { deleted_at: Date.now() });
     onChanged();
   }

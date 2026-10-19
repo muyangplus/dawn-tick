@@ -12,6 +12,7 @@ import {
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
+import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { SchoolPickerDialog } from '../components/school-picker-dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -74,6 +75,12 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
 
   async function applyImport(): Promise<void> {
     if (pending === null) return;
+    const ok = await confirmAction({
+      title: '覆盖现有数据',
+      description: '将覆盖设备上的现有数据，不可撤销',
+      confirmLabel: '确认覆盖',
+    });
+    if (!ok) return;
     setBusy(true);
     setError(null);
     try {
