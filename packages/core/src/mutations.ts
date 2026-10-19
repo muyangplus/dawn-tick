@@ -1,7 +1,7 @@
 import { normalizeRow } from './columns.ts';
 import { DEFAULT_TIME_ZONE } from './time.ts';
 import { addMinutes, parseClock, sectionOf } from './timetable.ts';
-import { maskToWeeks, weeksToMask } from './weeks.ts';
+import { MAX_WEEKS, describeWeeks, maskToWeeks, weeksToMask } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { assertValid } from './validation.ts';
 import type { EventNature, EventType, HolidaySource, PeriodSection, ReminderTargetType } from './types.ts';
@@ -550,14 +550,20 @@ export interface ScheduleInput {
   room?: string | null;
 }
 
-/** 用给定排课替换某门课的全部排课。 */
+export interface SetSchedulesOptions extends WriteOptions {
+  /** 学期总周数：用于把周次位图转成「1-16周」文本；缺省按 30 周上限。 */
+  totalWeeks?: number | undefined;
+}
+
+/** 用给定排课替换某门课的全部排课；`weeks_raw` 由位图派生，调用方不必再传。 */
 export async function setSchedules(
   storage: Storage,
   courseId: string,
   list: readonly ScheduleInput[],
-  options: WriteOptions = {},
+  options: SetSchedulesOptions = {},
 ): Promise<Row[]> {
   const ctx = context(storage, options);
+  const totalWeeks = options.totalWeeks ?? MAX_WEEKS;
   const existing = (await storage.collection<Row>('course_schedules').getAll()).filter(
     (row) => isAlive(row) && row['course_id'] === courseId,
   );
@@ -565,6 +571,7 @@ export async function setSchedules(
 
   const rows: Row[] = [];
   for (const item of list) {
+    const mask = weeksToMask([...item.weeks]);
     rows.push(
       await insert(ctx, 'course_schedules', {
         id: ctx.id(),
@@ -572,8 +579,8 @@ export async function setSchedules(
         day_of_week: item.dayOfWeek,
         period_start: item.periodStart,
         period_end: item.periodEnd,
-        weeks_mask: weeksToMask([...item.weeks]),
-        weeks_raw: item.weeksRaw ?? null,
+        weeks_mask: mask,
+        weeks_raw: item.weeksRaw ?? describeWeeks(mask, totalWeeks),
         room: item.room ?? null,
         created_at: ctx.now(),
         updated_at: ctx.now(),

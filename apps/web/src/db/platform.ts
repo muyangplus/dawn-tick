@@ -1,4 +1,5 @@
 import {
+  backfillWeeksRaw,
   migrate,
   sqliteStorage,
   validatedStorage,
@@ -12,7 +13,7 @@ import timetableEntriesSql from '@dawn-tick/core/schema/004_timetable_entries.sq
 import dueAtAnySql from '@dawn-tick/core/schema/005_due_at_any.sql?raw';
 import schemaVersionSql from '@dawn-tick/core/schema/006_schema_version.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
-import { logWarn } from '../log.ts';
+import { logInfo, logWarn } from '../log.ts';
 import { readStorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
 import { isCorruptDatabase } from './health.ts';
@@ -50,6 +51,20 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
 
 /** 各端使用各自最合适的底层存储：Windows/Android 用 SQLite，Web 用 IndexedDB。 */
 export async function openStorage(): Promise<Storage> {
+  const storage = await openStorageInner();
+  // 历史手工排课只写了 weeks_mask：开库时补一次 weeks_raw，之后再开库直接跳过
+  try {
+    const backfilled = await backfillWeeksRaw(storage);
+    if (backfilled > 0) logInfo('storage', '回填排课周次文本', { rows: backfilled });
+  } catch (error) {
+    logWarn('storage', '回填排课周次文本失败', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return storage;
+}
+
+async function openStorageInner(): Promise<Storage> {
   const platform = detectPlatform();
   if (platform !== 'web') {
     try {

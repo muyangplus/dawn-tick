@@ -253,13 +253,13 @@ export function CourseForm({
       if (course === null) {
         const created = await createCourse(storage, { semesterId, ...payload });
         savedId = String(created['id']);
-        await setSchedules(storage, savedId, schedules);
+        await setSchedules(storage, savedId, schedules, { totalWeeks });
         logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
         toast.success('已添加课程');
       } else {
         savedId = course.id;
         await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
-        await setSchedules(storage, course.id, schedules);
+        await setSchedules(storage, course.id, schedules, { totalWeeks });
         logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
         toast.success('已保存课程');
       }

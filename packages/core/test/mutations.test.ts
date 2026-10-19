@@ -24,6 +24,8 @@ import {
   uuidv7,
 } from '../src/mutations.ts';
 import { listTimeSlots } from '../src/repository.ts';
+import { backfillWeeksRaw } from '../src/backfill.ts';
+import { describeWeeks, weeksToMask } from '../src/weeks.ts';
 
 type Row = Record<string, unknown>;
 import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.ts';
@@ -484,4 +486,58 @@ test('新建学期使用固定 id 生成器便于断言', async () => {
     },
   );
   assert.equal(semester['id'], SEMESTER_ID);
+});
+
+test('setSchedules 由周次位图派生 weeks_raw', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const courses = await listManagedCourses(storage, SEMESTER_ID);
+  const course = courses[0];
+  assert.ok(course !== undefined);
+
+  await setSchedules(
+    storage,
+    course.id,
+    [{ dayOfWeek: 2, periodStart: 3, periodEnd: 4, weeks: weekRange(1, 16) }],
+    { totalWeeks: 20 },
+  );
+  const rows = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => row['course_id'] === course.id && row['deleted_at'] === null,
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.['weeks_raw'], describeWeeks(weeksToMask(weekRange(1, 16)), 20));
+  assert.equal(rows[0]?.['weeks_raw'], '1-16周');
+
+  await setSchedules(storage, course.id, [
+    { dayOfWeek: 4, periodStart: 1, periodEnd: 2, weeks: [2, 4, 6, 8] },
+  ]);
+  const after = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => row['course_id'] === course.id && row['deleted_at'] === null,
+  );
+  assert.equal(after[0]?.['weeks_raw'], '2-8周(双)');
+});
+
+test('启动回填历史排课的 weeks_raw 且幂等', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const collection = storage.collection<Row>('course_schedules');
+  const seeded = await collection.getAll();
+  const target = seeded[0];
+  assert.ok(target !== undefined);
+  // 模拟历史数据：只写了位图，没有周次文本
+  await collection.put({ ...target, weeks_raw: null });
+  const before = await collection.getAll();
+  const blanks = before.filter(
+    (row) => (row['weeks_raw'] === null || row['weeks_raw'] === '') && Number(row['weeks_mask'] ?? 0) > 0,
+  );
+  assert.ok(blanks.length >= 1, '构造出的历史排课应缺周次文本');
+
+  const filled = await backfillWeeksRaw(storage);
+  assert.equal(filled, blanks.length);
+  for (const row of blanks) {
+    const after = await collection.get(String(row['id']));
+    assert.equal(after?.['weeks_raw'], describeWeeks(Number(row['weeks_mask'])));
+  }
+  assert.equal(await storage.readMeta('weeks_raw_backfill_v1'), '1');
+  assert.equal(await backfillWeeksRaw(storage), 0, '第二次调用不再改动');
 });
