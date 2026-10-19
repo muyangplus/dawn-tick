@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   createCourse,
@@ -81,6 +81,8 @@ export function CourseManager({
   const [busy, setBusy] = useState(false);
   /** 新建课程：导入子项里的「手动添加」也会用它打开表单 */
   const [creating, setCreating] = useState(false);
+  /** 导入课表折叠区：「完成」要把它收起 */
+  const importRef = useRef<HTMLDetailsElement>(null);
 
   const reload = useCallback(async () => {
     setCourses(await listManagedCourses(storage, semesterId));
@@ -203,7 +205,7 @@ export function CourseManager({
       )}
 
       {/* 导入课表是课程管理的子项：展开后走同一套导入流程 */}
-      <details className="rounded-md border border-line bg-surface p-2" data-role="course-import">
+      <details ref={importRef} className="rounded-md border border-line bg-surface p-2" data-role="course-import">
         <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm font-medium text-ink" aria-label="导入课表">
           导入课表
           <span className="text-xs text-muted">网页课表 / 教务窗口 / ICS / CSV / Excel</span>
@@ -219,7 +221,14 @@ export function CourseManager({
                 onChanged();
               })();
             }}
-            onClose={() => undefined}
+            onClose={() => {
+              // 「完成」= 收起导入区并刷新列表，用户不必再手动收起
+              if (importRef.current !== null) importRef.current.open = false;
+              void (async () => {
+                await reload();
+                onChanged();
+              })();
+            }}
           />
         </div>
       </details>

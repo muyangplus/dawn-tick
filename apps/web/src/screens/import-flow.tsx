@@ -341,7 +341,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   return (
     <div className="flex flex-col gap-4">
       <ol className="flex flex-wrap items-center gap-2 text-xs" aria-label="导入步骤">
-        {['选择方式', '登录或上传', '预览', '确认'].map((label, index) => {
+        {['选择方式', '登录或上传', '预览', '完成'].map((label, index) => {
           const value = (index + 1) as Step;
           return (
             <li
@@ -533,10 +533,8 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             )}
           </div>
 
-          <span className="text-sm text-ink">或用浏览器书签复制</span>
-          <span className="text-xs text-muted">
-            存为书签后在课表页执行，页面内容进剪贴板
-          </span>
+          <span className="text-sm text-ink">1. 安装书签</span>
+          <span className="text-xs text-muted">把下面的代码存为浏览器书签</span>
           <textarea
             readOnly
             value={PAGE_BOOKMARKLET}
@@ -549,6 +547,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             </Button>
             {bookmarkCopied && <span className="text-xs text-muted">已复制</span>}
           </div>
+          <span className="text-sm text-ink">2. 在课表页执行书签，页面内容进剪贴板</span>
           <span className="text-sm text-ink">3. 回到本页粘贴，自动识别课表</span>
           <textarea
             value={pageText}

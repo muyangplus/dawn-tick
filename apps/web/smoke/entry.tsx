@@ -1730,7 +1730,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '网页导入提供书签与粘贴',
     view.container.querySelector('textarea[aria-label="书签小工具代码"]') !== null &&
       view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]') !== null &&
-      (view.container.textContent ?? '').includes('识别并预览'),
+      (view.container.textContent ?? '').includes('识别并预览') &&
+      (view.container.textContent ?? '').includes('1. 安装书签'),
     '',
   );
 
@@ -2955,6 +2956,46 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     tomorrowPreviewLessons([1, 2, 3, 4, 5, 6]).length === 4,
     `共 ${tomorrowPreviewLessons([1, 2, 3, 4, 5, 6]).length} 节`,
   );
+
+  // P0-05：独立挂一个 App，完整走一遍导入，验证步骤标签与「完成」收起导入区
+  {
+    const importApp = mount(<App />);
+    await flush(12);
+    clickByText(importApp.container, '设置');
+    await flush(12);
+    const importSummary = importApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]');
+    importSummary?.click();
+    await flush(10);
+    const importStepText = importApp.container.querySelector('[aria-label="导入步骤"]')?.textContent ?? '';
+    check(
+      '导入步骤第 4 步叫完成',
+      importStepText.includes('选择方式') &&
+        importStepText.includes('登录或上传') &&
+        importStepText.includes('预览') &&
+        importStepText.includes('完成') &&
+        !importStepText.includes('确认'),
+      importStepText,
+    );
+    if (clickByTextStart(importApp.container, '网页课表')) await flush(10);
+    const importPaste = importApp.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="粘贴课表页面内容"]',
+    );
+    if (importPaste instanceof window.HTMLTextAreaElement) {
+      setInputValue(importPaste, PAGE_SAMPLE);
+      await flush(6);
+      if (clickByText(importApp.container, '识别并预览')) await flush(22);
+    }
+    if (clickByText(importApp.container, '确认导入')) await flush(30);
+    const importFinished = (importApp.container.textContent ?? '').includes('导入完成');
+    if (clickByText(importApp.container, '完成')) await flush(12);
+    const importDetails = importApp.container.querySelector<HTMLDetailsElement>('[data-role="course-import"]');
+    check(
+      '点完成后导入区收起',
+      importFinished && importDetails !== null && importDetails.open === false,
+      `完成页=${importFinished} / open=${importDetails?.open ?? '(无)'}`,
+    );
+    importApp.root.unmount();
+  }
 
   return results;
 }
