@@ -23,7 +23,16 @@
 - 数据库文件头格式异常（`unsupported file format`）被判为健康：现在按损坏处理，启动时自动用最近快照恢复
 - 日志目标若指向 SQLite 文件则放弃写入，避免日志文本落进数据库
 
-## [0.2.0] - 2026-10-17
+- 备份设置键清单改为从设置键派生，补上「今天为第一天」「始终不显示周末」，换机恢复后不再静默回默认值
+- 整包导出与导入共用一套打包/解析：应用内导入会一并恢复预设，日志只读不覆盖
+- 手工新建的排课缺周次文本，详情显示「未标注周次」：写入时由周次位图派生，开库时一次性回填历史数据
+- 课程详情在桌面没有关闭出口、切页后不消失：补关闭按钮、Esc 与切页清空；1024–1439 宽改为右侧覆盖层，侧栏可折叠
+- 导入向导第 4 步「确认」名不副实、点「完成」无反应：第 4 步改名「完成」并收起导入区
+- 待办、作业、考试、实验不能删除：详情页加「删除这条」，时间线行支持长按删除
+- 删课程、删排课、删提醒、删调课记录、删与恢复快照、WebDAV 整库恢复、引导页覆盖导入均无二次确认：统一确认框与删除句式，逐类给数量
+- 导入课表入口埋在设置页两层折叠下、空态指向不存在的「导入页」：设置页顶部加四个快捷动作，空态给「导入课表」按钮，全仓去掉「导入页」说法
+
+## [0.2.0-beta.1] - 2026-10-17
 
 ### 新增
 
@@ -92,7 +101,7 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.2.0...dev
-[0.2.0]: https://github.com/muyangplus/dawn-tick/compare/v0.1.0...v0.2.0
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.2.0-beta.1...dev
+[0.2.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.2.0-beta.1
 [0.1.0]: https://github.com/muyangplus/dawn-tick/compare/v0.1.0-beta.1...v0.1.0
 [0.1.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.1.0-beta.1
