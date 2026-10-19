@@ -21,6 +21,8 @@ REQUIRED_JOBS = {
 }
 # 发布说明的比较基准：滚动标签会移动，不能进已发版正文
 PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""', '--notes-start-tag "$PREV"']
+# 用 CHANGELOG 段落作正文时要自己补 Full Changelog 比较链接（--notes-file 不会自动生成）
+PUBLISH_FULL_CHANGELOG_REQUIRED = ['**Full Changelog**: https://github.com/%s/compare/%s...%s', 'BODY_FILE']
 # 标签已存在时不传 --target：附注标签对象不是有效目标
 PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
 # 便携包说明：数据在程序所在目录，不是 %LOCALAPPDATA%
@@ -39,6 +41,7 @@ PUBLISH_VERSION_JSON_REQUIRED = [
 
 def check_publish_notes(text: str) -> list[str]:
     problems = [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少 Full Changelog 链接: {item}' for item in PUBLISH_FULL_CHANGELOG_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明缺少: {item}' for item in PUBLISH_PORTABLE_README_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明写错数据目录: {item}' for item in PUBLISH_PORTABLE_README_FORBIDDEN if item in text]
