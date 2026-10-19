@@ -16,6 +16,7 @@ import {
   findTimetable,
   fromBase64Utf8,
   setPresetOverride,
+  toBase64Utf8,
   validatedStorage,
   writeSettings,
 } from '@dawn-tick/core';
@@ -2876,6 +2877,42 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
     '',
   );
+
+  // 引导页导入与设置页对齐：文件接受 JSON / Base64 文本 / 整包 zip，提示同一句话
+  const onboardFileInput = remounted.container.querySelector<HTMLInputElement>('input[aria-label="选择备份文件"]');
+  const onboardImportText = remounted.container.querySelector<HTMLTextAreaElement>(
+    '[data-role="onboarding-import-text"]',
+  );
+  const onboardFormats =
+    remounted.container.querySelector('[data-role="onboarding-import-formats"]')?.textContent?.trim() ?? '';
+  check(
+    '引导页导入支持整包 zip 且格式提示与设置页一致',
+    onboardFileInput !== null &&
+      onboardFileInput.accept.includes('.zip') &&
+      onboardFileInput.accept.includes('.json') &&
+      onboardImportText !== null &&
+      onboardFormats.includes('支持晓刻导出的 JSON、Base64 文本与整包 zip'),
+    `accept=${onboardFileInput?.accept ?? '(无)'} 提示=${onboardFormats || '(无)'}`,
+  );
+  // 粘贴 Base64 走同一套解析：解析成功后先出现覆盖后果，再让用户确认
+  if (onboardImportText !== null) {
+    setInputValue(
+      onboardImportText,
+      toBase64Utf8(
+        JSON.stringify({ format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} }),
+      ),
+    );
+  }
+  await flush(8);
+  if (clickByLabel(remounted.container, '从文本导入')) await flush(12);
+  check(
+    '引导页粘贴 Base64 后提示覆盖后果',
+    (remounted.container.textContent ?? '').includes('将覆盖设备上的现有数据，不可撤销') &&
+      remounted.container.querySelector('button[aria-label="确认导入"]') !== null,
+    (remounted.container.textContent ?? '').slice(-120),
+  );
+  // 取消解析结果，后面的选校建学期用例仍从干净引导页开始
+  if (clickByLabel(remounted.container, '取消导入')) await flush(8);
 
   // 外部链接确认弹窗在引导页也要能弹出（曾经没挂，点了没反应）
   // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——
