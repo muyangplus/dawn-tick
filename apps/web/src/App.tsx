@@ -946,8 +946,10 @@ export function App() {
   const canPrevDay = stepDay(viewDay, -1, { hideWeekends: settings.hideWeekends, range: dayRange }) !== null;
   const canNextDay = stepDay(viewDay, 1, { hideWeekends: settings.hideWeekends, range: dayRange }) !== null;
 
+  // 视图进入过渡：key 随 view 变化，切页时容器重建，动画才会重新触发；
+  // `data-motion=off` 由 styles.css 的停用规则压到 1ms。
   const content = (
-    <>
+    <div key={view} className="dt-view-enter" data-role="view-root">
       {view === 'timetable' &&
         (mode === 'week' ? (
           <WeekView
@@ -1022,7 +1024,7 @@ export function App() {
           <span className="text-sm text-muted">建设中</span>
         </section>
       )}
-    </>
+    </div>
   );
 
   // 桌面侧栏与移动端 Sheet 共用同一份课程详情内容

@@ -1212,6 +1212,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
   check('切到日程页', switchedToSchedule && scheduleText.includes('倒计时'), scheduleText.slice(0, 60));
+  // 视图进入过渡：切页后视图根节点带 dt-view-enter，且根节点的 data-motion 同时存在
+  const viewRoot = view.container.querySelector('[data-role="view-root"]');
+  check(
+    '切页后视图根节点带进入过渡类',
+    viewRoot !== null &&
+      viewRoot.classList.contains('dt-view-enter') &&
+      (document.documentElement.dataset.motion ?? '') !== '',
+    `class=${viewRoot?.className ?? '(无)'} motion=${document.documentElement.dataset.motion ?? '(无)'}`,
+  );
   // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/课程调整收进「＋」，其余收进「⋯」
   check(
     '日程页默认只剩顶部一行与时间线',
