@@ -41,7 +41,7 @@ export interface SchoolPickerProps {
   pinned?: School | null;
   /** 内置 + 用户保存的教务条目：命中的会补一组「我已保存的学校」 */
   entries?: readonly SchoolEntry[];
-  /** 搜索框的 `aria-label`（导入页沿用「搜索学校」，便于既有断言与无障碍一致性） */
+  /** 搜索框的 `aria-label`（导入流程沿用「搜索学校」，便于既有断言与无障碍一致性） */
   searchLabel?: string;
   placeholder?: string;
   /** 结果区最大高度类 */

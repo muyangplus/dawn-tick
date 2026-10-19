@@ -4,6 +4,7 @@ import { addDays, dayOfWeek as nextDayOfWeek, weekOfDate } from '@dawn-tick/core
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
+import { Button } from '../components/ui/button.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
@@ -181,6 +182,10 @@ export interface WeekViewProps {
   onQuickCreate: (preset: QuickCreatePreset) => void;
   onPrevWindow: () => void;
   onNextWindow: () => void;
+  /** 空态主按钮：切到设置页并打开导入 */
+  onImport: () => void;
+  /** 移动端文案分支 */
+  compact: boolean;
 }
 
 function lessonsOf(data: AppData): LessonCell[] {
@@ -211,6 +216,8 @@ export function WeekView({
   onQuickCreate,
   onPrevWindow,
   onNextWindow,
+  onImport,
+  compact,
 }: WeekViewProps) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
@@ -721,7 +728,16 @@ export function WeekView({
               ? `${formatMonthDay(data.windowStart)} 没有课程`
               : `${formatDateRange(data.windowStart, data.windowDates[data.windowDates.length - 1] as string)} 没有课程`
           }
-          description="从右上角加课，或到导入页导入"
+          description={
+            compact
+              ? '点右下角「快速添加」，或在设置里导入课表'
+              : '从右上角「添加课程」，或在设置里导入课表'
+          }
+          action={
+            <Button size="sm" variant="secondary" aria-label="导入课表" onClick={onImport}>
+              导入课表
+            </Button>
+          }
         />
       )}
 

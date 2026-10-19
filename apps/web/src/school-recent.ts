@@ -27,7 +27,7 @@ export async function readRecentSchool(storage: Storage): Promise<School | null>
   return { id: parsed.id, name: parsed.name, tags: [] };
 }
 
-/** 记下这次选的学校：导入页与作息页共用同一个键。 */
+/** 记下这次选的学校：导入流程与作息页共用同一个键。 */
 export async function writeRecentSchool(storage: Storage, school: School): Promise<void> {
   const payload: RecentSchool = { id: school.id, name: school.name };
   await storage.writeMeta(RECENT_SCHOOL_META_KEY, JSON.stringify(payload));

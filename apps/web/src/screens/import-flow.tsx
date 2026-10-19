@@ -178,7 +178,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     setSchoolName(school.name);
     setPickedSchoolId(school.id);
     setSchoolId(school.id);
-    // 导入页与作息页共用「上次选的学校」：下次打开选择器置顶
+    // 导入流程与作息页共用「上次选的学校」：下次打开选择器置顶
     void writeRecentSchool(storage, school);
     const entry = allSchools.find(
       (item) => item.name === school.name || (item.aliases ?? []).includes(school.name),

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CalendarClock } from 'lucide-react';
 import { listTimeSlots, type Storage, type TimeSlotRow } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
-import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
+import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -122,7 +122,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
         : `预设 ${context.version}${context.kind === 'cached' ? '（已更新）' : '（内置）'}`;
 
   return (
-    <CollapsibleCard id="school-timetable" title="按学校套用作息" icon={CalendarClock} badge={presetLine}>
+    <SectionCard title="按学校套用作息" icon={CalendarClock} badge={presetLine}>
       <span className="text-xs text-muted">
         按该校作息重排时间表
       </span>
@@ -187,6 +187,6 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </CollapsibleCard>
+    </SectionCard>
   );
 }

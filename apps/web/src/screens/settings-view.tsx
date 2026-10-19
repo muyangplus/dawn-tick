@@ -112,6 +112,7 @@ import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
 import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
+import { ImportFlow } from './import-flow.tsx';
 import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
@@ -127,6 +128,7 @@ import type { ReminderView } from '../useReminders.ts';
 import { CardLayoutPanel } from './cards/layout-panel.tsx';
 import { readLayout } from './cards/layout-store.ts';
 import { resolveCards, type LayoutConfig } from './cards/registry.ts';
+import { rememberCollapsed } from '../lib/collapse-store.ts';
 import { SETTINGS_SECTIONS, settingsSection } from './cards/settings-cards.tsx';
 
 /** 预设来源的可读文案：raw 直连还是 GitHub contents 兜底。 */
@@ -251,6 +253,8 @@ export interface SettingsViewProps {
   onChanged: () => void;
   /** 从库外写入设置后（如 WebDAV 只应用设置）重新读取设置并热加载 */
   onSettingsReplaced: () => Promise<void>;
+  /** 课表空态点「导入课表」时递增，用于自动打开导入抽屉 */
+  importSignal?: number;
 }
 
 export function SettingsView({
@@ -268,6 +272,7 @@ export function SettingsView({
   onPatch,
   onChanged,
   onSettingsReplaced,
+  importSignal = 0,
 }: SettingsViewProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [semesterName, setSemesterName] = useState('');
@@ -657,6 +662,14 @@ export function SettingsView({
   /** 每种尺寸在桌面上的状态（已添加 / 被停用） */
   const [pinStates, setPinStates] = useState<MobileWidgetState[] | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  /** 顶部快捷动作打开的导入抽屉 */
+  const [importDrawerOpen, setImportDrawerOpen] = useState(false);
+  /** 快捷动作「恢复快照」：重挂卡片以按最新收起状态渲染 */
+  const [cardEpoch, setCardEpoch] = useState(0);
+
+  useEffect(() => {
+    if (importSignal > 0) setImportDrawerOpen(true);
+  }, [importSignal]);
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
   /** 整包里带出的预设与日志：导入时随设置一起恢复，JSON 粘贴输入为 null */
@@ -2070,6 +2083,28 @@ export function SettingsView({
   return (
     <div className="flex flex-col gap-3">
       {/* 卡片布局入口固定在顶部：卡片被隐藏也进得来 */}
+      <div className="flex flex-wrap items-center gap-2" data-role="settings-actions">
+        <Button size="sm" variant="primary" onClick={() => setImportDrawerOpen(true)}>
+          导入课表
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => setExportOpen(true)}>
+          导出备份
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            rememberCollapsed('data', false);
+            setCardEpoch((value) => value + 1);
+          }}
+        >
+          恢复快照
+        </Button>
+        <Button size="sm" variant="secondary" disabled={updateBusy} onClick={() => void runUpdateCheck()}>
+          检查更新
+        </Button>
+      </div>
+
       <div className="flex flex-wrap items-center gap-2" data-role="settings-toolbar">
         <Button
           size="sm"
@@ -2089,7 +2124,7 @@ export function SettingsView({
         const section = settingsSection(card.def.id);
         return (
           <CollapsibleCard
-            key={card.def.id}
+            key={`${card.def.id}-${cardEpoch}`}
             id={card.def.id}
             title={card.def.title}
             {...(section === undefined ? {} : { icon: section.icon })}
@@ -2099,6 +2134,21 @@ export function SettingsView({
           </CollapsibleCard>
         );
       })}
+
+      <Dialog open={importDrawerOpen} onOpenChange={setImportDrawerOpen}>
+        <DialogContent title="导入课表" description="网页课表 / 教务窗口 / ICS / CSV / Excel">
+          <ImportFlow
+            storage={storage}
+            semesterId={activeSemesterId ?? ''}
+            onManual={() => setImportDrawerOpen(false)}
+            onDone={onChanged}
+            onClose={() => {
+              setImportDrawerOpen(false);
+              onChanged();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={layoutOpen}

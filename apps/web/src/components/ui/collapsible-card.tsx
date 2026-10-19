@@ -14,6 +14,27 @@ export interface CollapsibleCardProps {
   children: ReactNode;
 }
 
+export interface SectionCardProps {
+  title: string;
+  icon?: LucideIcon;
+  badge?: ReactNode;
+  children: ReactNode;
+}
+
+/** 卡内分段标题：不可折叠，用于替代「卡里再套折叠卡」的两级结构。 */
+export function SectionCard({ title, icon: Icon, badge, children }: SectionCardProps) {
+  return (
+    <Card className="p-0">
+      <div className="flex min-h-tap w-full items-center gap-2 px-4 py-3">
+        {Icon !== undefined && <Icon className="size-4 text-ink" aria-hidden />}
+        <span className="text-sm font-semibold text-ink">{title}</span>
+        {badge !== undefined && <span className="text-xs font-normal text-muted">{badge}</span>}
+      </div>
+      <div className="flex flex-col gap-3 px-4 pb-4 pt-1">{children}</div>
+    </Card>
+  );
+}
+
 export function CollapsibleCard({ id, title, icon: Icon, badge, children }: CollapsibleCardProps) {
   const [open, setOpen] = useState(() => !isCollapsed(id));
 

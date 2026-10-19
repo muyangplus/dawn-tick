@@ -18,7 +18,7 @@ import {
 } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
 import { HelpHint } from './ui/help-hint.tsx';
-import { CollapsibleCard } from './ui/collapsible-card.tsx';
+import { SectionCard } from './ui/collapsible-card.tsx';
 import { Combobox } from './ui/combobox.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { Field, Input } from './ui/input.tsx';
@@ -476,7 +476,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const draftError = draft === null ? null : paramError(duration, breakMinutes);
 
   return (
-    <CollapsibleCard id="timetable" title="时间表" icon={CalendarRange}>
+    <SectionCard title="时间表" icon={CalendarRange}>
       <div className="grid grid-cols-2 gap-2">
         <Field label="每节时长（分钟）">
           <Input
@@ -683,6 +683,6 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           </DialogContent>
         </Dialog>
       )}
-    </CollapsibleCard>
+    </SectionCard>
   );
 }

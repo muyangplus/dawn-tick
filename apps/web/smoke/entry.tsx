@@ -1729,6 +1729,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理卡片里能展开
   clickByText(view.container, '设置');
   await flush(12);
+  const settingsActions = view.container.querySelector<HTMLElement>('[data-role="settings-actions"]');
+  check(
+    '设置页顶部提供四个快捷动作',
+    settingsActions !== null &&
+      ['导入课表', '导出备份', '恢复快照', '检查更新'].every((label) =>
+        (settingsActions.textContent ?? '').includes(label),
+      ),
+    (settingsActions?.textContent ?? '(无)').trim(),
+  );
+  if (settingsActions !== null && clickByText(settingsActions, '导入课表')) await flush(12);
+  check('快捷动作直接打开导入向导', document.querySelector('[aria-label="导入步骤"]') !== null, '');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(8);
   const courseImport = view.container.querySelector('[data-role="course-import"]');
   const importSummary = view.container.querySelector('[aria-label="导入课表"]');
   if (importSummary instanceof window.HTMLElement) importSummary.click();
@@ -2845,6 +2858,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (remounted.container.textContent ?? '').includes('我的学期') &&
       !(remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
     (remounted.container.textContent ?? '').slice(0, 60),
+  );
+  check(
+    '课表空态提供导入课表按钮',
+    remounted.container.querySelector('button[aria-label="导入课表"]') !== null &&
+      (remounted.container.textContent ?? '').includes('或在设置里导入课表') &&
+      !(remounted.container.textContent ?? '').includes('导入页'),
+    '',
   );
   // 删掉这个默认学期，后面的「选校建学期」用例仍从引导页开始
   if (clickByText(remounted.container, '设置')) await flush(16);

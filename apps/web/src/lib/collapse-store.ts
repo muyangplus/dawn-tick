@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'dt.settings.collapsed';
 /** 首次使用时的默认收起项：设置页只有「关于」展开。 */
-const DEFAULT_COLLAPSED = ['semesters', 'reminders', 'appearance', 'data'];
+const DEFAULT_COLLAPSED = ['appearance', 'data', 'maintenance', 'about'];
 
 function read(): Set<string> {
   try {

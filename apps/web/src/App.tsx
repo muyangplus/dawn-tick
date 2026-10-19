@@ -236,6 +236,8 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [data, setData] = useState<AppData | null>(null);
   const [view, setView] = useState<NavId>('timetable');
+  /** 课表空态点「导入课表」时递增：设置页收到后自动打开导入抽屉 */
+  const [settingsImportSignal, setSettingsImportSignal] = useState(0);
   const [mode, setMode] = useState<'week' | 'today'>('week');
   /** 查看窗口的起始日期；null 表示从今天开始（默认）。窗口里的周次由 data.viewWeek 给出 */
   const [windowStart, setWindowStart] = useState<string | null>(null);
@@ -951,6 +953,11 @@ export function App() {
           <WeekView
             data={data}
             showOtherWeeks={settings.showOtherWeeks}
+            compact={!isDesktop}
+            onImport={() => {
+              setView('settings');
+              setSettingsImportSignal((value) => value + 1);
+            }}
             onSelectLesson={(cell) => void openLesson(cell)}
             onMoveLesson={(cell, date, period) => openMove(cell, date, period)}
             onQuickCreate={(preset) => {
@@ -1006,6 +1013,7 @@ export function App() {
           onPatch={patch}
           onChanged={refresh}
           onSettingsReplaced={reloadSettings}
+          importSignal={settingsImportSignal}
         />
       )}
       {view === 'mine' && (
