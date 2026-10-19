@@ -2,6 +2,7 @@ import * as fakeIndexedDb from 'fake-indexeddb';
 import type { ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
+  activeSemester,
   addDays,
   BUILTIN_PRESET_VERSION,
   BUILTIN_TIMETABLES,
@@ -3018,6 +3019,81 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       `完成页=${importFinished} / open=${importDetails?.open ?? '(无)'}`,
     );
     importApp.root.unmount();
+  }
+
+  // P0-01：条目删除入口（详情页删除 → 确认 → 时间线消失）
+  {
+    // 前面的用例删过学期，这里先补一条今天的待办供删除使用
+    const todoStorage = validatedStorage(await openIndexedDbStorage());
+    const semesterRows = await todoStorage.collection<Record<string, unknown>>('semesters').getAll();
+    const smokeUserId = String(semesterRows[0]?.['user_id'] ?? 'u1');
+    const activeSemesterRow = (await activeSemester(todoStorage, smokeUserId)) ?? semesterRows[0];
+    if (activeSemesterRow !== undefined) {
+      await createEvent(todoStorage, {
+        userId: String(activeSemesterRow['user_id']),
+        semesterId: String(activeSemesterRow['id']),
+        type: 'todo',
+        title: '删除入口验证',
+        onDate: new Date().toISOString().slice(0, 10),
+      });
+    }
+    const todoApp = mount(<App />);
+    await flush(12);
+    const scheduleTab = [...todoApp.container.querySelectorAll<HTMLElement>('[data-role="bottom-nav"] button')]
+      .find((node) => (node.textContent ?? '').trim() === '日程');
+    scheduleTab?.click();
+    await flush(12);
+    let firstEvent = todoApp.container.querySelector<HTMLElement>('[data-role="timeline-event"]');
+    for (let step = 0; step < 4 && firstEvent === null; step += 1) {
+      todoApp.container.querySelector<HTMLElement>('[aria-label="后一天"]')?.click();
+      await flush(10);
+      firstEvent = todoApp.container.querySelector<HTMLElement>('[data-role="timeline-event"]');
+    }
+    for (let step = 0; step < 6 && firstEvent === null; step += 1) {
+      todoApp.container.querySelector<HTMLElement>('[aria-label="前一天"]')?.click();
+      await flush(10);
+      firstEvent = todoApp.container.querySelector<HTMLElement>('[data-role="timeline-event"]');
+    }
+    const eventLabel = firstEvent?.getAttribute('aria-label') ?? '';
+    const eventTitle = eventLabel.replace('编辑日程：', '');
+    check(
+      '时间线行可进入条目详情',
+      firstEvent !== null && eventTitle.length > 0,
+      eventLabel,
+    );
+    firstEvent?.click();
+    await flush(8);
+    const deleteEntry = document.querySelector<HTMLElement>('[aria-label^="删除条目 "]');
+    check(
+      '条目详情提供删除入口',
+      deleteEntry !== null,
+      deleteEntry?.getAttribute('aria-label') ?? '(无)',
+    );
+    deleteEntry?.click();
+    await flush(8);
+    check('删除条目前先弹确认', (document.body.textContent ?? '').includes('将删除'), '');
+    if (clickByText(document.body, '取消')) await flush(8);
+    check(
+      '取消删除后条目仍在',
+      [...todoApp.container.querySelectorAll('[data-role="timeline-event"]')].some((node) =>
+        (node.getAttribute('aria-label') ?? '').includes(eventTitle),
+      ),
+      '',
+    );
+    firstEvent?.click();
+    await flush(8);
+    const deleteAgain = document.querySelector<HTMLElement>('[aria-label^="删除条目 "]');
+    deleteAgain?.click();
+    await flush(8);
+    if (clickByText(document.body, '确认删除')) await flush(20);
+    check(
+      '确认删除后条目从时间线消失',
+      ![...(todoApp.container.querySelectorAll('[data-role="timeline-event"]'))].some((node) =>
+        (node.getAttribute('aria-label') ?? '').includes(eventTitle),
+      ),
+      '',
+    );
+    todoApp.root.unmount();
   }
 
   return results;

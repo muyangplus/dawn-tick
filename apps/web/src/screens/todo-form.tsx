@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   createEvent,
   dateWallClockToEpoch,
+  deleteEvent,
   formatDate,
   maskToWeeks,
   setReminder,
@@ -14,6 +15,8 @@ import {
 } from '@dawn-tick/core';
 import { logDebug, logError, logInfo } from '../log.ts';
 import { Button } from '../components/ui/button.tsx';
+import { confirmAction } from '../components/ui/confirm-dialog.tsx';
+import { DELETE } from '../copy/zh.ts';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input, Textarea } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
@@ -327,6 +330,32 @@ export function TodoForm({
   }
 
   /** 复制当前这一条：新建一条同名「副本」，其余字段照抄。 */
+  /** 删除当前条目：详情页 footer 的 danger 入口，确认后硬删并关闭。 */
+  async function remove(): Promise<void> {
+    if (editing === null) return;
+    const name = editing.title;
+    const ok = await confirmAction({
+      title: '删除条目',
+      description: DELETE(name, ['关联提醒']),
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await deleteEvent(storage, editing.id);
+      logInfo('todo', `已删除${KIND_LABEL[current]}`, { id: editing.id, title: name });
+      toast.success(`已删除「${name}」`);
+      onCreated();
+      onOpenChange(false);
+    } catch (cause: unknown) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      logError('todo', '删除失败', { message, id: editing.id });
+      toast.error(`删除失败：${message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function copyOne(): Promise<void> {
     if (editing === null) return;
     setBusy(true);
@@ -624,6 +653,17 @@ export function TodoForm({
           <Textarea value={note} aria-label="备注" onChange={(event) => setNote(event.target.value)} />
         </Field>
         <DialogFooter>
+          {editing !== null && (
+            <Button
+              variant="danger"
+              className="mr-auto"
+              disabled={busy}
+              aria-label={`删除条目 ${editing.title}`}
+              onClick={() => void remove()}
+            >
+              删除这条
+            </Button>
+          )}
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>

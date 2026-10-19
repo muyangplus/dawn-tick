@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
 import {
   CalendarClock,
   ChevronDown,
@@ -16,6 +16,7 @@ import {
   createEvent,
   createReschedule,
   dateRange,
+  deleteEvent,
   formatDate,
   updateEvent,
   type EventRow,
@@ -293,6 +294,18 @@ function ScheduleTimeline({
     onChanged();
   }
 
+  /** 长按时间线行删除待办/作业/考试/实验：与详情页同一确认口径。 */
+  async function deleteTimelineEvent(event: EventRow): Promise<void> {
+    const ok = await confirmAction({
+      title: '删除条目',
+      description: DELETE(event.title, ['关联提醒']),
+      confirmLabel: '确认删除',
+    });
+    if (!ok) return;
+    await deleteEvent(storage, event.id);
+    onChanged();
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {timeline.length === 0 ? (
@@ -327,6 +340,7 @@ function ScheduleTimeline({
                     item={item}
                     onToggleDone={toggleDone}
                     onDeleteAdjust={deleteAdjust}
+                    onDeleteEvent={deleteTimelineEvent}
                     onOpenLesson={openLessonDetail}
                     onOpenEvent={onOpenEvent}
                   />
@@ -346,6 +360,7 @@ function ScheduleTimeline({
                       item={item}
                       onToggleDone={toggleDone}
                       onDeleteAdjust={deleteAdjust}
+                      onDeleteEvent={deleteTimelineEvent}
                       onOpenLesson={openLessonDetail}
                       onOpenEvent={onOpenEvent}
                     />
@@ -385,6 +400,8 @@ interface TimelineRowProps {
   onToggleDone: (event: EventRow) => void;
   /** 删除一条调课/调休 */
   onDeleteAdjust: (event: EventRow) => void;
+  /** 长按删除一条待办/作业/考试/实验 */
+  onDeleteEvent: (event: EventRow) => void;
   /** 打开课程详情；没有 Provider 时课程行不可点 */
   onOpenLesson: ((target: AdjustTarget) => void) | null;
   /** 单击日程条目进入详情编辑 */
@@ -392,8 +409,27 @@ interface TimelineRowProps {
 }
 
 /** 一条时间线：左侧竖排时间列（开始 / – / 结束）+ 颜色竖条 + 右侧标题与地点；自动完成的整行更灰。 */
-function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenEvent }: TimelineRowProps) {
+function TimelineRow({ item, onToggleDone, onDeleteAdjust, onDeleteEvent, onOpenLesson, onOpenEvent }: TimelineRowProps) {
   const lessonTarget = item.lessonTarget ?? null;
+  // 长按删除：只对待办/作业/考试/实验；课次走课程详情，调课记录走行尾删除按钮
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressClick = useRef(false);
+  const canLongPress = item.kind !== 'adjust' && item.kind !== 'lesson' && item.event !== undefined;
+  const cancelLongPress = (): void => {
+    if (longPressTimer.current !== null) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+  const startLongPress = (): void => {
+    if (!canLongPress) return;
+    cancelLongPress();
+    longPressTimer.current = setTimeout(() => {
+      longPressTimer.current = null;
+      suppressClick.current = true;
+      onDeleteEvent(item.event as EventRow);
+    }, 600);
+  };
   const marker =
     item.autoDone ? (
       <span className="flex shrink-0 items-center" data-role="timeline-auto-check">
@@ -472,6 +508,10 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
 
   /** 日程条目：整行（含已完成）都能点开编辑；勾选框与删除按钮各自处理，不冒泡 */
   const openEvent = (): void => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
     if (item.event !== undefined && item.kind !== 'adjust') onOpenEvent(item.event as EventRow);
   };
   return (
@@ -488,6 +528,10 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onOpenLesson, onOpenE
       data-done={item.done ? 'true' : undefined}
       data-running={item.running ? 'true' : undefined}
       onClick={openEvent}
+      onPointerDown={startLongPress}
+      onPointerUp={cancelLongPress}
+      onPointerLeave={cancelLongPress}
+      onPointerCancel={cancelLongPress}
       onKeyDown={(event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
