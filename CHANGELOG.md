@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.3.0-beta.1] - 2026-10-19
+
 ### 新增
 
 - 课表视图两个开关：「今天为第一天」（关掉从本周周一开头）、「始终不显示周末」（列数按天数，跳过周六日；Android 一周概览与悬浮窗明日预告同样跳过周末）
@@ -101,7 +103,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.2.0-beta.1...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.3.0-beta.1...dev
+[0.3.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.3.0-beta.1
 [0.2.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.2.0-beta.1
 [0.1.0]: https://github.com/muyangplus/dawn-tick/compare/v0.1.0-beta.1...v0.1.0
 [0.1.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.1.0-beta.1
