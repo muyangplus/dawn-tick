@@ -15,6 +15,8 @@ export interface CourseCardProps {
   holidayLabel?: string;
   /** 兼容旧调用：等价于 tone="ghost" */
   dashed?: boolean;
+  /** 读屏播报用的完整描述（星期、节次、课程名、周次、地点）；不传则按卡片正文播报 */
+  ariaLabel?: string;
   onClick?: () => void;
   className?: string;
 }
@@ -30,6 +32,7 @@ export function CourseCard({
   tone,
   holidayLabel,
   dashed = false,
+  ariaLabel,
   onClick,
   className,
 }: CourseCardProps) {
@@ -117,6 +120,8 @@ export function CourseCard({
         data-tone={resolvedTone}
         data-role="course-card"
         data-dashed={resolvedTone === 'ghost' ? 'true' : undefined}
+        role={ariaLabel === undefined ? undefined : 'group'}
+        aria-label={ariaLabel}
       >
         {content}
       </div>
@@ -127,6 +132,7 @@ export function CourseCard({
     <button
       type="button"
       onClick={onClick}
+      aria-label={ariaLabel}
       className={cn(
         base,
         'min-h-tap text-left transition-transform',

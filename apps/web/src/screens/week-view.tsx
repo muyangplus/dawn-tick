@@ -779,7 +779,7 @@ export function WeekView({
               height: `${gridHeight}px`,
             }}
           >
-            <div className="relative border-r border-line">
+            <div aria-hidden data-role="period-axis" className="relative border-r border-line">
               {slots.map((slot, index) => (
                 <div
                   key={slot.periodNo}
@@ -820,6 +820,8 @@ export function WeekView({
               // 放假优先于非本周；多天假期只有第一天显示假期名称，之后只显示「放假」
               const holidayFirstDay = isHolidayRunStart(data, columnDate);
               const holidayName = data.holidayLabels.get(columnDate);
+              const weekday = WEEKDAYS[nextDayOfWeek(columnDate) - 1] ?? '';
+              const week = data.semester === null ? null : Math.max(1, weekOfDate(columnDate, data.semester.start_date));
               const dayLessons = lessons
                 .filter((lesson) => lesson.date === columnDate)
                 .filter((lesson) => lesson.inWeek || showOtherWeeks);
@@ -832,6 +834,8 @@ export function WeekView({
               return (
                 <div
                   key={`column-${columnDate}`}
+                  role="group"
+                  aria-label={`${weekday} ${formatMonthDay(columnDate)}`}
                   ref={(element) => {
                     if (element === null) columns.current.delete(columnDate);
                     else columns.current.set(columnDate, element);
@@ -1015,6 +1019,10 @@ export function WeekView({
                     // 补白已按分钟展开，这里只兜底：极端值仍保证卡片落在网格内可见
                     const height = Math.min(rawHeight, gridHeight);
                     const top = Math.max(0, Math.min(rawTop, gridHeight - height));
+                    // 读屏播报：星期 + 节次 + 课程名 + 周次 + 地点（有则加）
+                    const ariaParts = [weekday, formatPeriods(lesson.periodStart, lesson.periodEnd), lesson.name];
+                    if (week !== null) ariaParts.push(`第 ${week} 周`);
+                    if (lesson.room !== null && lesson.room !== '') ariaParts.push(lesson.room);
                     return (
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}
@@ -1037,6 +1045,7 @@ export function WeekView({
                         color={lesson.color}
                         room={lesson.room}
                         teacher={lesson.teacher}
+                        ariaLabel={ariaParts.join(' ')}
                         meta={
                           lesson.lab
                             ? [lesson.courseLabel, custom ? `${lesson.customStart}-${lesson.customEnd}` : `${lesson.startTime}-${lesson.endTime}`]
