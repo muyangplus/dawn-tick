@@ -17,4 +17,5 @@
     <string name="widget_cancelled_suffix">（停课）</string>
     <string name="widget_exam_label">考试倒计时</string>
     <string name="widget_exam_none">暂无考试</string>
+    <string name="widget_week_more">还有 %1$d 节</string>
 </resources>

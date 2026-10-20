@@ -17,8 +17,9 @@ import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
 import { logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
+import { openMainWindow } from '../widget-window.ts';
 import { MiniShell } from './shell.tsx';
-import { shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
+import { miniEmptyText, shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
 import '../styles.css';
 
 installWebviewGuards();
@@ -177,6 +178,8 @@ function Mini() {
   const zone = data?.timeZone ?? 'UTC';
   const background = settings?.widgetBackground ?? 'light';
   const hide = (): void => void hideWindow();
+  // 悬浮窗是常用入口：双击整窗或点标题栏「打开」都能回主窗口
+  const openMain = (): void => void openMainWindow();
   // 明天有课时把标题栏文案换掉，不再往内容区里塞一行标签（那行会把课程名挤出可视区）
   const headLabel = current !== undefined ? '正在上课' : undefined;
   // 明日课程预告：复用设置里的「空日程提示明日预告」，当天没课或当天的课都上完时切过去
@@ -216,7 +219,7 @@ function Mini() {
 
   if (error !== null) {
     return (
-      <MiniShell variant={variant} onHide={hide} background={background}>
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} background={background}>
         <div className="mini-empty" data-role="mini-error">
           课表读取失败：{error}
         </div>
@@ -226,7 +229,7 @@ function Mini() {
 
   if (variant === 'minimal') {
     return (
-      <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={headLabel} background={background}>
         <div className="mini-minimal">
           <span className="mini-count-big" data-role="mini-count">
             {current !== undefined
@@ -254,11 +257,12 @@ function Mini() {
       <MiniShell
         variant={variant}
         onHide={hide}
+        onOpen={openMain}
         background={background}
         label={showTomorrow ? previewLabel : undefined}
       >
         {lessons.length === 0 ? (
-          <div className="mini-empty">今天没有课啦</div>
+          <div className="mini-empty">{miniEmptyText(showTomorrow)}</div>
         ) : (
           <ul className="mini-list">
             {lessons.map((lesson) => {
@@ -274,7 +278,7 @@ function Mini() {
                   <span className="mini-item-name">{lesson.courseName}</span>
                   {running && (
                     <span className="tabular mini-item-remain" data-role="mini-running-left">
-                      余 {remaining(lesson.endAt, now)}
+                      剩余 {remaining(lesson.endAt, now)}
                     </span>
                   )}
                   {lesson.room !== null && <span className="mini-item-room">{lesson.room}</span>}
@@ -293,7 +297,7 @@ function Mini() {
       .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
       .slice(0, 3);
     return (
-      <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={headLabel} background={background}>
         <div className="mini-combo-top">
           <span className="mini-label" data-role="mini-top-label">
             {current !== undefined ? '正在上课' : nextIsTomorrow && tomorrowEnabled ? '明日课程预告' : '下一节课'}

@@ -187,7 +187,7 @@ object WidgetRenderer {
         return views
     }
 
-    /** 4×4 一周概览：一节课一行，放不下的整行不渲染。 */
+    /** 4×4 一周概览：一节课一行，放不下的整行不渲染；放不下时标题补「还有 N 节」。 */
     fun buildWeekOverview(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_week)
         val rowIds = intArrayOf(
@@ -221,8 +221,14 @@ object WidgetRenderer {
         )
         views.setTextViewText(
             R.id.widget_week_header,
-            if (snapshot == null) context.getString(R.string.widget_no_data)
-            else context.getString(R.string.widget_week_header, snapshot.week),
+            when {
+                snapshot == null -> context.getString(R.string.widget_no_data)
+                // 放不下的课整行不渲染，用标题补一句「还有 N 节」，避免看起来只有这些课
+                texts.size > capacity ->
+                    context.getString(R.string.widget_week_header, snapshot.week) +
+                        " · " + context.getString(R.string.widget_week_more, texts.size - capacity)
+                else -> context.getString(R.string.widget_week_header, snapshot.week)
+            },
         )
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views

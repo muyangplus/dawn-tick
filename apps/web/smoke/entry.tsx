@@ -3204,8 +3204,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   // —— 悬浮窗外壳：整窗作为拖动区（deep），关闭按钮自身仍是可点元素 ——
   let hidden = 0;
+  let opened = 0;
   const mini = mount(
-    <MiniShell variant="bar" onHide={() => { hidden += 1; }}>
+    <MiniShell
+      variant="bar"
+      onHide={() => {
+        hidden += 1;
+      }}
+      onOpen={() => {
+        opened += 1;
+      }}
+    >
       <div className="mini-title">高等数学</div>
       <div className="mini-row">
         <span className="mini-count">09:55</span>
@@ -3220,12 +3229,27 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       mini.container.querySelector('.mini-title')?.getAttribute('data-tauri-drag-region') === null,
     `拖动区=${miniRoot?.getAttribute('data-tauri-drag-region') ?? '(无)'}`,
   );
+  const miniOpen = mini.container.querySelector<HTMLElement>('button.mini-open');
+  check(
+    '悬浮窗标题栏有「打开」且不占用拖动区',
+    miniOpen !== null && miniOpen.tagName === 'BUTTON' && miniOpen.getAttribute('data-tauri-drag-region') === null,
+    miniOpen?.textContent?.trim() ?? '(无按钮)',
+  );
+  miniOpen?.click();
+  await flush(4);
+  check('悬浮窗「打开」打开主窗口', opened === 1, `打开 ${opened} 次`);
+  miniRoot?.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+  await flush(4);
+  check('悬浮窗双击整窗打开主窗口', opened === 2, `打开 ${opened} 次`);
   const miniClose = mini.container.querySelector<HTMLElement>('button.mini-close');
   check(
     '悬浮窗关闭按钮仍是可点击元素',
     miniClose !== null && miniClose.tagName === 'BUTTON' && miniClose.getAttribute('data-tauri-drag-region') === null,
     miniClose?.tagName ?? '(无按钮)',
   );
+  miniClose?.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+  await flush(4);
+  check('双击关闭按钮不会打开主窗口', opened === 2, `打开 ${opened} 次`);
   miniClose?.click();
   await flush(4);
   check('悬浮窗关闭按钮触发隐藏', hidden === 1, `隐藏 ${hidden} 次`);

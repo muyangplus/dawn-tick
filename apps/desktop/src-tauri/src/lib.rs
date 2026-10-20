@@ -1404,6 +1404,22 @@ async fn hide_widget(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 从悬浮窗打开主窗口：还原最小化、显示并前置。
+#[tauri::command]
+async fn show_main(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or_else(|| "主窗口不可用".to_string())?;
+    let _ = window.unminimize();
+    window.show().map_err(|error| format!("显示主窗口失败: {error}"))?;
+    window
+        .set_focus()
+        .map_err(|error| format!("聚焦主窗口失败: {error}"))?;
+    append_log("从悬浮窗打开主窗口");
+    Ok(())
+}
+
 /// 允许交给外部程序的链接：只有 http 与 https，且不含换行与引号。
 fn external_url_is_allowed(url: &str) -> bool {
     let lower = url.to_ascii_lowercase();
@@ -2761,6 +2777,7 @@ pub fn run() {
             submit_page_import,
             show_widget,
             hide_widget,
+            show_main,
             tray_status,
             open_external_url,
             open_log_dir,
