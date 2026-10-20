@@ -2,34 +2,54 @@
 
 ## 0. 项目事实与证据索引
 
+> 本节数字于 2026-10-20（`v0.4.1`）重测。条目内「位置/证据」的行号是历次审查时点的快照，经过 P0、P1/P2、A 三个批次的重构后普遍漂移；复核时按内容锚点（函数名、`data-role`、文案、键名）定位，不要按行号。
+
 **核心页面与入口**
-- 无 URL 路由：视图由 `view` 状态机切换（`timetable/schedule/settings/mine`，`apps/web/src/App.tsx:237`），条件渲染 `App.tsx:936-1004`；导航为桌面侧栏 `components/nav.tsx:14-19/23-67`、移动底栏 `nav.tsx:69-97`；第四项「我的」仍是占位（`App.tsx:998-1003`）。
-- 视图组件：`screens/week-view.tsx:206`、`screens/today-view.tsx:18`、`screens/schedule-view.tsx:31`、`screens/settings-view.tsx:252`、`screens/onboarding.tsx:32`。
+- 无 URL 路由：视图由 `view` 状态机切换（`timetable/schedule/settings/devices`，`apps/web/src/App.tsx`，449 行），条件渲染在 `app/` 各 hook 与 `components/app-screens.tsx`；导航 `components/nav.tsx`（桌面侧栏与移动底栏共用一份 `NAV_ITEMS`），第四项为「设备与同步」（P1-02 落地，无占位页）。
+- 视图组件：`screens/week-view.tsx`、`screens/today-view.tsx`、`screens/schedule-view.tsx`、`screens/settings-view.tsx`（212 行，偏好三卡）、`screens/devices-view.tsx`（176 行，存储/更新/关于）、`screens/onboarding.tsx`；设置与设备页的卡片在 `screens/settings/`（6 张卡 + 数据卡四块 + 三个 hook）。
 
 **关键用户路径**
-- 首启建学期：`onboarding.tsx:91-140` → `createSemester`（`packages/core/src/mutations.ts:303`）→ `App.tsx:912-917`。
-- 课表→课程详情→调课：`App.tsx:684-699` → `loadCourseDetail`（`data.ts:586`）→ `components/lesson-detail.tsx:23`；拖拽调课 `App.tsx:722-856` → `createReschedule`/`updateSchedule`（`mutations.ts:755/529`）。
-- 导入：设置→学期设置→`CourseManager`（`settings-view.tsx:1007-1013`）→ `ImportFlow`（`import-flow.tsx:85`）→ `applyImport`（`import/apply.ts:34`）。
-- 数据：导出/导入（`settings-view.tsx:1744/1751`、`data-management.ts:77/202`）；备份与 WebDAV（`backup.ts:122/226`、`webdav.ts:308/323`）。
+- 首启建学期：`screens/onboarding.tsx` → `createSemester`（`packages/core/src/mutations.ts`）→ `app/bootstrap.ts`。
+- 课表→课程详情→调课：`screens/timetable/move-controller.ts`（校验与写库）+ `components/adjust-dialog.tsx`（表单与文案）；拖拽 `screens/timetable/drag-session.ts`。
+- 导入：设置页顶部「导入课表」→ `screens/import-flow.tsx` → `packages/core/src/import/apply.ts`（预览冲突用 `previewDuplicates`）。
+- 数据：设备页「导出备份 / 恢复快照」→ `screens/settings/transfer-dialogs.tsx`、`backup.ts`（`backup_index`）、`webdav.ts`。
+- 更新：设备页「检查更新」→ `update.ts`（发布接口 → 发布内 `version.json` 兜底）+ `screens/settings/use-update-check.ts`。
 
 **模块边界**
-- core：`storage.ts:28-45`、`migrate.ts:36-47`、`sync.ts:132-161`、`import/index.ts:1-7`、`config/index.ts:288-412`。
-- web：`db/platform.ts:52-67`、`data.ts:184`、`log.ts`、`notify.ts`；desktop：`lib.rs:2739-2769`；mobile：`widget-pin.ts`、`WidgetRenderer.kt`。
+- core：`storage.ts`（`createMetaAccessors`）、`migrate.ts`、`sync.ts`、`import/`、`config/`、`timetable.ts`（重叠/钟点/顺延纯函数）、`colors.ts`、`time.ts`（`WEEKDAY_LABELS`、`plusMinutesText`）。
+- web：`app/`（bootstrap、会话、课表动作、副作用、恢复）、`lib/`（`action`、`errors`、`native`、`capabilities`、`plugins`、`meta`、`meta-keys`、`format`、`dates`、`day-nav`、`busy`）、`data.ts`（`loadSemesterContext`/`buildGrid`/`buildTimelineData`/`loadHolidays`，732 行）。
+- desktop：`apps/desktop/src-tauri/src/lib.rs` 30 个命令，与 `lib/native.ts` 的 `NATIVE_COMMANDS` 一一对应；mobile：`system-actions.ts`/`widget-pin.ts`/`import-window.ts`/`widget-snapshot.ts` 经 `lib/plugins.ts` 调用原生插件，契约见 `apps/mobile/docs/plugins.contract.md`。
 
 **文案资源位置**
-- 无集中文案模块；界面文案散在组件内，领域映射表见 `settings-view.tsx:133-191`、`data.ts:40-46`，设置键清单在 `settings.ts:151-188`、`backup.ts:57-91`；web 中文行 2344（`apps/web/src` 的 `.ts/.tsx` 含 CJK 字符行），单文件最多为 `settings-view.tsx` 419 行。
+- 跨组件句式在 `apps/web/src/copy/zh.ts`（`UNIT_LABEL`/`COUNT`/`DELETE`/`OVERWRITE`/`fail`）；节次范围单点在 `lib/format.ts:formatPeriodRange`；界面文案仍就地写在组件里（不做集中资源化）。
 
 **复用现状**
-- UI 基元 14 个 760 行（`components/ui/*`）；卡片注册表 `cards/registry.ts:82-160` 已注册 10 张（日程 4/设置 6）；Storage 三实现（`storage.ts:88`、`sqlite-storage.ts:64`、`idb-storage.ts:67`）；导入解析 7 个文件。
+- UI 基元 17 个（`components/ui/*`，含 `FormDialog`/`DangerDialog`/`SwitchField`/`Field.error`/`InlineError`/`StatusLine`/`EmptyState`）；卡片注册表 `cards/{settings,devices,schedule}-cards.tsx`；Storage 三实现共用 `createMetaAccessors`；导入解析在 `packages/core/src/import/`；`useAction` 统一了 12 处动作与忙碌态。
 
 **扩展点**
-- 卡片 `cards/registry.ts:82-102`；导入 `import/index.ts:1-7` + `import-flow.tsx:48-56`；提醒 `notify.ts:25-86` + `useReminders.ts:112-136`；平台 `platform-detect.ts:3-10`；主题 `tokens.ts:84` + `settings.ts:5/11`；设置项 `settings.ts:37-188` + `backup.ts:8-44`。
+- 卡片 `cards/registry.ts`；导入 `packages/core/src/import/index.ts`；提醒 `notify.ts` + `useReminders.ts`；平台能力 `lib/capabilities.ts`；主题 `design/tokens.ts` + `settings.ts`；课程色 `packages/core/src/colors.ts`；原生命令 `lib/native.ts`。
 
 **数据与存储**
-- 8 张表（`schema/001_init.sql:5-163`）；6 个迁移（`migrate.ts:36-47` + `db/platform.ts:26-33`）；时间口径 `time.ts:104-133`；行级同步协议 `sync.ts:132-161`；WebDAV 整包 `webdav.ts:148-323`。
+- 8 张表（`packages/core/src/schema/001_init.sql`）、6 个迁移（`001`–`006`）；时间口径 `packages/core/src/time.ts`；行级同步协议 `sync.ts`；WebDAV 整包 `webdav.ts`；`app_meta` 键清单 `lib/meta-keys.ts`。
 
 **验证入口**
-- `pnpm test`（`package.json:12`）；`tools/verify/verify-all.ps1` 19 项 9 段（`:37-218`）；CI 三 job（`.github/workflows/ci.yml:19/35/45`）；冒烟 `tools/verify/smoke-ui.mjs` + `apps/web/smoke/entry.tsx`；a11y `tools/design/check-a11y.mjs`。
+- `pnpm test`：core 272 / web 253 / tools 36 用例；`pnpm ui:smoke`：338 项（固定 `TZ=Asia/Shanghai` 与 2026-10-18T18:30+08:00 时钟）；`tools/verify/verify-all.ps1` 18 项检查（含小组件契约）；CI 四个 job：`node`（含界面冒烟）/ `schema` / `rust` / `android`（`.github/workflows/ci.yml`）；a11y `tools/design/check-a11y.mjs`。
+
+**发版**
+- `publish.yml` 由 `v*` 标签或手动触发；渠道 dev/beta/release；发布正文与 Full Changelog 由 `tools/release/publish.sh` 拼装（滚动标签不作基准），失败时把日志推到 `ci-debug` 分支。已发布：`v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`。
+
+## 0.1 任务状态总览（2026-10-20）
+
+| 分组 | 条数 | 状态 |
+|---|---|---|
+| §1 P0 | 8 | 全部 `待验收` |
+| §2 P1 | 13 | 全部 `待验收` |
+| §3 P2 | 17（含 §3.1 的 5 条真机/实机验收） | 全部 `待验收`，真机项待实机证据 |
+| §5 A 系列 | 18（A-05…A-22） | 17 条 `待验收`（A-13/A-20/A-21 早前完成，仍待验收）；A-16 `已关闭`（Q20） |
+| 未开工 | 0 | 无 `待办` 的 P/A 任务 |
+| §4 拓展路线 | 12 | 4 条 `待办`（R-01/R-03/R-04/R-07）、1 条 `待确认`（R-05）、6 条 `暂不做`（R-06/R-08…R-12）、R-02 并入 P1-02 |
+
+**下一阶段建议顺序**：① 清 §3.1 的 5 条真机/实机验收（Windows 便携版/安装版启动、诊断日志、EBWebView 搬迁、Android 真机、倒计时节拍）② R-01（ICS 导出，core 的 `exportIcs` 已就绪）③ R-03/R-04（悬浮窗与小组件主题联动，A-15 已让快照携带主题色）④ R-07（提醒动作与投递链）。R-05 需先定凭据与合规口径（Q15）。
 
 ## 1. P0 任务
 
@@ -721,8 +741,8 @@
 - 优先级：P1；ICE（I4/C9/E9=324）
 - 依赖：无
 - 验收指标：四页导航无占位；概览数字与课表/日程页一致；冒烟覆盖切换。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无；本轮结论：P1-02 已把「我的」占位改建为「设备与同步」页（存储/更新/同步/关于），R-02 的页面内容随该批交付，本条不再单独立项。
+- 状态：已完成（并入 P1-02）
 
 #### [R-03] Windows 悬浮窗增加考试倒计时样式
 - 轨道：功能拓展
@@ -899,6 +919,8 @@
 - 状态：暂不做
 
 ## 5. 代码复用与架构演进
+
+> A 系列已全部收口：A-05…A-12、A-14、A-15、A-17…A-19 于 2026-10-20 完成（合入 `v0.4.1`），A-13/A-20/A-21 早前完成，A-16 按 Q20 关闭。下列条目的位置/证据行号为重构前快照，按内容锚点复核。
 
 ### [A-05] 统一动作、错误与异步状态处理
 - 轨道：技术演进
@@ -1268,11 +1290,11 @@
 | 空态与错误 | `today-view.tsx:74-75`、`course-manager.tsx:153`、`search-dialog.tsx:68`、`App.tsx:889-895`、`import-flow.tsx:311,508`、`settings-view.tsx:440` | `可切换到周视图查看本周安排`→`切换周视图可看本周安排` + `查看周视图`；`当前学期没有课程，可在导入页添加或导入`→`当前学期没有课程，可在下方导入课表`；`没有匹配结果`→`没有匹配结果，换个关键词试试`；错误页补 `载入失败` + `{原因}。请重启应用；仍失败请在「设置 → 同步与数据」导入备份，并附日志反馈。` + 「重试」「导入备份」；`识别失败：{原因}。请换一种导入方式，或手动添加课程。`；`打开教务窗口失败：{原因}`；`连接失败：{原因}。请检查地址、用户名与密码` | P0/P1 |
 | 引导与小组件 | `onboarding.tsx:175,193,256-257`、`mini/main.tsx:261,277`、`strings.xml:11,14-15` | `创建并开始`→`创建学期并设为当前`；跳过说明正文一句 + help；`确认导入`前加 `将覆盖设备上的现有数据，不可撤销`；`今天没有课啦`→`今天没有课了`/`明天也没有课`；`余`→`剩余`；`尚未同步数据`→`尚未创建学期`；`本周课表`→`一周概览` | P1 |
 
-### 6.4 文案资源小集中
-- 新建 `apps/web/src/copy/zh.ts`：纯数据 + 构造函数，不引入 i18n 框架与运行时；键为 `ACTION`、`STATE`、`COUNT`、`periodRange()`、`DELETE`、`fail()`、`NOTIFY`、`CHANNEL`、`UNIT_LABEL`，合计 ≤60 键。
-- 执行顺序：第一批（P0 同批）`ACTION`/`STATE`/`COUNT`/`periodRange`；第二批（P1 同批）`DELETE`/`fail`/`NOTIFY`/`CHANNEL`；第三批（P2 同批）`UNIT_LABEL` 与 CP-06 剩余 P2 文案。
-- CP-06（原 88 条 P2 打磨）不单独成条，随第三批逐区域替换：口语、标点、单位、日期格式、重复句与安装包说明；每 PR 用 `grep` 校验同一字面量不再出现第二次；被测试断言的文案（`test/channel.test.ts:7`、`test/health.test.ts:30-32`、`test/data-management.test.ts:156`、`test/import-injection.test.ts:69/91`）保持字面量或在同 PR 改断言；安装包补 `shortDescription`/`longDescription`（`tauri.conf.json:27-31`）。
-- 不做什么：不做多语言切换与翻译后台；不迁插值与日志 message（`log.ts` 原位）；不迁原生侧文案（`strings.xml`、Tauri 托盘与错误框原位）；不迁被测试断言的导出；不建 ICU 复数与日期库，量词用 `COUNT()` 表驱动。
+### 6.4 文案资源小集中（已落地）
+
+- `apps/web/src/copy/zh.ts` 现有 5 个导出：`UNIT_LABEL`、`COUNT(type, n)`、`DELETE(object, parts)`、`OVERWRITE(object, detail)`、`fail(what, reason?, next?)`；节次范围单点在 `packages/core`/`lib/format.ts` 的 `formatPeriodRange`（A-06 归位）。
+- 已落实：量词由 `COUNT` 表驱动（P1-12）、删除句与覆盖句统一（P0-02）、失败句式统一（P1-05/P1-09）、渠道与快照/备份/预设名词统一（P2-09）。
+- 仍保留就地写法：原生侧文案（`strings.xml`、Tauri 托盘与错误框）、被测试断言的导出、日志 message；不引 i18n 框架、不做多语言切换（见 §8 第 12 条）。
 
 ## 7. 待确认问题
 
@@ -1321,12 +1343,25 @@
 | Q18 | 社交共享课表、成绩管理、收费内购只评估不排期 | §8 |
 | Q19 | 顺序按数据风险优先 | 已执行（P0-06→07→08→03→05→02→01→04） |
 
+### 7.2 第三轮新增/确认的决策（Q20–Q27）
+
+| 编号 | 结论 | 去向 |
+|---|---|---|
+| Q20 | 量了 A-16 重合度：两条管线共同部分仅「多源依次 fetch + 错误归一 + 抛最后一个错误」（约 25 行/条），源类型、JSON 形态、清单校验、缓存策略各异 → 按 Q14 关闭，不抽共享层 | A-16 `已关闭` |
+| Q21 | 版本节奏：P0/P1/P2 收口发 `0.4.0` 正式版；A 系列是纯内部重构 + 少量修复，按补丁号发 `0.4.1` | `v0.4.0`、`v0.4.1` |
+| Q22 | 界面冒烟必须在产品主时区跑（runner 默认 UTC 会让「首次启动按系统时区对齐」改写设置、时间断言全飘）→ 冒烟脚本与 CI step 都固定 `TZ=Asia/Shanghai` | `tools/verify/smoke-ui.mjs`、`ci.yml` |
+| Q23 | 发布正文的 Full Changelog 由发布脚本自己拼（`--notes-file` 不会自动生成），滚动标签不作比较基准；发布失败把日志推到 `ci-debug` 分支供无权限读 Actions 日志时排查 | `tools/release/publish.sh` |
+| Q24 | 卡片「侧列」保留功能并在宽屏真正两列显示，不删控件；卡片布局入口每页只在顶部一处 | P2-07（已实现） |
+| Q25 | 移动端高频表单（加课/加待办/调课）用底部 Sheet，桌面仍居中 Dialog；容器切换集中在 App 挂载处 | P2-17（已实现） |
+| Q26 | R-02「我的」页面上线并入 P1-02「设备与同步」页，不单独立项 | R-02 `已完成（并入 P1-02）` |
+| Q27 | 下一阶段顺序建议：先清 §3.1 的真机/实机验收 → R-01 → R-03/R-04 → R-07；R-05 先定凭据与合规口径 | §0.1、§4（待排期） |
+
 ## 8. 不建议现在做
 
 1. 全局撤销与操作历史：需要事件溯源、逆向 patch 与操作台账，本轮先以 P0-02 的「确认 + 软删 + 快照兜底」覆盖。
 2. 周视图改真 ARIA grid/table：会动绝对定位渲染、行高自适应与拖拽命中（`week-view.tsx:988-1078`），本轮只做 P2-01 的短期语义。
 3. 完整键盘拖拽调课：方向键移动、落点预览与读屏播报是一套新交互，先用「详情→调课」等价路径补齐 P2-05 的 spinbutton 键盘。
-4. 移动端 24 处 Dialog 全改底部 Sheet：手势、键盘避让、安全区与焦点回归成本高，P2-04 只改 2–3 个高频表单。
+4. 移动端全部 Dialog 改底部 Sheet：P2-17 已把加课/加待办/调课三个高频短表单改成底部 Sheet，其余长表单与确认框继续用居中 Dialog（改造成本高于收益）。
 5. PWA / Service Worker 与 Web mini 入口裁剪：涉及缓存策略、版本更新与多入口构建，本轮只改文档口径（Q8）。
 6. 四套主题间距与密度重做、账号与社交体系：与当前可用性问题无关，P0 收敛前做会放大回归。
 7. 悬浮窗完整体验（主窗口唤起、最小化恢复、多窗口焦点）：需 Rust 侧配合，P2-08 只做「双击打开」最小版。
@@ -1337,13 +1372,18 @@
 12. 全局 i18n 与 1285 条文案全量 `t()` 化（CAP-11）：无多语言需求，改造触碰几乎所有组件且收益不可验证；术语与高频文案由文案轨覆盖。
 13. 卡片注册表插件化或动态注册：会让「卡片不出现」更难排查，静态注册可预测；只把 `void [...]` 改为显式数组即可。
 14. 引入状态管理库或请求缓存层：与 `loadAppData` 全量刷新模型冲突，属架构级改动，当前数据量下无收益。
-15. 拆 `week-view.tsx` 拖动状态机（BND-07）：当前无拖动缺陷驱动且冒烟依赖其行为，等真有缺陷时随修复一起抽。
+15. ~~拆 `week-view.tsx` 拖动状态机~~（A-10 已抽出 `screens/timetable/drag-session.ts` 并补单测，本条移出）。
 16. Windows 11 小组件面板（R-11/D28）立即开工：依赖 WinRT/MSIX 原生实现，投入产出比未验证，先做 R-03 的悬浮窗考试倒计时。
-17. iOS 端（R-10/D7）立即开工：先补平台能力抽象（A-09），否则第三端维护成本指数上升。
+17. iOS 端（R-10/D7）立即开工：先补平台能力抽象（A-09，已完成），否则第三端维护成本指数上升。
+18. 「先抽象再验证」的共享层（A-16 那类）：本轮用测量否决过一次，后续同类需求先量重合理由再立项，不要凭直觉抽。
+19. 把 `smoke/entry.tsx` 拆成 `bootstrap` + 多个 `cases/*`（A-19 第三步）：当前 338 项断言按顺序共享 DOM 状态，拆分会先撞用例隔离问题；等冒烟改成用例独立挂载后再做。
+20. 为「管理员权限注册开机启动」改 Rust 写 HKLM：A-09 已把调用修正为现有提权命令，但 Rust 仍只写 HKCU 用户级 Run 键；要真正达成效用需要 HKLM 写入 + UAC 提权链路，属桌面壳单独一条任务，未排期。
 
 ## 9. Agent 分派与盲审覆盖
 
 ### 9.1 分派与执行记录
+
+> 首轮（重构 TODO 本身）用 8 个常驻 Agent 并行审查与盲审；P0/P1/P2/A 的执行改用「每任务独立 worktree + `subagent`」按批次推进，批次记录见 §10.7–§10.10。
 
 | 角色 | 执行者 | 任务 | 输入 | 输出 | 依赖 | 验收标准 |
 |---|---|---|---|---|---|---|
@@ -1381,6 +1421,21 @@
 | 新增任务 | 由主审三轨产生；盲审独立报出同一问题的标「主审+盲审」：P0-01、P0-02、P0-04、P0-05、P0-07、P1-08、P2-11、P2-12、P2-13、P2-14、P2-15、R-12、A-05、A-06、A-09、A-10、A-11、A-15、A-16、A-20、A-21、A-22；其余标「主审」，盲审未对新增任务排序 |
 | 分歧 | 35 条中三方不一致 11 条，裁决见 `08a`；其中 O-25、O-35 未达删除准入，降为 Q14、Q15 |
 | 盲审未覆盖 | 无旧条目未被盲审覆盖；新增任务中盲审未独立报出的项（如 P0-03 之外的布局细节、A-07、A-08、A-12、A-17、A-18、A-19）按「主审」标注，未用盲审数量替代证据 |
+
+### 9.4 第三轮执行记录（A 系列并行批次，2026-10-20）
+
+| 批次 | 任务 | 并行度 | 结果 |
+|---|---|---|---|
+| A1 | A-06 时间常量单源、A-07 规则纯函数、A-12 `app_meta` 收敛、A-19 依赖清理 | 4 | 全部合入，A-19 只做前两项（冒烟拆分按 §8 第 19 条搁置） |
+| A2 | A-08 颜色与周次选择器、A-14 组件基元、A-15 小组件契约、A-17 学校检索收编 | 4 | 全部合入；A-15 的 Kotlin 改动未编译验证（无 Android 构建链），由契约脚本兜底 |
+| A3 | A-09 原生桥收口、A-18 导入协议与插件契约 | 2 | 全部合入；A-09 顺带修了 `relaunch_elevated_autostart` 运行时 bug |
+| A4 | A-05 动作/错误/忙碌态统一 | 1 | 合入；手写 busy 18→0、本地 describe 5→0 |
+| A5 | A-10 大文件拆分、A-11 设置页按卡拆分 | 2 | 全部合入；App 1514→449 行、`settings-view` 1057→212 行 |
+| 收口 | A-22（按 A-05/A-13/P2-04 口径核验）、A-16（Q20 关闭） | — | A-22 转待验收；A-16 关闭 |
+| 发版 | `v0.4.1`（`b3fc824`） | — | 正式版发布成功，6 个发布 job 全绿 |
+
+- 执行方式：每个任务一个 `task/<id>` 分支 + `E:/work/dsh/dawn-tick-wt/<id>` worktree，基线取最新 `dev`；跨任务文件冲突由 Lead 合并时解决；每任务跑 `typecheck` + 相关测试，批次末跑 `pnpm test` 与 `pnpm ui:smoke`（338 项）。
+- 合并后全量验证：`cargo check`、`check-widget-contract.mjs`、`check-workflows.py`、版本一致性与 CHANGELOG 结构检查均通过。
 
 ## 10. 变更记录
 
@@ -1552,3 +1607,28 @@
 | A-16 远端制品共享 | — | — | 按 Q14 量重合度后关闭（共享部分仅约 25 行/条） |
 
 - 发版过程修掉两个阻塞：① 界面冒烟在 CI runner 默认 UTC 下时间文案漂移（首次把冒烟接进 CI 时暴露）→ 冒烟脚本与 CI 步骤固定 `TZ=Asia/Shanghai`；② 发布正文的 Full Changelog 拼装跑在 `PREV` 计算之前，正文缺比较链接且 `gh release create` 失败 → 发布逻辑抽到 `tools/release/publish.sh`，正文自行拼好 Full Changelog（不再传 `--notes-start-tag`），失败时把日志推到 `ci-debug` 分支便于无权限读 Actions 日志时排查。
+
+### 10.10 第三轮变更记录（P1/P2 收口 + A 系列，2026-10-20）
+
+**状态变更**
+- P1、P2 全部完成：P1-01…P1-13、P2-01…P2-17 均转 `待验收`；P2-04 拆分出 P2-17（移动端底部 Sheet，已完成）。
+- A 系列全部收口：A-05…A-12、A-14、A-15、A-17…A-19 转 `待验收`；A-13/A-20/A-21 早前完成并保持待验收；A-16 `已关闭`（Q20）。
+- R-02 并入 P1-02（`已完成（并入 P1-02）`），§4 剩余 4 条待办、1 条待确认、6 条暂不做。
+- 未开工的 P/A 任务为 0。
+
+**结构变更**
+- 新增 §0.1「任务状态总览」，给出分组条数、下一阶段建议顺序与发版记录。
+- 新增 §7.2「第三轮新增/确认的决策（Q20–Q27）」。
+- 新增 §9.4「第三轮执行记录（A 系列并行批次）」。
+- §0 事实索引按 `v0.4.1` 重测（视图状态机、模块边界、文案位置、验证入口、发版链路）；统一声明「行号为历史快照，按内容锚点复核」。
+- §6.4 文案资源从「计划」改为「已落地」，列出现有 5 个导出与仍就地写的位置。
+- §8 更新：移动端 Sheet、周视图拖动状态机两条改为已落地；新增 3 条（先量重合度再抽象、冒烟拆分时机、HKLM 开机启动）。
+
+**发版**
+- `v0.4.0`（`a3b2858`，正式）：P1/P2 两批产品体验改动的收口。
+- `v0.4.1`（`b3fc824`，正式）：A 系列架构收口 + 两处用户可见修复（Android 小组件配色随主题、Windows 提权启动命令修正）。
+
+**遗留**
+- 55 条 `待验收` 需要逐条确认，其中 §3.1 的 5 条要真机/实机证据。
+- R-05（教务在线抓取）待定凭据与合规口径（Q15）；R-06/R-08…R-12 暂不做。
+- 「管理员权限注册开机启动」仍只写 HKCU，见 §8 第 20 条。
