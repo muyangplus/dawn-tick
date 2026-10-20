@@ -7,10 +7,13 @@ import { Tabs, TabsList, TabsTrigger } from './ui/tabs.tsx';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-/** 周模式的翻页信息：第几周、本周是第几周。 */
+/** 周模式的翻页信息：第几周、本周是第几周、首/末周时翻不动。 */
 export interface WeekNavProps {
   viewWeek: number;
   currentWeek: number;
+  /** 第 1 周不能再往前、最后一周不能再往后（与日模式同一份边界判定） */
+  canPrev: boolean;
+  canNext: boolean;
   onPrev: () => void;
   onNext: () => void;
 }
@@ -76,14 +79,14 @@ export function AppToolbar({
 
       {mode === 'week' ? (
         <div className="flex items-center gap-1" data-role="week-nav">
-          <Button variant="ghost" size="icon" aria-label="上一屏" onClick={week.onPrev}>
+          <Button variant="ghost" size="icon" aria-label="上一屏" disabled={!week.canPrev} onClick={week.onPrev}>
             <ChevronLeft className="size-4" aria-hidden />
           </Button>
           <span className="tabular min-w-16 text-center text-sm text-ink">
             第 {week.viewWeek} 周
             {week.viewWeek === week.currentWeek && <span className="text-xs text-muted"> · 本周</span>}
           </span>
-          <Button variant="ghost" size="icon" aria-label="下一屏" onClick={week.onNext}>
+          <Button variant="ghost" size="icon" aria-label="下一屏" disabled={!week.canNext} onClick={week.onNext}>
             <ChevronRight className="size-4" aria-hidden />
           </Button>
         </div>
