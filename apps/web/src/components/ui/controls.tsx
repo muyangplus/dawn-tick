@@ -1,8 +1,8 @@
 import * as CheckboxPrimitive from '@radix-ui/react-checkbox';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import * as SwitchPrimitive from '@radix-ui/react-switch';
-import { Check, ChevronDown } from 'lucide-react';
-import type { ComponentProps } from 'react';
+import { Check, ChevronDown, type LucideIcon } from 'lucide-react';
+import type { ComponentProps, ReactNode } from 'react';
 import { cn } from '../../lib/cn.ts';
 import { useFieldControl, useRegisterFieldControl } from './input.tsx';
 
@@ -44,6 +44,60 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
   );
 }
 
+export interface SwitchFieldProps {
+  label: ReactNode;
+  /** 标题下的补充说明（一句话）；需要长文本时自己传 Node */
+  description?: ReactNode;
+  icon?: LucideIcon;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  disabled?: boolean;
+  /** 开关本身的 aria-label，保持既有断言与可访问名不变 */
+  ariaLabel?: string;
+  /** 开关上的 data-role，保持既有断言选择器 */
+  dataRole?: string;
+  className?: string;
+}
+
+/**
+ * 开关行：左侧标题 + 说明、右侧 Switch，整行可点（<label> 隐式关联）。
+ * 只做展示，不含业务状态；`ariaLabel` / `dataRole` 落到 Switch 本身。
+ */
+export function SwitchField({
+  label,
+  description,
+  icon: Icon,
+  checked,
+  onCheckedChange,
+  disabled,
+  ariaLabel,
+  dataRole,
+  className,
+}: SwitchFieldProps) {
+  return (
+    <label className={cn('flex min-h-tap items-center justify-between gap-3 text-sm text-ink', className)}>
+      <span className="flex min-w-0 flex-col">
+        {Icon === undefined ? (
+          <span>{label}</span>
+        ) : (
+          <span className="flex items-center gap-2">
+            <Icon className="size-4" aria-hidden />
+            {label}
+          </span>
+        )}
+        {description !== undefined && <span className="truncate text-xs text-muted">{description}</span>}
+      </span>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        data-role={dataRole}
+      />
+    </label>
+  );
+}
+
 export const Select = SelectPrimitive.Root;
 
 export function SelectTrigger({
@@ -58,10 +112,12 @@ export function SelectTrigger({
       className={cn(
         'inline-flex min-h-tap w-full items-center justify-between gap-2 rounded-md border border-line bg-surface px-3 text-sm text-ink',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
+        'aria-invalid:border-danger-strong',
         className,
       )}
       {...props}
       id={props.id ?? field?.id}
+      aria-invalid={props['aria-invalid'] ?? (field?.invalid === true ? true : undefined)}
       aria-describedby={props['aria-describedby'] ?? field?.describedBy}
     >
       {children}

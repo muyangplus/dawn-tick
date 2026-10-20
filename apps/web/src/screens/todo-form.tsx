@@ -26,7 +26,13 @@ import { DialogFooter } from '../components/ui/dialog.tsx';
 import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { Field, Input, Textarea } from '../components/ui/input.tsx';
 import { HelpHint } from '../components/ui/help-hint.tsx';
-import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SwitchField,
+} from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 
 /** 待办类型：日程 / 作业 / 考试 / 实验。 */
@@ -481,30 +487,22 @@ export function TodoForm({
           </Select>
         </Field>
       </div>
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex min-w-0 flex-col">
-          <span>自定义时间</span>
-          <span className="truncate text-xs text-muted">按真实起止时间显示</span>
-        </span>
-        <Switch
-          aria-label="自定义时间"
-          checked={customTime}
-          onCheckedChange={(checked) => setCustomTime(checked)}
-        />
-      </label>
+      <SwitchField
+        label="自定义时间"
+        description="按真实起止时间显示"
+        checked={customTime}
+        onCheckedChange={(checked) => setCustomTime(checked)}
+        ariaLabel="自定义时间"
+      />
       {isLab && (
         <div className="flex flex-col gap-2" data-role="lab-fields">
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span className="flex min-w-0 flex-col">
-              <span>每周重复</span>
-              <span className="truncate text-xs text-muted">关闭时只在这一天</span>
-            </span>
-            <Switch
-              aria-label="实验每周重复"
-              checked={labRepeat}
-              onCheckedChange={(checked) => setLabRepeat(checked)}
-            />
-          </label>
+          <SwitchField
+            label="每周重复"
+            description="关闭时只在这一天"
+            checked={labRepeat}
+            onCheckedChange={(checked) => setLabRepeat(checked)}
+            ariaLabel="实验每周重复"
+          />
           {labRepeat && (
             <>
               <Field label="星期">
@@ -598,39 +596,27 @@ export function TodoForm({
           )}
         </div>
       )}
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex min-w-0 flex-col">
-          <span>开启倒计时</span>
-          <span className="truncate text-xs text-muted">在倒计时卡片里显示剩余天数</span>
-        </span>
-        <Switch
-          aria-label="开启倒计时"
-          checked={switches.countdown}
-          onCheckedChange={(checked) => setSwitches((current) => ({ ...current, countdown: checked }))}
-        />
-      </label>
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex min-w-0 flex-col">
-          <span>显示在课表上</span>
-          <span className="truncate text-xs text-muted">占用课表格子</span>
-        </span>
-        <Switch
-          aria-label="显示在课表上"
-          checked={showInTimetable}
-          onCheckedChange={(checked) => setShowInTimetable(checked)}
-        />
-      </label>
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex min-w-0 flex-col">
-          <span>需要手动确认完成</span>
-          <span className="truncate text-xs text-muted">打开后不会自动完成，过期仍留在待办列表</span>
-        </span>
-        <Switch
-          aria-label="需要手动确认完成"
-          checked={switches.manualDone}
-          onCheckedChange={(checked) => setSwitches((current) => ({ ...current, manualDone: checked }))}
-        />
-      </label>
+      <SwitchField
+        label="开启倒计时"
+        description="在倒计时卡片里显示剩余天数"
+        checked={switches.countdown}
+        onCheckedChange={(checked) => setSwitches((current) => ({ ...current, countdown: checked }))}
+        ariaLabel="开启倒计时"
+      />
+      <SwitchField
+        label="显示在课表上"
+        description="占用课表格子"
+        checked={showInTimetable}
+        onCheckedChange={(checked) => setShowInTimetable(checked)}
+        ariaLabel="显示在课表上"
+      />
+      <SwitchField
+        label="需要手动确认完成"
+        description="打开后不会自动完成，过期仍留在待办列表"
+        checked={switches.manualDone}
+        onCheckedChange={(checked) => setSwitches((current) => ({ ...current, manualDone: checked }))}
+        ariaLabel="需要手动确认完成"
+      />
       <Field label="备注">
         <Textarea value={note} aria-label="备注" onChange={(event) => setNote(event.target.value)} />
       </Field>

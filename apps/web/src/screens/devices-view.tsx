@@ -70,12 +70,19 @@ import { runBusy } from '../lib/busy.ts';
 import { DELETE, fail } from '../copy/zh.ts';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { Dialog, DialogContent, DialogFooter, FormDialog } from '../components/ui/dialog.tsx';
+import { EmptyState } from '../components/ui/empty-state.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { ExternalLink } from '../components/ui/external-link.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { HelpHint } from '../components/ui/help-hint.tsx';
-import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SwitchField,
+} from '../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../components/ui/status-line.tsx';
 import { registerPendingRestart } from '../pending-restart.ts';
 import { toast } from '../components/ui/toaster.tsx';
@@ -757,15 +764,13 @@ export function DevicesView({
         ) : null}
         {platform !== 'web' && (
           <div className="flex flex-col gap-1" data-role="wal-setting">
-            <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-              <span>启用 WAL 日志模式</span>
-              <Switch
-                aria-label="启用 WAL 日志模式"
-                data-role="wal-switch"
-                checked={walOn}
-                onCheckedChange={(checked) => void toggleWal(checked)}
-              />
-            </label>
+            <SwitchField
+              label="启用 WAL 日志模式"
+              checked={walOn}
+              onCheckedChange={(checked) => void toggleWal(checked)}
+              ariaLabel="启用 WAL 日志模式"
+              dataRole="wal-switch"
+            />
             <span className="text-xs text-muted" data-role="wal-hint">
               {settings.walMode === 'auto'
                 ? `跟随默认：便携版关闭、安装版开启（当前${walOn ? '开启' : '关闭'}）`
@@ -779,32 +784,26 @@ export function DevicesView({
           跨设备迁移用导出导入
         </span>
         <div className="flex flex-col gap-1" data-role="backup-settings">
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>自动快照</span>
-            <Switch
-              aria-label="自动快照"
-              checked={settings.autoBackup}
-              onCheckedChange={(checked) => void onPatch({ autoBackup: checked })}
-            />
-          </label>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>启动时快照一次</span>
-            <Switch
-              aria-label="启动时快照"
-              checked={settings.backupOnStart}
-              disabled={!settings.autoBackup}
-              onCheckedChange={(checked) => void onPatch({ backupOnStart: checked })}
-            />
-          </label>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>每天快照一次</span>
-            <Switch
-              aria-label="每天快照"
-              checked={settings.backupDaily}
-              disabled={!settings.autoBackup}
-              onCheckedChange={(checked) => void onPatch({ backupDaily: checked })}
-            />
-          </label>
+          <SwitchField
+            label="自动快照"
+            checked={settings.autoBackup}
+            onCheckedChange={(checked) => void onPatch({ autoBackup: checked })}
+            ariaLabel="自动快照"
+          />
+          <SwitchField
+            label="启动时快照一次"
+            checked={settings.backupOnStart}
+            disabled={!settings.autoBackup}
+            onCheckedChange={(checked) => void onPatch({ backupOnStart: checked })}
+            ariaLabel="启动时快照"
+          />
+          <SwitchField
+            label="每天快照一次"
+            checked={settings.backupDaily}
+            disabled={!settings.autoBackup}
+            onCheckedChange={(checked) => void onPatch({ backupDaily: checked })}
+            ariaLabel="每天快照"
+          />
           <Field label="保留份数" hint="1–100 份，超出后自动删最旧的">
             <Input
               data-role="backup-keep"
@@ -840,9 +839,7 @@ export function DevicesView({
             </StatusLine>
           )}
           {snapshots.length === 0 ? (
-            <span className="text-xs text-muted" data-role="snapshot-empty">
-              暂无快照
-            </span>
+            <EmptyState size="sm" tone="muted" title="暂无快照" data-role="snapshot-empty" />
           ) : (
             <ul className="flex flex-col gap-1" data-role="snapshot-list">
               {snapshots.map((entry) => (
@@ -905,40 +902,32 @@ export function DevicesView({
               onChange={(event) => void onPatch({ webdavPassword: event.target.value })}
             />
           </Field>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>自动同步</span>
-            <Switch
-              aria-label="自动同步"
-              checked={settings.webdavAuto}
-              onCheckedChange={(checked) => void onPatch({ webdavAuto: checked })}
-            />
-          </label>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>启动时同步一次</span>
-            <Switch
-              aria-label="启动时同步"
-              checked={settings.webdavOnStart}
-              disabled={!settings.webdavAuto}
-              onCheckedChange={(checked) => void onPatch({ webdavOnStart: checked })}
-            />
-          </label>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>每天同步一次</span>
-            <Switch
-              aria-label="每天同步"
-              checked={settings.webdavDaily}
-              disabled={!settings.webdavAuto}
-              onCheckedChange={(checked) => void onPatch({ webdavDaily: checked })}
-            />
-          </label>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>远端保留历史多份</span>
-            <Switch
-              aria-label="远端保留历史多份"
-              checked={settings.webdavHistory}
-              onCheckedChange={(checked) => void onPatch({ webdavHistory: checked })}
-            />
-          </label>
+          <SwitchField
+            label="自动同步"
+            checked={settings.webdavAuto}
+            onCheckedChange={(checked) => void onPatch({ webdavAuto: checked })}
+            ariaLabel="自动同步"
+          />
+          <SwitchField
+            label="启动时同步一次"
+            checked={settings.webdavOnStart}
+            disabled={!settings.webdavAuto}
+            onCheckedChange={(checked) => void onPatch({ webdavOnStart: checked })}
+            ariaLabel="启动时同步"
+          />
+          <SwitchField
+            label="每天同步一次"
+            checked={settings.webdavDaily}
+            disabled={!settings.webdavAuto}
+            onCheckedChange={(checked) => void onPatch({ webdavDaily: checked })}
+            ariaLabel="每天同步"
+          />
+          <SwitchField
+            label="远端保留历史多份"
+            checked={settings.webdavHistory}
+            onCheckedChange={(checked) => void onPatch({ webdavHistory: checked })}
+            ariaLabel="远端保留历史多份"
+          />
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -1040,47 +1029,31 @@ export function DevicesView({
           )}
         </div>
         {CHANNEL !== 'dev' ? (
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span className="flex min-w-0 flex-col">
-              <span>接收公测版更新</span>
-              <span className="truncate text-xs text-muted">
-                {CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到公测版'}
-              </span>
-            </span>
-            <Switch
-              checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-              aria-label="接收公测版更新"
-              onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
-            />
-          </label>
+          <SwitchField
+            label="接收公测版更新"
+            description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到公测版'}
+            checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
+            onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
+            ariaLabel="接收公测版更新"
+          />
         ) : (
           <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
         )}
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>自动检查版本更新</span>
-            <span className="truncate text-xs text-muted">启动后自动查一次，有新版本时弹出更新信息</span>
-          </span>
-          <Switch
-            checked={settings.autoCheckUpdate}
-            aria-label="自动检查版本更新"
-            onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
-          />
-        </label>
+        <SwitchField
+          label="自动检查版本更新"
+          description="启动后自动查一次，有新版本时弹出更新信息"
+          checked={settings.autoCheckUpdate}
+          onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
+          ariaLabel="自动检查版本更新"
+        />
         {CHANNEL === 'dev' && (
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span className="flex min-w-0 flex-col">
-              <span>开发者特性</span>
-              <span className="truncate text-xs text-muted">
-                关闭后按正式版运行
-              </span>
-            </span>
-            <Switch
-              checked={settings.devFeatures}
-              aria-label="开发者特性"
-              onCheckedChange={(checked) => void onPatch({ devFeatures: checked })}
-            />
-          </label>
+          <SwitchField
+            label="开发者特性"
+            description="关闭后按正式版运行"
+            checked={settings.devFeatures}
+            onCheckedChange={(checked) => void onPatch({ devFeatures: checked })}
+            ariaLabel="开发者特性"
+          />
         )}
 
         {/* 应用诊断日志：开关控制 dawn-tick.log，级别决定门槛 */}
@@ -1095,14 +1068,12 @@ export function DevicesView({
             </Button>
             <span className="text-xs text-muted">导出当前缓冲区</span>
           </div>
-          <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>启用应用诊断日志</span>
-            <Switch
-              checked={settings.logEnabled}
-              aria-label="启用应用诊断日志"
-              onCheckedChange={(checked) => void onPatch({ logEnabled: checked })}
-            />
-          </label>
+          <SwitchField
+            label="启用应用诊断日志"
+            checked={settings.logEnabled}
+            onCheckedChange={(checked) => void onPatch({ logEnabled: checked })}
+            ariaLabel="启用应用诊断日志"
+          />
           <Field label="日志级别" hint="设置输出的最低日志级别">
             <Select value={settings.logLevel} onValueChange={(value) => void onPatch({ logLevel: value as LogLevel })}>
               <SelectTrigger aria-label="日志级别">
@@ -1382,7 +1353,7 @@ export function DevicesView({
         </DialogContent>
       </Dialog>
 
-      <Dialog
+      <FormDialog
         open={exportOpen}
         onOpenChange={(open) => {
           if (!open) {
@@ -1390,8 +1361,13 @@ export function DevicesView({
             setExportText('');
           }
         }}
+        title="导出备份"
+        description="勾选要导出的模块，并选择导出格式"
+        submitLabel={exportFormat === 'base64' ? '生成文本' : '导出'}
+        submitting={busy}
+        submitDisabled={exportModules.size === 0}
+        onSubmit={() => void downloadBackup()}
       >
-        <DialogContent title="导出备份" description="勾选要导出的模块，并选择导出格式">
           <div className="flex flex-col gap-1">
             {BACKUP_MODULES.map((module) => (
               <label key={module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
@@ -1414,15 +1390,21 @@ export function DevicesView({
             ))}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setExportModules(new Set(BACKUP_MODULES))}>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setExportModules(new Set(BACKUP_MODULES))}
+            >
               全选
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setExportModules(new Set())}>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setExportModules(new Set())}>
               清空
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
+              type="button"
               size="sm"
               variant={exportFormat === 'json' ? 'primary' : 'secondary'}
               aria-label="导出为 JSON 文件"
@@ -1431,6 +1413,7 @@ export function DevicesView({
               JSON 文件
             </Button>
             <Button
+              type="button"
               size="sm"
               variant={exportFormat === 'base64' ? 'primary' : 'secondary'}
               aria-label="导出为 Base64 文本"
@@ -1439,6 +1422,7 @@ export function DevicesView({
               Base64 文本
             </Button>
             <Button
+              type="button"
               size="sm"
               variant={exportFormat === 'zip' ? 'primary' : 'secondary'}
               aria-label="导出为整包 zip"
@@ -1484,6 +1468,7 @@ export function DevicesView({
               />
               <div className="flex flex-wrap gap-2">
                 <Button
+                  type="button"
                   size="sm"
                   variant="secondary"
                   onClick={() => {
@@ -1498,32 +1483,28 @@ export function DevicesView({
                 >
                   复制文本
                 </Button>
-                <Button size="sm" variant="secondary" onClick={() => void saveBase64Backup()}>
+                <Button type="button" size="sm" variant="secondary" onClick={() => void saveBase64Backup()}>
                   保存为文件
                 </Button>
               </div>
             </div>
           )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setExportOpen(false)}>
-              取消
-            </Button>
-            <Button variant="primary" disabled={busy || exportModules.size === 0} onClick={() => void downloadBackup()}>
-              {exportFormat === 'base64' ? '生成文本' : '导出'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </FormDialog>
 
-      <Dialog
+      <FormDialog
         open={importOpen}
         onOpenChange={(open) => {
           if (!open) setImportOpen(false);
         }}
+        title="导入备份"
+        description="选择备份文件，或直接粘贴 JSON / Base64 文本"
+        submitLabel="从文本导入"
+        submitDisabled={importText.trim().length === 0}
+        onSubmit={parsePastedBackup}
       >
-        <DialogContent title="导入备份" description="选择备份文件，或直接粘贴 JSON / Base64 文本">
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              type="button"
               size="sm"
               variant="secondary"
               aria-label="选择备份文件"
@@ -1542,24 +1523,20 @@ export function DevicesView({
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
           />
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setImportOpen(false)}>
-              取消
-            </Button>
-            <Button variant="primary" disabled={importText.trim().length === 0} onClick={parsePastedBackup}>
-              从文本导入
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </FormDialog>
 
-      <Dialog
+      <FormDialog
         open={pendingImport !== null}
         onOpenChange={(open) => {
           if (!open) setPendingImport(null);
         }}
+        title="导入备份"
+        description="选模块与冲突处理"
+        submitLabel="导入"
+        submitting={busy}
+        submitDisabled={importModules.size === 0}
+        onSubmit={() => void confirmImport()}
       >
-        <DialogContent title="导入备份" description="选模块与冲突处理">
           <div className="flex flex-col gap-1">
             {summarizeBackup(pendingImport ?? { format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} })
               .filter((item) => item.rows > 0)
@@ -1588,6 +1565,7 @@ export function DevicesView({
             {IMPORT_MODES.map((mode) => (
               <Button
                 key={mode}
+                type="button"
                 size="sm"
                 variant={importMode === mode ? 'primary' : 'secondary'}
                 aria-label={`导入方式：${IMPORT_MODE_LABEL[mode]}`}
@@ -1597,16 +1575,7 @@ export function DevicesView({
               </Button>
             ))}
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setPendingImport(null)}>
-              取消
-            </Button>
-            <Button variant="primary" disabled={busy || importModules.size === 0} onClick={() => void confirmImport()}>
-              导入
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </FormDialog>
     </div>
   );
 }

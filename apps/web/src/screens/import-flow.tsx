@@ -27,6 +27,7 @@ import {
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
+import { InlineError } from '../components/ui/inline-error.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -670,19 +671,15 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               data-role="import-recognize-error"
               className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 p-3"
             >
-              <span className="text-xs text-danger-strong">
+              <InlineError>
                 {fail('识别失败', failure.reason, '请换一种导入方式，或手动添加课程。').text}
-              </span>
+              </InlineError>
               <Button size="sm" variant="secondary" onClick={openManualMapping}>
                 改用手动指定表格
               </Button>
             </div>
           )}
-          {failure?.source === 'clipboard' && (
-            <p role="alert" className="text-xs text-danger-strong">
-              {failure.reason}
-            </p>
-          )}
+          {failure?.source === 'clipboard' && <InlineError>{failure.reason}</InlineError>}
 
           <details ref={mappingDetails} data-role="manual-mapping" className="flex flex-col gap-2">
             <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm text-ink">
@@ -764,9 +761,9 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                     </Button>
                   </div>
                   {failure?.source === 'mapping' && (
-                    <p role="alert" className="text-xs text-danger-strong">
+                    <InlineError>
                       {fail('识别失败', failure.reason, '请调整表头行、星期列或节次列后重试。').text}
-                    </p>
+                    </InlineError>
                   )}
                 </>
               )}
@@ -806,9 +803,9 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             </Button>
           </div>
           {failure?.source === 'file' && (
-            <p role="alert" className="text-xs text-danger-strong">
+            <InlineError>
               {fail('识别失败', failure.reason, '请检查文件格式，或改用其他导入方式。').text}
-            </p>
+            </InlineError>
           )}
         </Card>
       )}
@@ -915,7 +912,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               没有冲突项
             </p>
           )}
-          {warnings.length > 0 && <p className="text-xs text-danger-strong">{warnings.join('；')}</p>}
+          {warnings.length > 0 && <InlineError>{warnings.join('；')}</InlineError>}
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" disabled={busy || selected.size === 0} onClick={() => void confirm()}>
               确认导入
@@ -930,7 +927,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       {step === 4 && (
         <div className="flex flex-col gap-3">
           <span className="text-sm text-ink">导入完成</span>
-          {warnings.length > 0 && <p className="text-xs text-danger-strong">{warnings.join('；')}</p>}
+          {warnings.length > 0 && <InlineError>{warnings.join('；')}</InlineError>}
           <div className="flex gap-2">
             <Button
               variant="secondary"

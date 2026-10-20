@@ -14,6 +14,7 @@ import { Card, CardTitle } from '../components/ui/card.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { HelpHint } from '../components/ui/help-hint.tsx';
+import { InlineError } from '../components/ui/inline-error.tsx';
 import { SchoolPickerDialog } from '../components/school-picker-dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import {
@@ -213,7 +214,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               onChange={(event) => setTotalWeeks(Number(event.target.value))}
             />
           </Field>
-          {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
+          {error !== null && <InlineError>{error}</InlineError>}
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" disabled={busy} onClick={() => void submit()}>
               创建并开始
@@ -321,9 +322,9 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
                     .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
                     .join('、')}
                 </span>
-                <span className="text-xs text-danger-strong" data-role="onboarding-overwrite-hint">
+                <InlineError data-role="onboarding-overwrite-hint">
                   将覆盖设备上的现有数据，不可撤销
-                </span>
+                </InlineError>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="primary" aria-label="确认导入" disabled={busy} onClick={() => void applyImport()}>
                     确认导入
@@ -338,9 +339,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               </>
             )}
             {importError !== null && (
-              <p className="text-xs text-danger-strong" data-role="onboarding-import-error">
-                {importError}
-              </p>
+              <InlineError data-role="onboarding-import-error">{importError}</InlineError>
             )}
           </div>
         </Card>
