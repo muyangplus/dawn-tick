@@ -29,3 +29,17 @@ export async function hideWidget(): Promise<void> {
     // 窗口不存在时忽略
   }
 }
+
+/** 从悬浮窗打开主窗口：还原最小化、前置并聚焦；未在桌面端时忽略。 */
+export async function openMainWindow(): Promise<void> {
+  if (!canUseWidget()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('show_main');
+    logInfo('widget', '从悬浮窗打开主窗口');
+  } catch (cause: unknown) {
+    logWarn('widget', '打开主窗口失败', {
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}

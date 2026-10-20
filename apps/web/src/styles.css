@@ -178,6 +178,13 @@
     font-size: var(--text-xs);
   }
 
+  .mini-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mini-open,
   .mini-close {
     border: 0;
     background: transparent;
@@ -186,6 +193,10 @@
     font-size: var(--text-sm);
     line-height: 1;
     cursor: pointer;
+  }
+
+  .mini-open {
+    font-size: var(--text-xs);
   }
 
   .mini-title {

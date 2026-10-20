@@ -12,7 +12,7 @@ export interface MobileWidget {
 export const MOBILE_WIDGETS: readonly MobileWidget[] = [
   { id: 'next', label: '下一节课', size: '2×2', description: '下一节课的课程、时间与地点' },
   { id: 'today', label: '今日课表', size: '4×2', description: '今天所有课程与进行中的一节' },
-  { id: 'week', label: '一周概览', size: '4×4', description: '整周的课表格子' },
+  { id: 'week', label: '一周概览', size: '4×4', description: '一周课程清单' },
   { id: 'exam', label: '考试倒计时', size: '2×2', description: '最近的考试与剩余天数' },
 ];
 

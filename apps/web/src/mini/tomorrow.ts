@@ -26,3 +26,8 @@ export function previewDateFor(today: string, hideWeekends: boolean): string {
   const tomorrow = addDays(today, 1);
   return hideWeekends ? nextWorkday(tomorrow) : tomorrow;
 }
+
+/** 悬浮窗空态文案：显示明日预告时是「明天也没有课」，否则是「今天没有课了」。 */
+export function miniEmptyText(showTomorrow: boolean): string {
+  return showTomorrow ? '明天也没有课' : '今天没有课了';
+}
