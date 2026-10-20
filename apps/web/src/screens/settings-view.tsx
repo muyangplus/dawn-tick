@@ -34,18 +34,6 @@ import {
   type MobileWidgetState,
   type PinWidgetStatus,
 } from '../widget-pin.ts';
-import {
-  isIgnoringBatteryOptimizations,
-  openNotifySettings,
-  requestIgnoreBatteryOptimizations,
-} from '../system-actions.ts';
-import {
-  exactAlarmState,
-  readNotifyStatus,
-  requestExactAlarm,
-  type ExactAlarmState,
-  type NotifyStatus,
-} from '../permissions.ts';
 import { readTrayStatus } from '../storage-config.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
@@ -74,13 +62,15 @@ import {
 import { StatusLine } from '../components/ui/status-line.tsx';
 import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { isNotifyAbnormal, notifyNextStep, notifyStateOf } from '../notify-state.ts';
+import { notifyNextStep } from '../notify-state.ts';
 import type { ReminderView } from '../useReminders.ts';
 import { cn } from '../lib/cn.ts';
 import { CardLayoutDialog } from './cards/layout-panel.tsx';
 import { readLayout } from './cards/layout-store.ts';
 import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/registry.ts';
 import { settingsSection } from './cards/settings-cards.tsx';
+import { RemindersCard } from './settings/reminders-card.tsx';
+import { useNotifyPermission } from './settings/use-notify-permission.ts';
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
 const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = {
@@ -216,66 +206,20 @@ export function SettingsView({
   const [layout, setLayout] = useState<LayoutConfig>({});
   const [layoutOpen, setLayoutOpen] = useState(false);
   const zoneInvalid = !isValidTimeZone(settings.timeZone);
-  /** 安卓权限状态：精确闹钟与电池优化白名单（通知状态全平台都读） */
-  const [alarmState, setAlarmState] = useState<ExactAlarmState>('unsupported');
-  const [batteryFree, setBatteryFree] = useState<boolean | null>(null);
-  /** 通知状态：应用级开关、运行时权限、渠道静音分开报 */
-  const [notifyStatus, setNotifyStatus] = useState<NotifyStatus | null>(null);
-  const androidApp = isAndroidApp();
+  /** 通知权限：顶部提示条、提醒卡角标与卡内状态行共用同一份 */
+  const notify = useNotifyPermission(storage, reminders.request);
+  /** 安卓上读出每种尺寸小组件的桌面状态（已添加 / 被停用） */
   useEffect(() => {
-    let cancelled = false;
-    const refreshNotify = (): void => {
-      void readNotifyStatus(storage).then((status) => {
-        if (!cancelled) setNotifyStatus(status);
-      });
-    };
-    refreshNotify();
-    // 从系统设置页回到应用时重新读一次：用户可能刚开了通知或改了权限
-    globalThis.addEventListener('focus', refreshNotify);
-    return () => {
-      cancelled = true;
-      globalThis.removeEventListener('focus', refreshNotify);
-    };
-  }, [storage]);
-  useEffect(() => {
-    if (!androidApp) return;
+    if (!isAndroidApp()) return;
     let cancelled = false;
     void (async () => {
-      const [alarm, ignoring, states] = await Promise.all([
-        exactAlarmState(),
-        isIgnoringBatteryOptimizations(),
-        readMobileWidgetStates(),
-      ]);
-      if (!cancelled) {
-        setAlarmState(alarm);
-        setBatteryFree(ignoring);
-        setPinStates(states);
-      }
+      const states = await readMobileWidgetStates();
+      if (!cancelled) setPinStates(states);
     })();
     return () => {
       cancelled = true;
     };
-  }, [androidApp]);
-  /** 全平台共用六态：按钮由状态给出，不再按平台各写一套词 */
-  const notifyState = notifyStateOf(notifyStatus);
-  const notifyAbnormal = isNotifyAbnormal(notifyState);
-  /** 权限状态点：已允许绿色、异常红色、其余灰色 */
-  const notifyDotClass =
-    notifyState.state === 'granted' ? 'bg-success-strong' : notifyAbnormal ? 'bg-danger-strong' : 'bg-line';
-  async function runNotifyAction(action: 'request' | 'settings'): Promise<void> {
-    if (action === 'request') {
-      await reminders.request();
-      const next = await readNotifyStatus(storage);
-      setNotifyStatus(next);
-      toast.info(`通知权限：${notifyStateOf(next).label}`);
-      return;
-    }
-    const opened = await openNotifySettings(notifyStatus?.channelMuted === true ? notifyStatus.channelId : null);
-    if (!opened) {
-      toast.error(fail('打开系统设置', null, '请手动到系统设置里开启通知'));
-    }
-    setNotifyStatus(await readNotifyStatus(storage));
-  }
+  }, []);
   /** 请求把一种尺寸的小组件添加到桌面：动作结果走 toast，等系统确认后再给结果。 */
   async function addWidget(id: MobileWidgetState['id']): Promise<void> {
     setPinPending(id);
@@ -289,7 +233,6 @@ export function SettingsView({
     }
     toast.info(PIN_STATUS_LABEL[result.status]);
   }
-  const next = reminders.upcoming[0];
 
   useEffect(() => {
     let cancelled = false;
@@ -494,123 +437,7 @@ export function SettingsView({
     ),
 
     reminders: (
-      <>
-        <StatusLine
-          dataRole="notify-permission"
-          action={
-            notifyState.action !== null && (
-              <Button
-                size="sm"
-                variant="secondary"
-                aria-label={notifyState.action === 'request' ? '申请通知权限' : '去系统设置'}
-                onClick={() => void runNotifyAction(notifyState.action as 'request' | 'settings')}
-              >
-                {notifyState.action === 'request' ? '申请通知权限' : '去系统设置'}
-              </Button>
-            )
-          }
-        >
-          <span className={`mr-1 inline-block size-2 rounded-full ${notifyDotClass}`} data-role="notify-status-dot" aria-hidden />
-          通知权限：{notifyState.label}
-        </StatusLine>
-        <span className="text-xs text-muted">关闭后不再提醒</span>
-        {androidApp && (
-          <>
-            <StatusLine
-              dataRole="exact-alarm-status"
-              action={
-                alarmState === 'denied' && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    aria-label="开启精确闹钟"
-                    onClick={() =>
-                      void (async () => {
-                        await requestExactAlarm();
-                        const next = await exactAlarmState();
-                        setAlarmState(next);
-                        if (next === 'granted') toast.success('已开启精确闹钟');
-                        else toast.info('精确闹钟仍未开启，请到系统设置里允许');
-                      })()
-                    }
-                  >
-                    去开启
-                  </Button>
-                )
-              }
-            >
-              精确闹钟：{alarmState === 'granted' ? '已开启' : alarmState === 'denied' ? '未开启' : '不适用'}
-            </StatusLine>
-            <StatusLine
-              dataRole="battery-optimization-status"
-              action={
-                batteryFree === false && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    aria-label="申请加入电池优化白名单"
-                    onClick={() =>
-                      void (async () => {
-                        await requestIgnoreBatteryOptimizations();
-                        const next = await isIgnoringBatteryOptimizations();
-                        setBatteryFree(next);
-                        if (next === true) toast.success('已加入电池优化白名单');
-                        else toast.info('仍未加入白名单，提醒可能延后');
-                      })()
-                    }
-                  >
-                    去设置
-                  </Button>
-                )
-              }
-            >
-              后台运行：{batteryFree === null ? '读取中…' : batteryFree ? '已加入电池优化白名单' : '受电池优化限制，提醒可能延后'}
-            </StatusLine>
-          </>
-        )}
-        <SwitchField
-          label="课前提醒"
-          description="所有课程默认提醒，可在课程详情里单独设置"
-          checked={settings.classReminderEnabled}
-          onCheckedChange={(checked) => void onPatch({ classReminderEnabled: checked })}
-          ariaLabel="课前提醒"
-        />
-        <Field label="默认提前">
-          <div className="flex flex-wrap items-center gap-2">
-            {[5, 10, 15, 20, 30].map((minutes) => (
-              <Button
-                key={minutes}
-                size="sm"
-                variant={settings.classReminderMinutes === minutes ? 'primary' : 'secondary'}
-                aria-label={`提前 ${COUNT('minute', minutes)}`}
-                disabled={!settings.classReminderEnabled}
-                onClick={() => void onPatch({ classReminderMinutes: minutes })}
-              >
-                {COUNT('minute', minutes)}
-              </Button>
-            ))}
-            <Input
-              type="number"
-              min={1}
-              max={180}
-              className="w-24"
-              aria-label="自定义提前分钟"
-              disabled={!settings.classReminderEnabled}
-              value={String(settings.classReminderMinutes)}
-              onChange={(event) => {
-                const value = Number(event.target.value);
-                if (Number.isFinite(value) && value >= 1 && value <= 180) {
-                  void onPatch({ classReminderMinutes: Math.round(value) });
-                }
-              }}
-            />
-          </div>
-        </Field>
-        <span className="text-xs text-muted">
-          接下来 7 天待提醒 {COUNT('reminder', reminders.upcoming.length)}
-          {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
-        </span>
-      </>
+      <RemindersCard settings={settings} onPatch={onPatch} reminders={reminders} notify={notify} />
     ),
 
     appearance: (
@@ -910,7 +737,7 @@ export function SettingsView({
         title={card.def.title}
         {...(section === undefined ? {} : { icon: section.icon })}
         {...(card.def.id === 'semesters' ? { badge: COUNT('semester', semesters.length) } : {})}
-        {...(card.def.id === 'reminders' && notifyAbnormal
+        {...(card.def.id === 'reminders' && notify.abnormal
           ? { badge: <span className="text-danger-strong" data-role="notify-card-badge">通知未授权</span> }
           : {})}
       >
@@ -923,7 +750,7 @@ export function SettingsView({
     <div className="flex flex-col gap-3">
       {/* 待重启与通知权限异常都只在设置页顶部呈现一次，各卡片不再重复 */}
       <PendingRestartBar />
-      {notifyAbnormal && (
+      {notify.abnormal && (
         <div
           data-role="notify-banner"
           className="flex flex-wrap items-center gap-2 rounded-md border border-danger-strong/40 bg-danger-strong/10 px-3 py-2 text-xs text-danger-strong"
@@ -932,10 +759,10 @@ export function SettingsView({
           <Button
             size="sm"
             variant="secondary"
-            aria-label={notifyNextStep(notifyState)}
-            onClick={() => void runNotifyAction(notifyState.action ?? 'request')}
+            aria-label={notifyNextStep(notify.view)}
+            onClick={() => void notify.act(notify.view.action ?? 'request')}
           >
-            {notifyNextStep(notifyState)}
+            {notifyNextStep(notify.view)}
           </Button>
         </div>
       )}
