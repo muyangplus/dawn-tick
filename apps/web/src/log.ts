@@ -1,6 +1,8 @@
 import type { Storage } from '@dawn-tick/core';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { LOG_META_KEY } from './lib/meta-keys.ts';
+import { supportsNativeLog } from './lib/capabilities.ts';
+import { invokeNative } from './lib/native.ts';
 import { detectPlatform } from './platform-detect.ts';
 
 export { LOG_META_KEY };
@@ -35,10 +37,9 @@ export function applyLogSettings(options: { level: LogLevel; fileEnabled: boolea
   currentLevel = options.level;
   fileEnabled = options.fileEnabled;
   void (async () => {
-    if (detectPlatform() !== 'tauri') return;
+    if (!supportsNativeLog()) return;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
+      await invokeNative('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
     } catch {
       // 原生日志不可用时只影响内存与本地存储
     }
@@ -71,10 +72,9 @@ function platformLabel(): string {
 }
 
 async function writeToNative(entry: LogEntry): Promise<void> {
-  if (detectPlatform() !== 'tauri') return;
+  if (!supportsNativeLog()) return;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('log_event', {
+    await invokeNative('log_event', {
       level: entry.level,
       scope: entry.scope,
       message: entry.message,

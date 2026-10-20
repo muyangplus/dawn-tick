@@ -8,7 +8,7 @@ import {
   type ImportResult,
   type Storage,
 } from '@dawn-tick/core';
-import { detectPlatform } from './platform-detect.ts';
+import { supportsNativeHttp } from './lib/capabilities.ts';
 import { readMetaNumber } from './lib/meta.ts';
 import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
@@ -67,7 +67,7 @@ export function remoteUrl(settings: Pick<AppSettings, 'webdavUrl'>, name: string
 }
 
 async function davFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  if (detectPlatform() === 'tauri') {
+  if (supportsNativeHttp()) {
     const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
     return tauriFetch(url, init);
   }
