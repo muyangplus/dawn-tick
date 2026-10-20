@@ -24,6 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../com
 import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
+import { errorMessage } from '../lib/errors.ts';
 import { cn } from '../lib/cn.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 
@@ -272,7 +273,7 @@ export function CourseForm({
         onOpenChange(false);
       } catch (cause: unknown) {
         // 保存失败同时写日志与界面提示，避免只留一句「无反应」
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = errorMessage(cause);
         logError('course', '保存课程失败', { message, id: course?.id ?? null });
         setError(message);
         toast.error(`保存课程失败：${message}`);

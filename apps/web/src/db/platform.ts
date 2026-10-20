@@ -17,6 +17,7 @@ import dueAtAnySql from '@dawn-tick/core/schema/005_due_at_any.sql?raw';
 import schemaVersionSql from '@dawn-tick/core/schema/006_schema_version.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { logInfo, logWarn } from '../log.ts';
+import { errorMessage } from '../lib/errors.ts';
 import { readStorageInfo, type StorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
 import { isCorruptDatabase, isMissingSqlxMigrations } from './health.ts';
@@ -116,10 +117,6 @@ export async function openStorage(): Promise<Storage> {
   return storage;
 }
 
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
 async function openStorageInner(): Promise<Storage> {
   if (openerOverride !== null) return openerOverride();
   const platform = detectPlatform();
@@ -130,7 +127,7 @@ async function openStorageInner(): Promise<Storage> {
     } catch (error) {
       // 损坏不回退到 IndexedDB：回退会掩盖损坏，看起来像数据没了
       if (isCorruptDatabase(error)) throw error;
-      fallbackReason = describe(error);
+      fallbackReason = errorMessage(error);
       if (platform === 'tauri' && isMissingSqlxMigrations(error)) {
         // 迁移记账在插件 load 内先跑：旧库会从 001 重跑、撞上已有 users 而失败
         const info = await readStorageInfo();

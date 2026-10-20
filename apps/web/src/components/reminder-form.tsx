@@ -5,7 +5,7 @@ import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
 import { SwitchField } from './ui/controls.tsx';
 import { Input, Label } from './ui/input.tsx';
-import { toast } from './ui/toaster.tsx';
+import { useAction } from '../lib/action.ts';
 import { cn } from '../lib/cn.ts';
 
 const PRESETS = [5, 10, 15, 20, 30];
@@ -25,7 +25,7 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
   const [custom, setCustom] = useState(false);
   const [skipHolidays, setSkipHolidays] = useState(true);
   const [snooze, setSnooze] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
 
   useEffect(() => {
     let cancelled = false;
@@ -56,42 +56,46 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
   }, [storage, courseId]);
 
   async function save(): Promise<void> {
-    setBusy(true);
-    try {
-      await setReminder(storage, {
-        userId,
-        targetType: 'course',
-        targetId: courseId,
-        advanceMinutes: advance,
-        skipHolidays,
-        snoozeMinutes: snooze ? 5 : null,
-      });
-      const rows = await listRemindersFor(storage, 'course', courseId);
-      setReminderId(rows[0] === undefined ? null : String(rows[0]['id']));
-      toast.success(`已设置课前 ${advance} 分钟提醒`);
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    await run({
+      scope: 'reminder',
+      label: '正在保存提醒…',
+      ok: `已设置课前 ${advance} 分钟提醒`,
+      fail: { what: '保存提醒失败', next: '请重试；仍失败请重新打开课程详情。' },
+      task: async () => {
+        await setReminder(storage, {
+          userId,
+          targetType: 'course',
+          targetId: courseId,
+          advanceMinutes: advance,
+          skipHolidays,
+          snoozeMinutes: snooze ? 5 : null,
+        });
+        const rows = await listRemindersFor(storage, 'course', courseId);
+        setReminderId(rows[0] === undefined ? null : String(rows[0]['id']));
+        onChanged();
+      },
+    });
   }
 
   async function remove(): Promise<void> {
     if (reminderId === null) return;
-    const ok = await confirmAction({
-      title: '删除提醒',
-      description: '将删除这节课的课前提醒，不可撤销',
-      confirmLabel: '确认删除',
+    await run({
+      scope: 'reminder',
+      label: '正在删除提醒…',
+      ok: '已删除提醒',
+      fail: { what: '删除提醒失败', next: '请重试；仍失败请重新打开课程详情。' },
+      confirm: () =>
+        confirmAction({
+          title: '删除提醒',
+          description: '将删除这节课的课前提醒，不可撤销',
+          confirmLabel: '确认删除',
+        }),
+      task: async () => {
+        await deleteReminder(storage, reminderId);
+        setReminderId(null);
+        onChanged();
+      },
     });
-    if (!ok) return;
-    setBusy(true);
-    try {
-      await deleteReminder(storage, reminderId);
-      setReminderId(null);
-      toast.success('已删除提醒');
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
   }
 
   return (
@@ -172,11 +176,11 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
           </label>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" disabled={busy} onClick={() => void save()}>
+            <Button variant="primary" loading={busy} onClick={() => void save()}>
               保存提醒
             </Button>
             {reminderId !== null && (
-              <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+              <Button variant="ghost" loading={busy} onClick={() => void remove()}>
                 <Trash2 className="size-4" aria-hidden />
                 删除提醒
               </Button>

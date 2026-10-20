@@ -26,6 +26,8 @@ import {
 } from '../data-management.ts';
 import { applySchoolTimetable, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
+import { useAction } from '../lib/action.ts';
+import { errorMessage } from '../lib/errors.ts';
 
 export interface OnboardingProps {
   storage: Storage;
@@ -46,7 +48,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   const [error, setError] = useState<string | null>(null);
   /** 导入自己的错误：显示在导入分区里，不跟建学期的错误混在一起 */
   const [importError, setImportError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const [pending, setPending] = useState<BackupPayload | null>(null);
   /** 整包 zip 里的预设与日志；JSON / Base64 输入为 null */
   const [pendingExtras, setPendingExtras] = useState<PackageExtras | null>(null);
@@ -91,7 +93,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
       setPending(parseImportText(importText));
       setPendingExtras(null);
     } catch (cause: unknown) {
-      setImportError(cause instanceof Error ? cause.message : String(cause));
+      setImportError(errorMessage(cause));
     }
   }
 
@@ -103,33 +105,35 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
 
   async function applyImport(): Promise<void> {
     if (pending === null) return;
-    const ok = await confirmAction({
-      title: '覆盖现有数据',
-      description: '将覆盖设备上的现有数据，不可撤销',
-      confirmLabel: '确认覆盖',
-    });
-    if (!ok) return;
-    setBusy(true);
+    const target = pending;
     setImportError(null);
-    try {
-      const modules = presentModules(pending);
-      // 整包可能只带预设快照、没有设置行：补上 settings 才会写回预设
-      const hasPresets =
-        pendingExtras !== null &&
-        (pendingExtras.presets.snapshot !== null || pendingExtras.presets.content !== null);
-      if (hasPresets && !modules.includes('settings')) modules.push('settings');
-      const result = await importConfig(storage, pending, {
-        mode: 'overwrite',
-        modules,
-        extras: pendingExtras,
-      });
-      toast.success(`已导入 ${result.imported} 条记录${result.presets ? '，已恢复预设' : ''}`);
-      onDone();
-    } catch (cause: unknown) {
-      setImportError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'onboarding',
+      label: '正在导入备份…',
+      fail: { what: '导入备份失败', next: '请检查备份文件后重试。' },
+      confirm: () =>
+        confirmAction({
+          title: '覆盖现有数据',
+          description: '将覆盖设备上的现有数据，不可撤销',
+          confirmLabel: '确认覆盖',
+        }),
+      task: async () => {
+        const modules = presentModules(target);
+        // 整包可能只带预设快照、没有设置行：补上 settings 才会写回预设
+        const hasPresets =
+          pendingExtras !== null &&
+          (pendingExtras.presets.snapshot !== null || pendingExtras.presets.content !== null);
+        if (hasPresets && !modules.includes('settings')) modules.push('settings');
+        const imported = await importConfig(storage, target, {
+          mode: 'overwrite',
+          modules,
+          extras: pendingExtras,
+        });
+        toast.success(`已导入 ${imported.imported} 条记录${imported.presets ? '，已恢复预设' : ''}`);
+        onDone();
+      },
+    });
+    if (!result.ok && result.error !== null) setImportError(result.error);
   }
 
   /** 建学期：跳过引导与「创建并开始」共用这一段，只有取值来源不同。 */
@@ -139,35 +143,35 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     weeks: number,
     picked: School | null,
   ): Promise<void> {
-    setBusy(true);
     setError(null);
-    try {
-      const semester = await createSemester(storage, {
-        userId,
-        name: semesterName,
-        startDate: start,
-        totalWeeks: weeks,
-        timeZone,
-      });
-      if (picked !== null) {
-        // 记录这次选择：作息设置里据此置顶「一键套用」
-        await writeRecentSchool(storage, picked);
-        try {
-          const result = await applySchoolTimetable(storage, String(semester['id']), picked);
-          toast.success(`已按 ${picked.name} 排好节次（${result.periods} 节）`);
-        } catch (cause: unknown) {
-          // 套用作息失败不影响学期创建，用户可在作息设置里重来
-          setError(`学期已创建，但套用作息失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    const result = await run({
+      scope: 'onboarding',
+      label: '正在创建学期…',
+      task: async () => {
+        const semester = await createSemester(storage, {
+          userId,
+          name: semesterName,
+          startDate: start,
+          totalWeeks: weeks,
+          timeZone,
+        });
+        if (picked !== null) {
+          // 记录这次选择：作息设置里据此置顶「一键套用」
+          await writeRecentSchool(storage, picked);
+          try {
+            const applied = await applySchoolTimetable(storage, String(semester['id']), picked);
+            toast.success(`已按 ${picked.name} 排好节次（${applied.periods} 节）`);
+          } catch (cause: unknown) {
+            // 套用作息失败不影响学期创建，用户可在作息设置里重来
+            setError(`学期已创建，但套用作息失败：${errorMessage(cause)}`);
+          }
+        } else {
+          toast.success('学期已创建');
         }
-      } else {
-        toast.success('学期已创建');
-      }
-      onDone();
-    } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+        onDone();
+      },
+    });
+    if (!result.ok && result.error !== null) setError(result.error);
   }
 
   async function submit(): Promise<void> {
@@ -216,7 +220,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
           </Field>
           {error !== null && <InlineError>{error}</InlineError>}
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={busy} onClick={() => void submit()}>
+            <Button variant="primary" loading={busy} onClick={() => void submit()}>
               创建并开始
             </Button>
             <Button
@@ -326,7 +330,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
                   将覆盖设备上的现有数据，不可撤销
                 </InlineError>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="primary" aria-label="确认导入" disabled={busy} onClick={() => void applyImport()}>
+                  <Button variant="primary" aria-label="确认导入" loading={busy} onClick={() => void applyImport()}>
                     确认导入
                   </Button>
                   <Button variant="ghost" aria-label="取消导入" disabled={busy} onClick={clearPending}>

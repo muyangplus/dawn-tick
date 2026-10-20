@@ -38,16 +38,12 @@ export function storageStatusLabel(label: string, fallback: boolean): string {
   return fallback ? `${label} · ${STORAGE_FALLBACK_LABEL}` : label;
 }
 
-function describe(cause: unknown): string {
-  return nativeErrorMessage(cause);
-}
-
 export async function readStorageInfo(): Promise<StorageInfo | null> {
   if (!canConfigureStorage()) return null;
   try {
     return (await invokeNative<StorageInfo>('storage_info')) ?? null;
   } catch (cause: unknown) {
-    logWarn('storage', '读取存储位置失败', { message: describe(cause) });
+    logWarn('storage', '读取存储位置失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -66,7 +62,7 @@ export async function saveStoragePath(path: string): Promise<StoragePathResult> 
     logInfo('storage', '存储位置已保存', { dir: info.dir, custom: info.customPath, copied: info.copied.length });
     return { info, error: null };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('storage', '保存存储位置失败', { path, message });
     return { info: null, error: message };
   }
@@ -77,7 +73,7 @@ export async function openDataDirectory(): Promise<string | null> {
   try {
     return (await invokeNative<string>('open_data_dir')) ?? null;
   } catch (cause: unknown) {
-    logWarn('storage', '打开数据目录失败', { message: describe(cause) });
+    logWarn('storage', '打开数据目录失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -89,7 +85,7 @@ export async function relaunchApplication(): Promise<boolean> {
     logInfo('storage', '已请求重启应用');
     return true;
   } catch (cause: unknown) {
-    logWarn('storage', '重启应用失败', { message: describe(cause) });
+    logWarn('storage', '重启应用失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -111,7 +107,7 @@ export async function readTrayStatus(): Promise<TrayStatusResult> {
     const status = await invokeNative<TrayStatus>('tray_status');
     return { status: status ?? null, error: status === undefined ? '当前平台没有托盘' : null };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('desktop', '读取托盘状态失败', { message });
     return { status: null, error: message };
   }

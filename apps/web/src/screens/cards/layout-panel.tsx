@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { Button } from '../../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
+import { useAction } from '../../lib/action.ts';
 import { cn } from '../../lib/cn.ts';
 import { moveCard, resolveAllCards, type CardScope, type CardState, type CardZone, type LayoutConfig } from './registry.ts';
 import { readLayout, writeLayout } from './layout-store.ts';
@@ -45,53 +46,53 @@ export function CardLayoutDialog({
 
 /** 卡片布局面板：每张卡片一行，可显隐、上移下移、主列/侧列切换、恢复默认。 */
 export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelProps) {
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const [message, setMessage] = useState<string | null>(null);
 
   async function apply(next: LayoutConfig): Promise<void> {
-    setBusy(true);
-    try {
-      await writeLayout(storage, next);
-      onChange(next);
-      setMessage(null);
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'layout',
+      label: '正在保存卡片布局…',
+      task: async () => {
+        await writeLayout(storage, next);
+        onChange(next);
+        setMessage(null);
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   async function restoreDefault(): Promise<void> {
-    setBusy(true);
-    try {
-      await writeLayout(storage, {});
-      onChange(await readLayout(storage));
-      setMessage('已恢复默认布局');
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'layout',
+      label: '正在恢复默认布局…',
+      task: async () => {
+        await writeLayout(storage, {});
+        onChange(await readLayout(storage));
+        setMessage('已恢复默认布局');
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   /** 全部显示：把所有卡片改回可见，顺序与主/侧列保持不动。 */
   async function showAll(): Promise<void> {
-    setBusy(true);
-    try {
-      const next: LayoutConfig = { ...layout };
-      for (const scope of SCOPES) {
-        for (const card of resolveAllCards(scope, layout)) {
-          next[card.def.id] = { ...next[card.def.id], visible: true };
+    const result = await run({
+      scope: 'layout',
+      label: '正在显示全部卡片…',
+      task: async () => {
+        const next: LayoutConfig = { ...layout };
+        for (const scope of SCOPES) {
+          for (const card of resolveAllCards(scope, layout)) {
+            next[card.def.id] = { ...next[card.def.id], visible: true };
+          }
         }
-      }
-      await writeLayout(storage, next);
-      onChange(next);
-      setMessage('已把所有卡片设为显示');
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+        await writeLayout(storage, next);
+        onChange(next);
+        setMessage('已把所有卡片设为显示');
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   return (
@@ -106,7 +107,7 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
         <Button
           size="sm"
           variant="secondary"
-          disabled={busy}
+          loading={busy}
           aria-label="全部显示卡片"
           onClick={() => void showAll()}
         >
@@ -115,7 +116,7 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
         <Button
           size="sm"
           variant="secondary"
-          disabled={busy}
+          loading={busy}
           aria-label="恢复默认布局"
           onClick={() => void restoreDefault()}
         >

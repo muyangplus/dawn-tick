@@ -25,6 +25,8 @@ import { EmptyState } from './ui/empty-state.tsx';
 import { InlineError } from './ui/inline-error.tsx';
 import { Field, Input } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
+import { useAction } from '../lib/action.ts';
+import { errorMessage } from '../lib/errors.ts';
 import { logInfo } from '../log.ts';
 
 const SECTION_LABEL = { am: '上午', pm: '下午', night: '晚上' } as const;
@@ -191,7 +193,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const [nightCount, setNightCount] = useState(2);
   const [slots, setSlots] = useState<readonly TimeSlotRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   /** 单节改动已生效，等待用户选择重排范围；null 表示没有待回答的询问 */
   const [draft, setDraft] = useState<RerollDraft | null>(null);
   /** 已落库、但还没问范围的编辑：输入过程中只记在这里，失焦或回车时才弹窗 */
@@ -289,91 +291,91 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   };
 
   async function generate(): Promise<void> {
-    setBusy(true);
     setMessage(null);
-    try {
-      const periods = generatePeriods({
-        durationMinutes: duration,
-        breakMinutes,
-        blocks: [
-          { section: 'am', startTime: amStart, count: amCount },
-          { section: 'pm', startTime: pmStart, count: pmCount },
-          { section: 'night', startTime: nightStart, count: nightCount },
-        ],
-      });
-      await replaceTimeSlots(storage, semesterId, periods);
-      logInfo('timetable', '生成节次', { periods: periods.length, duration, breakMinutes });
-      toast.success(`已生成 ${periods.length} 个节次`);
-      await reload();
-      onChanged();
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'timetable',
+      label: '正在生成节次…',
+      task: async () => {
+        const periods = generatePeriods({
+          durationMinutes: duration,
+          breakMinutes,
+          blocks: [
+            { section: 'am', startTime: amStart, count: amCount },
+            { section: 'pm', startTime: pmStart, count: pmCount },
+            { section: 'night', startTime: nightStart, count: nightCount },
+          ],
+        });
+        await replaceTimeSlots(storage, semesterId, periods);
+        logInfo('timetable', '生成节次', { periods: periods.length, duration, breakMinutes });
+        toast.success(`已生成 ${periods.length} 个节次`);
+        await reload();
+        onChanged();
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   /** 套用选中的内置作息：照抄预设的节次时间，并把时长与课间同步成预设里最常见的节距。 */
   async function applyPreset(): Promise<void> {
     if (selectedPreset === undefined) return;
-    setBusy(true);
     setMessage(null);
-    try {
-      await replaceTimeSlots(
-        storage,
-        semesterId,
-        selectedPreset.periods.map((period) => ({
-          periodNo: period.periodNo,
-          startTime: period.start,
-          endTime: period.end,
-          // 时段按开始时间推断：<12:00 上午、<18:00 下午、其余晚上
-          section: sectionOf(period.start),
-          label: null,
-        })),
-      );
-      const spacing = presetSpacing(selectedPreset.periods);
-      if (spacing.durationMinutes !== null) setDuration(spacing.durationMinutes);
-      if (spacing.breakMinutes !== null) setBreakMinutes(spacing.breakMinutes);
-      setAppliedPreset({
-        name: selectedPreset.name,
-        source: selectedPreset.source ?? null,
-        count: selectedPreset.periods.length,
-      });
-      logInfo('timetable', '套用作息预设', {
-        id: selectedPreset.id,
-        periods: selectedPreset.periods.length,
-        duration: spacing.durationMinutes,
-        breakMinutes: spacing.breakMinutes,
-      });
-      toast.success(`已套用「${selectedPreset.name}」作息（${selectedPreset.periods.length} 节）`);
-      await reload();
-      onChanged();
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'timetable',
+      label: '正在套用作息…',
+      task: async () => {
+        await replaceTimeSlots(
+          storage,
+          semesterId,
+          selectedPreset.periods.map((period) => ({
+            periodNo: period.periodNo,
+            startTime: period.start,
+            endTime: period.end,
+            // 时段按开始时间推断：<12:00 上午、<18:00 下午、其余晚上
+            section: sectionOf(period.start),
+            label: null,
+          })),
+        );
+        const spacing = presetSpacing(selectedPreset.periods);
+        if (spacing.durationMinutes !== null) setDuration(spacing.durationMinutes);
+        if (spacing.breakMinutes !== null) setBreakMinutes(spacing.breakMinutes);
+        setAppliedPreset({
+          name: selectedPreset.name,
+          source: selectedPreset.source ?? null,
+          count: selectedPreset.periods.length,
+        });
+        logInfo('timetable', '套用作息预设', {
+          id: selectedPreset.id,
+          periods: selectedPreset.periods.length,
+          duration: spacing.durationMinutes,
+          breakMinutes: spacing.breakMinutes,
+        });
+        toast.success(`已套用「${selectedPreset.name}」作息（${selectedPreset.periods.length} 节）`);
+        await reload();
+        onChanged();
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   async function append(): Promise<void> {
-    setBusy(true);
     setMessage(null);
-    try {
-      // 追加的一节接在最后一节之后：间隔用界面上的课间
-      const created = await appendTimeSlot(storage, semesterId, duration, breakMinutes);
-      logInfo('timetable', '追加节次', {
-        periodNo: created['period_no'],
-        startTime: created['start_time'],
-        breakMinutes,
-      });
-      toast.success(`已添加第 ${created['period_no']} 节`);
-      await reload();
-      onChanged();
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'timetable',
+      label: '正在追加节次…',
+      task: async () => {
+        // 追加的一节接在最后一节之后：间隔用界面上的课间
+        const created = await appendTimeSlot(storage, semesterId, duration, breakMinutes);
+        logInfo('timetable', '追加节次', {
+          periodNo: created['period_no'],
+          startTime: created['start_time'],
+          breakMinutes,
+        });
+        toast.success(`已添加第 ${created['period_no']} 节`);
+        await reload();
+        onChanged();
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   /** 单节改起止时间先只改这一节并立即生效；改了结束时间的推算时长即重排用的新时长。 */
@@ -386,7 +388,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       onChanged();
       return true;
     } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
+      setMessage(errorMessage(cause));
       return false;
     }
   }
@@ -416,74 +418,76 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     const current = draft;
     if (current === null) return;
     closeScope();
-    setBusy(true);
     setMessage(null);
-    try {
-      const rows = await listTimeSlots(storage, semesterId);
-      if (rows.length === 0) {
-        setMessage('没有可重排的节次，请先生成节次');
-        return;
-      }
-      const anchor = current.periodNo;
-      if (!rows.some((row) => row.period_no === anchor)) {
-        setMessage(`第 ${anchor} 节不存在，无法顺延重排`);
-        return;
-      }
-      const planned = reflowPeriods(
-        rows.map((row) => ({ periodNo: row.period_no, start: row.start_time, end: row.end_time })),
-        { anchorPeriodNo: anchor, durationMinutes: duration, breakMinutes },
-      );
-      const times = new Map(planned.map((period) => [period.periodNo, period] as const));
-      await replaceTimeSlots(
-        storage,
-        semesterId,
-        rows.map((row) => {
-          const next = times.get(row.period_no);
-          const startTime = next?.start ?? row.start_time;
-          return {
-            periodNo: row.period_no,
-            startTime,
-            endTime: next?.end ?? row.end_time,
-            section: row.section ?? sectionOf(startTime),
-            label: row.label,
-          };
-        }),
-      );
-      logInfo('timetable', '按锚点顺延重排', {
-        anchor,
-        section: current.section,
-        duration,
-        breakMinutes,
-      });
-      toast.success(`第 ${anchor} 节起已顺延：每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`);
-      await reload();
-      onChanged();
-    } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'timetable',
+      label: '正在顺延重排…',
+      task: async () => {
+        const rows = await listTimeSlots(storage, semesterId);
+        if (rows.length === 0) {
+          setMessage('没有可重排的节次，请先生成节次');
+          return;
+        }
+        const anchor = current.periodNo;
+        if (!rows.some((row) => row.period_no === anchor)) {
+          setMessage(`第 ${anchor} 节不存在，无法顺延重排`);
+          return;
+        }
+        const planned = reflowPeriods(
+          rows.map((row) => ({ periodNo: row.period_no, start: row.start_time, end: row.end_time })),
+          { anchorPeriodNo: anchor, durationMinutes: duration, breakMinutes },
+        );
+        const times = new Map(planned.map((period) => [period.periodNo, period] as const));
+        await replaceTimeSlots(
+          storage,
+          semesterId,
+          rows.map((row) => {
+            const next = times.get(row.period_no);
+            const startTime = next?.start ?? row.start_time;
+            return {
+              periodNo: row.period_no,
+              startTime,
+              endTime: next?.end ?? row.end_time,
+              section: row.section ?? sectionOf(startTime),
+              label: row.label,
+            };
+          }),
+        );
+        logInfo('timetable', '按锚点顺延重排', {
+          anchor,
+          section: current.section,
+          duration,
+          breakMinutes,
+        });
+        toast.success(`第 ${anchor} 节起已顺延：每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`);
+        await reload();
+        onChanged();
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   async function remove(periodNo: number): Promise<void> {
-    setBusy(true);
     setMessage(null);
-    try {
-      const result = await deleteTimeSlot(storage, semesterId, periodNo);
-      if (!result.deleted) {
-        setMessage(
-          result.usedBy > 0
-            ? `第 ${periodNo} 节被 ${result.usedBy} 条排课占用，请先调整`
-            : `第 ${periodNo} 节不存在`,
-        );
-        return;
-      }
-      logInfo('timetable', '删除节次', { periodNo });
-      await reload();
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    const result = await run({
+      scope: 'timetable',
+      label: '正在删除节次…',
+      task: async () => {
+        const outcome = await deleteTimeSlot(storage, semesterId, periodNo);
+        if (!outcome.deleted) {
+          setMessage(
+            outcome.usedBy > 0
+              ? `第 ${periodNo} 节被 ${outcome.usedBy} 条排课占用，请先调整`
+              : `第 ${periodNo} 节不存在`,
+          );
+          return;
+        }
+        logInfo('timetable', '删除节次', { periodNo });
+        await reload();
+        onChanged();
+      },
+    });
+    if (!result.ok && result.error !== null) setMessage(result.error);
   }
 
   const draftError = draft === null ? null : paramError(duration, breakMinutes);
@@ -542,7 +546,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           <Button
             variant="secondary"
             size="sm"
-            disabled={busy || selectedPreset === undefined}
+            loading={busy}
+            disabled={selectedPreset === undefined}
             onClick={() => void applyPreset()}
           >
             套用此作息
@@ -589,11 +594,11 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="primary" size="sm" disabled={busy} onClick={() => void generate()}>
+        <Button variant="primary" size="sm" loading={busy} onClick={() => void generate()}>
           <Wand2 className="size-4" aria-hidden />
           自动生成节次
         </Button>
-        <Button variant="secondary" size="sm" disabled={busy} onClick={() => void append()}>
+        <Button variant="secondary" size="sm" loading={busy} onClick={() => void append()}>
           <Plus className="size-4" aria-hidden />
           追加一节
         </Button>

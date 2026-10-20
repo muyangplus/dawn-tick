@@ -1,4 +1,5 @@
 import { detectPlatform, type Platform } from '../platform-detect.ts';
+import { errorMessage } from '../lib/errors.ts';
 
 /** SQLite 的损坏报错都带这些字样。 */
 const CORRUPT_MARKERS = [
@@ -12,7 +13,7 @@ const CORRUPT_MARKERS = [
 
 /** 是否属于数据库损坏：界面据此换文案，并且不再回退到 IndexedDB。 */
 export function isCorruptDatabase(cause: unknown): boolean {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   const lower = message.toLowerCase();
   return CORRUPT_MARKERS.some((marker) => lower.includes(marker));
 }
@@ -23,7 +24,7 @@ export function isCorruptDatabase(cause: unknown): boolean {
  * 判据取 sqlx 的迁移前缀 + SQLite 的 existing 报错 + users 表名，避免误伤其它迁移失败。
  */
 export function isMissingSqlxMigrations(cause: unknown): boolean {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   const lower = message.toLowerCase();
   return (
     lower.includes('while executing migration') &&

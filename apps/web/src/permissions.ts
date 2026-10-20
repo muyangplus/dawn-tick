@@ -2,6 +2,7 @@ import { isAndroidApp, isDesktopApp, supportsBackgroundReminders } from './lib/c
 import { currentNotifyPermission, ensureNotifyPermission, readNotifyAsked, type NotifyPermission } from './notify.ts';
 import { readNativeNotifyStatus } from './system-actions.ts';
 import { logInfo, logWarn } from './log.ts';
+import { errorMessage } from './lib/errors.ts';
 import type { Storage } from '@dawn-tick/core';
 
 export type ExactAlarmState = 'granted' | 'denied' | 'unsupported';
@@ -61,7 +62,7 @@ async function readTauriNotifyStatus(asked: boolean): Promise<NotifyStatus> {
     };
   } catch (cause: unknown) {
     logWarn('permission', '桌面通知状态不可读', {
-      message: cause instanceof Error ? cause.message : String(cause),
+      message: errorMessage(cause),
     });
     // 取不到就明确报「状态不可读」，不假装成未申请或六态中的某一态
     return { ...statusBase(asked), source: 'tauri', runtime: 'unreadable' };
@@ -108,7 +109,7 @@ export async function exactAlarmState(): Promise<ExactAlarmState> {
     return status.exact_alarm === 'granted' ? 'granted' : 'denied';
   } catch (cause: unknown) {
     logWarn('permission', '读取精确闹钟设置失败', {
-      message: cause instanceof Error ? cause.message : String(cause),
+      message: errorMessage(cause),
     });
     return 'unsupported';
   }
@@ -124,7 +125,7 @@ export async function requestExactAlarm(): Promise<boolean> {
     return true;
   } catch (cause: unknown) {
     logWarn('permission', '跳转精确闹钟设置页失败', {
-      message: cause instanceof Error ? cause.message : String(cause),
+      message: errorMessage(cause),
     });
     return false;
   }

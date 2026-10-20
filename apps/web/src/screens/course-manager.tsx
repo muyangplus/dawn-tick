@@ -15,9 +15,9 @@ import { Button } from '../components/ui/button.tsx';
 import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { DangerDialog, Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
-import { toast } from '../components/ui/toaster.tsx';
 import { COUNT, DELETE } from '../copy/zh.ts';
 import { countForCourse, type CourseCounts } from '../delete-counts.ts';
+import { useAction } from '../lib/action.ts';
 import { CourseForm } from './course-form.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { logInfo } from '../log.ts';
@@ -82,7 +82,7 @@ export function CourseManager({
   const [removeCounts, setRemoveCounts] = useState<CourseCounts | null>(null);
   /** 复制课程：先选只复制课程信息，还是连排课一起复制 */
   const [copying, setCopying] = useState<ManagedCourse | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   /** 新建课程：导入子项里的「手动添加」也会用它打开表单 */
   const [creating, setCreating] = useState(false);
   /** 导入课表折叠区：「完成」要把它收起 */
@@ -105,58 +105,63 @@ export function CourseManager({
   /** 复制课程：可选只复制课程信息，或连同全部排课一起复制。 */
   async function confirmCopy(withSchedules: boolean): Promise<void> {
     if (copying === null) return;
-    setBusy(true);
-    try {
-      const source = copying;
-      const created = await createCourse(storage, {
-        semesterId,
-        name: `${source.name} 副本`,
-        shortName: source.shortName,
-        teacher: source.teacher,
-        location: source.location,
-        color: source.color,
-        note: source.note,
-      });
-      const id = String(created['id']);
-      if (withSchedules) {
-        for (const schedule of source.schedules) {
-          await createSchedule(storage, {
-            courseId: id,
-            dayOfWeek: schedule.dayOfWeek,
-            periodStart: schedule.periodStart,
-            periodEnd: schedule.periodEnd,
-            weeks: schedule.weeks,
-            room: schedule.room,
-            startTime: schedule.startTime,
-            endTime: schedule.endTime,
-          });
+    const source = copying;
+    await run({
+      scope: 'course',
+      label: '正在复制课程…',
+      ok: withSchedules
+        ? `已复制「${source.name}」及 ${source.schedules.length} 段排课`
+        : `已复制「${source.name}」`,
+      fail: { what: '复制课程失败', next: '请重试；仍失败请重新打开课程管理。' },
+      task: async () => {
+        const created = await createCourse(storage, {
+          semesterId,
+          name: `${source.name} 副本`,
+          shortName: source.shortName,
+          teacher: source.teacher,
+          location: source.location,
+          color: source.color,
+          note: source.note,
+        });
+        const id = String(created['id']);
+        if (withSchedules) {
+          for (const schedule of source.schedules) {
+            await createSchedule(storage, {
+              courseId: id,
+              dayOfWeek: schedule.dayOfWeek,
+              periodStart: schedule.periodStart,
+              periodEnd: schedule.periodEnd,
+              weeks: schedule.weeks,
+              room: schedule.room,
+              startTime: schedule.startTime,
+              endTime: schedule.endTime,
+            });
+          }
         }
-      }
-      logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
-      toast.success(
-        withSchedules ? `已复制「${source.name}」及 ${source.schedules.length} 段排课` : `已复制「${source.name}」`,
-      );
-      setCopying(null);
-      await reload();
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+        logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
+        setCopying(null);
+        await reload();
+        onChanged();
+      },
+    });
   }
 
   async function confirmRemove(): Promise<void> {
     if (removing === null) return;
-    setBusy(true);
-    try {
-      await deleteCourse(storage, removing.id);
-      logInfo('course', '删除课程', { id: removing.id, schedules: removing.schedules.length });
-      toast.success(`已删除课程「${removing.name}」`);
-      setRemoving(null);
-      await reload();
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    const target = removing;
+    await run({
+      scope: 'course',
+      label: '正在删除课程…',
+      ok: `已删除课程「${target.name}」`,
+      fail: { what: '删除课程失败', next: '请重试；仍失败请重开应用后再删。' },
+      task: async () => {
+        await deleteCourse(storage, target.id);
+        logInfo('course', '删除课程', { id: target.id, schedules: target.schedules.length });
+        setRemoving(null);
+        await reload();
+        onChanged();
+      },
+    });
   }
 
   return (
@@ -281,10 +286,10 @@ export function CourseManager({
           }
         >
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => void confirmCopy(false)}>
+            <Button variant="secondary" loading={busy} onClick={() => void confirmCopy(false)}>
               只复制课程信息
             </Button>
-            <Button variant="primary" disabled={busy} onClick={() => void confirmCopy(true)}>
+            <Button variant="primary" loading={busy} onClick={() => void confirmCopy(true)}>
               连排课一起复制
             </Button>
           </div>

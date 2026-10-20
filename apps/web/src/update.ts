@@ -1,6 +1,8 @@
 /** 更新检查只判断「有没有新版」，下载与安装由界面触发。 */
 /** 只有 fetch 抛错才从 UPDATE_API_FEEDS 回退 UPDATE_FEEDS，HTTP 状态错误不回退。 */
 
+import { errorMessage } from './lib/errors.ts';
+
 export type UpdateChannel = 'dev' | 'beta' | 'release';
 
 const OWNER = 'muyangplus';
@@ -314,7 +316,7 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
     };
   } catch (cause: unknown) {
     // 网络异常：记住原始原因，下面回退；回退也失败时把它交出去（不吞掉真实原因）
-    networkError = cause instanceof Error ? cause.message : String(cause);
+    networkError = errorMessage(cause);
   }
 
   // ② 回退：version.json 直连（github.com 资产）。beta 没有固定直连地址，直接交回原始网络错误。

@@ -13,6 +13,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { SCHOOL_TAGS, listProvinces, type School } from '@dawn-tick/core';
+import { errorMessage } from '../lib/errors.ts';
 import {
   presetIndexFromSnapshot,
   resolvePresetSource,
@@ -152,7 +153,7 @@ export async function loadPresetContext(storage: Storage): Promise<PresetContext
   try {
     index = presetIndexFromSnapshot(snapshot);
   } catch (cause: unknown) {
-    problem = cause instanceof Error ? cause.message : String(cause);
+    problem = errorMessage(cause);
   }
   return { version: source.version, kind: source.kind, index, problem, snapshot };
 }

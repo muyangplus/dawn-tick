@@ -1,4 +1,5 @@
 import type { Storage } from '@dawn-tick/core';
+import { errorMessage } from './lib/errors.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { LOG_META_KEY } from './lib/meta-keys.ts';
 import { supportsNativeLog } from './lib/capabilities.ts';
@@ -50,9 +51,9 @@ export function logLevel(): LogLevel {
   return currentLevel;
 }
 
-/** 异常转一行内部原因：界面只显示用户语言，原始信息只进日志。 */
+/** 异常转一行内部原因：界面只显示用户语言，原始信息只进日志。单一实现见 `lib/errors.ts`。 */
 export function describeError(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+  return errorMessage(cause);
 }
 
 export function logFileEnabled(): boolean {
