@@ -252,7 +252,7 @@ test('锚点顺延重排：锚点缺失或参数越界时报错', () => {
   assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 300, breakMinutes: 10 }), /上课时长/);
   assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: -1 }), /课间间隔/);
   assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 200 }), /课间间隔/);
-  assert.throws(() => reflowPeriods([], { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 }), /课次列表不能为空/);
+  assert.throws(() => reflowPeriods([], { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 }), /节次列表不能为空/);
   assert.throws(
     () =>
       reflowPeriods(
@@ -262,7 +262,7 @@ test('锚点顺延重排：锚点缺失或参数越界时报错', () => {
         ],
         { anchorPeriodNo: 2, durationMinutes: 45, breakMinutes: 10 },
       ),
-    /课次编号重复/,
+    /节次编号重复/,
   );
   assert.doesNotThrow(
     () => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45.2, breakMinutes: 10.4 }),

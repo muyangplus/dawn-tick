@@ -73,7 +73,7 @@ export function generatePeriods(input: TimetableInput): GeneratedPeriod[] {
     }
   }
   if (periods.length === 0) throw new Error('至少需要一个时段且节数大于零');
-  if (periods.length > 30) throw new Error('课次不能超过 30 节');
+  if (periods.length > 30) throw new Error('节次不能超过 30 节');
   return periods;
 }
 
@@ -108,7 +108,7 @@ export function regenerateSections(
     if (!wanted.has(section)) continue;
     const first = group[0];
     if (first === undefined) continue;
-    if (group.length > 20) throw new Error(`单个时段的课次不能超过 20 节：${section} 有 ${group.length} 节`);
+    if (group.length > 20) throw new Error(`单个时段的节次不能超过 20 节：${section} 有 ${group.length} 节`);
     const fresh = generatePeriods({
       durationMinutes: input.durationMinutes,
       breakMinutes: input.breakMinutes,
@@ -164,16 +164,16 @@ export function reflowPeriods(
   if (!Number.isFinite(gap) || gap < 0 || gap > 120) {
     throw new Error('课间间隔需在 0 到 120 分钟之间');
   }
-  if (periods.length === 0) throw new Error('课次列表不能为空');
+  if (periods.length === 0) throw new Error('节次列表不能为空');
 
   const sorted = [...periods].sort((left, right) => left.periodNo - right.periodNo);
   for (const [index, period] of sorted.entries()) {
     if (!Number.isInteger(period.periodNo) || period.periodNo < 1) {
-      throw new Error(`课次编号应为正整数：${String(period.periodNo)}`);
+      throw new Error(`节次编号应为正整数：${String(period.periodNo)}`);
     }
     const previous = sorted[index - 1];
     if (previous !== undefined && previous.periodNo === period.periodNo) {
-      throw new Error(`课次编号重复：${period.periodNo}`);
+      throw new Error(`节次编号重复：${period.periodNo}`);
     }
   }
 

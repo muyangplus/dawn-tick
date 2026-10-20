@@ -228,7 +228,7 @@ export async function appendTimeSlot(
   const gap = Math.max(0, Math.round(breakMinutes));
   const startTime = last === undefined ? '08:00' : addMinutes(String(last['end_time']), gap);
   const periodNo = last === undefined ? 1 : Number(last['period_no']) + 1;
-  if (periodNo > 30) throw new Error('课次不能超过 30 节');
+  if (periodNo > 30) throw new Error('节次不能超过 30 节');
   return insert(ctx, 'time_slots', {
     id: ctx.id(),
     semester_id: semesterId,
