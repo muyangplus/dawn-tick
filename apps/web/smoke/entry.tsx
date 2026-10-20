@@ -270,6 +270,15 @@ async function flush(rounds = 8): Promise<void> {
   }
 }
 
+/** 轮询等待异步渲染结果：重复预检要读存储，固定 flush 轮数不够稳。 */
+async function waitFor(predicate: () => boolean, rounds = 40): Promise<boolean> {
+  for (let index = 0; index < rounds; index += 1) {
+    if (predicate()) return true;
+    await flush(1);
+  }
+  return predicate();
+}
+
 function clickByText(container: HTMLElement, label: string): boolean {
   const button = [...container.querySelectorAll('button')].find(
     (item) => (item.textContent ?? '').trim() === label,
@@ -513,6 +522,21 @@ const PAGE_WEEKDAY_SAMPLE = `<table><tr><td>节次</td><td>星期一</td><td>星
   <tr><td>第1节</td><td>手动映射课程<br>1-16周</td><td></td><td></td></tr>
   <tr><td>第2节</td><td></td><td>手动映射课程二<br>2-16周</td><td></td></tr>
 </table>`;
+
+/**
+ * P2-16：前两条与 `PAGE_SAMPLE` 完全一致（同一批数据导入后就成为冲突项），
+ * 第三条是新课，用来验证「只看冲突项」筛选只藏非冲突行。
+ */
+const PAGE_MIXED_DUPLICATE_SAMPLE = `<table id="kbtable"><tr>
+  <td id="1-1"><div><span class="title">网页导入课程</span><p>张老师</p><p>教三-401</p><p>1-16周</p></div></td>
+  <td id="2-1"><div><span class="title">网页导入课程二</span><p>李老师</p><p>理科楼-201</p><p>2-16周(双)</p></div></td>
+  <td id="5-3"><div><span class="title">无冲突新增课程</span><p>王老师</p><p>教二-101</p><p>5-8周</p></div></td>
+</tr></table>`;
+
+/** P2-16：全新课程，用来验证「没有冲突项」的空筛选提示。 */
+const PAGE_NO_DUPLICATE_SAMPLE = `<table id="kbtable"><tr>
+  <td id="4-5"><div><span class="title">零冲突课程</span><p>赵老师</p><p>教一-102</p><p>3-6周</p></div></td>
+</tr></table>`;
 
 /** 预设更新冒烟用的假 Response：全程不联网。 */
 function presetJsonResponse(body: unknown, ok = true, status = 200): Response {
@@ -3148,7 +3172,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     // P2-02：预览支持全选 / 清空 / 反选
     const preview = importApp.container.querySelector('[data-role="import-preview"]');
     const previewBoxes = (): HTMLInputElement[] => [
-      ...(preview?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []),
+      // 排除 P2-16 的「只看冲突项」开关：这里数的是行勾选框
+      ...(preview?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:not([data-role])') ?? []),
     ];
     const previewText = (): string => preview?.textContent ?? '';
     let batchOk =
@@ -3193,6 +3218,128 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       `完成页=${importFinished} / open=${importDetails?.open ?? '(无)'}`,
     );
     importApp.root.unmount();
+  }
+
+  // P2-16：导入预览「只看冲突项」——冲突行标注、筛选隐藏非冲突行、无冲突时给空提示
+  {
+    const conflictApp = mount(<App />);
+    await flush(12);
+    clickByText(conflictApp.container, '设置');
+    await flush(12);
+    conflictApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]')?.click();
+    await flush(10);
+    if (clickByTextStart(conflictApp.container, '网页课表')) await flush(10);
+
+    const previewBox = (): HTMLElement | null =>
+      conflictApp.container.querySelector('[data-role="import-preview"]');
+    const conflictRows = (): HTMLElement[] => [
+      ...(previewBox()?.querySelectorAll<HTMLElement>('[data-role="import-conflict-row"]') ?? []),
+    ];
+    const plainRows = (): HTMLElement[] => [
+      ...(previewBox()?.querySelectorAll<HTMLElement>('[data-role="import-row"]') ?? []),
+    ];
+    const rowCheckboxes = (): HTMLInputElement[] => [
+      ...(previewBox()?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:not([data-role])') ?? []),
+    ];
+    const previewText = (): string => previewBox()?.textContent ?? '';
+    const filterBox = (): HTMLInputElement | null =>
+      previewBox()?.querySelector<HTMLInputElement>('input[data-role="import-conflict-only"]') ?? null;
+
+    const paste = conflictApp.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="粘贴课表页面内容"]',
+    );
+    if (paste instanceof window.HTMLTextAreaElement) {
+      setInputValue(paste, PAGE_MIXED_DUPLICATE_SAMPLE);
+      await flush(6);
+      if (clickByText(conflictApp.container, '识别并预览')) await flush(10);
+    }
+
+    const marked = await waitFor(
+      () =>
+        conflictRows().length === 2 &&
+        plainRows().length === 1 &&
+        previewText().includes('其中 2 条重复'),
+    );
+    check(
+      '预览标出重复条目',
+      marked &&
+        conflictRows().every((row) => (row.textContent ?? '').includes('重复，将被跳过')) &&
+        plainRows().every((row) => !(row.textContent ?? '').includes('重复，将被跳过')),
+      `${conflictRows().length} 条重复 / ${plainRows().length} 条非重复`,
+    );
+
+    const filter = filterBox();
+    filter?.click();
+    await flush(6);
+    const visibleRows = [...(previewBox()?.querySelectorAll<HTMLElement>('tbody tr') ?? [])];
+    check(
+      '只看冲突项：冲突行可见，非冲突行隐藏',
+      filter !== null &&
+        filter.checked &&
+        visibleRows.length === 2 &&
+        visibleRows.every((row) => row.getAttribute('data-role') === 'import-conflict-row') &&
+        !previewText().includes('无冲突新增课程') &&
+        previewText().includes('筛选态：批选只作用于可见行'),
+      `可见 ${visibleRows.length} 行 / ${conflictRows().length} 条冲突`,
+    );
+
+    // 筛选态下批选只作用于可见行：隐藏行（那条新排课）的勾选状态保持不动
+    const batchBar = previewBox()?.querySelector<HTMLElement>('[data-role="import-batch"]');
+    let batchOk = batchBar !== null && batchBar !== undefined;
+    if (batchBar !== null && batchBar !== undefined) {
+      clickByText(batchBar, '清空');
+      await flush(6);
+      batchOk =
+        batchOk &&
+        rowCheckboxes().every((box) => !box.checked) &&
+        previewText().includes('已选 1 条');
+      clickByText(batchBar, '全选');
+      await flush(6);
+      batchOk =
+        batchOk &&
+        rowCheckboxes().length === 2 &&
+        rowCheckboxes().every((box) => box.checked) &&
+        previewText().includes('已选 3 条');
+      clickByText(batchBar, '反选');
+      await flush(6);
+      batchOk =
+        batchOk &&
+        rowCheckboxes().every((box) => !box.checked) &&
+        previewText().includes('已选 1 条');
+    }
+    check(
+      '筛选态下批选只作用于可见行',
+      batchOk,
+      `${rowCheckboxes().filter((box) => box.checked).length}/${rowCheckboxes().length} 已勾选 ${previewText().slice(0, 30)}`,
+    );
+
+    // 没有冲突项：筛选打开后列表为空，并给一句提示
+    if (clickByText(conflictApp.container, '返回')) await flush(8);
+    const pasteAgain = conflictApp.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="粘贴课表页面内容"]',
+    );
+    if (pasteAgain instanceof window.HTMLTextAreaElement) {
+      setInputValue(pasteAgain, PAGE_NO_DUPLICATE_SAMPLE);
+      await flush(6);
+      if (clickByText(conflictApp.container, '识别并预览')) await flush(10);
+    }
+    const ready = await waitFor(() => {
+      const box = filterBox();
+      return box !== null && !box.disabled && previewText().includes('解析到 1 条排课');
+    });
+    filterBox()?.click();
+    await flush(6);
+    const emptyHint = previewBox()?.querySelector('[data-role="import-no-conflict"]');
+    check(
+      '没有冲突项时提示出现',
+      ready &&
+        filterBox()?.checked === true &&
+        (previewBox()?.querySelectorAll('tbody tr').length ?? -1) === 0 &&
+        emptyHint !== null &&
+        (emptyHint.textContent ?? '').includes('没有冲突项'),
+      `提示=${emptyHint?.textContent?.trim() ?? '(无)'} 行=${previewBox()?.querySelectorAll('tbody tr').length ?? -1}`,
+    );
+    conflictApp.root.unmount();
   }
 
   // P0-01：条目删除入口（详情页删除 → 确认 → 时间线消失）
