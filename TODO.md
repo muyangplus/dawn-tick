@@ -914,8 +914,8 @@
 - 优先级：P1；ICE（I6/C8/E7=336）
 - 依赖：无
 - 验收指标：`grep -rn "useBusyAction" apps/web/src` 至少 1 处真实调用或删为 0；`busy.test.ts` 出现在测试脚本输出；手写 `useState(false)` busy 从 13 处降到 ≤4。
-- 来源：主审+盲审；分歧与裁决：`useBusyAction` 0 调用为盲审同向发现；`busy.test.ts` 未进 `apps/web/package.json:10` 为主审核实。
-- 状态：待办
+- 来源：主审+盲审；分歧与裁决：`useBusyAction` 0 调用为盲审同向发现；`busy.test.ts` 未进 `apps/web/package.json:10` 为主审核实。本轮实现：`104e25f`（合入 `8e2207c`）。
+- 状态：待验收
 
 ### [A-06] 时间与日期常量单源：WEEKDAYS、节次文案、日期戳、倒计时、周序号→日期
 - 轨道：技术演进
@@ -1135,8 +1135,8 @@
 - 优先级：P2；ICE（I3/C7/E6=126）
 - 依赖：A-09（插件加载统一后可集中接口）
 - 验收指标：两端诊断字段一致（共用样例断言）；`registerPlugin(` 调用点从 4 降到 1；插件契约文档存在。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`bc44144`（合入 `b2814d3`）。
+- 状态：待验收
 
 ### [A-19] 依赖与构建清理（未用依赖、manualChunks、冒烟入口拆分）
 - 轨道：技术演进
@@ -1543,6 +1543,8 @@
 | A-19 依赖与构建清理 | `23cac3a` | `b4eb35b` | 删 6 个未用 Radix 依赖、exceljs 独立 chunk（冒烟拆分未做） |
 | A-08 课程色与周次选择器单源 | `51275d5` | `2fc95de` | core `colors.ts`、`week-picker.tsx`、删死函数；两表单周次 DOM 一致 |
 | A-09 原生桥与平台能力收口 | `025f17b` | `635da57` | `lib/native`/`lib/capabilities`，tauri 动态 import 20→1，Rust 命令 30/30 对齐，修 `relaunch_elevated_autostart` 运行时 bug |
+| A-05 动作/错误/忙碌态统一 | `104e25f` | `8e2207c` | `lib/errors`/`lib/action`/`lib/toast`；手写 busy 18→0、本地 describe 5→0、内联错误转换 33→1 |
+| A-18 导入诊断与插件契约 | `bc44144` | `b2814d3` | 注入脚本诊断字段补齐 9 项、`lib/plugins.ts` 唯一加载入口、`plugins.contract.md` |
 | A-16 远端制品共享 | — | — | 按 Q14 量重合度后关闭（共享部分仅约 25 行/条） |
 
 - 发版过程修掉两个阻塞：① 界面冒烟在 CI runner 默认 UTC 下时间文案漂移（首次把冒烟接进 CI 时暴露）→ 冒烟脚本与 CI 步骤固定 `TZ=Asia/Shanghai`；② 发布正文的 Full Changelog 拼装跑在 `PREV` 计算之前，正文缺比较链接且 `gh release create` 失败 → 发布逻辑抽到 `tools/release/publish.sh`，正文自行拼好 Full Changelog（不再传 `--notes-start-tag`），失败时把日志推到 `ci-debug` 分支便于无权限读 Actions 日志时排查。
