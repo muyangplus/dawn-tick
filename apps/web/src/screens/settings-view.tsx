@@ -64,9 +64,10 @@ import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { isNotifyAbnormal, notifyNextStep, notifyStateOf } from '../notify-state.ts';
 import type { ReminderView } from '../useReminders.ts';
+import { cn } from '../lib/cn.ts';
 import { CardLayoutDialog } from './cards/layout-panel.tsx';
 import { readLayout } from './cards/layout-store.ts';
-import { resolveCards, type LayoutConfig } from './cards/registry.ts';
+import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/registry.ts';
 import { settingsSection } from './cards/settings-cards.tsx';
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
@@ -792,11 +793,7 @@ export function SettingsView({
         </Field>
           </>
         )}
-        <Field label="卡片布局" hint="顶部按钮进入">
-          <Button size="sm" variant="secondary" aria-label="打开卡片布局" onClick={() => setLayoutOpen(true)}>
-            打开卡片布局
-          </Button>
-        </Field>
+        <span className="text-xs text-muted">卡片显隐在顶部「卡片布局」</span>
         {canUseWidget() && (
           <StatusLine dataRole="tray-status">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</StatusLine>
         )}
@@ -893,7 +890,31 @@ export function SettingsView({
     ),
   };
 
-  const cards = resolveCards('settings', layout);
+  /** 设置页卡片：主列在上、侧列在右；侧列由顶部「卡片布局」切换，没有侧列时不占宽度。 */
+  const mainCards = cardsInZone('settings', layout, 'main');
+  const sideCards = cardsInZone('settings', layout, 'side');
+  /** 两列只在主列与侧列都有卡片时生效：全部卡片都切到侧列时，侧列自己占满整行（P2-07） */
+  const twoColumn = mainCards.length > 0 && sideCards.length > 0;
+
+  const renderCard = (card: ResolvedCard): ReactNode => {
+    const body = bodies[card.def.id];
+    if (body === undefined) return null;
+    const section = settingsSection(card.def.id);
+    return (
+      <CollapsibleCard
+        key={card.def.id}
+        id={card.def.id}
+        title={card.def.title}
+        {...(section === undefined ? {} : { icon: section.icon })}
+        {...(card.def.id === 'semesters' ? { badge: COUNT('semester', semesters.length) } : {})}
+        {...(card.def.id === 'reminders' && notifyAbnormal
+          ? { badge: <span className="text-danger-strong" data-role="notify-card-badge">通知未授权</span> }
+          : {})}
+      >
+        {body}
+      </CollapsibleCard>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -935,25 +956,24 @@ export function SettingsView({
         <span className="text-xs text-muted">显示 / 隐藏卡片、调顺序与主侧列</span>
       </div>
 
-      {cards.map((card) => {
-        const body = bodies[card.def.id];
-        if (body === undefined) return null;
-        const section = settingsSection(card.def.id);
-        return (
-          <CollapsibleCard
-            key={card.def.id}
-            id={card.def.id}
-            title={card.def.title}
-            {...(section === undefined ? {} : { icon: section.icon })}
-            {...(card.def.id === 'semesters' ? { badge: COUNT('semester', semesters.length) } : {})}
-            {...(card.def.id === 'reminders' && notifyAbnormal
-              ? { badge: <span className="text-danger-strong" data-role="notify-card-badge">通知未授权</span> }
-              : {})}
+      {/* P2-07：侧列只在有卡片时生效（desktop 两列 2fr/1fr），否则主列占满整行 */}
+      <div
+        className={cn('grid items-start gap-3', twoColumn && 'desktop:grid-cols-[2fr_1fr]')}
+        data-role="settings-grid"
+      >
+        <div className="flex min-w-0 flex-col gap-3" data-role="settings-main">
+          {mainCards.map(renderCard)}
+        </div>
+        {sideCards.length > 0 && (
+          <aside
+            className="flex min-w-0 flex-col gap-3"
+            data-role="settings-side"
+            aria-label="设置侧栏"
           >
-            {body}
-          </CollapsibleCard>
-        );
-      })}
+            {sideCards.map(renderCard)}
+          </aside>
+        )}
+      </div>
 
       <Dialog open={importDrawerOpen} onOpenChange={setImportDrawerOpen}>
         <DialogContent title="导入课表" description="网页课表 / 教务窗口 / ICS / CSV / Excel">

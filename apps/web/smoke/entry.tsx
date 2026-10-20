@@ -2881,8 +2881,104 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `倒计时相关卡片 ${layoutTitles.filter((title) => title.includes('倒计时')).length} 张`,
   );
   if (clickByLabel(document.body, '关闭卡片布局')) await flush(8);
+  // P2-07：设置页「卡片布局」入口只剩顶部一处，外观卡内不再有第二个入口
+  const layoutEntryButtons = (): HTMLElement[] =>
+    [...view.container.querySelectorAll<HTMLElement>('button')].filter((item) =>
+      (item.getAttribute('aria-label') ?? '').includes('卡片布局'),
+    );
+  const settingsEntries = layoutEntryButtons();
+  check(
+    '设置页卡片布局入口只有顶部一处',
+    settingsEntries.length === 1 &&
+      settingsEntries[0]?.closest('[data-role="settings-toolbar"]') !== null,
+    `${settingsEntries.length} 处：${settingsEntries.map((item) => item.getAttribute('aria-label')).join(' / ') || '(无)'}`,
+  );
+  check(
+    '外观卡写明卡片显隐在顶部「卡片布局」',
+    (view.container.textContent ?? '').includes('卡片显隐在顶部「卡片布局」'),
+    '',
+  );
+  // P2-07：外观卡切到侧列后真的进右栏（宽屏 desktop 两列 2fr/1fr），不再是无效控件
+  if (clickByLabel(view.container, '卡片布局')) await flush(12);
+  const appearanceToSide = clickByLabel(document.body, '卡片区域：外观：侧列');
+  await flush(16);
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
+  const settingsGrid = view.container.querySelector<HTMLElement>('[data-role="settings-grid"]');
+  const settingsSide = view.container.querySelector<HTMLElement>('[data-role="settings-side"]');
+  const settingsMain = view.container.querySelector<HTMLElement>('[data-role="settings-main"]');
+  check(
+    '设置页侧列生效：外观卡进入右栏并变成两列',
+    appearanceToSide &&
+      settingsSide !== null &&
+      (settingsSide.textContent ?? '').includes('主题风格') &&
+      !(settingsMain?.textContent ?? '').includes('主题风格') &&
+      (settingsGrid?.className ?? '').includes('desktop:grid-cols-[2fr_1fr]'),
+    `侧栏=${settingsSide === null ? '无' : (settingsSide.textContent ?? '').slice(0, 24)}`,
+  );
+  if (clickByLabel(view.container, '卡片布局')) await flush(12);
+  if (clickByLabel(document.body, '卡片区域：外观：主列')) await flush(16);
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
+  check(
+    '设置页外观卡可切回主列',
+    view.container.querySelector('[data-role="settings-side"]') === null &&
+      (view.container.querySelector('[data-role="settings-main"]')?.textContent ?? '').includes('主题风格'),
+    '',
+  );
+  // P2-07 验收：隐藏外观卡（入口所在卡片）后，顶部入口仍在
+  if (clickByLabel(view.container, '卡片布局')) await flush(12);
+  const appearanceCheckbox = document.querySelector<HTMLInputElement>('input[aria-label="显示卡片：外观"]');
+  if (appearanceCheckbox !== null) {
+    appearanceCheckbox.click();
+    await flush(16);
+  }
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
+  const appearanceHidden = !(view.container.textContent ?? '').includes('卡片显隐在顶部「卡片布局」');
+  const entryAfterHide = layoutEntryButtons().length === 1;
+  if (entryAfterHide) clickByLabel(view.container, '卡片布局');
+  await flush(12);
+  check(
+    '隐藏外观卡后仍可进入卡片布局',
+    appearanceHidden && entryAfterHide && document.querySelector('[aria-label="显示卡片：外观"]') !== null,
+    `外观卡=${appearanceHidden ? '已隐藏' : '仍显示'} / 入口=${entryAfterHide ? '可点' : '找不到'}`,
+  );
+  const restoreAppearance = document.querySelector<HTMLInputElement>('input[aria-label="显示卡片：外观"]');
+  if (restoreAppearance !== null && !restoreAppearance.checked) {
+    restoreAppearance.click();
+    await flush(16);
+  }
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
+  check(
+    '外观卡恢复显示',
+    (view.container.textContent ?? '').includes('卡片显隐在顶部「卡片布局」'),
+    '',
+  );
   // 「更新与维护」「关于」「存储与同步」三张卡片都在设备与同步页
   await gotoDevices();
+  // P2-07：设备与同步页同样只有顶部一个入口，侧列切换同样生效
+  const devicesEntries = layoutEntryButtons();
+  check(
+    '设备与同步页卡片布局入口只有顶部一处',
+    devicesEntries.length === 1 &&
+      devicesEntries[0]?.closest('[data-role="devices-toolbar"]') !== null,
+    `${devicesEntries.length} 处：${devicesEntries.map((item) => item.getAttribute('aria-label')).join(' / ') || '(无)'}`,
+  );
+  if (clickByLabel(view.container, '卡片布局')) await flush(12);
+  const aboutToSide = clickByLabel(document.body, '卡片区域：关于：侧列');
+  await flush(16);
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
+  const devicesSide = view.container.querySelector<HTMLElement>('[data-role="devices-side"]');
+  const devicesGrid = view.container.querySelector<HTMLElement>('[data-role="devices-grid"]');
+  check(
+    '设备与同步页侧列生效：关于卡进入右栏并变成两列',
+    aboutToSide &&
+      devicesSide !== null &&
+      devicesSide.querySelector('[data-role="about-app"]') !== null &&
+      (devicesGrid?.className ?? '').includes('desktop:grid-cols-[2fr_1fr]'),
+    `侧栏=${devicesSide === null ? '无' : (devicesSide.textContent ?? '').slice(0, 24)}`,
+  );
+  if (clickByLabel(view.container, '卡片布局')) await flush(12);
+  if (clickByLabel(document.body, '卡片区域：关于：主列')) await flush(16);
+  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
   // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
   const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
   const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';

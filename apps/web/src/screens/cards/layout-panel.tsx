@@ -97,7 +97,7 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
   return (
     <div className="flex flex-col gap-3">
       <span className="text-xs text-muted">
-        每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换；「全部显示」把所有卡片恢复可见，恢复默认即返回出厂顺序。
+        每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换（侧列在宽屏显示为右栏）；「全部显示」把所有卡片恢复可见，恢复默认即返回出厂顺序。
       </span>
       {SCOPES.map((scope) => (
         <ScopeGroup key={scope} scope={scope} layout={layout} busy={busy} onApply={(next) => void apply(next)} />

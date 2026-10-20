@@ -78,9 +78,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../com
 import { StatusLine, type StatusMessage } from '../components/ui/status-line.tsx';
 import { registerPendingRestart } from '../pending-restart.ts';
 import { toast } from '../components/ui/toaster.tsx';
+import { cn } from '../lib/cn.ts';
 import { CardLayoutDialog } from './cards/layout-panel.tsx';
 import { readLayout } from './cards/layout-store.ts';
-import { resolveCards, type LayoutConfig } from './cards/registry.ts';
+import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/registry.ts';
 import { devicesSection } from './cards/devices-cards.tsx';
 import { rememberCollapsed } from '../lib/collapse-store.ts';
 /** 关于卡片列出的运行时依赖与许可证：由 tools/legal/collect-licenses.mjs 生成。 */
@@ -1262,7 +1263,27 @@ export function DevicesView({
     ),
   };
 
-  const cards = resolveCards('devices', layout);
+  /** 设备与同步页卡片：主列在上、侧列在右；侧列由顶部「卡片布局」切换，没有侧列时不占宽度。 */
+  const mainCards = cardsInZone('devices', layout, 'main');
+  const sideCards = cardsInZone('devices', layout, 'side');
+  /** 两列只在主列与侧列都有卡片时生效：全部卡片都切到侧列时，侧列自己占满整行（P2-07） */
+  const twoColumn = mainCards.length > 0 && sideCards.length > 0;
+
+  const renderCard = (card: ResolvedCard): ReactNode => {
+    const body = bodies[card.def.id];
+    if (body === undefined) return null;
+    const section = devicesSection(card.def.id);
+    return (
+      <CollapsibleCard
+        key={`${card.def.id}-${cardEpoch}`}
+        id={card.def.id}
+        title={card.def.title}
+        {...(section === undefined ? {} : { icon: section.icon })}
+      >
+        {body}
+      </CollapsibleCard>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-3" data-role="devices-view" aria-label="设备与同步">
@@ -1299,21 +1320,24 @@ export function DevicesView({
         <span className="text-xs text-muted">显示 / 隐藏卡片、调顺序与主侧列</span>
       </div>
 
-      {cards.map((card) => {
-        const body = bodies[card.def.id];
-        if (body === undefined) return null;
-        const section = devicesSection(card.def.id);
-        return (
-          <CollapsibleCard
-            key={`${card.def.id}-${cardEpoch}`}
-            id={card.def.id}
-            title={card.def.title}
-            {...(section === undefined ? {} : { icon: section.icon })}
+      {/* P2-07：侧列只在有卡片时生效（desktop 两列 2fr/1fr），否则主列占满整行 */}
+      <div
+        className={cn('grid items-start gap-3', twoColumn && 'desktop:grid-cols-[2fr_1fr]')}
+        data-role="devices-grid"
+      >
+        <div className="flex min-w-0 flex-col gap-3" data-role="devices-main">
+          {mainCards.map(renderCard)}
+        </div>
+        {sideCards.length > 0 && (
+          <aside
+            className="flex min-w-0 flex-col gap-3"
+            data-role="devices-side"
+            aria-label="设备与同步侧栏"
           >
-            {body}
-          </CollapsibleCard>
-        );
-      })}
+            {sideCards.map(renderCard)}
+          </aside>
+        )}
+      </div>
 
       <CardLayoutDialog
         open={layoutOpen}
