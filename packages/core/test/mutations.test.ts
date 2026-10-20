@@ -197,6 +197,32 @@ test('写入前校验会拦截非法值', async () => {
   );
 });
 
+test('课程名为空或全是空白时拒绝写入', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const semesterId = String(semester['id']);
+
+  for (const name of ['', '   ', '\t']) {
+    await assert.rejects(
+      () => createCourse(storage, { semesterId, name }, options),
+      (error: unknown) => error instanceof RangeError && error.message.includes('课程名不能为空'),
+      `createCourse 应拒绝空名 ${JSON.stringify(name)}`,
+    );
+  }
+
+  const course = await createCourse(storage, { semesterId, name: '  高等数学  ' }, options);
+  assert.equal(course['name'], '高等数学', '名称两端的空白会被去掉');
+
+  await assert.rejects(
+    () => updateCourse(storage, String(course['id']), { name: '  ' }, options),
+    (error: unknown) => error instanceof RangeError && error.message.includes('课程名不能为空'),
+    'updateCourse 应拒绝把名称改成空白',
+  );
+  const stored = await storage.collection<Record<string, unknown>>('courses').get(String(course['id']));
+  assert.equal(stored?.['name'], '高等数学', '被拒的空名不会写回');
+});
+
 test('设置默认值与读写回环', async () => {
   const storage = new MemoryStorage();
   assert.deepEqual(await readSettings(storage), DEFAULT_SETTINGS);
