@@ -19,6 +19,8 @@ import {
   maskToWeeks,
   nextOccurrence,
   nextWorkday,
+  periodAtClock,
+  plusMinutesText,
   resolveTimeZone,
   weekOfDate,
   weekStart,
@@ -45,32 +47,6 @@ const EVENT_LABEL: Record<string, string> = {
   todo: '日程',
   temp: '日程',
 };
-
-/** 墙钟时间落到重叠的节次上；没有重叠时贴最近的一节。 */
-function periodAtClock(
-  clock: string | null,
-  slots: ReadonlyArray<{ period_no: number; start_time: string; end_time: string }>,
-): number | null {
-  if (clock === null || clock === '' || slots.length === 0) return null;
-  const toMinutes = (value: string): number => {
-    const [hour, minute] = value.split(':').map(Number);
-    return (hour ?? 0) * 60 + (minute ?? 0);
-  };
-  const target = toMinutes(clock);
-  const inside = slots.find((slot) => toMinutes(slot.start_time) <= target && toMinutes(slot.end_time) > target);
-  if (inside !== undefined) return inside.period_no;
-  const nearest = slots.reduce((best, slot) =>
-    Math.abs(toMinutes(slot.start_time) - target) < Math.abs(toMinutes(best.start_time) - target) ? slot : best,
-  );
-  return nearest.period_no;
-}
-
-/** HH:MM 加分钟，用于缺结束时间时按一节时长估计。 */
-function plusMinutesText(clock: string, minutes: number): string {
-  const [hour, minute] = clock.split(':').map(Number);
-  const total = ((hour ?? 0) * 60 + (minute ?? 0) + minutes) % (24 * 60);
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
-}
 
 export interface LessonCell {
   scheduleId: string;
@@ -436,9 +412,9 @@ export async function loadAppData(
         : clockStart === null
           ? null
           : plusMinutesText(clockStart, 45));
-    const periodStart = entry.period_start ?? periodAtClock(clockStart, slots);
+    const periodStart = entry.period_start ?? periodAtClock(slots, clockStart);
     if (periodStart === null) continue;
-    const periodEnd = Math.max(periodStart, entry.period_end ?? periodAtClock(clockEnd, slots) ?? periodStart);
+    const periodEnd = Math.max(periodStart, entry.period_end ?? periodAtClock(slots, clockEnd) ?? periodStart);
     const weekday = entry.as_day_of_week ?? dayOfWeek(entryDate);
     // 条目所在周次；有位图时按位图在各周的同一天再铺一次
     const entryWeeks =

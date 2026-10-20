@@ -41,6 +41,108 @@ export function addMinutes(time: string, minutes: number): string {
   return formatClock(parseClock(time) + minutes);
 }
 
+/** 节次表的槽位：只取判定所需的三列，不依赖具体的行类型。 */
+export interface PeriodSlot {
+  period_no: number;
+  start_time: string;
+  end_time: string;
+}
+
+/** 一组节次范围（含首含尾）。 */
+export interface PeriodRange {
+  periodStart: number;
+  periodEnd: number;
+}
+
+/** 容错的 HH:MM 解析：解析不出返回 null，供渲染路径不抛错地换算。 */
+function clockMinutes(clock: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(clock.trim());
+  if (match === null) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+/**
+ * 两个含首含尾的节次区间是否相交，入参顺序无关。
+ * 单节传 start === end；相邻不算重叠（1–2 与 3–4 不相交）。
+ */
+export function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  const aLow = Math.min(aStart, aEnd);
+  const aHigh = Math.max(aStart, aEnd);
+  const bLow = Math.min(bStart, bEnd);
+  const bHigh = Math.max(bStart, bEnd);
+  return aLow <= bHigh && bLow <= aHigh;
+}
+
+/** 两组周次是否有交集；任一侧为空集时不相交。 */
+export function weeksIntersect(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length === 0 || b.length === 0) return false;
+  const [probe, pool] = a.length <= b.length ? [a, b] : [b, a];
+  const set = new Set(pool);
+  return probe.some((week) => set.has(week));
+}
+
+/** 开始时间离 target 最近的槽位（并列取靠前的一节）。 */
+function nearestSlot(slots: readonly PeriodSlot[], target: number): PeriodSlot | null {
+  let best: PeriodSlot | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const slot of slots) {
+    const start = clockMinutes(slot.start_time);
+    if (start === null) continue;
+    const distance = Math.abs(start - target);
+    if (distance < bestDistance) {
+      best = slot;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * 墙钟时间落到重叠的节次上（含起点不含终点）；没有重叠时贴到开始时间最近的一节。
+ * 时钟缺失、为空或解析不出时返回 null。
+ */
+export function periodAtClock(slots: readonly PeriodSlot[], clock: string | null): number | null {
+  if (clock === null || clock === '' || slots.length === 0) return null;
+  const target = clockMinutes(clock);
+  if (target === null) return null;
+  for (const slot of slots) {
+    const start = clockMinutes(slot.start_time);
+    const end = clockMinutes(slot.end_time);
+    if (start === null || end === null) continue;
+    if (start <= target && target < end) return slot.period_no;
+  }
+  return nearestSlot(slots, target)?.period_no ?? null;
+}
+
+/**
+ * 钟点范围覆盖到的节次范围；没有任何重叠时贴到开始时间最近的一节。
+ * 与 `periodAtClock` 分开保留：一个返回单节，一个返回范围，语义不同。
+ */
+export function periodsForClockRange(
+  slots: readonly PeriodSlot[],
+  start: string,
+  end: string,
+): PeriodRange | null {
+  if (slots.length === 0) return null;
+  const from = clockMinutes(start);
+  const to = clockMinutes(end);
+  if (from === null || to === null) return null;
+  let low = Number.POSITIVE_INFINITY;
+  let high = Number.NEGATIVE_INFINITY;
+  for (const slot of slots) {
+    const slotStart = clockMinutes(slot.start_time);
+    const slotEnd = clockMinutes(slot.end_time);
+    if (slotStart === null || slotEnd === null) continue;
+    if (slotStart < to && slotEnd > from) {
+      low = Math.min(low, slot.period_no);
+      high = Math.max(high, slot.period_no);
+    }
+  }
+  if (low <= high) return { periodStart: low, periodEnd: high };
+  const nearest = nearestSlot(slots, from);
+  return nearest === null ? null : { periodStart: nearest.period_no, periodEnd: nearest.period_no };
+}
+
 /**
  * 按固定时长与时段起点生成课次：时段内相邻两节间隔为 breakMinutes，
  * 时段之间由各自的起点决定（例如上午 08:00、下午 14:00、晚上 19:00）。

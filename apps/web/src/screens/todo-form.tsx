@@ -5,6 +5,8 @@ import {
   deleteEvent,
   formatDate,
   maskToWeeks,
+  periodsForClockRange,
+  plusMinutesText,
   setReminder,
   updateEvent,
   weeksToMask,
@@ -75,46 +77,11 @@ export interface TodoFormProps {
   container?: FormContainer;
 }
 
-/** 自定义时间窗口覆盖到的节次范围；没有任何重叠时贴到最近的一节。 */
-export function periodsForClock(
-  slots: readonly TimeSlotRow[],
-  start: string,
-  end: string,
-): { periodStart: number; periodEnd: number } | null {
-  if (slots.length === 0) return null;
-  const toMinutes = (clock: string): number => {
-    const [hour, minute] = clock.split(':').map(Number);
-    return (hour ?? 0) * 60 + (minute ?? 0);
-  };
-  const from = toMinutes(start);
-  const to = toMinutes(end);
-  const overlapping = slots.filter((slot) => toMinutes(slot.start_time) < to && toMinutes(slot.end_time) > from);
-  if (overlapping.length > 0) {
-    return {
-      periodStart: Math.min(...overlapping.map((slot) => slot.period_no)),
-      periodEnd: Math.max(...overlapping.map((slot) => slot.period_no)),
-    };
-  }
-  const nearest = slots.reduce((best, slot) =>
-    Math.abs(toMinutes(slot.start_time) - from) < Math.abs(toMinutes(best.start_time) - from) ? slot : best,
-  );
-  return { periodStart: nearest.period_no, periodEnd: nearest.period_no };
-}
-
 /** 节次输入取整到 1..40，非法时用兜底值。 */
 function toPeriod(value: string, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(40, Math.max(1, Math.round(parsed)));
-}
-
-/** 分钟数加偏移，返回 HH:MM（用于默认结束时间）。 */
-function plusMinutes(clock: string, minutes: number): string {
-  const [hour, minute] = clock.split(':').map(Number);
-  const total = ((hour ?? 0) * 60 + (minute ?? 0) + minutes) % (24 * 60);
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 export function TodoForm({
@@ -214,7 +181,7 @@ export function TodoForm({
         : dateWallClockToEpoch(dueDate, dueTime, timeZone);
       const endAt = customTime ? dateWallClockToEpoch(dueDate, endTime, timeZone) : null;
       const linked = !isExam && courseId.length > 0;
-      const derived = customTime && isLab ? periodsForClock(slots, startTime, endTime) : null;
+      const derived = customTime && isLab ? periodsForClockRange(slots, startTime, endTime) : null;
       // 节次只写数字：自定义时间算不出重叠节次、或输入不是数字时，退回该条原有节次
       const fallbackPeriod = editing?.period_start ?? 1;
       const timetable = isLab || showInTimetable;
@@ -406,7 +373,7 @@ export function TodoForm({
     });
   }
 
-  const clockPeriods = customTime ? periodsForClock(slots, startTime, endTime) : null;
+  const clockPeriods = customTime ? periodsForClockRange(slots, startTime, endTime) : null;
 
   return (
     <FormSurface
@@ -485,7 +452,7 @@ export function TodoForm({
                 aria-label="开始时间"
                 onChange={(event) => {
                   setStartTime(event.target.value);
-                  setEndTime((current) => (current <= event.target.value ? plusMinutes(event.target.value, 90) : current));
+                  setEndTime((current) => (current <= event.target.value ? plusMinutesText(event.target.value, 90) : current));
                 }}
               />
             </Field>

@@ -6,9 +6,13 @@ import {
   generatePeriods,
   nextPeriod,
   parseClock,
+  periodAtClock,
+  periodsForClockRange,
+  rangesOverlap,
   reflowPeriods,
   regenerateSections,
   sectionOf,
+  weeksIntersect,
 } from '../src/timetable.ts';
 
 test('时刻解析与格式化', () => {
@@ -286,3 +290,71 @@ test('锚点顺延重排：duration + break 的固定步长与 generatePeriods �
   );
 });
 
+const slots = [
+  { period_no: 1, start_time: '08:00', end_time: '08:45' },
+  { period_no: 2, start_time: '08:55', end_time: '09:40' },
+  { period_no: 3, start_time: '10:00', end_time: '10:45' },
+  { period_no: 4, start_time: '10:55', end_time: '11:40' },
+];
+
+test('节次区间相交：含首含尾，相邻不算重叠', () => {
+  assert.equal(rangesOverlap(1, 2, 3, 4), false, '相邻（1–2 与 3–4）不重叠');
+  assert.equal(rangesOverlap(3, 4, 1, 2), false, '入参顺序无关');
+  assert.equal(rangesOverlap(1, 2, 2, 4), true, '共用边界 2 算重叠');
+  assert.equal(rangesOverlap(2, 2, 1, 4), true, '单节落在连堂里');
+  assert.equal(rangesOverlap(2, 2, 2, 2), true, '同一单节');
+  assert.equal(rangesOverlap(1, 3, 2, 4), true);
+  assert.equal(rangesOverlap(4, 2, 1, 2), true, '倒序区间归一化后仍相交');
+});
+
+test('周次相交：跨周同一节次不算重叠', () => {
+  assert.equal(rangesOverlap(3, 3, 3, 3), true, '节次本身重叠');
+  assert.equal(weeksIntersect([1, 3, 5], [2, 4, 6]), false, '周次无交集 → 不冲突');
+  assert.equal(weeksIntersect([1, 3, 5], [3, 7]), true);
+  assert.equal(weeksIntersect([2], [1, 2, 3]), true);
+  assert.equal(weeksIntersect([], [1]), false, '空周次集不与任何周次相交');
+  assert.equal(weeksIntersect([1], []), false);
+  assert.equal(weeksIntersect([], []), false);
+});
+
+test('钟点落到节次：重叠取该节，无重叠取最近的一节', () => {
+  assert.equal(periodAtClock(slots, '08:10'), 1);
+  assert.equal(periodAtClock(slots, '08:00'), 1, '含起点');
+  assert.equal(periodAtClock(slots, '10:44'), 3);
+  // 08:45–08:55 是课间：贴到更近的第 2 节（10 分钟）而不是第 1 节（45 分钟）
+  assert.equal(periodAtClock(slots, '08:50'), 2);
+  assert.equal(periodAtClock(slots, '12:30'), 4, '超出最后一节贴到最后一节');
+  assert.equal(periodAtClock(slots, '07:00'), 1, '早于第一节贴到第一节');
+  assert.equal(periodAtClock(slots, null), null);
+  assert.equal(periodAtClock(slots, ''), null);
+  assert.equal(periodAtClock([], '08:00'), null);
+  assert.equal(periodAtClock(slots, '8点'), null, '解析不出的钟点返回 null');
+  assert.equal(periodAtClock(slots, '8:05'), 1, '接受一位小时');
+});
+
+test('钟点范围换算节次范围：覆盖多节取最小到最大', () => {
+  assert.deepEqual(periodsForClockRange(slots, '08:30', '10:10'), { periodStart: 1, periodEnd: 3 });
+  assert.deepEqual(periodsForClockRange(slots, '08:00', '08:45'), { periodStart: 1, periodEnd: 1 });
+  assert.deepEqual(
+    periodsForClockRange(slots, '09:30', '10:00'),
+    { periodStart: 2, periodEnd: 2 },
+    '结束时刻正好等于下一节开始，不算覆盖下一节',
+  );
+  assert.deepEqual(
+    periodsForClockRange(slots, '10:00', '10:10'),
+    { periodStart: 3, periodEnd: 3 },
+    '开始时刻正好等于本节开始',
+  );
+  assert.deepEqual(
+    periodsForClockRange([...slots].reverse(), '08:30', '10:10'),
+    { periodStart: 1, periodEnd: 3 },
+    '与入参顺序无关',
+  );
+});
+
+test('钟点范围换算节次范围：无重叠时贴到开始时间最近的一节', () => {
+  assert.deepEqual(periodsForClockRange(slots, '12:00', '13:00'), { periodStart: 4, periodEnd: 4 });
+  assert.deepEqual(periodsForClockRange(slots, '08:46', '08:54'), { periodStart: 2, periodEnd: 2 });
+  assert.equal(periodsForClockRange([], '08:00', '09:00'), null);
+  assert.equal(periodsForClockRange(slots, '', '09:00'), null);
+});
