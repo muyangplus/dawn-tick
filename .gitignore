@@ -88,3 +88,6 @@ local.properties
 /apps/mobile/android/app/src/main/assets/public/
 /apps/mobile/android/capacitor-cordova-android-plugins/
 /apps/desktop/src-tauri/gen/
+
+# 临时脚本（轮询/调试）不入库
+tools/tmp-*
