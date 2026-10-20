@@ -22,14 +22,12 @@ import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
 import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
 import { Button } from './components/ui/button.tsx';
-import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
 import { BusyOverlay } from './components/ui/busy-overlay.tsx';
 import { PendingRestartBar } from './components/pending-restart-bar.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
 import { Sheet, type FormContainer } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
-import { Database, Loader2, TriangleAlert } from 'lucide-react';
 import {
   defaultWindowStart,
   loadAppData,
@@ -39,18 +37,10 @@ import {
   type CourseDetail,
   type LessonCell,
 } from './data.ts';
-import { maybeAutoBackup, createSnapshot, pruneSnapshots, takeRecoveryNotice } from './backup.ts';
-import { downloadAndApply, maybeAutoSync, type ApplyMode } from './webdav.ts';
-import { openStorage } from './db/platform.ts';
-import { corruptMessage, isCorruptDatabase } from './db/health.ts';
-import {
-  STORAGE_FALLBACK_BADGE,
-  STORAGE_FALLBACK_BANNER,
-  STORAGE_READ_ONLY_MESSAGE,
-  isFallbackStorage,
-  readOnlyStorage,
-} from './db/fallback.ts';
-import { fail, type Failure } from './lib/fail.ts';
+import { createSnapshot, pruneSnapshots } from './backup.ts';
+import { downloadAndApply, type ApplyMode } from './webdav.ts';
+import { STORAGE_READ_ONLY_MESSAGE, isFallbackStorage, readOnlyStorage } from './db/fallback.ts';
+import { fail } from './lib/fail.ts';
 import { dayStampUtc, formatMonthDayRange } from './lib/dates.ts';
 import { restoreLatestBackupSnapshot } from './lib/recovery.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
@@ -65,23 +55,37 @@ import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
 import { ensureStartupPermissions } from './permissions.ts';
 import { markNotifyAsked } from './notify.ts';
-import { attachLogStorage, clearLogs, describeError, loadLogs, logDebug, logError, logInfo, logWarn, logsText } from './log.ts';
+import { clearLogs, describeError, logDebug, logError, logInfo, logWarn, logsText } from './log.ts';
 import { registerPendingRestart } from './pending-restart.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { invokeNative } from './lib/native.ts';
-import { SEEN_NOTICES_META_KEY, TIME_ZONE_ALIGNED_META_KEY } from './lib/meta-keys.ts';
-import { applyCachedPreset } from './preset-update.ts';
+import { SEEN_NOTICES_META_KEY } from './lib/meta-keys.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
 import { clampDayDate, clampWindowStart, dayRangeOf, defaultDayDate, stepDay, stepWindow } from './lib/day-nav.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
 import { openDataDirectory, relaunchApplication, storageStatusLabel } from './storage-config.ts';
 import { applyDevFeatures } from './dev-features.ts';
-import { applyLogSettings, defaultLogLevel } from './log.ts';
+import { applyLogSettings } from './log.ts';
 import { openExternalUrl, saveTextFile } from './system-actions.ts';
-import { CHANNEL, CHANNEL_LABEL, appVersion } from './channel.ts';
+import { CHANNEL, appVersion } from './channel.ts';
 import { notifyWidgetWindows, writeWidgetSnapshot } from './widget-snapshot.ts';
+import {
+  NOTICE_BETA,
+  NOTICE_DEV,
+  NoticeDialog,
+  RELEASES_URL,
+  RemoteNewerDialog,
+  UpdateDialog,
+  type NoticeDismissOptions,
+  type RemoteBackupInfo,
+} from './components/app-dialogs.tsx';
+import { ErrorScreen, LoadingScreen, StorageFallbackBanner } from './components/app-screens.tsx';
+import { runBootstrap, startDailyMaintenance, type BootFailure } from './app/bootstrap.ts';
 import './styles.css';
+
+// 冒烟测试与外部入口沿用 App.tsx 的导出：加载页的阈值与组件仍是同一份实现
+export { LOADING_SLOW_MS, LoadingScreen, ErrorScreen, StorageFallbackBanner } from './components/app-screens.tsx';
 
 const USER_ID = 'u1';
 /** 改变课表窗口排法的设置：改完后窗口回到默认起点。 */
@@ -98,12 +102,6 @@ interface DetailState {
   detail: CourseDetail;
   /** 这一课次所在的日期：详情页的「调课」把它作为原日期 */
   date: string;
-}
-
-/** 启动失败：区分损坏（走备份恢复）与其它（重试/日志），文案统一由 fail() 生成。 */
-interface BootFailure {
-  kind: 'corrupt' | 'other';
-  failure: Failure;
 }
 
 /** 窗口覆盖的日期区间文案，例如 8/19–8/23。 */
@@ -145,124 +143,6 @@ function lessonCellOf(data: AppData, target: AdjustTarget): LessonCell {
   };
 }
 
-/** 加载页的「仍在载入…」阈值：冷启动超过 3 秒才追加，避免正常启动闪一下。 */
-export const LOADING_SLOW_MS = 3000;
-
-/** 冷启动加载页：图标 + 进度文案；3 秒后追加「仍在载入…」。 */
-export function LoadingScreen({ slowAfterMs = LOADING_SLOW_MS }: { slowAfterMs?: number }) {
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    const timer = globalThis.setTimeout(() => setSlow(true), slowAfterMs);
-    return () => globalThis.clearTimeout(timer);
-  }, [slowAfterMs]);
-  return (
-    <main
-      className="flex h-full flex-col items-center justify-center gap-3 bg-page p-4"
-      role="status"
-      aria-live="polite"
-      data-role="loading-screen"
-    >
-      <div className="flex size-12 items-center justify-center rounded-2xl bg-surface-muted text-primary-strong">
-        <Loader2 className="dt-spinner size-6" aria-hidden />
-      </div>
-      <p className="text-sm text-ink">正在载入…</p>
-      {slow && (
-        <p className="text-xs text-muted" data-role="loading-slow">
-          仍在载入…
-        </p>
-      )}
-    </main>
-  );
-}
-
-export interface ErrorScreenProps {
-  kind: 'corrupt' | 'other';
-  failure: Failure;
-  onRetry: () => void;
-  onRestore: () => void;
-  onOpenBackupDir: () => void;
-  onOpenLogs: () => void;
-}
-
-/** 页面级错误：图标 + 标题 + 说明 + 最多两个修复按钮（损坏走备份，其它走重试/日志）。 */
-export function ErrorScreen({
-  kind,
-  failure,
-  onRetry,
-  onRestore,
-  onOpenBackupDir,
-  onOpenLogs,
-}: ErrorScreenProps) {
-  const corrupt = kind === 'corrupt';
-  const Icon = corrupt ? Database : TriangleAlert;
-  return (
-    <main
-      className="flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4"
-      data-role="error-screen"
-    >
-      <div className="my-auto flex w-full max-w-md flex-col items-center gap-3 text-center" role="alert">
-        <div className="flex size-12 items-center justify-center rounded-2xl bg-danger/10 text-danger-strong">
-          <Icon className="size-6" aria-hidden />
-        </div>
-        <h1 className="text-base font-semibold text-ink">{failure.title}</h1>
-        <p className="text-sm text-muted">{failure.body}</p>
-        <div className="flex flex-wrap justify-center gap-2">
-          {corrupt ? (
-            <>
-              <Button variant="primary" onClick={onRestore}>
-                从备份文件恢复
-              </Button>
-              <Button variant="secondary" onClick={onOpenBackupDir}>
-                打开备份目录
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button variant="primary" onClick={onRetry}>
-                重试
-              </Button>
-              <Button variant="secondary" onClick={onOpenLogs}>
-                打开日志
-              </Button>
-            </>
-          )}
-        </div>
-      </div>
-    </main>
-  );
-}
-
-export interface StorageFallbackBannerProps {
-  onRetry: () => void;
-  onOpenLogs: () => void;
-}
-
-/** 主壳顶部的临时回退警告条：常驻、首屏可见，并说明回退期间只读。 */
-export function StorageFallbackBanner({ onRetry, onOpenLogs }: StorageFallbackBannerProps) {
-  return (
-    <div
-      role="alert"
-      data-role="storage-fallback-banner"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-strong"
-    >
-      <TriangleAlert className="size-4 shrink-0" aria-hidden />
-      <span className="min-w-0 flex-1">{STORAGE_FALLBACK_BANNER}</span>
-      <span className="rounded-full bg-warning/10 px-2 py-0.5 font-medium">{STORAGE_FALLBACK_BADGE}</span>
-      <span className="text-[11px]">{STORAGE_READ_ONLY_MESSAGE}</span>
-      <Button size="sm" variant="secondary" onClick={onRetry}>
-        重试
-      </Button>
-      <Button size="sm" variant="ghost" onClick={onOpenLogs}>
-        打开日志
-      </Button>
-    </div>
-  );
-}
-const NOTICE_DEV = 'dev-frequent-updates';
-const NOTICE_BETA = 'beta-unstable';
-const RELEASES_URL = 'https://github.com/muyangplus/dawn-tick/releases';
-/** 每天备份的检查间隔：够短能补上当天的份，又不至于频繁查目录 */
-const DAILY_BACKUP_CHECK_MS = 10 * 60 * 1000;
 
 function parseSeenNotices(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
@@ -324,6 +204,8 @@ export function App() {
   const leftSchedule = useRef(false);
   /** 发现新版本时的更新信息弹窗 */
   const [updateInfo, setUpdateInfo] = useState<UpdateStatus | null>(null);
+  /** 远端备份比本机新：启动或每日同步发现，下载前先给本机做快照 */
+  const [remoteNewer, setRemoteNewer] = useState<RemoteBackupInfo | null>(null);
   /** 递增触发一次额外的自动检查（切到测试版后） */
   const [checkTick, setCheckTick] = useState(0);
   const breakpoint = useBreakpoint();
@@ -420,115 +302,27 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      let stage = { scope: 'storage', label: '存储初始化' };
-      try {
-        const opened = await openStorage();
-        /** 临时回退：原生库打不开，改用浏览器存储；按 Q5 只读，启动阶段也不写任何数据 */
-        const readOnly = isFallbackStorage(opened);
-        stage = { scope: 'data', label: '数据载入' };
-        // 回退期间连日志也不写临时库：只留在内存与原生日志里
-        attachLogStorage(readOnly ? readOnlyStorage(opened) : opened);
-        await loadLogs();
-        // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，运行时不替换。
-        if (readOnly) {
-          logWarn('storage', '临时回退期间跳过启动预设写入', { kind: opened.kind });
-        } else {
-          try {
-            const preset = await applyCachedPreset(opened);
-            logInfo('preset', '启动套用预设', {
-              version: preset.version,
-              source: preset.applied ? 'cached' : 'builtin',
-              applied: preset.applied,
-              ...(preset.reason === undefined ? {} : { reason: preset.reason }),
-            });
-          } catch (cause: unknown) {
-            const message = describeError(cause);
-            logWarn('preset', '启动套用预设失败，继续使用内置预设', { message });
-          }
-        }
-        // 首次启动按系统时区对齐一次；之后完全以用户选择为准（默认上海）
-        const aligned = await opened.readMeta(TIME_ZONE_ALIGNED_META_KEY);
-        let loaded = await readSettings(opened);
-        if (!readOnly && (aligned === undefined || aligned === null || aligned === '')) {
-          const systemZone =
-            typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
-              ? Intl.DateTimeFormat().resolvedOptions().timeZone
-              : '';
-          if (systemZone.length > 0 && isValidTimeZone(systemZone) && systemZone !== loaded.timeZone) {
-            loaded = await writeSettings(opened, { timeZone: systemZone });
-            logInfo('settings', '首次启动按系统时区对齐', { from: DEFAULT_SETTINGS.timeZone, to: systemZone });
-          }
-          await opened.writeMeta(TIME_ZONE_ALIGNED_META_KEY, '1');
-        }
-        // 日志级别默认随渠道定：dev 最详细，其余 info（只写一次，之后跟随用户选择）
-        const storedLogLevel = await opened.readMeta('log_level');
-        if (!readOnly && (storedLogLevel === undefined || storedLogLevel === null || storedLogLevel === '')) {
-          loaded = await writeSettings(opened, { logLevel: defaultLogLevel(CHANNEL) });
-          logInfo('settings', '初始化日志级别', { level: loaded.logLevel, channel: CHANNEL });
-        }
-        if (cancelled) return;
-        setStorage(opened);
-        setSettings(loaded);
-        setResolvedMode(applyTheme(loaded.themePreset, loaded.theme));
-        logInfo('storage', '存储就绪', {
-          kind: opened.kind,
-          fallback: readOnly,
-          theme: loaded.themePreset,
-          mode: loaded.theme,
-        });
-        const recovered = await takeRecoveryNotice();
-        if (recovered !== null) toast.info(recovered);
-        if (readOnly) {
-          logWarn('storage', '临时回退期间跳过自动备份与自动同步', { kind: opened.kind });
-        } else {
-          const snapshot = await maybeAutoBackup(opened, loaded, { startup: true });
-          if (snapshot !== null) {
-            logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
-          }
-          const sync = await maybeAutoSync(opened, loaded, { startup: true });
-          if (sync.action === 'remote-newer') {
-            setRemoteNewer({ name: sync.name, detail: sync.detail });
-          } else if (sync.action === 'uploaded') {
-            logInfo('webdav', '启动自动同步已上传', { name: sync.name });
-          } else if (sync.action === 'error') {
-            logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
-          }
-        }
-        await reload(opened, loaded);
-        const manager = globalThis.navigator?.storage;
-        if (manager !== undefined && typeof manager.persist === 'function') {
-          const granted = await manager.persist();
+      const result = await runBootstrap({
+        onReady: ({ storage: opened, settings: loaded, resolvedMode: mode }) => {
+          if (cancelled) return;
+          setStorage(opened);
+          setSettings(loaded);
+          setResolvedMode(mode);
+        },
+        // 首屏数据：失败由 bootstrap 归一成错误页文案
+        loadData: async (opened, loaded) => {
+          await reload(opened, loaded);
+        },
+        onNotice: (message) => toast.info(message),
+        onRemoteNewer: (info) => {
+          if (!cancelled) setRemoteNewer(info);
+        },
+        onPersistent: (granted) => {
           if (!cancelled) setPersistent(granted);
-          logInfo('storage', '持久化申请', { granted });
-        }
-      } catch (cause: unknown) {
-        const message = describeError(cause);
-        if (isCorruptDatabase(cause)) {
-          logError('storage', '数据库损坏，未载入数据', { message });
-          if (!cancelled) {
-            setError({
-              kind: 'corrupt',
-              failure: fail(
-                '载入失败',
-                corruptMessage(),
-                '请从最近的备份恢复，或打开备份目录手动处理。',
-              ),
-            });
-          }
-          return;
-        }
-        logError(stage.scope, `${stage.label}失败`, { message });
-        if (!cancelled) {
-          setError({
-            kind: 'other',
-            failure: fail(
-              '载入失败',
-              `${stage.label}没有完成`,
-              '请重启应用；仍失败请在「设置 → 同步与数据」导入备份，并附日志反馈。',
-            ),
-          });
-        }
-      }
+        },
+        isCancelled: () => cancelled,
+      });
+      if (!cancelled && !result.ok) setError(result.error);
     })();
     return () => {
       cancelled = true;
@@ -538,23 +332,12 @@ export function App() {
   // 每天一次自动备份与自动同步：应用一直开着时也要能补上当天那次
   useEffect(() => {
     if (storage === null || isFallbackStorage(storage)) return;
-    const timer = globalThis.setInterval(() => {
-      void maybeAutoBackup(storage, settings, { startup: false }).then((snapshot) => {
-        if (snapshot !== null) {
-          logInfo('backup', '每日自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
-        }
-      });
-      void maybeAutoSync(storage, settings, { startup: false }).then((outcome) => {
-        if (outcome.action === 'remote-newer') {
-          setRemoteNewer({ name: outcome.name, detail: outcome.detail });
-        } else if (outcome.action === 'uploaded') {
-          logInfo('webdav', '每日自动同步已上传', { name: outcome.name });
-        } else if (outcome.action === 'error') {
-          logWarn('webdav', '每日自动同步失败', { detail: outcome.detail });
-        }
-      });
-    }, DAILY_BACKUP_CHECK_MS);
-    return () => globalThis.clearInterval(timer);
+    const maintenance = startDailyMaintenance({
+      storage,
+      settings,
+      onRemoteNewer: (info) => setRemoteNewer(info),
+    });
+    return maintenance.stop;
   }, [storage, settings]);
 
   // 日志级别与开关同步到原生：写文件的门槛按设置走（dev 默认 trace）
@@ -696,8 +479,6 @@ export function App() {
     setResolvedMode(applyTheme(next.themePreset, next.theme));
     await reload(storage, next, windowStart);
   }, [reload, storage, windowStart]);
-
-  const [remoteNewer, setRemoteNewer] = useState<{ name: string; detail: string | null } | null>(null);
 
   /** 远端备份比本机新时的提示：下载前先给本机做快照，避免静默覆盖。 */
   async function applyRemote(mode: ApplyMode): Promise<void> {
@@ -1245,6 +1026,18 @@ export function App() {
       />
     );
 
+  /** 关掉渠道提示：记已读、清状态；去发布页或切到测试版时再补上对应的副作用。 */
+  function dismissNotice(id: string, options: NoticeDismissOptions): void {
+    void markNoticeSeen(screenStorage, id);
+    if (options.openReleases === true) openExternalUrl(RELEASES_URL);
+    // 从公测版提示回来时自动检查一次更新（按钮路径不查，与原来一致）
+    if (id === NOTICE_BETA && options.recheck === true && settings.autoCheckUpdate) {
+      autoChecked.current = false;
+      setCheckTick((tick) => tick + 1);
+    }
+    setNotice(null);
+  }
+
   return (
     // 外壳钉在视口上，主区自己滚动；不依赖 dvh 重新计算高度。
     <div className="fixed inset-0 flex overflow-hidden bg-page text-ink" data-role="app-shell">
@@ -1400,110 +1193,14 @@ export function App() {
         container={formContainer}
       />
 
-      {/* 渠道提示：开发版可能频繁更新、公测版可能不稳定；每条只弹一次，新增提示对老用户也会弹 */}
-      <Dialog
-        open={notice !== null}
-        onOpenChange={(open) => {
-          if (open || notice === null) return;
-          void markNoticeSeen(screenStorage, notice);
-          const wasBetaNotice = notice === NOTICE_BETA;
-          setNotice(null);
-          // 切到测试版后自动检查一次更新
-          if (wasBetaNotice && settings.autoCheckUpdate) {
-            autoChecked.current = false;
-            setCheckTick((tick) => tick + 1);
-          }
-        }}
-      >
-        <DialogContent
-          title={notice === NOTICE_BETA ? '公测版提示' : '开发版提示'}
-          description={
-            notice === NOTICE_BETA
-              ? '公测版可能不稳定，反馈请附日志'
-              : '开发版滚动更新'
-          }
-        >
-          <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (notice === null) return;
-                void markNoticeSeen(screenStorage, notice);
-                setNotice(null);
-                openExternalUrl(RELEASES_URL);
-              }}
-            >
-              查看发布页
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                if (notice === null) return;
-                void markNoticeSeen(screenStorage, notice);
-                setNotice(null);
-              }}
-            >
-              知道了
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 发现新版本：显示版本、渠道与发布说明 */}
-      <Dialog
-        open={updateInfo !== null}
-        onOpenChange={(open) => {
-          if (!open) setUpdateInfo(null);
-        }}
-      >
-        <DialogContent
-          title={`发现新版本 ${updateInfo?.latest ?? ''}`}
-          description={`当前 ${appVersion()} · 渠道 ${CHANNEL_LABEL[updateInfo?.manifest?.channel ?? updateInfo?.feed ?? CHANNEL]}`}
-        >
-          {updateInfo?.manifest?.notes !== undefined && updateInfo.manifest.notes.trim().length > 0 && (
-            <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-muted p-2 text-xs text-ink">
-              {updateInfo.manifest.notes}
-            </pre>
-          )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setUpdateInfo(null)}>
-              稍后
-            </Button>
-            <Button variant="primary" onClick={() => openExternalUrl(RELEASES_URL)}>
-              去发布页下载
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 远端备份更新：提示下载，下载前先给本机做快照 */}
-      <Dialog
-        open={remoteNewer !== null}
-        onOpenChange={(open) => {
-          if (!open) setRemoteNewer(null);
-        }}
-      >
-        <DialogContent
-          title="远端有较新的备份"
-          description={`${remoteNewer?.name ?? ''}${remoteNewer?.detail == null ? '' : ` · ${remoteNewer.detail}`}；恢复全部将覆盖本机数据（下载前会先备份本机），不可撤销`}
-        >
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoteNewer(null)}>
-              稍后
-            </Button>
-            <Button
-              variant="secondary"
-              aria-label="下载并只应用设置与预设"
-              onClick={() => void applyRemote('settings')}
-            >
-              只应用设置与预设
-            </Button>
-            <Button variant="danger" aria-label="下载并恢复整库" onClick={() => void applyRemote('all')}>
-              恢复全部
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 三个只读弹窗：渠道提示、发现新版本、远端有较新的备份 */}
+      <NoticeDialog notice={notice} onDismiss={dismissNotice} />
+      <UpdateDialog info={updateInfo} onClose={() => setUpdateInfo(null)} />
+      <RemoteNewerDialog
+        info={remoteNewer}
+        onClose={() => setRemoteNewer(null)}
+        onApply={(mode) => void applyRemote(mode)}
+      />
 
       <Toaster mode={resolvedMode} />
       <ExternalLinkConfirm />
