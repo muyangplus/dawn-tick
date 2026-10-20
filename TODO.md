@@ -999,8 +999,8 @@
 - 优先级：P1；ICE（I6/C7/E4=168）
 - 依赖：A-05、A-08（动作与周次组件先归位）
 - 验收指标：`App.tsx` ≤700 行；`schedule-cards.tsx` 不再 import `@dawn-tick/core` mutations；`loadAppData` ≤120 行且拆出的 4 个纯函数有单测（`app-data.test.ts`）；冒烟 235 项全绿。
-- 来源：主审+盲审；分歧与裁决：周视图拖动状态机拆分
-- 状态：待办
+- 来源：主审+盲审；分歧与裁决：周视图拖动状态机拆分；本轮实现：`dd8111e`（8 个提交，合入 `cbd333f`）：`App.tsx` 1514→449 行、`loadAppData` 397→70 行、`schedule-cards` 不再 import core mutations，新增 11 个模块与 3 个测试文件，冒烟 338 项逐项保持。
+- 状态：待验收
 
 ### [A-11] 设置页按卡片拆分（6 张卡独立组件）
 - 轨道：技术演进
@@ -1545,6 +1545,8 @@
 | A-09 原生桥与平台能力收口 | `025f17b` | `635da57` | `lib/native`/`lib/capabilities`，tauri 动态 import 20→1，Rust 命令 30/30 对齐，修 `relaunch_elevated_autostart` 运行时 bug |
 | A-05 动作/错误/忙碌态统一 | `104e25f` | `8e2207c` | `lib/errors`/`lib/action`/`lib/toast`；手写 busy 18→0、本地 describe 5→0、内联错误转换 33→1 |
 | A-18 导入诊断与插件契约 | `bc44144` | `b2814d3` | 注入脚本诊断字段补齐 9 项、`lib/plugins.ts` 唯一加载入口、`plugins.contract.md` |
+| A-10 大文件拆分 | `dd8111e` | `cbd333f` | App 1514→449 行、`loadAppData` 397→70 行、卡片写库上移、`move-controller`/`drag-session`/`bootstrap` 成模块，新增 3 个测试文件 |
+| A-11 设置页按卡拆分 | `7616a9b` | `519325d` | `settings-view` 1057→212 行、`devices-view` 1612→176 行、6 张卡组件独立、冒烟 338 不掉 |
 | A-16 远端制品共享 | — | — | 按 Q14 量重合度后关闭（共享部分仅约 25 行/条） |
 
 - 发版过程修掉两个阻塞：① 界面冒烟在 CI runner 默认 UTC 下时间文案漂移（首次把冒烟接进 CI 时暴露）→ 冒烟脚本与 CI 步骤固定 `TZ=Asia/Shanghai`；② 发布正文的 Full Changelog 拼装跑在 `PREV` 计算之前，正文缺比较链接且 `gh release create` 失败 → 发布逻辑抽到 `tools/release/publish.sh`，正文自行拼好 Full Changelog（不再传 `--notes-start-tag`），失败时把日志推到 `ci-debug` 分支便于无权限读 Actions 日志时排查。
