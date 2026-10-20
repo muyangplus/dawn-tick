@@ -1,4 +1,4 @@
-import { weeksToMask, type Storage } from '@dawn-tick/core';
+import { DEFAULT_COURSE_COLOR, weeksToMask, type Storage } from '@dawn-tick/core';
 
 export const SAMPLE_USER = 'u1';
 export const SAMPLE_SEMESTER = 'sem-1';
@@ -47,7 +47,7 @@ export async function seedSample(storage: Storage, startDate: string, timeZone: 
   }
 
   const courses: Array<[string, string, string, string, string, string, number]> = [
-    ['c-1', '高等数学', '高数', '张老师', '教三-201', '#4F8DFD', 5],
+    ['c-1', '高等数学', '高数', '张老师', '教三-201', DEFAULT_COURSE_COLOR, 5],
     ['c-2', '大学物理', '大物', '李老师', '理科楼-105', '#F2994A', 3.5],
     ['c-3', '大学英语', '大英', '王老师', '外语楼-302', '#27AE60', 2],
   ];

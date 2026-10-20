@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   createCourse,
+  DEFAULT_COURSE_COLOR,
   listManagedCourses,
-  maskToWeeks,
-  parityMask,
   rangesOverlap,
   setSchedules,
   updateCourse,
@@ -17,6 +16,7 @@ import {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { Button } from '../components/ui/button.tsx';
+import { WeekPicker } from '../components/week-picker.tsx';
 import { DialogFooter } from '../components/ui/dialog.tsx';
 import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
@@ -29,10 +29,6 @@ import { formatPeriodRange } from '../lib/format.ts';
 
 function allWeeks(total: number): number[] {
   return Array.from({ length: total }, (_, index) => index + 1);
-}
-
-function parityWeeks(total: number, parity: 'odd' | 'even'): number[] {
-  return maskToWeeks(parityMask(total, parity), total);
 }
 
 interface ScheduleDraft {
@@ -230,7 +226,7 @@ export function CourseForm({
           shortName: shortName.trim().length > 0 ? shortName.trim() : null,
           teacher: teacher.trim().length > 0 ? teacher.trim() : null,
           location: location.trim().length > 0 ? location.trim() : null,
-          color: palette[colorIndex % palette.length] ?? '#4F8DFD',
+          color: palette[colorIndex % palette.length] ?? DEFAULT_COURSE_COLOR,
           credits: credits.trim().length > 0 ? Number(credits) : null,
           note: note.trim().length > 0 ? note.trim() : null,
         };
@@ -417,59 +413,11 @@ export function CourseForm({
               )}
             </div>
             <div className="flex flex-col gap-2 rounded-md border border-line p-2">
-              <div className="flex flex-wrap items-end gap-2">
-                <Field label="周次">
-                  <div className="flex flex-wrap gap-1">
-                    {(
-                      [
-                        { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
-                        { id: 'odd', label: '单周', weeks: parityWeeks(totalWeeks, 'odd') },
-                        { id: 'even', label: '双周', weeks: parityWeeks(totalWeeks, 'even') },
-                        { id: 'none', label: '清空', weeks: [] },
-                      ] as const
-                    ).map((item) => (
-                      <Button
-                        key={item.id}
-                        size="sm"
-                        variant="secondary"
-                        aria-label={`周次${item.label}`}
-                        onClick={() => patchDraft(draft.key, { weeks: [...item.weeks] })}
-                      >
-                        {item.label}
-                      </Button>
-                    ))}
-                  </div>
-                </Field>
-                <span className="text-xs text-muted">
-                  已选 {draft.weeks.length}/{totalWeeks} 周
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-1" role="group" aria-label="周次选择">
-                {allWeeks(totalWeeks).map((week) => {
-                  const selected = draft.weeks.includes(week);
-                  return (
-                    <button
-                      key={week}
-                      type="button"
-                      aria-label={`第 ${week} 周`}
-                      aria-pressed={selected}
-                      onClick={() =>
-                        patchDraft(draft.key, {
-                          weeks: selected
-                            ? draft.weeks.filter((item) => item !== week)
-                            : [...draft.weeks, week].sort((left, right) => left - right),
-                        })
-                      }
-                      className={cn(
-                        'tabular size-tap rounded-sm border text-xs',
-                        selected ? 'border-primary-strong bg-primary text-on-primary' : 'border-line text-muted',
-                      )}
-                    >
-                      {week}
-                    </button>
-                  );
-                })}
-              </div>
+              <WeekPicker
+                totalWeeks={totalWeeks}
+                value={draft.weeks}
+                onValueChange={(weeks) => patchDraft(draft.key, { weeks })}
+              />
             </div>
             <div className="flex flex-wrap items-end gap-2">
               <Field label="教室">

@@ -1,4 +1,5 @@
 export * from './time.ts';
+export * from './colors.ts';
 export * from './weeks.ts';
 export * from './timetable.ts';
 export * from './db.ts';
