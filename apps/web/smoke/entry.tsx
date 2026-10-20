@@ -24,6 +24,7 @@ import {
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
+import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
@@ -233,7 +234,7 @@ async function seed(): Promise<SmokeSeed> {
     title: '无时间待办',
     onDate: addDays(mondayText, -1),
   });
-  // 窗口内的那一天：③ 段要看「其他」性质的待办
+  // 窗口内的那一天：③ 段要看「日程」性质的待办
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
@@ -808,6 +809,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 't', bubbles: true }));
   await flush(30);
   check('快捷键 T 回到以今天开头的窗口', windowStartOf() === todayText, windowStartOf());
+  // 快捷键说明只在侧栏保留一处，且方向键是「平移一屏」不是「切周」
+  // 冒烟跑在移动端断点（不渲染侧栏），这里单独挂一次侧栏核对文案
+  const sidebar = mount(<AppSidebar current="timetable" onSelect={() => {}} appName="晓刻 DawnTick" subtitle="第 1 周" />);
+  await flush(4);
+  const sidebarText = sidebar.container.querySelector('[data-role="app-sidebar"]')?.textContent ?? '';
+  check(
+    '快捷键说明只在侧栏一处且方向键说法正确',
+    sidebarText.includes('快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天'),
+    sidebarText.slice(-40),
+  );
+  sidebar.root.unmount();
+  sidebar.container.remove();
   check(
     '放假日课程灰显',
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
@@ -1429,7 +1442,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const pastCourseRow = rowIn('timeline-completed', '往期课');
   const noTimeRow = rowIn('timeline-main', '无时间待办');
   const courseNature = natureOf(pastCourseRow);
-  const otherNature = natureOf(noTimeRow);
+  const todoNature = natureOf(noTimeRow);
   check(
     '日程时间线：过期的课自动归入已完成',
     pastCourseRow !== undefined &&
@@ -1518,9 +1531,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const adjustNature = natureOf(view.container.querySelector('[data-kind="adjust"]'));
   const examNature = natureOf(rowIn('timeline-main', '期末模拟考'));
   check(
-    '日程时间线：显示条目性质标签（课程/调整/其他/考试）',
-    courseNature === '课程' && adjustNature === '调整' && otherNature === '其他' && examNature === '考试',
-    `课程=${courseNature} 调整=${adjustNature} 其他=${otherNature} 考试=${examNature}`,
+    '日程时间线：显示条目性质标签（课程/调整/日程/考试）',
+    courseNature === '课程' && adjustNature === '调整' && todoNature === '日程' && examNature === '考试',
+    `课程=${courseNature} 调整=${adjustNature} 日程=${todoNature} 考试=${examNature}`,
   );
 
   // ④ 停课：日程里默认已完成（进已完成分组、不计入未完成），课表里灰显并标注「停课」
@@ -2778,7 +2791,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '关于卡片：帮助与反馈置顶并给出仓库入口',
     helpBlock !== null &&
       (helpBlock.textContent ?? '').includes('帮助与反馈') &&
-      (helpBlock.textContent ?? '').includes('快捷键') &&
+      (helpBlock.textContent ?? '').includes('缺少学校适配？提交学校信息') &&
       view.container.querySelector('[data-role="issues-link"]') !== null &&
       (view.container.querySelector('[data-role="readme-link"]')?.getAttribute('href') ?? '').includes('#readme') &&
       (appBlock === null ||
@@ -2807,10 +2820,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   check(
-    '数据页有自动备份开关、保留份数与快照列表',
+    '数据页有自动快照开关、保留份数与快照列表',
     view.container.querySelector('[data-role="backup-settings"]') !== null &&
-      view.container.querySelector('[role="switch"][aria-label="自动备份"]') !== null &&
-      view.container.querySelector('[role="switch"][aria-label="启动时备份"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="自动快照"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="启动时快照"]') !== null &&
       view.container.querySelector('[data-role="backup-keep"]') !== null &&
       view.container.querySelector('[data-role="backup-kind"]')?.textContent?.includes('JSON 快照') === true &&
       view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
@@ -2818,7 +2831,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // —— P1-05 反馈双轨：动作结果走 toast，持续状态走带时间的 live region 状态行 ——
-  if (clickByText(view.container, '立即备份')) await flush(18);
+  if (clickByText(view.container, '立即创建快照')) await flush(18);
   const snapshotStatus = view.container.querySelector<HTMLElement>('[data-role="snapshot-message"]');
   check(
     '备份结果进 live region 状态行并带操作时间',
@@ -2854,7 +2867,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
-  if (clickByText(view.container, '导出配置')) await flush(10);
+  if (clickByText(view.container, '导出备份')) await flush(10);
   check(
     '导出可选模块',
     document.body.textContent?.includes('学期与节次') === true &&
@@ -2862,11 +2875,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('input[aria-label="导出 提醒"]') !== null,
     '',
   );
-  // 整包 zip：可选把预设快照与日志一起打包，导出格式仍是三选一
+  // 整包 zip：可选把预设与日志一起打包，导出格式仍是三选一
   if (clickByLabel(document.body, '导出为整包 zip')) await flush(6);
   check(
     '整包 zip 可选打包预设与日志',
-    document.querySelector('input[aria-label="整包包含预设快照"]') !== null &&
+    document.querySelector('input[aria-label="整包包含预设"]') !== null &&
       document.querySelector('input[aria-label="整包包含日志文件"]') !== null,
     '',
   );
@@ -2891,10 +2904,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
-  // 导入配置：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
-  if (clickByLabel(view.container, '导入配置')) await flush(10);
+  // 导入备份：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
+  if (clickByLabel(view.container, '导入备份')) await flush(10);
   check(
-    '导入配置合并文件与粘贴两种方式',
+    '导入备份合并文件与粘贴两种方式',
     document.querySelector('[data-role="import-text"]') !== null &&
       document.body.textContent?.includes('选择备份文件') === true,
     '',
@@ -2905,7 +2918,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const pasteParsed = clickByText(document.body, '从文本导入');
   await flush(14);
   check(
-    '粘贴 Base64 文本可导入配置',
+    '粘贴 Base64 文本可导入备份',
     pasteParsed &&
       document.body.textContent?.includes('按修改时间合并') === true &&
       document.querySelector('input[aria-label="导入 课程与排课"]') !== null,

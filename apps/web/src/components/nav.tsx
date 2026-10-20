@@ -104,7 +104,7 @@ export function AppSidebar({
       {!collapsed && (
         <div className="mt-auto flex items-center gap-1 text-xs text-muted">
           <Sun className="size-3" aria-hidden />
-          快捷键 ← → 切周，T 回今天，/ 搜索
+          快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天
         </div>
       )}
     </aside>

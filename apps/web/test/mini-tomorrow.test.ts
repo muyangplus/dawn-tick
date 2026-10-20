@@ -25,7 +25,7 @@ test('预告判定：开关、课数与今天的课都上完才显示', () => {
   assert.equal(tomorrowPreviewLessons([1, 2, 3, 4, 5]).length, 4);
 });
 
-test('悬浮窗空态：预告日没课说「明天也没有课」，否则说「今天没有课了」', () => {
+test('悬浮窗空态：预告日没课说「明天也没有课」，否则说「今天没有课」', () => {
   assert.equal(miniEmptyText(true), '明天也没有课');
-  assert.equal(miniEmptyText(false), '今天没有课了');
+  assert.equal(miniEmptyText(false), '今天没有课');
 });

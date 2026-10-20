@@ -18,12 +18,12 @@ export const MOBILE_WIDGETS: readonly MobileWidget[] = [
 
 /** 手动添加步骤：一键添加不可用时按这个来。 */
 export const WIDGET_PIN_STEPS: readonly string[] = [
-  '长按桌面空白处，进入「小组件」列表',
+  '长按主屏空白处，进入「小组件」列表',
   '在列表里找到「晓刻 DawnTick」',
   '选尺寸后拖到桌面上',
 ];
 
-/** 只有 Android 应用内才有桌面小组件；Windows 用悬浮窗、Web 没有。 */
+/** 只有 Android 应用内才有主屏小组件；Windows 用悬浮窗、Web 没有。 */
 export function hasMobileWidgets(): boolean {
   return detectPlatform() === 'capacitor';
 }
@@ -91,16 +91,16 @@ function pinStatusOf(value: string | undefined): PinWidgetStatus {
 export async function pinWidget(id: MobileWidget['id']): Promise<PinWidgetResult> {
   const plugin = await loadWidgetPlugin();
   if (plugin === null) {
-    return { status: 'unsupported', reason: '当前平台没有桌面小组件' };
+    return { status: 'unsupported', reason: '当前平台没有主屏小组件' };
   }
   try {
     const result = await plugin.requestPin({ provider: id });
     const status = pinStatusOf(result?.status);
-    logInfo('widget', '请求添加桌面小组件', { provider: id, status, reason: result?.reason ?? null });
+    logInfo('widget', '请求添加主屏小组件', { provider: id, status, reason: result?.reason ?? null });
     return { status, reason: result?.reason };
   } catch (cause: unknown) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    logWarn('widget', '请求添加桌面小组件失败', { provider: id, message: reason });
+    logWarn('widget', '请求添加主屏小组件失败', { provider: id, message: reason });
     return { status: 'error', reason };
   }
 }
@@ -120,7 +120,7 @@ export async function readMobileWidgetStates(): Promise<MobileWidgetState[] | nu
     }
     return states;
   } catch (cause: unknown) {
-    logWarn('widget', '读取桌面小组件状态失败', {
+    logWarn('widget', '读取主屏小组件状态失败', {
       message: cause instanceof Error ? cause.message : String(cause),
     });
     return null;

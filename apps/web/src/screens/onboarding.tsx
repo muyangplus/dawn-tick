@@ -13,6 +13,7 @@ import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
+import { HelpHint } from '../components/ui/help-hint.tsx';
 import { SchoolPickerDialog } from '../components/school-picker-dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import {
@@ -232,8 +233,9 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               跳过，先用默认学期
             </Button>
           </div>
-          <span className="text-xs text-muted">
-            跳过会直接建一个「{DEFAULT_SEMESTER_NAME}」（本周一开学、{DEFAULT_WEEKS} 周、内置默认作息），之后在设置里随时可改。
+          <span className="flex items-center gap-1 text-xs text-muted">
+            跳过会建一个「{DEFAULT_SEMESTER_NAME}」（本周一开学、{DEFAULT_WEEKS} 周）
+            <HelpHint label="跳过引导">使用内置默认作息，之后可在设置里修改</HelpHint>
           </span>
 
           <details className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-advanced">
@@ -296,8 +298,8 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             </div>
             <textarea
               data-role="onboarding-import-text"
-              aria-label="配置文本"
-              placeholder="或在此粘贴 JSON / Base64 配置文本"
+              aria-label="备份文本"
+              placeholder="或在此粘贴 JSON / Base64 备份文本"
               className="h-20 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
               value={importText}
               onChange={(event) => setImportText(event.target.value)}

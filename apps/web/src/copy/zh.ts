@@ -3,7 +3,31 @@
  * 破坏性操作句式固定为 docs/04-界面与文案规范.md:108-109 的「将删除「X」及 …，不可撤销」。
  */
 
-/** 删除句：DELETE('数据结构', ['3 条排课', '1 条提醒']) → 将删除「数据结构」及3 条排课、1 条提醒，不可撤销 */
+/**
+ * 量词表：同一实体全仓只在这里定量词，调用点只传类别与数量。
+ * 课程=门、排课=条、上课次数=节、节次=个、待办/日程/提醒=条、安排=项、时长=分钟。
+ */
+export const UNIT_LABEL = {
+  course: '门',
+  schedule: '条',
+  lesson: '节',
+  period: '个',
+  event: '条',
+  todo: '条',
+  reminder: '条',
+  plan: '项',
+  semester: '个',
+  minute: '分钟',
+} as const;
+
+export type CountType = keyof typeof UNIT_LABEL;
+
+/** 计数句：COUNT('course', 3) → `3 门`；名词由调用点写在数字前（`课程 3 门`）。 */
+export function COUNT(type: CountType, count: number): string {
+  return `${count} ${UNIT_LABEL[type]}`;
+}
+
+/** 删除句：DELETE('数据结构', ['排课 3 条', '提醒 1 条']) → 将删除「数据结构」及排课 3 条、提醒 1 条，不可撤销 */
 export function DELETE(object: string, parts: readonly string[] = []): string {
   const tail = parts.length > 0 ? `及${parts.join('、')}，不可撤销` : '，不可撤销';
   return `将删除「${object}」${tail}`;

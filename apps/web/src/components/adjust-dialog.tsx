@@ -304,7 +304,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
     }
     const sameWeek = weekOfDate(finalDate, semester.start_date) === weekOfDate(sourceDate, semester.start_date);
     if (scope === 'this' && !sameWeek) {
-      toast.error('「这一次」只改原日期所在周的这一次课；跨周请选「指定日期」');
+      toast.error('「这一次」只改本周；跨周改用「指定日期」');
       return;
     }
     if (finalDate === sourceDate && periodStart === schedule.periodStart && periodEnd === schedule.periodEnd) {
@@ -644,7 +644,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                 onChange={(event) => setRestFrom(event.target.value)}
               />
             </Field>
-            <Field label="目标上课日">
+            <Field label="目标上课日" hint="原日课表整体搬过来" help="调休后，目标日按原日课表上课">
               <Input
                 type="date"
                 value={restTo}
@@ -652,9 +652,6 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                 onChange={(event) => setRestTo(event.target.value)}
               />
             </Field>
-            <span className="text-xs text-muted">
-              例：把周四的课表调到周六 → 周六按周四课表上课（{WEEKDAYS[dayOfWeek(restFrom) - 1] ?? ''} 的课）
-            </span>
           </div>
         )}
 

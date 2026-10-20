@@ -708,7 +708,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                           <tr key={rowIndex} className="border-t border-line">
                             <th className="w-6 p-1 text-muted">{rowIndex}</th>
                             {row.map((cell, cellIndex) => (
-                              <td key={cellIndex} className="max-w-24 truncate p-1" title={cell}>
+                              <td key={cellIndex} className="max-w-24 break-words p-1 align-top">
                                 {cell === '' ? '—' : cell}
                               </td>
                             ))}

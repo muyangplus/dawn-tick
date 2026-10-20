@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { hasMobileWidgets, pinWidget, readMobileWidgetStates } from '../src/widget-pin.ts';
 import { readNotifyStatus } from '../src/permissions.ts';
 
-test('非安卓平台没有桌面小组件', async () => {
+test('非安卓平台没有主屏小组件', async () => {
   assert.equal(hasMobileWidgets(), false);
   assert.deepEqual(await pinWidget('next'), {
     status: 'unsupported',
-    reason: '当前平台没有桌面小组件',
+    reason: '当前平台没有主屏小组件',
   });
   assert.equal(await readMobileWidgetStates(), null);
 });

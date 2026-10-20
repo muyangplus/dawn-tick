@@ -55,7 +55,7 @@ import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
-import { DELETE, fail } from '../copy/zh.ts';
+import { COUNT, DELETE, fail } from '../copy/zh.ts';
 import { countForSemester, type SemesterCounts } from '../delete-counts.ts';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
@@ -71,13 +71,13 @@ import { settingsSection } from './cards/settings-cards.tsx';
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
 const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = {
-  added: '已添加到桌面',
-  'already-added': '已在桌面上',
-  cancelled: '没收到系统确认，请长按桌面添加',
-  unsupported: '启动器不支持，请长按桌面添加',
+  added: '已添加到主屏',
+  'already-added': '已在主屏上',
+  cancelled: '没收到系统确认，请长按主屏添加',
+  unsupported: '启动器不支持，请长按主屏添加',
   disabled: '小组件被停用，请在系统设置启用',
-  rejected: '系统没接受请求，请长按桌面添加',
-  error: '添加失败，请长按桌面添加',
+  rejected: '系统没接受请求，请长按主屏添加',
+  error: '添加失败，请长按主屏添加',
 };
 
 const THEME_LABEL: Record<ThemePreset, string> = {
@@ -328,7 +328,7 @@ export function SettingsView({
       const report = await deleteSemesterDeep(storage, removing.id);
       logInfo('semester', '删除学期', { id: removing.id, ...report });
       toast.success(
-        `已删除「${removing.name}」，连带清理课程 ${report.courses} · 排课 ${report.schedules} · 节次 ${report.slots} · 日程 ${report.events} · 提醒 ${report.reminders}`,
+        `已删除「${removing.name}」：课程 ${COUNT('course', report.courses)}、排课 ${COUNT('schedule', report.schedules)}、节次 ${COUNT('period', report.slots)}、日程 ${COUNT('event', report.events)}、提醒 ${COUNT('reminder', report.reminders)}`,
       );
       setRemoving(null);
       onChanged();
@@ -557,11 +557,11 @@ export function SettingsView({
                 key={minutes}
                 size="sm"
                 variant={settings.classReminderMinutes === minutes ? 'primary' : 'secondary'}
-                aria-label={`提前 ${minutes} 分钟`}
+                aria-label={`提前 ${COUNT('minute', minutes)}`}
                 disabled={!settings.classReminderEnabled}
                 onClick={() => void onPatch({ classReminderMinutes: minutes })}
               >
-                {minutes} 分钟
+                {COUNT('minute', minutes)}
               </Button>
             ))}
             <Input
@@ -582,11 +582,8 @@ export function SettingsView({
           </div>
         </Field>
         <span className="text-xs text-muted">
-          接下来 7 天待提醒 {reminders.upcoming.length} 条
+          接下来 7 天待提醒 {COUNT('reminder', reminders.upcoming.length)}
           {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
-        </span>
-        <span className="text-xs text-muted">
-          单课可在课程详情里单独设置
         </span>
       </>
     ),
@@ -690,9 +687,9 @@ export function SettingsView({
         </label>
         {hasMobileWidgets() ? (
           <div className="flex flex-col gap-2" data-role="mobile-widget-guide">
-            <span className="text-sm text-ink">桌面小组件</span>
+            <span className="text-sm text-ink">主屏小组件</span>
             <span className="text-xs text-muted">
-              桌面长按 → 小组件 → 晓刻
+              主屏长按 → 小组件 → 晓刻
             </span>
             {MOBILE_WIDGETS.map((widget) => {
               const state = pinStates?.find((item) => item.id === widget.id) ?? null;
@@ -724,12 +721,12 @@ export function SettingsView({
                       <Button
                         size="sm"
                         variant="secondary"
-                        aria-label={`添加小组件到桌面：${widget.label}`}
+                        aria-label={`添加小组件到主屏：${widget.label}`}
                         loading={pinPending === widget.id}
                         disabled={pinPending !== null && pinPending !== widget.id}
                         onClick={() => void addWidget(widget.id)}
                       >
-                        添加到桌面
+                        添加到主屏
                       </Button>
                     </span>
                   </div>
@@ -805,15 +802,16 @@ export function SettingsView({
         )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
-            <span>空日程提示明日预告</span>
-            <span className="truncate text-xs text-muted">无课时显示明日课程</span>
+            <span>明日课程预告</span>
+            <span className="truncate text-xs text-muted">当天没课或课上完时显示</span>
           </span>
           <Switch
             checked={settings.tomorrowPreview}
-            aria-label="空日程提示明日预告"
+            aria-label="明日课程预告"
             onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
           />
-        </label>        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+        </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>开学倒计时</span>
             <span className="truncate text-xs text-muted">学期开始前显示距离开学还有几天</span>
@@ -947,7 +945,7 @@ export function SettingsView({
             id={card.def.id}
             title={card.def.title}
             {...(section === undefined ? {} : { icon: section.icon })}
-            {...(card.def.id === 'semesters' ? { badge: `${semesters.length} 个` } : {})}
+            {...(card.def.id === 'semesters' ? { badge: COUNT('semester', semesters.length) } : {})}
             {...(card.def.id === 'reminders' && notifyAbnormal
               ? { badge: <span className="text-danger-strong" data-role="notify-card-badge">通知未授权</span> }
               : {})}
@@ -1029,10 +1027,11 @@ export function SettingsView({
             removing === null
               ? ''
               : DELETE(removing.name, [
-                  `${removeCounts?.courses ?? 0} 门课程`,
-                  `${removeCounts?.schedules ?? 0} 条排课`,
-                  `${removeCounts?.events ?? 0} 条日程`,
-                  `${removeCounts?.reminders ?? 0} 条提醒`,
+                  `课程 ${COUNT('course', removeCounts?.courses ?? 0)}`,
+                  `排课 ${COUNT('schedule', removeCounts?.schedules ?? 0)}`,
+                  `节次 ${COUNT('period', removeCounts?.slots ?? 0)}`,
+                  `日程 ${COUNT('event', removeCounts?.events ?? 0)}`,
+                  `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
                 ])
           }
         >

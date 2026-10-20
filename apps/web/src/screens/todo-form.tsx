@@ -20,6 +20,7 @@ import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { DELETE } from '../copy/zh.ts';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { Field, Input, Textarea } from '../components/ui/input.tsx';
+import { HelpHint } from '../components/ui/help-hint.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 
@@ -333,14 +334,13 @@ export function TodoForm({
     }
   }
 
-  /** 复制当前这一条：新建一条同名「副本」，其余字段照抄。 */
-  /** 删除当前条目：详情页 footer 的 danger 入口，确认后硬删并关闭。 */
+  /** 删除当前待办：详情页 footer 的 danger 入口，确认后硬删并关闭。 */
   async function remove(): Promise<void> {
     if (editing === null) return;
     const target = editing;
     const name = target.title;
     const ok = await confirmAction({
-      title: '删除条目',
+      title: '删除待办',
       description: DELETE(name, ['关联提醒']),
       confirmLabel: '确认删除',
     });
@@ -360,6 +360,7 @@ export function TodoForm({
     });
   }
 
+  /** 复制当前这一条：新建一条同名「副本」，其余字段照抄。 */
   async function copyOne(): Promise<void> {
     if (editing === null) return;
     const target = editing;
@@ -566,8 +567,9 @@ export function TodoForm({
                     </Button>
                   ))}
                 </div>
-                <span className="text-xs text-muted">
-                  已选 {labWeeks.length} 周；起始日期所在周的星期几会在上面以「星期」为准
+                <span className="flex items-center gap-1 text-xs text-muted">
+                  已选 {labWeeks.length} 周 · 每周重复按上面的「星期」
+                  <HelpHint label="每周重复">起始日期只决定首次上课日，之后按「星期」与所选周次重复</HelpHint>
                 </span>
               </>
             )}
