@@ -821,6 +821,32 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   sidebar.root.unmount();
   sidebar.container.remove();
+
+  // P2-06：周模式与日模式同一份边界口径 —— 第 1 周的「上一屏」置灰、窗口不再越过学期边界
+  const navButton = (label: '上一屏' | '下一屏'): HTMLButtonElement | null =>
+    view.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  const stepWindowBy = async (label: '上一屏' | '下一屏'): Promise<void> => {
+    const before = windowStartOf();
+    if (clickByLabel(view.container, label)) await flush(12);
+    // 重载还没落地时窗口不动：再等一轮，避免把慢一拍的渲染当成翻不动
+    if (windowStartOf() === before) await flush(20);
+  };
+  for (let index = 0; index < 12 && navButton('上一屏')?.disabled === false; index += 1) {
+    await stepWindowBy('上一屏');
+  }
+  check(
+    '第 1 周的「上一屏」置灰',
+    navButton('上一屏')?.disabled === true && windowNav()?.getAttribute('data-window-week') === '1',
+    `起=${windowStartOf()} 周=${windowNav()?.getAttribute('data-window-week') ?? '(无)'}`,
+  );
+  if (clickByLabel(view.container, '下一屏')) await flush(24);
+  check(
+    '第 1 周仍能往后翻一屏',
+    windowNav()?.getAttribute('data-window-week') === '2',
+    `周=${windowNav()?.getAttribute('data-window-week') ?? '(无)'}`,
+  );
+  if (clickByLabel(view.container, '回到今天')) await flush(30);
+  check('边界用例后回到今天的窗口', windowStartOf() === todayText, windowStartOf());
   check(
     '放假日课程灰显',
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
@@ -1073,6 +1099,23 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       tallBody.className.includes('overflow-y-auto'),
     `弹窗=${tallDialog?.className.includes('max-h-') === true ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
   );
+  // P2-05：弹窗打开时全局快捷键不再动背景 —— ←/→ 不翻窗口、/ 不叠第二层搜索
+  const windowStartInDialog = windowStartOf();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  await flush(20);
+  check('弹窗打开时 → 不改背景窗口', windowStartOf() === windowStartInDialog, `${windowStartInDialog} → ${windowStartOf()}`);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  await flush(20);
+  check('弹窗打开时 ← 不改背景窗口', windowStartOf() === windowStartInDialog, windowStartOf());
+  const dialogsBefore = document.querySelectorAll('[role="dialog"]').length;
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: '/', bubbles: true }));
+  await flush(12);
+  check(
+    '弹窗打开时 / 不叠第二层搜索',
+    document.querySelectorAll('[role="dialog"]').length === dialogsBefore &&
+      !(document.body.textContent ?? '').includes('课程、教师、地点、周次与日程'),
+    `弹窗 ${dialogsBefore} → ${document.querySelectorAll('[role="dialog"]').length}`,
+  );
   if (clickByText(document.body, '取消')) await flush(6);
   check('取消后占位块消失', view.container.querySelector('[data-role="empty-slot"]') === null, '');
 
@@ -1265,6 +1308,58 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     slotRange(view.container) === '第 5 节' && document.querySelector('[aria-label="起始节"]') === null,
     `${slotRange(view.container)} @ 周${emptyDay}`,
   );
+  // P2-05：节次范围是 spinbutton，补 ↑/↓/Enter/Esc 并更新 aria-valuenow
+  const wheelOf = (): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>('[data-role="period-wheel"]');
+  const wheelKey = (key: string): void => {
+    wheelOf()?.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  };
+  check(
+    '节次范围是 spinbutton 且可键盘聚焦',
+    wheelOf()?.getAttribute('role') === 'spinbutton' && wheelOf()?.tabIndex === 0,
+    `role=${wheelOf()?.getAttribute('role') ?? '(无)'} tabindex=${wheelOf()?.tabIndex ?? '(无)'}`,
+  );
+  wheelKey('ArrowDown');
+  await flush(6);
+  check(
+    '↓ 扩展一节并更新 aria-valuenow',
+    slotRange(view.container) === '第 5–6 节' && wheelOf()?.getAttribute('aria-valuenow') === '6',
+    `${slotRange(view.container)} / now=${wheelOf()?.getAttribute('aria-valuenow') ?? '(无)'}`,
+  );
+  wheelKey('ArrowUp');
+  await flush(6);
+  check(
+    '↑ 收回一节并更新 aria-valuenow',
+    slotRange(view.container) === '第 5 节' && wheelOf()?.getAttribute('aria-valuenow') === '5',
+    `${slotRange(view.container)} / now=${wheelOf()?.getAttribute('aria-valuenow') ?? '(无)'}`,
+  );
+  // 16–20px 的小控件用透明外扩到 44px：视觉尺寸不变，只在 className 上留可断言的标记
+  const tapTargets = [...view.container.querySelectorAll<HTMLElement>('[data-tap-area="44"]')];
+  check(
+    '节次控件带 44px 透明命中区',
+    tapTargets.length >= 3 && tapTargets.every((item) => (item.getAttribute('class') ?? '').includes('after:')),
+    `${tapTargets.length} 个`,
+  );
+  wheelKey('Escape');
+  await flush(6);
+  check(
+    'spinbutton 上按 Esc 取消占位块',
+    view.container.querySelector('[data-role="empty-slot"]') === null,
+    '',
+  );
+  // 重新开一个占位块，验证 Enter 直接进加课弹窗
+  clickGridCell(view.container, emptyDay, 5);
+  await flush(8);
+  wheelKey('Enter');
+  await flush(12);
+  check(
+    'spinbutton 回车直接打开加课弹窗',
+    (document.body.textContent ?? '').includes('添加课程') &&
+      triggerText('起始节') === '第 5 节' &&
+      triggerText('结束节') === '第 5 节',
+    `${triggerText('起始节')} → ${triggerText('结束节')}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
   // 清掉占位块，避免影响后面的拖动调课断言
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
@@ -2586,6 +2681,34 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('日模式翻到下一天', dayDateText() === '10/19 周一', dayDateText());
   if (clickByLabel(view.container, '前一天')) await flush(12);
   check('日模式翻回前一天', dayDateText() === '10/18 周日', dayDateText());
+
+  // P2-06：日视图课程行可点、可键盘打开详情（与周视图「点课程卡 → 调课」同一条路径）
+  // 周一（10/19）放假没有课：再翻一天到周二（线代第 5–6 节）
+  if (clickByLabel(view.container, '后一天')) await flush(12);
+  if (clickByLabel(view.container, '后一天')) await flush(12);
+  check('日视图翻到有课的一天', dayDateText() === '10/20 周二', dayDateText());
+  const dayRow = view.container.querySelector<HTMLElement>('[data-role="day-lesson"]');
+  check(
+    '日视图课程行是 role=button 且可聚焦',
+    dayRow !== null && dayRow.getAttribute('role') === 'button' && dayRow.tabIndex === 0,
+    `role=${dayRow?.getAttribute('role') ?? '(无)'} tabindex=${dayRow?.tabIndex ?? '(无)'}`,
+  );
+  if (dayRow !== null) {
+    dayRow.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await flush(12);
+    const dayDetailOpen = document.querySelector('[data-role="reminder-section"]') !== null;
+    check('日视图课程行回车打开课程详情', dayDetailOpen, dayDetailOpen ? '已打开' : '未打开');
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(12);
+    check(
+      'Esc 收起日视图打开的详情',
+      document.querySelector('[data-role="reminder-section"]') === null,
+      '',
+    );
+  }
+  if (clickByLabel(view.container, '前一天')) await flush(12);
+  if (clickByLabel(view.container, '前一天')) await flush(12);
+  check('日视图键盘用例后回到今天', dayDateText() === '10/18 周日', dayDateText());
   check(
     '日视图按查看日期显示课表',
     (view.container.querySelector('[aria-label="日视图"]')?.textContent ?? '').includes('节课'),
@@ -3305,21 +3428,34 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(remounted.container, '课表')) await flush(20);
 
-  // 把学期挪到过去：窗口整段落在学期外，空态换成「学期外」并给「回到学期内」
+  // 把学期挪到过去：Q6 决定停在学期边界 —— 窗口被夹回最后一周，不再出现「学期外」状态
   const emptyStore = validatedStorage(await openIndexedDbStorage());
   const emptySemester = await activeSemester(emptyStore, USER_ID);
   if (emptySemester !== undefined) {
     await updateSemester(emptyStore, String(emptySemester['id']), { start_date: '2025-01-01' });
   }
-  if (clickByLabel(remounted.container, '下一屏')) await flush(30);
-  const outsideEmpty = remounted.container.querySelector<HTMLElement>('[data-role="week-empty"]');
+  // 直接改库不会推送给应用：点一次「下一屏」触发重载，重载时窗口按新学期的边界重新夹
+  if (clickByLabel(remounted.container, '下一屏')) await flush(40);
+  const pastNav = remounted.container.querySelector('[data-role="window-nav"]');
+  const pastPrev = remounted.container.querySelector<HTMLButtonElement>('button[aria-label="上一屏"]');
+  const pastNext = remounted.container.querySelector<HTMLButtonElement>('button[aria-label="下一屏"]');
+  const pastEmpty = remounted.container.querySelector<HTMLElement>('[data-role="week-empty"]');
   check(
-    '学期外空态：文案与主行动独立于真空课表',
-    outsideEmpty?.getAttribute('data-empty-state') === 'outside-semester' &&
-      (outsideEmpty.textContent ?? '').includes('学期外没有课程') &&
-      outsideEmpty.querySelectorAll('button').length === 1 &&
-      (outsideEmpty.querySelector('button')?.textContent ?? '').trim() === '回到学期内',
-    `空态=${outsideEmpty?.getAttribute('data-empty-state') ?? '(无)'}`,
+    '学期整体过去后窗口停在最后一周（不越过学期边界）',
+    pastNav?.getAttribute('data-window-week') === '20' &&
+      pastPrev !== null &&
+      pastPrev.disabled === false &&
+      pastNext !== null &&
+      pastNext.disabled === true,
+    `起=${pastNav?.getAttribute('data-window-start') ?? '(无)'} 周=${pastNav?.getAttribute('data-window-week') ?? '(无)'} 上一屏=${
+      pastPrev?.disabled === true ? '置灰' : '可点'
+    } 下一屏=${pastNext?.disabled === true ? '置灰' : '可点'}`,
+  );
+  check(
+    '学期外不再出现「学期外」空态（Q6：不加学期外水印）',
+    pastEmpty?.getAttribute('data-empty-state') !== 'outside-semester' &&
+      !(remounted.container.textContent ?? '').includes('学期外没有课程'),
+    `空态=${pastEmpty?.getAttribute('data-empty-state') ?? '(无)'}`,
   );
 
   // 恢复学期起始日，再造「只有非本周」：只排第 1 周，翻到后续周次后虚线课卡可见时不得再报「没有课程」
@@ -3339,13 +3475,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       weeks: [1],
     });
   }
-  if (clickByLabel(remounted.container, '下一屏')) await flush(30);
+  // 直接改库同样不会刷新：先用「上一屏」触发重载（窗口被夹回第 1 周），再翻到第 2 周看第 1 周的虚线课
+  if (clickByLabel(remounted.container, '上一屏')) await flush(40);
+  if (clickByLabel(remounted.container, '下一屏')) await flush(40);
   check(
     '只有非本周课时不再出现「没有课程」空态',
     (remounted.container.textContent ?? '').includes('只在第一周') &&
       remounted.container.querySelector('[data-role="week-empty"]') === null &&
       remounted.container.querySelector('[data-tone="ghost"]') !== null,
-    `空态=${remounted.container.querySelector('[data-role="week-empty"]') === null ? '无' : '有'}`,
+    `周=${remounted.container.querySelector('[data-role="window-nav"]')?.getAttribute('data-window-week') ?? '(无)'} 空态=${
+      remounted.container.querySelector('[data-role="week-empty"]')?.getAttribute('data-empty-state') ?? '无'
+    }`,
   );
 
   // 删掉这个默认学期，后面的「选校建学期」用例仍从引导页开始

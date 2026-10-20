@@ -34,7 +34,7 @@ import {
   type TimeSlotRow,
   type TodoSort,
 } from '@dawn-tick/core';
-import { dayRangeOf } from './lib/day-nav.ts';
+import { clampWindowStart, dayRangeOf } from './lib/day-nav.ts';
 
 /** 课表里条目的角标文案。 */
 const EVENT_LABEL: Record<string, string> = {
@@ -228,10 +228,14 @@ export async function loadAppData(
   const slotByPeriod = new Map(slots.map((slot) => [slot.period_no, slot]));
   const currentWeek = Math.max(1, weekOfDate(today, semester.start_date));
   // 窗口起点：显式给了就用它；只给了周次就用那一周的周一；都没有按设置取今天或本周周一
-  const windowStart = resolveWindowStart(
-    options.windowStart ??
-      (options.viewWeek === undefined ? defaultWindowStart(today, settings) : weekDateOf(semester, options.viewWeek, 1)),
-    settings,
+  // 最后夹进学期：今天落在学期外时窗口停在边界，不再出现「学期外」窗口（Q6）
+  const windowStart = clampWindowStart(
+    resolveWindowStart(
+      options.windowStart ??
+        (options.viewWeek === undefined ? defaultWindowStart(today, settings) : weekDateOf(semester, options.viewWeek, 1)),
+      settings,
+    ),
+    dayRangeOf(semester),
   );
   const viewDays = Math.max(1, settings.viewDays);
   const windowDates: string[] = [];

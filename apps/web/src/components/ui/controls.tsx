@@ -11,6 +11,8 @@ export function Checkbox({ className, ...props }: ComponentProps<typeof Checkbox
     <CheckboxPrimitive.Root
       className={cn(
         'size-5 shrink-0 rounded-sm border border-line-strong bg-surface',
+        // 20px 的勾选框加一层 44px 透明命中区：视觉尺寸不变，触控/运动障碍用户可达（--spacing-tap 的 44px 口径）
+        "relative after:absolute after:content-[''] after:-inset-3.5 after:rounded-sm",
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
         'data-[state=checked]:bg-primary data-[state=checked]:text-on-primary',
         className,
@@ -29,6 +31,8 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
     <SwitchPrimitive.Root
       className={cn(
         'inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-line-strong transition-colors',
+        // 24px 高：上下各外扩 10px 补到 44px 命中区，视觉高度不变
+        "relative after:absolute after:content-[''] after:-inset-y-2.5 after:left-0 after:right-0",
         'bg-surface-muted data-[state=checked]:bg-primary',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
         className,

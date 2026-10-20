@@ -481,13 +481,16 @@ function TimelineRow({
         <CircleCheck className="size-4 text-muted" role="img" aria-label={`已到时间自动完成：${item.title}`} />
       </span>
     ) : item.checkable && item.event !== undefined ? (
-      <input
-        type="checkbox"
-        className="size-4 shrink-0"
-        checked={item.done}
-        aria-label={`标记完成：${item.title}`}
-        onChange={() => onToggleDone(item.event as EventRow)}
-      />
+      // 勾选框本体只有 16px：外面套一层 44px 的 label 命中区，视觉尺寸不变（触控可达）
+      <label className="flex min-h-tap min-w-tap shrink-0 cursor-pointer items-center justify-center" data-role="done-tap">
+        <input
+          type="checkbox"
+          className="size-4 shrink-0"
+          checked={item.done}
+          aria-label={`标记完成：${item.title}`}
+          onChange={() => onToggleDone(item.event as EventRow)}
+        />
+      </label>
     ) : null;
 
   const body = (
@@ -742,8 +745,11 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                     {formatDayCountdown(countdownTarget(row), now)}
                   </span>
                 </button>
-                {/* 倒计时条目也能直接勾完成，不必进详情 */}
-                <span className="flex shrink-0 items-center pr-3">
+                {/* 倒计时条目也能直接勾完成，不必进详情；label 给 16px 勾选框补足 44px 命中区 */}
+                <label
+                  className="flex min-h-tap min-w-tap shrink-0 cursor-pointer items-center justify-center pr-3"
+                  data-role="done-tap"
+                >
                   <input
                     type="checkbox"
                     className="size-4"
@@ -754,7 +760,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                       void toggleCountdownDone(ctx, row, event.target.checked);
                     }}
                   />
-                </span>
+                </label>
               </Card>
             ))}
           </div>

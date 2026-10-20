@@ -25,6 +25,16 @@ const MOVE_TOLERANCE = 8;
 /** 拖动占位块松手后，抑制紧随那次 click 的时间窗（毫秒）。 */
 const SUPPRESS_SLOT_CLICK_MS = 500;
 
+/**
+ * 44px 透明命中区：视觉尺寸不变，用伪元素把命中区外扩到触控口径（见 `--spacing-tap` 的 min-h-tap / size-tap 口径）。
+ * 往上多扩 28px 是因为占位块只有一节高时，向下外扩会被 overflow-hidden 裁掉；左右各 14px 只占相邻留白。
+ */
+const TAP_AREA =
+  "relative after:absolute after:content-[''] after:-top-7 after:bottom-0 after:-left-3.5 after:-right-3.5";
+/** 滚轮条只上下外扩：左右外扩会盖住相邻的「上一节 / 下一节」。 */
+const WHEEL_TAP_AREA =
+  "relative after:absolute after:content-[''] after:-top-7 after:bottom-0 after:-left-1 after:-right-1";
+
 /** 表头显示月日。 */
 function formatMonthDay(date: string): string {
   const [, month, day] = date.split('-');
@@ -474,6 +484,14 @@ export function WeekView({
     start = Math.max(1, Math.min(start, end));
     setEmptyTarget({ date: target.date, start, end });
     warnClash(target.date, start, end);
+  }
+
+  /** 键盘调范围：↓ 把结束节向下扩一节（最多到总节数），↑ 收回一节（最少回到起始节）。 */
+  function resizeRange(target: EmptyTarget, direction: -1 | 1): void {
+    const end = Math.min(periodCount, Math.max(target.start, target.end + direction));
+    if (end === target.end) return;
+    setEmptyTarget({ date: target.date, start: target.start, end });
+    warnClash(target.date, target.start, end);
   }
 
   /** 按下占位块（滚轮条或块本体）：记录起点，之后由 pointermove 改范围。 */
@@ -974,7 +992,11 @@ export function WeekView({
                         <button
                           type="button"
                           aria-label="在此新建课程"
-                          className="flex size-5 shrink-0 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted"
+                          className={cn(
+                            'flex size-5 shrink-0 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted',
+                            TAP_AREA,
+                          )}
+                          data-tap-area="44"
                           style={{ touchAction: 'none' }}
                           onClick={(event) => {
                             event.stopPropagation();
@@ -1010,7 +1032,11 @@ export function WeekView({
                         <button
                           type="button"
                           aria-label="上一节"
-                          className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink"
+                          className={cn(
+                            'flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink',
+                            TAP_AREA,
+                          )}
+                          data-tap-area="44"
                           onClick={(event) => {
                             event.stopPropagation();
                             const current = emptyRef.current;
@@ -1021,15 +1047,43 @@ export function WeekView({
                         </button>
                         <div
                           role="spinbutton"
+                          tabIndex={0}
                           aria-label="节次范围"
-                          aria-valuemin={1}
+                          aria-valuemin={placeholder.start}
                           aria-valuemax={periodCount}
-                          aria-valuenow={placeholder.start}
+                          aria-valuenow={placeholder.end}
                           aria-valuetext={formatPeriods(placeholder.start, placeholder.end)}
                           data-role="period-wheel"
-                          title="上下拖动（或滚动鼠标滚轮）调整节次范围"
-                          className="tabular cursor-ns-resize select-none whitespace-nowrap rounded-sm px-1 text-ink"
+                          data-tap-area="44"
+                          title="拖动、滚轮或 ↑/↓ 调整节次范围；Enter 新建课程，Esc 取消"
+                          className={cn(
+                            'tabular cursor-ns-resize select-none whitespace-nowrap rounded-sm px-1 text-ink',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
+                            WHEEL_TAP_AREA,
+                          )}
                           style={{ touchAction: 'none' }}
+                          onKeyDown={(event) => {
+                            const current = emptyRef.current;
+                            if (current === null) return;
+                            // ↑/↓ 调整范围：↓ 向下一节扩展、↑ 收回一节；Enter 直接新建，Esc 取消
+                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              resizeRange(current, event.key === 'ArrowDown' ? 1 : -1);
+                              return;
+                            }
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openQuickCreate(current);
+                              return;
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setEmptyTarget(null);
+                            }
+                          }}
                           onPointerDown={(event) => beginEmptyDrag(event, 'wheel')}
                           onPointerMove={moveEmptyDrag}
                           onPointerUp={endEmptyDrag}
@@ -1040,7 +1094,11 @@ export function WeekView({
                         <button
                           type="button"
                           aria-label="下一节"
-                          className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink"
+                          className={cn(
+                            'flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink',
+                            TAP_AREA,
+                          )}
+                          data-tap-area="44"
                           onClick={(event) => {
                             event.stopPropagation();
                             const current = emptyRef.current;

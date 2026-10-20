@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_SETTINGS,
-  addDays,
   dayOfWeek as nextDayOfWeek,
   readSettings,
   isValidTimeZone,
@@ -11,6 +10,7 @@ import {
   type AppSettings,
   type EventRow,
   type ManagedCourse,
+  type Occurrence,
   type SearchHit,
   type Storage,
 } from '@dawn-tick/core';
@@ -34,7 +34,6 @@ import {
   defaultWindowStart,
   loadAppData,
   loadCourseDetail,
-  resolveWindowStart,
   weekDateOf,
   type AppData,
   type CourseDetail,
@@ -69,7 +68,7 @@ import { attachLogStorage, clearLogs, describeError, loadLogs, logDebug, logErro
 import { registerPendingRestart } from './pending-restart.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
-import { clampDayDate, dayRangeOf, defaultDayDate, stepDay } from './lib/day-nav.ts';
+import { clampDayDate, clampWindowStart, dayRangeOf, defaultDayDate, stepDay, stepWindow } from './lib/day-nav.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
 import { openDataDirectory, relaunchApplication, storageStatusLabel } from './storage-config.ts';
@@ -101,15 +100,6 @@ interface DetailState {
 interface BootFailure {
   kind: 'corrupt' | 'other';
   failure: Failure;
-}
-/** 查看窗口平移一屏；windowStart 为 null（默认起点）时以已加载起点为基准，起点可越出学期。 */
-function shiftWindowStart(
-  current: string | null,
-  loaded: string,
-  days: number,
-  settings: AppSettings,
-): string {
-  return resolveWindowStart(addDays(current ?? loaded, days), settings);
 }
 
 /** 窗口覆盖的日期区间文案，例如 8/19–8/23。 */
@@ -380,8 +370,9 @@ export function App() {
       const explicit = start !== undefined && start !== null && start !== '';
       const next = await loadAppData(target, current, explicit ? { windowStart: start } : {});
       setData(next);
-      // 只记显式起点：null 表示跟随设置里的默认起点，设置一变窗口才会跟着动
-      if (explicit) setWindowStart(start);
+      // 只记显式起点：null 表示跟随设置里的默认起点，设置一变窗口才会跟着动。
+      // 记夹过学期的实际起点（next.windowStart），避免状态与已加载窗口不一致时「翻不动」。
+      if (explicit) setWindowStart(next.windowStart);
       logInfo('data', '加载课表', {
         week: next.week,
         viewWeek: next.viewWeek,
@@ -400,16 +391,20 @@ export function App() {
     [],
   );
 
-  /** 上一屏 / 下一屏：按设置的天数平移窗口起点。 */
+  /** 上一屏 / 下一屏：按设置的天数平移窗口起点，停在学期首/末周（Q6）；翻不动就不动。 */
   const shiftWindow = useCallback(
     (days: number) => {
-      setWindowStart((current) => {
-        const loaded = data?.windowStart;
-        if (current === null && (loaded === undefined || loaded === '')) return current;
-        return shiftWindowStart(current, loaded ?? '', days, settings);
+      if (data === null || data.semester === null) return;
+      const start = windowStart ?? data.windowStart;
+      if (start === '') return;
+      const next = stepWindow(start, days > 0 ? 1 : -1, {
+        days: Math.abs(days),
+        range: dayRangeOf(data.semester),
+        hideWeekends: settings.hideWeekends,
       });
+      if (next !== null) setWindowStart(next);
     },
-    [data?.windowStart, settings],
+    [data, windowStart, settings.hideWeekends],
   );
 
   /** 日模式翻一天：跳过周末、停在学期边界。 */
@@ -640,7 +635,17 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null;
-      if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (
+        target !== null &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable === true)
+      ) {
+        return;
+      }
+      // 弹窗打开时背景不动：只保留 Esc（弹窗自己也能关），/ 不叠第二层搜索、←/→ 与 T 不翻背景
+      if (typeof document !== 'undefined' && document.querySelector('[role="dialog"]') !== null) {
+        if (event.key === 'Escape' && detail !== null) setDetail(null);
+        return;
+      }
       if (event.key === 'Escape' && detail !== null) {
         setDetail(null);
         return;
@@ -663,9 +668,13 @@ export function App() {
   }, [settings.viewDays, shiftWindow, stepDayBy, backToToday, dayMode, detail]);
 
   useEffect(() => {
-    if (storage === null || data === null) return;
+    if (storage === null || data === null || data.semester === null) return;
     // windowStart=null 表示「用默认起点」：要拿默认起点跟已加载的窗口起点比，否则「回到今天」不会重载
-    const wanted = windowStart ?? defaultWindowStart(data.today, settings);
+    // 默认起点也夹进学期：今天落在学期外时停在边界（Q6），不再出现「学期外」窗口
+    const wanted = clampWindowStart(
+      windowStart ?? defaultWindowStart(data.today, settings),
+      dayRangeOf(data.semester),
+    );
     if (wanted === data.windowStart) return;
     void reload(storage, settings, wanted);
   }, [windowStart, data, storage, settings, reload]);
@@ -925,6 +934,21 @@ export function App() {
     setDetail({ cell: lessonCellOf(data, target), detail: loaded, date: target.date });
   }
 
+  /** 日视图里点课程行：课次不是网格格，按当天课次还原课程卡后走同一个 openLesson。 */
+  function openLessonFromDay(lesson: Occurrence): void {
+    if (data === null) return;
+    void openLesson(
+      lessonCellOf(data, {
+        scheduleId: lesson.scheduleId,
+        courseId: lesson.courseId,
+        courseName: lesson.courseName,
+        date: lesson.date,
+        periodStart: lesson.periodStart,
+        periodEnd: lesson.periodEnd,
+      }),
+    );
+  }
+
   /** 详情页的「调课」：以当前这一课次为预设目标，打开调课弹窗。 */
   function openAdjustForLesson(cell: LessonCell, date: string): void {
     if (!guardWrite('调课')) return;
@@ -1109,6 +1133,10 @@ export function App() {
   const viewDay = clampDayDate(dayDate ?? defaultDayDate(data.today, settings.hideWeekends), dayRange);
   const canPrevDay = stepDay(viewDay, -1, { hideWeekends: settings.hideWeekends, range: dayRange }) !== null;
   const canNextDay = stepDay(viewDay, 1, { hideWeekends: settings.hideWeekends, range: dayRange }) !== null;
+  // 周模式与日模式同一份边界口径：第 1 周与最后一周的 ‹ › 置灰（Q6：停在学期边界）
+  const weekStepOptions = { days: settings.viewDays, range: dayRange, hideWeekends: settings.hideWeekends };
+  const canPrevWeek = stepWindow(data.windowStart, -1, weekStepOptions) !== null;
+  const canNextWeek = stepWindow(data.windowStart, 1, weekStepOptions) !== null;
 
   // 视图进入过渡：key 随 view 变化，切页时容器重建，动画才会重新触发；
   // `data-motion=off` 由 styles.css 的停用规则压到 1ms。
@@ -1141,6 +1169,7 @@ export function App() {
             date={viewDay}
             isToday={viewDay === data.today}
             onOpenWeek={() => setMode('week')}
+            onSelectLesson={openLessonFromDay}
           />
         ))}
       {view === 'schedule' && (
@@ -1264,6 +1293,8 @@ export function App() {
               week={{
                 viewWeek: data.viewWeek,
                 currentWeek: data.week,
+                canPrev: canPrevWeek,
+                canNext: canNextWeek,
                 onPrev: () => shiftWindow(-settings.viewDays),
                 onNext: () => shiftWindow(settings.viewDays),
               }}
