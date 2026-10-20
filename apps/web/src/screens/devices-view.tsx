@@ -6,13 +6,11 @@ import {
   IMPORT_MODE_LABEL,
   IMPORT_MODES,
   formatDateTime,
-  LOG_LEVELS,
   summarizeBackup,
   type AppSettings,
   type BackupModule,
   type BackupPayload,
   type ImportMode,
-  type LogLevel,
   type Storage,
 } from '@dawn-tick/core';
 import {
@@ -25,23 +23,11 @@ import {
   type ExportFormat,
   type PackageExtras,
 } from '../data-management.ts';
-import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
+import { CHANNEL, featureVisible } from '../channel.ts';
 import { dayStampUtc } from '../lib/dates.ts';
-import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
-import {
-  BUILTIN_PRESET_VERSION,
-  cacheSnapshotContent,
-  checkPresetUpdate,
-  fetchSnapshot,
-  resolvePresetSource,
-  writeCachedSnapshot,
-  type PresetSource,
-} from '../preset-update.ts';
-import { clearLogs, logInfo, logsText, logWarn } from '../log.ts';
 import { canUseWidget, hasMobileWidgets, isWebApp } from '../lib/capabilities.ts';
-import { readElevationStatus, requestElevation } from '../autostart.ts';
 import { detectPlatform } from '../platform-detect.ts';
-import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
+import { copyText } from '../system-actions.ts';
 import {
   canConfigureStorage,
   openDataDirectory,
@@ -75,15 +61,8 @@ import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter, FormDialog } from '../components/ui/dialog.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
-import { ExternalLink } from '../components/ui/external-link.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SwitchField,
-} from '../components/ui/controls.tsx';
+import { SwitchField } from '../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../components/ui/status-line.tsx';
 import { registerPendingRestart } from '../pending-restart.ts';
 import { toast } from '../components/ui/toaster.tsx';
@@ -93,31 +72,11 @@ import { readLayout } from './cards/layout-store.ts';
 import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/registry.ts';
 import { devicesSection } from './cards/devices-cards.tsx';
 import { AboutCard } from './settings/about-card.tsx';
+import { MaintenanceCard } from './settings/maintenance-card.tsx';
+import { useUpdateCheck } from './settings/use-update-check.ts';
+import { exportLogs, saveText, showLogDirectory } from './settings/file-export.ts';
+import { formatBytes, said } from './settings/format.ts';
 import { rememberCollapsed } from '../lib/collapse-store.ts';
-
-/** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
-const PRESET_SOURCE_LABEL = '预设仓库（GitHub）';
-
-/** 日志级别说明（与维护卡片文案一致）。 */
-const LOG_LEVEL_HINT: Record<LogLevel, string> = {
-  error: '仅严重错误',
-  warn: '错误 + 警告信息',
-  info: '一般操作信息（默认）',
-  debug: '详细信息，包含请求/响应详情',
-  trace: '全部日志，最详细',
-};
-
-/** 快照大小的可读文案。 */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/** 状态行统一带时间：动作结果另走 toast，这里留可回看的「上一次操作」。 */
-function said(text: string): StatusMessage {
-  return { text, at: Date.now() };
-}
 
 export interface DevicesViewProps {
   storage: Storage;
@@ -146,12 +105,7 @@ export function DevicesView({
   onSettingsReplaced,
 }: DevicesViewProps) {
   const fileInput = useRef<HTMLInputElement>(null);
-  const updateAction = useAction();
-  const [updateResult, setUpdateResult] = useState<StatusMessage | null>(null);
-  const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
-  const presetAction = useAction();
-  const [presetResult, setPresetResult] = useState<StatusMessage | null>(null);
-  const [elevated, setElevated] = useState<boolean | null>(null);
+  const update = useUpdateCheck(settings);
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [storagePathInput, setStoragePathInput] = useState('');
   const [storageMessage, setStorageMessage] = useState<StatusMessage | null>(null);
@@ -317,18 +271,6 @@ export function DevicesView({
     });
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      // 缓存比内置新且哈希可信才用缓存
-      const source = await resolvePresetSource(storage);
-      if (!cancelled) setPresetSource(source);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [storage]);
-
   const dav: DavSettings = {
     webdavUrl: settings.webdavUrl,
     webdavUser: settings.webdavUser,
@@ -423,110 +365,6 @@ export function DevicesView({
     });
   }
 
-  useEffect(() => {
-    if (!canUseWidget()) return;
-    let cancelled = false;
-    void (async () => {
-      const value = await readElevationStatus();
-      if (!cancelled) setElevated(value);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function requestAdmin(): Promise<void> {
-    const result = await requestElevation();
-    if (!result.ok) {
-      toast.error(fail('提权', result.error ?? '', '请手动以管理员身份运行'));
-    }
-  }
-
-  async function runUpdateCheck(): Promise<void> {
-    await updateAction.run({
-      scope: 'update',
-      label: '正在检查更新…',
-      log: '检查更新失败',
-      fail: { what: '检查更新', next: '请稍后再试' },
-      task: async () => {
-        const status = await checkForUpdate({
-          channel: CHANNEL,
-          receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
-          currentVersion: appVersion(),
-        });
-        if (status.error !== null) {
-          const message = fail('检查更新', status.error, '请稍后再试');
-          setUpdateResult(said(message));
-          toast.error(message);
-          logWarn('update', '检查更新失败', { error: status.error, feed: status.feed });
-          return;
-        }
-        const manifest = status.manifest;
-        const message = status.available
-          ? `发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在发布页下载`
-          : `已是最新版本（${CHANNEL_LABEL[status.feed]}）`;
-        setUpdateResult(said(message));
-        toast.success(message);
-        logInfo('update', '检查更新', {
-          feed: status.feed,
-          current: status.current,
-          latest: status.latest,
-          available: status.available,
-          verify: verifyHint(status.feed, 'windows'),
-          ...(manifest?.notes === undefined ? {} : { notes: manifest.notes }),
-        });
-      },
-    });
-  }
-
-  /** 检查预设更新：快照写入缓存、下次启动由 resolvePresetSource 生效；失败时界面沿用内置预设。 */
-  async function runPresetCheck(): Promise<void> {
-    const result = await presetAction.run({
-      scope: 'preset',
-      label: '正在读取预设更新…',
-      log: '下载预设快照失败',
-      fail: { what: '检查预设更新', next: '请稍后再试' },
-      task: async () => {
-        const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
-        const status = await checkPresetUpdate({ cachedVersion: currentVersion });
-        if (status.error !== null) {
-          const message = fail('检查预设更新', status.error, '请稍后再试');
-          setPresetResult(said(message));
-          toast.error(message);
-          logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion });
-          return;
-        }
-        if (!status.available || status.version === null) {
-          const message = `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${PRESET_SOURCE_LABEL}`}`;
-          setPresetResult(said(message));
-          toast.success(message);
-          logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version, source: status.source });
-          return;
-        }
-        const snapshot = await fetchSnapshot(status.version);
-        await writeCachedSnapshot(storage, snapshot);
-        // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
-        const content = await cacheSnapshotContent(storage, snapshot);
-        if (!content.ok) {
-          logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
-            version: snapshot.version,
-            message: content.reason ?? '未知原因',
-          });
-        }
-        setPresetSource(await resolvePresetSource(storage));
-        const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统），下次启动生效`;
-        setPresetResult(said(message));
-        toast.success(message);
-        // 预设要下次启动才套用：与其它待重启改动共用一条提示
-        registerPendingRestart('preset-update');
-        logInfo('preset', '已下载预设快照', { version: snapshot.version, hash: snapshot.hash });
-      },
-    });
-    if (!result.ok && result.error !== null) {
-      setPresetResult(said(fail('检查预设更新', result.error, '请稍后再试')));
-    }
-  }
-
   const exportAction = useAction();
   const importAction = useAction();
   const logAction = useAction();
@@ -561,40 +399,6 @@ export function DevicesView({
       cancelled = true;
     };
   }, [storage]);
-
-  /** 桌面端走系统保存对话框，其余端下载；结果由调用方 toast。 */
-  async function saveText(name: string, content: string, extension: string, filterName: string): Promise<boolean> {
-    const result = await saveTextFile(name, content, { extension, filterName });
-    if (result.cancelled) {
-      toast.info('已取消保存');
-      return false;
-    }
-    if (!result.ok) {
-      toast.error(fail('保存', result.error, '请换一个位置后重试'));
-      return false;
-    }
-    return true;
-  }
-
-  async function exportLogs(): Promise<void> {
-    const entries = logsText();
-    const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;
-    const saved = await saveText(name, entries === '' ? '暂无日志' : entries, 'txt', '日志文件');
-    if (saved) {
-      toast.success(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
-      void clearLogs();
-    }
-  }
-
-  /** 桌面端：资源管理器定位日志目录 */
-  async function showLogDirectory(): Promise<void> {
-    const dir = await openLogDirectory();
-    if (dir === null) {
-      toast.error(fail('打开日志目录', null, '请到「设置 → 同步与数据」查看数据目录'));
-      return;
-    }
-    toast.info(`日志目录：${dir}`);
-  }
 
   async function downloadBackup(): Promise<void> {
     await exportAction.run({
@@ -1027,148 +831,7 @@ export function DevicesView({
     ),
 
     maintenance: (
-      <>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            aria-label="检查更新"
-            loading={updateAction.busy}
-            onClick={() => void runUpdateCheck()}
-          >
-            检查更新
-          </Button>
-          <ExternalLink
-            dataRole="release-page-link"
-            className="text-xs text-primary-strong underline"
-            href="https://github.com/muyangplus/dawn-tick/releases"
-            ariaLabel="打开发布页（GitHub）"
-          >
-            打开发布页
-          </ExternalLink>
-          {updateResult !== null && (
-            <StatusLine dataRole="update-result" at={updateResult.at}>
-              {updateResult.text}
-            </StatusLine>
-          )}
-        </div>
-        {CHANNEL !== 'dev' ? (
-          <SwitchField
-            label="接收公测版更新"
-            description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到公测版'}
-            checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-            onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
-            ariaLabel="接收公测版更新"
-          />
-        ) : (
-          <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
-        )}
-        <SwitchField
-          label="自动检查版本更新"
-          description="启动后自动查一次，有新版本时弹出更新信息"
-          checked={settings.autoCheckUpdate}
-          onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
-          ariaLabel="自动检查版本更新"
-        />
-        {CHANNEL === 'dev' && (
-          <SwitchField
-            label="开发者特性"
-            description="关闭后按正式版运行"
-            checked={settings.devFeatures}
-            onCheckedChange={(checked) => void onPatch({ devFeatures: checked })}
-            ariaLabel="开发者特性"
-          />
-        )}
-
-        {/* 应用诊断日志：开关控制 dawn-tick.log，级别决定门槛 */}
-        <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="log-settings">
-          <span className="text-sm font-medium text-ink">应用诊断日志</span>
-          <span className="text-xs text-muted">
-            写入文件的门槛
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-label="打开日志"
-              onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
-            >
-              打开日志
-            </Button>
-            <span className="text-xs text-muted">导出当前缓冲区</span>
-          </div>
-          <SwitchField
-            label="启用应用诊断日志"
-            checked={settings.logEnabled}
-            onCheckedChange={(checked) => void onPatch({ logEnabled: checked })}
-            ariaLabel="启用应用诊断日志"
-          />
-          <Field label="日志级别" hint="设置输出的最低日志级别">
-            <Select value={settings.logLevel} onValueChange={(value) => void onPatch({ logLevel: value as LogLevel })}>
-              <SelectTrigger aria-label="日志级别">
-                <span>{settings.logLevel}</span>
-              </SelectTrigger>
-              <SelectContent>
-                {LOG_LEVELS.map((level) => (
-                  <SelectItem key={level} value={level}>
-                    {level} · {LOG_LEVEL_HINT[level]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
-        <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
-          <span>预设仓库</span>
-          <ExternalLink
-            dataRole="preset-repo-link"
-            className="text-primary-strong underline"
-            href="https://github.com/muyangplus/dawn-tick-presets"
-            ariaLabel="打开预设仓库（GitHub）"
-          >
-            GitHub
-          </ExternalLink>
-          <StatusLine dataRole="preset-version">
-            预设版本：
-            {presetSource === null
-              ? '读取中…'
-              : `${presetSource.version}（${presetSource.kind === 'cached' ? '已更新' : '内置'}）`}
-          </StatusLine>
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            aria-label="检查预设更新"
-            loading={presetAction.busy}
-            onClick={() => void runPresetCheck()}
-          >
-            检查预设更新
-          </Button>
-          {presetResult !== null && (
-            <StatusLine dataRole="preset-result" at={presetResult.at}>
-              {presetResult.text}
-            </StatusLine>
-          )}
-        </div>
-        {canUseWidget() && (
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusLine dataRole="elevation-status">
-              运行权限：{elevated === null ? '读取中…' : elevated ? '管理员' : '普通用户'}
-            </StatusLine>
-            <Button
-              size="sm"
-              variant="secondary"
-              aria-label="以管理员身份重新启动"
-              disabled={elevated !== false}
-              onClick={() => void requestAdmin()}
-            >
-              以管理员身份重新启动
-            </Button>
-          </div>
-        )}
-        <span className="text-xs text-muted">只在应用内检查版本</span>
-      </>
+      <MaintenanceCard storage={storage} settings={settings} onPatch={onPatch} update={update} />
     ),
 
     about: <AboutCard />,
@@ -1213,7 +876,7 @@ export function DevicesView({
         >
           恢复快照
         </Button>
-        <Button size="sm" variant="secondary" loading={updateAction.busy} onClick={() => void runUpdateCheck()}>
+        <Button size="sm" variant="secondary" loading={update.busy} onClick={() => void update.run()}>
           检查更新
         </Button>
       </div>
