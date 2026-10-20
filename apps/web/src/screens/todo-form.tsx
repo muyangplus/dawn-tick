@@ -14,6 +14,7 @@ import {
   type TimeSlotRow,
 } from '@dawn-tick/core';
 import { logDebug, logError, logInfo } from '../log.ts';
+import { useBusyAction } from '../lib/busy.ts';
 import { Button } from '../components/ui/button.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { DELETE } from '../copy/zh.ts';
@@ -135,7 +136,8 @@ export function TodoForm({
   const [location, setLocation] = useState('');
   const [seatNo, setSeatNo] = useState('');
   const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
+  /** 保存/删除/复制共用一份提交态：busy 期间按钮转圈、重复触发被忽略 */
+  const { busy, run } = useBusyAction();
   const [switches, setSwitches] = useState(() => defaultSwitches(kind));
   // 实验：只这一次 / 每周重复
   const [labRepeat, setLabRepeat] = useState(false);
@@ -194,9 +196,13 @@ export function TodoForm({
     setSwitches(defaultSwitches(next));
   }
 
+  /** 提交入口：先过一遍空标题守卫，再进统一的 busy/蒙版保护。 */
   async function submit(): Promise<void> {
     if (title.trim().length === 0) return;
-    setBusy(true);
+    await run(`正在保存${KIND_LABEL[current]}…`, saveTodo);
+  }
+
+  async function saveTodo(): Promise<void> {
     try {
       const at = customTime
         ? dateWallClockToEpoch(dueDate, startTime, timeZone)
@@ -324,8 +330,6 @@ export function TodoForm({
       const message = cause instanceof Error ? cause.message : String(cause);
       logError('todo', '保存失败', { message, type: current, editing: editing?.id ?? null });
       toast.error(`保存失败：${message}`);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -333,64 +337,68 @@ export function TodoForm({
   /** 删除当前条目：详情页 footer 的 danger 入口，确认后硬删并关闭。 */
   async function remove(): Promise<void> {
     if (editing === null) return;
-    const name = editing.title;
+    const target = editing;
+    const name = target.title;
     const ok = await confirmAction({
       title: '删除条目',
       description: DELETE(name, ['关联提醒']),
       confirmLabel: '确认删除',
     });
     if (!ok) return;
-    setBusy(true);
-    try {
-      await deleteEvent(storage, editing.id);
-      logInfo('todo', `已删除${KIND_LABEL[current]}`, { id: editing.id, title: name });
-      toast.success(`已删除「${name}」`);
-      onCreated();
-      onOpenChange(false);
-    } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      logError('todo', '删除失败', { message, id: editing.id });
-      toast.error(`删除失败：${message}`);
-    } finally {
-      setBusy(false);
-    }
+    await run('正在删除…', async () => {
+      try {
+        await deleteEvent(storage, target.id);
+        logInfo('todo', `已删除${KIND_LABEL[current]}`, { id: target.id, title: name });
+        toast.success(`已删除「${name}」`);
+        onCreated();
+        onOpenChange(false);
+      } catch (cause: unknown) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        logError('todo', '删除失败', { message, id: target.id });
+        toast.error(`删除失败：${message}`);
+      }
+    });
   }
 
   async function copyOne(): Promise<void> {
     if (editing === null) return;
-    setBusy(true);
-    try {
-      const copyTitle = `${editing.title} 副本`;
-      await createEvent(storage, {
-        userId,
-        type: editing.type,
-        title: copyTitle,
-        semesterId: editing.semester_id,
-        onDate: editing.on_date,
-        startAt: editing.start_at,
-        endAt: editing.end_at,
-        dueAt: editing.due_at,
-        subject: editing.subject,
-        location: editing.location,
-        seatNo: editing.seat_no,
-        note: editing.note,
-        countdown: editing.countdown === 1,
-        manualDone: editing.manual_done === 1,
-        nature: editing.nature,
-        periodStart: editing.period_start,
-        periodEnd: editing.period_end,
-        weeksMask: editing.weeks_mask,
-        asDayOfWeek: editing.as_day_of_week,
-        startTime: editing.start_time,
-        endTime: editing.end_time,
-        showInTimetable: editing.show_in_timetable === 1,
-      });
-      toast.success(`已复制为「${copyTitle}」`);
-      onCreated();
-      onOpenChange(false);
-    } finally {
-      setBusy(false);
-    }
+    const target = editing;
+    const copyTitle = `${target.title} 副本`;
+    await run('正在复制…', async () => {
+      try {
+        await createEvent(storage, {
+          userId,
+          type: target.type,
+          title: copyTitle,
+          semesterId: target.semester_id,
+          onDate: target.on_date,
+          startAt: target.start_at,
+          endAt: target.end_at,
+          dueAt: target.due_at,
+          subject: target.subject,
+          location: target.location,
+          seatNo: target.seat_no,
+          note: target.note,
+          countdown: target.countdown === 1,
+          manualDone: target.manual_done === 1,
+          nature: target.nature,
+          periodStart: target.period_start,
+          periodEnd: target.period_end,
+          weeksMask: target.weeks_mask,
+          asDayOfWeek: target.as_day_of_week,
+          startTime: target.start_time,
+          endTime: target.end_time,
+          showInTimetable: target.show_in_timetable === 1,
+        });
+        toast.success(`已复制为「${copyTitle}」`);
+        onCreated();
+        onOpenChange(false);
+      } catch (cause: unknown) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        logError('todo', '复制失败', { message, id: target.id });
+        toast.error(`复制失败：${message}`);
+      }
+    });
   }
 
   return (
@@ -657,22 +665,27 @@ export function TodoForm({
             <Button
               variant="danger"
               className="mr-auto"
-              disabled={busy}
+              loading={busy}
               aria-label={`删除条目 ${editing.title}`}
               onClick={() => void remove()}
             >
               删除这条
             </Button>
           )}
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
             取消
           </Button>
           {editing !== null && (
-            <Button variant="secondary" disabled={busy} onClick={() => void copyOne()}>
+            <Button variant="secondary" loading={busy} onClick={() => void copyOne()}>
               复制一条
             </Button>
           )}
-          <Button variant="primary" disabled={busy || title.trim().length === 0} onClick={() => void submit()}>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={title.trim().length === 0}
+            onClick={() => void submit()}
+          >
             保存
           </Button>
         </DialogFooter>

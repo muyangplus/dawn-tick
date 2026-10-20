@@ -1020,6 +1020,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     triggerText('起始节') === '第 1 节' && triggerText('结束节') === '第 2 节',
     `${triggerText('起始节')} → ${triggerText('结束节')}`,
   );
+  // C2a：课程名为空时保存禁用，并在字段下方给出错误文案（core 侧同样拒绝空名）
+  const emptyNameSave = [...document.body.querySelectorAll('button')].find(
+    (item) => (item.textContent ?? '').trim() === '保存',
+  );
+  const emptyNameErrorShown = (document.body.textContent ?? '').includes('课程名不能为空');
+  check(
+    '课程名为空时保存禁用并提示',
+    emptyNameSave !== undefined && emptyNameSave.disabled && emptyNameErrorShown,
+    `保存=${emptyNameSave === undefined ? '无' : emptyNameSave.disabled ? '禁用' : '可点'} / 提示=${
+      emptyNameErrorShown ? '有' : '无'
+    }`,
+  );
   // 内容超过屏高的弹窗必须留在视口内，并由正文区滚动
   const tallDialog = document.querySelector<HTMLElement>('[role="dialog"]');
   const tallBody = tallDialog?.querySelector<HTMLElement>('[data-role="dialog-body"]');
@@ -1086,7 +1098,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const nameBox = document.querySelector('[role="dialog"] input');
   if (nameBox instanceof window.HTMLInputElement) setInputValue(nameBox, '重叠测试课');
   await flush(4);
-  if (clickByText(document.body, '保存')) await flush(16);
+  const courseSave = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+    (item) => (item.textContent ?? '').trim() === '保存',
+  );
+  courseSave?.click();
+  // React 19 在首个微任务里刷新离散事件的状态：等一拍再断言，此时保存还没落库
+  await Promise.resolve();
+  const busyOverlay = document.querySelector('[data-role="busy-overlay"]');
+  check(
+    '保存时按钮带 aria-busy 并盖慢操作蒙版',
+    courseSave !== undefined &&
+      courseSave.getAttribute('aria-busy') === 'true' &&
+      busyOverlay !== null,
+    `按钮 aria-busy=${courseSave?.getAttribute('aria-busy') ?? '无'} / 蒙版=${busyOverlay === null ? '无' : '有'}`,
+  );
+  await flush(16);
   check(
     '重叠课程保存成功并提示',
     (view.container.textContent ?? '').includes('重叠测试课') &&

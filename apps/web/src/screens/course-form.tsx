@@ -17,6 +17,7 @@ import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
+import { useBusyAction } from '../lib/busy.ts';
 import { cn } from '../lib/cn.ts';
 import { periodRange } from '../copy/zh.ts';
 
@@ -143,11 +144,13 @@ export function CourseForm({
   const [colorIndex, setColorIndex] = useState(0);
   const [drafts, setDrafts] = useState<ScheduleDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** 保存是唯一提交入口：busy 期间按钮转圈 + 整页蒙版，重复点击被忽略 */
+  const { busy, run } = useBusyAction();
 
   const palette = PRESETS[preset].courses;
   const firstPeriod = slots[0]?.period_no ?? 1;
   const lastPeriod = slots.at(-1)?.period_no ?? firstPeriod + 1;
+  const nameEmpty = name.trim().length === 0;
 
   useEffect(() => {
     if (!open) return;
@@ -214,75 +217,87 @@ export function CourseForm({
   }
 
   async function submit(): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      const payload = {
-        name: name.trim(),
-        shortName: shortName.trim().length > 0 ? shortName.trim() : null,
-        teacher: teacher.trim().length > 0 ? teacher.trim() : null,
-        location: location.trim().length > 0 ? location.trim() : null,
-        color: palette[colorIndex % palette.length] ?? '#4F8DFD',
-        credits: credits.trim().length > 0 ? Number(credits) : null,
-        note: note.trim().length > 0 ? note.trim() : null,
-      };
-      const schedules = drafts.map((draft) => ({
-        dayOfWeek: draft.dayOfWeek,
-        periodStart: Math.min(draft.periodStart, draft.periodEnd),
-        periodEnd: Math.max(draft.periodStart, draft.periodEnd),
-        weeks: [...draft.weeks].sort((left, right) => left - right),
-        room: draft.room.trim().length > 0 ? draft.room.trim() : null,
-        startTime: draft.customTime ? draft.startTime : null,
-        endTime: draft.customTime ? draft.endTime : null,
-      }));
+    // 空名在 UI 层已禁用保存，这里再挡一次：回车/程序触发也不写空白课卡
+    if (nameEmpty) return;
+    await run('正在保存课程…', async () => {
+      setError(null);
+      try {
+        const payload = {
+          name: name.trim(),
+          shortName: shortName.trim().length > 0 ? shortName.trim() : null,
+          teacher: teacher.trim().length > 0 ? teacher.trim() : null,
+          location: location.trim().length > 0 ? location.trim() : null,
+          color: palette[colorIndex % palette.length] ?? '#4F8DFD',
+          credits: credits.trim().length > 0 ? Number(credits) : null,
+          note: note.trim().length > 0 ? note.trim() : null,
+        };
+        const schedules = drafts.map((draft) => ({
+          dayOfWeek: draft.dayOfWeek,
+          periodStart: Math.min(draft.periodStart, draft.periodEnd),
+          periodEnd: Math.max(draft.periodStart, draft.periodEnd),
+          weeks: [...draft.weeks].sort((left, right) => left - right),
+          room: draft.room.trim().length > 0 ? draft.room.trim() : null,
+          startTime: draft.customTime ? draft.startTime : null,
+          endTime: draft.customTime ? draft.endTime : null,
+        }));
 
-      logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
-        name: payload.name,
-        schedules: schedules.map((item) => ({
-          day: item.dayOfWeek,
-          periods: `${item.periodStart}-${item.periodEnd}`,
-          weeks: item.weeks.length,
-          time: item.startTime === null ? null : `${item.startTime}-${item.endTime}`,
-        })),
-      });
-      let savedId: string;
-      if (course === null) {
-        const created = await createCourse(storage, { semesterId, ...payload });
-        savedId = String(created['id']);
-        await setSchedules(storage, savedId, schedules, { totalWeeks });
-        logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
-        toast.success('已添加课程');
-      } else {
-        savedId = course.id;
-        await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
-        await setSchedules(storage, course.id, schedules, { totalWeeks });
-        logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
-        toast.success('已保存课程');
+        logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
+          name: payload.name,
+          schedules: schedules.map((item) => ({
+            day: item.dayOfWeek,
+            periods: `${item.periodStart}-${item.periodEnd}`,
+            weeks: item.weeks.length,
+            time: item.startTime === null ? null : `${item.startTime}-${item.endTime}`,
+          })),
+        });
+        let savedId: string;
+        if (course === null) {
+          const created = await createCourse(storage, { semesterId, ...payload });
+          savedId = String(created['id']);
+          await setSchedules(storage, savedId, schedules, { totalWeeks });
+          logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
+          toast.success('已添加课程');
+        } else {
+          savedId = course.id;
+          await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
+          await setSchedules(storage, course.id, schedules, { totalWeeks });
+          logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
+          toast.success('已保存课程');
+        }
+        // 重叠只提醒不阻止：课程此时已经保存成功
+        const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
+        if (overlap !== null) {
+          toast.info(`与「${overlap.name}」${periodRange(overlap.start, overlap.end)}重叠，已同时保留`);
+        }
+        onCreated();
+        onOpenChange(false);
+      } catch (cause: unknown) {
+        // 保存失败同时写日志与界面提示，避免只留一句「无反应」
+        const message = cause instanceof Error ? cause.message : String(cause);
+        logError('course', '保存课程失败', { message, id: course?.id ?? null });
+        setError(message);
+        toast.error(`保存课程失败：${message}`);
       }
-      // 重叠只提醒不阻止：课程此时已经保存成功
-      const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
-      if (overlap !== null) {
-        toast.info(`与「${overlap.name}」${periodRange(overlap.start, overlap.end)}重叠，已同时保留`);
-      }
-      onCreated();
-      onOpenChange(false);
-    } catch (cause: unknown) {
-      // 保存失败同时写日志与界面提示，避免只留一句「无反应」
-      const message = cause instanceof Error ? cause.message : String(cause);
-      logError('course', '保存课程失败', { message, id: course?.id ?? null });
-      setError(message);
-      toast.error(`保存课程失败：${message}`);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent title={course === null ? '添加课程' : '编辑课程'} description="课程信息与排课时段">
         <Field label="课程名">
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+          <Input
+            value={name}
+            aria-required="true"
+            aria-invalid={nameEmpty}
+            aria-describedby={nameEmpty ? 'course-name-error' : undefined}
+            onChange={(event) => setName(event.target.value)}
+          />
         </Field>
+        {nameEmpty && (
+          <p id="course-name-error" className="text-xs text-danger-strong">
+            课程名不能为空
+          </p>
+        )}
         <div className="grid gap-2 tablet:grid-cols-3">
           <Field label="简称">
             <Input value={shortName} onChange={(event) => setShortName(event.target.value)} />
@@ -488,12 +503,13 @@ export function CourseForm({
         </div>
         {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
             取消
           </Button>
           <Button
             variant="primary"
-            disabled={busy || name.trim().length === 0 || drafts.length === 0 || lastPeriod < firstPeriod}
+            loading={busy}
+            disabled={nameEmpty || drafts.length === 0 || lastPeriod < firstPeriod}
             onClick={() => void submit()}
           >
             保存
