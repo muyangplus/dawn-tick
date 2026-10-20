@@ -9,6 +9,7 @@ import {
 } from '@dawn-tick/core';
 import { detectPlatform } from './platform-detect.ts';
 import { activeSqlDriver } from './db/active-driver.ts';
+import { dayStampLocal } from './lib/dates.ts';
 import { logInfo, logWarn } from './log.ts';
 
 /** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
@@ -210,16 +211,9 @@ export async function restoreSnapshot(
   }
 }
 
-export function localDay(at: number): string {
-  const date = new Date(at);
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
 export function snapshotsToday(entries: readonly SnapshotEntry[], now: number): SnapshotEntry[] {
-  const today = localDay(now);
-  return entries.filter((entry) => localDay(entry.createdAt) === today);
+  const today = dayStampLocal(now);
+  return entries.filter((entry) => dayStampLocal(entry.createdAt) === today);
 }
 
 /** 自动备份：「启动时备份」只管启动那一次，「每天备份」管运行中补当天那份。 */

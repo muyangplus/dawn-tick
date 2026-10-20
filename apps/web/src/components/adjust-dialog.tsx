@@ -9,12 +9,14 @@ import {
   updateSchedule,
   weekOfDate,
   weekStart,
+  WEEKDAY_LABELS,
   type ManagedCourse,
   type Storage,
 } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { weekDateOf } from '../data.ts';
 import { fail } from '../lib/fail.ts';
+import { formatPeriodRange } from '../lib/format.ts';
 import { logError, logInfo } from '../log.ts';
 import { Button } from './ui/button.tsx';
 import { DialogFooter } from './ui/dialog.tsx';
@@ -24,7 +26,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.
 import { toast } from './ui/toaster.tsx';
 
 const USER_ID = 'u1';
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** 调课弹窗的四个主操作。 */
@@ -90,11 +91,6 @@ function overlapAt(
     }
   }
   return null;
-}
-
-/** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
-function periodLabel(start: number, end: number): string {
-  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
 async function withToast(
@@ -274,7 +270,7 @@ export function AdjustDialog({
               period_start: periodStart,
               period_end: periodEnd,
             }).then(() => undefined),
-          `已改为每周 ${WEEKDAYS[targetDay - 1] ?? ''} ${periodLabel(periodStart, periodEnd)}`,
+          `已改为每周 ${WEEKDAY_LABELS[targetDay - 1] ?? ''} ${formatPeriodRange(periodStart, periodEnd)}`,
           '改为每周失败',
         );
         if (!done) return;
@@ -286,7 +282,7 @@ export function AdjustDialog({
           excludeCourseId: courseId,
         });
         if (overlap !== null) {
-          toast.info(`调整后与「${overlap.name}」${periodLabel(overlap.start, overlap.end)}重叠，已同时保留`);
+          toast.info(`调整后与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
         }
         logInfo('adjust', '已改为每周', { scheduleId: schedule.id, dayOfWeek: targetDay });
         onChanged();
@@ -339,7 +335,7 @@ export function AdjustDialog({
             newRoom: newRoom.trim().length === 0 ? null : newRoom.trim(),
             asDayOfWeek: dayOfWeek(finalDate),
           }).then(() => undefined),
-        `已把这一次课调到 ${finalDate} ${periodLabel(periodStart, periodEnd)}`,
+        `已把这一次课调到 ${finalDate} ${formatPeriodRange(periodStart, periodEnd)}`,
         '调课失败',
       );
       if (!done) return;
@@ -351,7 +347,7 @@ export function AdjustDialog({
         excludeCourseId: courseId,
       });
       if (overlap !== null) {
-        toast.info(`调整后与「${overlap.name}」${periodLabel(overlap.start, overlap.end)}重叠，已同时保留`);
+        toast.info(`调整后与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
       }
       logInfo('adjust', '已记录调课', {
         scheduleId: schedule.id,
@@ -471,7 +467,7 @@ export function AdjustDialog({
         periodEnd: extraPeriodEnd,
         weeks: [week],
       });
-      toast.success(`已加课：第 ${week} 周 ${WEEKDAYS[dayOfWeek(extraDate) - 1] ?? ''}`);
+      toast.success(`已加课：第 ${week} 周 ${WEEKDAY_LABELS[dayOfWeek(extraDate) - 1] ?? ''}`);
       onChanged();
       onOpenChange(false);
     } finally {
@@ -488,8 +484,8 @@ export function AdjustDialog({
         : scope === 'this'
           ? '与原日期同一周内'
           : '可跨周、可换星期';
-  const moveFromLabel = schedule === undefined ? '' : periodLabel(schedule.periodStart, schedule.periodEnd);
-  const moveToLabel = `${newDate} ${periodLabel(periodStart, periodEnd)}`;
+  const moveFromLabel = schedule === undefined ? '' : formatPeriodRange(schedule.periodStart, schedule.periodEnd);
+  const moveToLabel = `${newDate} ${formatPeriodRange(periodStart, periodEnd)}`;
   const description =
     mode === 'move'
       ? `把「${course?.name ?? '课程'}」${moveFromLabel}调整为 ${moveToLabel}`
@@ -548,7 +544,7 @@ export function AdjustDialog({
                 <SelectTrigger aria-label="课次">
                   {schedule === undefined
                     ? '选择课次'
-                    : `${WEEKDAYS[schedule.dayOfWeek - 1] ?? ''} ${periodLabel(
+                    : `${WEEKDAY_LABELS[schedule.dayOfWeek - 1] ?? ''} ${formatPeriodRange(
                         schedule.periodStart,
                         schedule.periodEnd,
                       )}`}
@@ -556,7 +552,7 @@ export function AdjustDialog({
                 <SelectContent>
                   {schedules.map((item) => (
                     <SelectItem key={item.id} value={item.id}>
-                      {`${WEEKDAYS[item.dayOfWeek - 1] ?? ''} ${periodLabel(item.periodStart, item.periodEnd)}`}
+                      {`${WEEKDAY_LABELS[item.dayOfWeek - 1] ?? ''} ${formatPeriodRange(item.periodStart, item.periodEnd)}`}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -2,6 +2,12 @@ export const DEFAULT_TIME_ZONE = 'Asia/Shanghai';
 export const META_TIME_ZONE = 'time_zone';
 export const META_AUTO_TIME_ZONE = 'auto_time_zone';
 
+/**
+ * 星期短名：下标 = dayOfWeek - 1，即 1=周一 … 7=周日。
+ * 全仓唯一的星期文案来源；UI 侧具名导入，Kotlin 侧按同一规格维护并标注同源。
+ */
+export const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
+
 export interface ZonedParts {
   year: number;
   month: number;

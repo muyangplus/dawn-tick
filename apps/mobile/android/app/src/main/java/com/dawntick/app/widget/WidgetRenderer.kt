@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
  */
 object WidgetRenderer {
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    // 与 packages/core/src/time.ts 的 WEEKDAY_LABELS 同源（Kotlin 侧无法直接引用 TS 常量，改文案时两边一起改）。
     private val weekdays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
     private const val TIME_SEPARATOR = "–"
 

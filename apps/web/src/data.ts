@@ -35,6 +35,7 @@ import {
   type TodoSort,
 } from '@dawn-tick/core';
 import { clampWindowStart, dayRangeOf } from './lib/day-nav.ts';
+import { dayStampUtc } from './lib/dates.ts';
 
 /** 课表里条目的角标文案。 */
 const EVENT_LABEL: Record<string, string> = {
@@ -613,6 +614,6 @@ function scheduleKey(row: EventRow): number {
 }
 
 export function todoDateLabel(row: EventRow): string {
-  if (row.due_at !== null && row.due_at !== undefined) return formatDate(row.due_at, 'UTC').slice(0, 10);
+  if (row.due_at !== null && row.due_at !== undefined) return dayStampUtc(row.due_at);
   return row.on_date ?? '未排期';
 }

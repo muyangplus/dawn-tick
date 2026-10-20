@@ -13,6 +13,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { logInfo, logWarn, logsText } from './log.ts';
+import { dayStampUtc } from './lib/dates.ts';
 import { saveBinaryFile, saveTextFile } from './system-actions.ts';
 import {
   applyPackageEntries,
@@ -62,12 +63,8 @@ export interface ExportOutcome {
   rows: number;
 }
 
-function dayStamp(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
 export function exportFileName(format: ExportFormat, now = Date.now()): string {
-  const day = dayStamp(now);
+  const day = dayStampUtc(now);
   if (format === 'base64') return `DawnTick-backup-${day}.base64.txt`;
   if (format === 'zip') return `DawnTick-backup-${day}.zip`;
   return `DawnTick-backup-${day}.json`;

@@ -3,8 +3,11 @@ import { Plus, Trash2 } from 'lucide-react';
 import {
   createCourse,
   listManagedCourses,
+  maskToWeeks,
+  parityMask,
   setSchedules,
   updateCourse,
+  WEEKDAY_LABELS,
   type ManagedCourse,
   type Storage,
   type ThemePreset,
@@ -20,20 +23,14 @@ import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
 import { cn } from '../lib/cn.ts';
-import { periodRange } from '../copy/zh.ts';
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+import { formatPeriodRange } from '../lib/format.ts';
 
 function allWeeks(total: number): number[] {
   return Array.from({ length: total }, (_, index) => index + 1);
 }
 
-function oddWeeks(total: number): number[] {
-  return allWeeks(total).filter((week) => week % 2 === 1);
-}
-
-function evenWeeks(total: number): number[] {
-  return allWeeks(total).filter((week) => week % 2 === 0);
+function parityWeeks(total: number, parity: 'odd' | 'even'): number[] {
+  return maskToWeeks(parityMask(total, parity), total);
 }
 
 interface ScheduleDraft {
@@ -271,7 +268,7 @@ export function CourseForm({
         // 重叠只提醒不阻止：课程此时已经保存成功
         const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
         if (overlap !== null) {
-          toast.info(`与「${overlap.name}」${periodRange(overlap.start, overlap.end)}重叠，已同时保留`);
+          toast.info(`与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
         }
         onCreated();
         onOpenChange(false);
@@ -348,10 +345,10 @@ export function CourseForm({
                 onValueChange={(value) => patchDraft(draft.key, { dayOfWeek: Number(value) })}
               >
                 <SelectTrigger aria-label="星期">
-                  <span>{WEEKDAYS[draft.dayOfWeek - 1]}</span>
+                  <span>{WEEKDAY_LABELS[draft.dayOfWeek - 1]}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {WEEKDAYS.map((label, index) => (
+                  {WEEKDAY_LABELS.map((label, index) => (
                     <SelectItem key={label} value={String(index + 1)}>
                       {label}
                     </SelectItem>
@@ -424,8 +421,8 @@ export function CourseForm({
                     {(
                       [
                         { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
-                        { id: 'odd', label: '单周', weeks: oddWeeks(totalWeeks) },
-                        { id: 'even', label: '双周', weeks: evenWeeks(totalWeeks) },
+                        { id: 'odd', label: '单周', weeks: parityWeeks(totalWeeks, 'odd') },
+                        { id: 'even', label: '双周', weeks: parityWeeks(totalWeeks, 'even') },
                         { id: 'none', label: '清空', weeks: [] },
                       ] as const
                     ).map((item) => (

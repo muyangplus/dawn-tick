@@ -1,13 +1,12 @@
 import { CalendarClock, MapPin, PencilLine, Trash2, User, X } from 'lucide-react';
-import { deleteCourse, deleteSchedule, type Storage } from '@dawn-tick/core';
+import { deleteCourse, deleteSchedule, WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
 import { COUNT, DELETE } from '../copy/zh.ts';
+import { formatPeriodRange } from '../lib/format.ts';
 import { ReminderForm } from './reminder-form.tsx';
 import { toast } from './ui/toaster.tsx';
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 export interface LessonDetailProps {
   storage: Storage;
@@ -98,7 +97,7 @@ export function LessonDetail({
           >
             <div className="flex flex-col">
               <span className="tabular text-xs text-ink">
-                {WEEKDAYS[row.day_of_week - 1]} 第 {row.period_start}-{row.period_end} 节
+                {WEEKDAY_LABELS[row.day_of_week - 1] ?? ''} {formatPeriodRange(row.period_start, row.period_end)}
               </span>
               <span className="text-xs text-muted">{row.weeks_raw ?? '未标注周次'}</span>
             </div>
@@ -123,7 +122,7 @@ export function LessonDetail({
                 onClick={() =>
                   void removeSchedule(
                     row.id,
-                    `${WEEKDAYS[row.day_of_week - 1]} 第 ${row.period_start}–${row.period_end} 节`,
+                    `${WEEKDAY_LABELS[row.day_of_week - 1] ?? ''} ${formatPeriodRange(row.period_start, row.period_end)}`,
                   )
                 }
               >

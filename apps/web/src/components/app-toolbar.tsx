@@ -1,11 +1,9 @@
 import { CalendarRange, ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { dayOfWeek, type SemesterRow } from '@dawn-tick/core';
+import { dayOfWeek, WEEKDAY_LABELS, type SemesterRow } from '@dawn-tick/core';
 import { AddMenuButton, type AddActionHandlers } from './add-menu.tsx';
 import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs.tsx';
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 /** 周模式的翻页信息：第几周、本周是第几周、首/末周时翻不动。 */
 export interface WeekNavProps {
@@ -46,7 +44,7 @@ export interface AppToolbarProps {
 /** 日模式的日期文案：10/19 周一。 */
 function dayLabel(date: string): string {
   const [, month, day] = date.split('-');
-  return `${Number(month)}/${Number(day)} ${WEEKDAYS[dayOfWeek(date) - 1] ?? ''}`;
+  return `${Number(month)}/${Number(day)} ${WEEKDAY_LABELS[dayOfWeek(date) - 1] ?? ''}`;
 }
 
 export function AppToolbar({

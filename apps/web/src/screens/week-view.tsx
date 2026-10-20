@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
-import { addDays, dayOfWeek as nextDayOfWeek, weekOfDate } from '@dawn-tick/core';
+import { addDays, dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
@@ -8,13 +8,14 @@ import { Button } from '../components/ui/button.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
+import { formatMonthDayRange } from '../lib/dates.ts';
+import { formatPeriodRange } from '../lib/format.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
 import { weekEmptyKind } from '../lib/week-empty.ts';
 import { ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, nextRowHeight, rowHeightFor, type CardMeasurement } from '../lib/row-height.ts';
 import { logDebug, logWarn } from '../log.ts';
 
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 /** 同一宽度下最多连调两次行高：滚动条出现/消失会让宽度抖动，再调就会来回跳。 */
 const MAX_ROW_HEIGHT_ADJUSTS = 2;
 const ROW_HEIGHT_ADJUST_WINDOW_MS = 3000;
@@ -34,17 +35,6 @@ const TAP_AREA =
 /** 滚轮条只上下外扩：左右外扩会盖住相邻的「上一节 / 下一节」。 */
 const WHEEL_TAP_AREA =
   "relative after:absolute after:content-[''] after:-top-7 after:bottom-0 after:-left-1 after:-right-1";
-
-/** 表头显示月日。 */
-function formatMonthDay(date: string): string {
-  const [, month, day] = date.split('-');
-  return `${Number(month)}/${Number(day)}`;
-}
-
-/** 节次范围文案：单节显示「第 3 节」，连堂显示「第 3–4 节」。 */
-function formatPeriods(start: number, end: number): string {
-  return start === end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
-}
 
 /** 多天假期第一天：当天放假且前一天不放假。 */
 /** 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。 */
@@ -105,7 +95,7 @@ function firstClash(data: AppData, date: string, start: number, end: number): Cl
 
 /** 重叠提示：与「高等数学」第 1–2 节重叠。 */
 function clashLabel(clash: Clash): string {
-  return `与「${clash.name}」${formatPeriods(clash.start, clash.end)}重叠`;
+  return `与「${clash.name}」${formatPeriodRange(clash.start, clash.end)}重叠`;
 }
 
 /** 按住的位置决定哪条边跟着指针：单节时上下都算扩展，否则按上半/下半取边。 */
@@ -589,7 +579,7 @@ export function WeekView({
     if (current === null) return;
     if (active.mode === 'wheel') {
       const changed = current.start !== active.startPeriod || current.end !== active.endPeriod;
-      if (changed) toast.success(`已调整为 ${formatPeriods(current.start, current.end)}`);
+      if (changed) toast.success(`已调整为 ${formatPeriodRange(current.start, current.end)}`);
       return;
     }
     // 仅点击了块内空白：交给按钮自身的 click，本处不弹窗
@@ -816,7 +806,7 @@ export function WeekView({
           >
             <div className="px-2 py-2 text-center text-xs text-muted">节次</div>
             {data.windowDates.map((date) => {
-              const label = WEEKDAYS[nextDayOfWeek(date) - 1] ?? '';
+              const label = WEEKDAY_LABELS[nextDayOfWeek(date) - 1] ?? '';
               const isToday = date === data.today;
               const isHoliday = data.holidayLabels.has(date);
               return (
@@ -829,7 +819,7 @@ export function WeekView({
                 >
                   <span className="flex flex-col items-center gap-0.5">
                     <span className="truncate">{label}</span>
-                    <span className="tabular text-[9px] text-muted tablet:text-[10px]">{formatMonthDay(date)}</span>
+                    <span className="tabular text-[9px] text-muted tablet:text-[10px]">{formatMonthDayRange(date)}</span>
                     {isToday && <span className="text-[9px] text-muted tablet:text-[10px]">今天</span>}
                     {isHoliday && <span className="text-[9px] text-muted tablet:text-[10px]">放假</span>}
                   </span>
@@ -886,7 +876,7 @@ export function WeekView({
               // 放假优先于非本周；多天假期只有第一天显示假期名称，之后只显示「放假」
               const holidayFirstDay = isHolidayRunStart(data, columnDate);
               const holidayName = data.holidayLabels.get(columnDate);
-              const weekday = WEEKDAYS[nextDayOfWeek(columnDate) - 1] ?? '';
+              const weekday = WEEKDAY_LABELS[nextDayOfWeek(columnDate) - 1] ?? '';
               const week = data.semester === null ? null : Math.max(1, weekOfDate(columnDate, data.semester.start_date));
               const dayLessons = lessons
                 .filter((lesson) => lesson.date === columnDate)
@@ -901,7 +891,7 @@ export function WeekView({
                 <div
                   key={`column-${columnDate}`}
                   role="group"
-                  aria-label={`${weekday} ${formatMonthDay(columnDate)}`}
+                  aria-label={`${weekday} ${formatMonthDayRange(columnDate)}`}
                   ref={(element) => {
                     if (element === null) columns.current.delete(columnDate);
                     else columns.current.set(columnDate, element);
@@ -1015,7 +1005,7 @@ export function WeekView({
                             className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm bg-surface"
                           >
                             <span className="tabular rounded-sm bg-primary px-1.5 py-0.5 text-[11px] text-on-primary shadow-sm">
-                              {formatPeriods(placeholder.start, placeholder.end)}
+                              {formatPeriodRange(placeholder.start, placeholder.end)}
                             </span>
                             {placeholderClash !== null && (
                               <span
@@ -1052,7 +1042,7 @@ export function WeekView({
                           aria-valuemin={placeholder.start}
                           aria-valuemax={periodCount}
                           aria-valuenow={placeholder.end}
-                          aria-valuetext={formatPeriods(placeholder.start, placeholder.end)}
+                          aria-valuetext={formatPeriodRange(placeholder.start, placeholder.end)}
                           data-role="period-wheel"
                           data-tap-area="44"
                           title="拖动、滚轮或 ↑/↓ 调整节次范围；Enter 新建课程，Esc 取消"
@@ -1089,7 +1079,7 @@ export function WeekView({
                           onPointerUp={endEmptyDrag}
                           onPointerCancel={cancelEmptyDrag}
                         >
-                          {formatPeriods(placeholder.start, placeholder.end)}
+                          {formatPeriodRange(placeholder.start, placeholder.end)}
                         </div>
                         <button
                           type="button"
@@ -1126,7 +1116,7 @@ export function WeekView({
                     const height = Math.min(rawHeight, gridHeight);
                     const top = Math.max(0, Math.min(rawTop, gridHeight - height));
                     // 读屏播报：星期 + 节次 + 课程名 + 周次 + 地点（有则加）
-                    const ariaParts = [weekday, formatPeriods(lesson.periodStart, lesson.periodEnd), lesson.name];
+                    const ariaParts = [weekday, formatPeriodRange(lesson.periodStart, lesson.periodEnd), lesson.name];
                     if (week !== null) ariaParts.push(`第 ${week} 周`);
                     if (lesson.room !== null && lesson.room !== '') ariaParts.push(lesson.room);
                     return (
@@ -1228,7 +1218,7 @@ export function WeekView({
           <CourseCard
             name={drag.cell.name}
             color={drag.cell.color}
-            meta={formatPeriods(drag.cell.periodStart, drag.cell.periodEnd)}
+            meta={formatPeriodRange(drag.cell.periodStart, drag.cell.periodEnd)}
           />
         </div>
       )}

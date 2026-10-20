@@ -4,9 +4,8 @@ import type { AppData } from '../data.ts';
 import { Countdown } from '../components/countdown.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
-import { periodRange } from '../copy/zh.ts';
 import { cn } from '../lib/cn.ts';
-import { formatRemaining } from '../lib/format.ts';
+import { formatPeriodRange, formatRemaining } from '../lib/format.ts';
 import { useNowTick } from '../lib/use-now.ts';
 
 export interface TodayViewProps {
@@ -126,7 +125,7 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium text-ink">{lesson.courseName}</span>
                   <span className="flex items-center gap-2 truncate text-xs text-muted">
-                    {periodRange(lesson.periodStart, lesson.periodEnd)}
+                    {formatPeriodRange(lesson.periodStart, lesson.periodEnd)}
                     {lesson.room !== null && (
                       <span className="flex items-center gap-1">
                         <MapPin className="size-3" aria-hidden />

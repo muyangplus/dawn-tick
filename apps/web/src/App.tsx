@@ -51,6 +51,7 @@ import {
   readOnlyStorage,
 } from './db/fallback.ts';
 import { fail, type Failure } from './lib/fail.ts';
+import { dayStampUtc, formatMonthDayRange } from './lib/dates.ts';
 import { restoreLatestBackupSnapshot } from './lib/recovery.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
@@ -105,15 +106,7 @@ interface BootFailure {
 /** 窗口覆盖的日期区间文案，例如 8/19–8/23。 */
 function formatWindowRange(data: AppData): string {
   const last = data.windowDates[data.windowDates.length - 1] ?? data.windowStart;
-  const monthDay = (date: string): string => {
-    const [, month, day] = date.split('-');
-    return `${Number(month)}/${Number(day)}`;
-  };
-  if (data.windowStart === last) return monthDay(data.windowStart);
-  const [fromYear, fromMonth] = data.windowStart.split('-');
-  const [toYear, toMonth] = last.split('-');
-  if (fromYear === toYear && fromMonth === toMonth) return `${monthDay(data.windowStart)}–${Number(last.split('-')[2])}`;
-  return `${monthDay(data.windowStart)}–${monthDay(last)}`;
+  return formatMonthDayRange(data.windowStart, last);
 }
 
 /** 按当天课次还原课程卡信息：时间线课次不是周视图格子，详情与周视图共用同一份数据。 */
@@ -757,7 +750,7 @@ export function App() {
   async function exportDiagnosticLogs(): Promise<void> {
     try {
       const entries = logsText();
-      const name = `DawnTick-log-${new Date().toISOString().slice(0, 10)}.txt`;
+      const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;
       const saved = await saveTextFile(name, entries === '' ? '暂无日志' : entries, {
         extension: 'txt',
         filterName: '日志文件',

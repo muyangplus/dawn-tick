@@ -8,6 +8,7 @@ import {
   setReminder,
   updateEvent,
   weeksToMask,
+  WEEKDAY_LABELS,
   type EventRow,
   type SemesterRow,
   type Storage,
@@ -15,6 +16,7 @@ import {
 } from '@dawn-tick/core';
 import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
+import { formatPeriodRange } from '../lib/format.ts';
 import { Button } from '../components/ui/button.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { DELETE } from '../copy/zh.ts';
@@ -51,8 +53,6 @@ const ADVANCE_OPTIONS: ReadonlyArray<{ id: string; label: string; minutes: numbe
   { id: 'three', label: '提前 3 天', minutes: 3 * 24 * 60 },
   { id: 'week', label: '提前 1 周', minutes: 7 * 24 * 60 },
 ];
-
-const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 export interface TodoFormProps {
   open: boolean;
@@ -406,6 +406,8 @@ export function TodoForm({
     });
   }
 
+  const clockPeriods = customTime ? periodsForClock(slots, startTime, endTime) : null;
+
   return (
     <FormSurface
       open={open}
@@ -605,9 +607,9 @@ export function TodoForm({
             )}
             {customTime && (
               <span className="self-center text-xs text-muted">
-                已按起止时间回填节次{periodsForClock(slots, startTime, endTime) === null
+                已按起止时间回填节次{clockPeriods === null
                   ? ''
-                  : `（第 ${periodsForClock(slots, startTime, endTime)?.periodStart}–${periodsForClock(slots, startTime, endTime)?.periodEnd} 节）`}
+                  : `（${formatPeriodRange(clockPeriods.periodStart, clockPeriods.periodEnd)}）`}
               </span>
             )}
           </div>

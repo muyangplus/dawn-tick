@@ -39,14 +39,6 @@ export function OVERWRITE(object: string, detail: string): string {
 }
 
 /**
- * 节次范围：单节「第 3 节」，连堂「第 3–4 节」。
- * 连接符固定为 en dash（U+2013），节次范围只在这里生成，调用点不要再手写「-」。
- */
-export function periodRange(start: number, end: number): string {
-  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
-}
-
-/**
  * 失败句式（P1-05）：`xx失败：原因。下一步`。
  * 没有原因时省略冒号段，例如 `重启失败。请手动重新打开应用`；下一步为空时只留句号。
  */
