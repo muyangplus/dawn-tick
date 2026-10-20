@@ -931,8 +931,8 @@
 - 优先级：P1；ICE（I6/C9/E8=432）
 - 依赖：无
 - 验收指标：`grep -rn "周一', '周二'" apps packages` 仅 core 1 处 + Kotlin 1 处；`grep -rn "第 \${.*} 节"` 仅 `lib/format.ts` 1 处；倒序输入归一化为「第 3–5 节」；`format.test.ts` 通过。
-- 来源：主审+盲审；分歧与裁决：无
-- 状态：待办
+- 来源：主审+盲审；分歧与裁决：无。本轮实现：`5abfe52`（合入 `fcb0fdc`）。
+- 状态：待验收
 
 ### [A-07] 课表规则纯函数化：重叠检测与「钟点→节次」换算
 - 轨道：技术演进
@@ -948,8 +948,8 @@
 - 优先级：P1；ICE（I4/C8/E7=224）
 - 依赖：A-06（同批工具归位，可先后）
 - 验收指标：core 新增边界单测（相邻不重叠/跨周同节次不重叠/无重叠取最近节次）通过；三处内联 `periodEnd < start || periodStart > end` 归零。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`5651f60`（合入 `bdb0d41`）。
+- 状态：待验收
 
 ### [A-08] 课程色与周次选择器单源
 - 轨道：技术演进
@@ -1033,8 +1033,8 @@
 - 优先级：P1；ICE（I5/C7/E6=210）
 - 依赖：A-01（键清单派生思路一致）
 - 验收指标：`grep -rn "JSON.parse(await storage.readMeta" apps/web/src` 为 0；`listSnapshots` 不再读取快照正文（存储桩断言读取值体积下降）；`readMeta` 实现从 3 份降到 1 份。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`c3126e2`（合入 `c0bfcb4`）。
+- 状态：待验收
 
 ### [A-13] CI 纳入界面冒烟与 a11y，修复 `busy.test.ts` 未运行
 - 轨道：技术演进
@@ -1067,8 +1067,8 @@
 - 优先级：P2；ICE（I4/C9/E8=288）
 - 依赖：A-03（DangerDialog 与确认组件共用危险按钮语义；A-03 已并入产品轨 P0-02）
 - 验收指标：28 处开关行模板 ≤2；`text-danger-strong">{error}` 内联写法 ≤2；`EmptyState` 使用文件数 ≥8；`FormDialog` 覆盖 ≥4 个表单弹窗。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`7247417`（合入 `b94d67d`）。
+- 状态：待验收
 
 ### [A-15] 小组件快照契约与配色对齐（TS↔Kotlin）
 - 轨道：技术演进
@@ -1084,8 +1084,8 @@
 - 优先级：P2；ICE（I5/C8/E6=240）
 - 依赖：无
 - 验收指标：契约检查脚本在字段不一致时退出码非 0；修改 `WidgetSnapshot` 字段后本地 verify 可报出 Kotlin 未同步；Android 小组件颜色随主题变化（真机）。
-- 来源：主审+盲审；分歧与裁决：无
-- 状态：待办
+- 来源：主审+盲审；分歧与裁决：无。本轮实现：`e420af0`（合入 `c531097`）。
+- 状态：待验收
 
 ### [A-16] 远端制品拉取/校验共享（更新检查与预设更新）
 - 轨道：技术演进
@@ -1118,8 +1118,8 @@
 - 优先级：P2；ICE（I4/C7/E5=140）
 - 依赖：无（名录数据合并列入「不建议现在做」）
 - 验收指标：`filterSchools` 删除后 `apps/web/test/school-picker.test.ts` 全绿；三处入口同关键词首条结果一致。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`93e459d`（合入 `70758b3`）。
+- 状态：待验收
 
 ### [A-18] 页面导入协议与原生插件契约对齐
 - 轨道：技术演进
@@ -1152,8 +1152,8 @@
 - 优先级：P2；ICE（I2/C9/E9=162）
 - 依赖：A-13（CI 先纳入冒烟，拆冒烟才有回归保护）
 - 验收指标：`credits.generated.ts` 条目减少 6；构建产物存在独立 exceljs chunk 且主 chunk 不含它；`pnpm ui:smoke` 的 `[PASS]` 数不变。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`23cac3a`（合入 `b4eb35b`）。
+- 状态：待验收
 
 **来源到去向映射**
 
@@ -1534,4 +1534,13 @@
 - CI 增加 Android 编译校验 job 的原因：安卓工程此前只在发版时编译，编译错误要到打标签才暴露（`v0.3.0-beta.1` 首次构建即因缺校验而失败，重跑后通过）。
 - P1/P2 全部收口：P1-01…P1-13、P2-01…P2-17 均已完成，状态为待验收；A 系列（A-05…A-22，除 A-13/A-20/A-21）仍为待办，属技术演进下一阶段。
 - 发版：`v0.4.0` → `a3b2858`（release 渠道，正式 Release 已生成）：Windows 安装包与便携包、Android APK、Web 静态包、`version.json` 及各自 `.sha256`；正文含 CHANGELOG 0.4.0 段与 `Full Changelog`（基准 `v0.1.0`，滚动标签不作基准）。
+| A-06 时间与日期常量单源 | `5abfe52` | `fcb0fdc` | `WEEKDAY_LABELS`/`formatPeriodRange`/`lib/dates`、core 257→264 |
+| A-07 重叠判定与钟点换算纯函数 | `5651f60` | `bdb0d41` | core 新增 4 个纯函数 + 单测，三处内联判定归零 |
+| A-12 `app_meta` 收敛与快照索引 | `c3126e2` | `c0bfcb4` | `lib/meta`/键清单、`createMetaAccessors`、`backup_index`、core 266 / web 225 |
+| A-14 组件基元 | `7247417` | `b94d67d` | `SwitchField`/`Field.error`/`InlineError`/`FormDialog`/`DangerDialog`/`EmptyState size+tone`；开关行 28→2 |
+| A-15 小组件快照契约 | `e420af0` | `c531097` | `check-widget-contract.mjs` 双向差集、快照 `colors`、Kotlin 契约对齐（未编译验证） |
+| A-17 学校检索收编 | `93e459d` | `70758b3` | `filterSchools` 退场，`searchSchools` 单源，三入口首条一致 |
+| A-19 依赖与构建清理 | `23cac3a` | `b4eb35b` | 删 6 个未用 Radix 依赖、exceljs 独立 chunk（冒烟拆分未做） |
+| A-16 远端制品共享 | — | — | 按 Q14 量重合度后关闭（共享部分仅约 25 行/条） |
+
 - 发版过程修掉两个阻塞：① 界面冒烟在 CI runner 默认 UTC 下时间文案漂移（首次把冒烟接进 CI 时暴露）→ 冒烟脚本与 CI 步骤固定 `TZ=Asia/Shanghai`；② 发布正文的 Full Changelog 拼装跑在 `PREV` 计算之前，正文缺比较链接且 `gh release create` 失败 → 发布逻辑抽到 `tools/release/publish.sh`，正文自行拼好 Full Changelog（不再传 `--notes-start-tag`），失败时把日志推到 `ci-debug` 分支便于无权限读 Actions 日志时排查。
