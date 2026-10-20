@@ -1,4 +1,5 @@
 import { isAndroidApp, isDesktopApp } from './capabilities.ts';
+import { errorMessage } from './errors.ts';
 
 /**
  * 原生桥：前端调用 Tauri 命令与 Capacitor 插件的唯一出口。
@@ -53,10 +54,7 @@ export type NativeCommand = (typeof NATIVE_COMMANDS)[number];
 
 /** 把 `invoke` 的拒绝值（Rust `Err(String)` / JS Error / 其他）归一成一行文本。 */
 export function nativeErrorMessage(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === 'string') return cause;
-  if (cause === null || cause === undefined) return '原生调用失败';
-  return String(cause);
+  return errorMessage(cause, '原生调用失败');
 }
 
 /** 归一后的原生调用错误：保留命令名与原始拒绝值，`message` 可直接进日志或界面。 */

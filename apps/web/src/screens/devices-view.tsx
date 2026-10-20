@@ -67,7 +67,8 @@ import {
   type ApplyMode,
   type DavSettings,
 } from '../webdav.ts';
-import { runBusy } from '../lib/busy.ts';
+import { useAction } from '../lib/action.ts';
+import { errorMessage } from '../lib/errors.ts';
 import { DELETE, fail } from '../copy/zh.ts';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
@@ -147,22 +148,22 @@ export function DevicesView({
   onSettingsReplaced,
 }: DevicesViewProps) {
   const fileInput = useRef<HTMLInputElement>(null);
-  const [updateBusy, setUpdateBusy] = useState(false);
+  const updateAction = useAction();
   const [updateResult, setUpdateResult] = useState<StatusMessage | null>(null);
   const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
-  const [presetBusy, setPresetBusy] = useState(false);
+  const presetAction = useAction();
   const [presetResult, setPresetResult] = useState<StatusMessage | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [storagePathInput, setStoragePathInput] = useState('');
   const [storageMessage, setStorageMessage] = useState<StatusMessage | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
-  const [storageBusy, setStorageBusy] = useState(false);
+  const storageAction = useAction();
   const [snapshots, setSnapshots] = useState<SnapshotEntry[]>([]);
   const [snapshotMessage, setSnapshotMessage] = useState<StatusMessage | null>(null);
-  const [snapshotBusy, setSnapshotBusy] = useState(false);
+  const snapshotAction = useAction();
   const [davStatus, setDavStatus] = useState<StatusMessage | null>(null);
-  const [davBusy, setDavBusy] = useState(false);
+  const davAction = useAction();
   const [davConfirmOpen, setDavConfirmOpen] = useState(false);
   const platform = detectPlatform();
   const portableStorage = storageInfo?.portable === true;
@@ -182,25 +183,28 @@ export function DevicesView({
 
   /** 保存存储位置：成功后要重启才生效。 */
   async function saveStorage(path: string): Promise<void> {
-    setStorageBusy(true);
     setStorageError(null);
     setStorageMessage(null);
-    try {
-      const result = await saveStoragePath(path);
-      if (result.info === null) {
-        toast.error(fail('保存存储位置', result.error, '请检查路径后重试'));
-        return;
-      }
-      setStorageInfo(result.info);
-      setStoragePathInput(result.info.customPath);
-      const copied = result.info.copied.length;
-      setStorageMessage(said(copied > 0 ? `已保存存储位置，复制了 ${copied} 个数据文件` : '已保存存储位置'));
-      toast.success(`已写入 ${result.info.dir}${copied > 0 ? `，复制了 ${copied} 个数据文件` : ''}`);
-      // 存储位置要重启才生效：只登记，不在这里渲染提示与按钮
-      registerPendingRestart('storage-path');
-    } finally {
-      setStorageBusy(false);
-    }
+    const result = await storageAction.run({
+      scope: 'storage',
+      label: '正在保存存储位置…',
+      fail: false,
+      task: async () => {
+        const saved = await saveStoragePath(path);
+        if (saved.info === null) {
+          toast.error(fail('保存存储位置', saved.error, '请检查路径后重试'));
+          return;
+        }
+        setStorageInfo(saved.info);
+        setStoragePathInput(saved.info.customPath);
+        const copied = saved.info.copied.length;
+        setStorageMessage(said(copied > 0 ? `已保存存储位置，复制了 ${copied} 个数据文件` : '已保存存储位置'));
+        toast.success(`已写入 ${saved.info.dir}${copied > 0 ? `，复制了 ${copied} 个数据文件` : ''}`);
+        // 存储位置要重启才生效：只登记，不在这里渲染提示与按钮
+        registerPendingRestart('storage-path');
+      },
+    });
+    if (!result.ok && result.error !== null) setStorageError(result.error);
   }
 
   /** 日志模式存在库里，下次打开数据库时套用。 */
@@ -221,38 +225,42 @@ export function DevicesView({
 
   /** 立即做一份快照，并按保留份数清理。 */
   async function backupNow(): Promise<void> {
-    setSnapshotBusy(true);
     setSnapshotMessage(null);
-    try {
-      const entry = await createSnapshot(storage);
-      if (entry === null) {
-        toast.error(fail('快照', null, '请查看「应用诊断日志」后重试'));
-        return;
-      }
-      const removed = await pruneSnapshots(storage, settings.backupKeep);
-      await refreshSnapshots();
-      setSnapshotMessage(said('已备份'));
-      toast.success(
-        `已生成快照 ${formatDateTime(entry.createdAt, settings.timeZone)}${removed > 0 ? `，清理了 ${removed} 份旧快照` : ''}`,
-      );
-    } finally {
-      setSnapshotBusy(false);
-    }
+    await snapshotAction.run({
+      scope: 'backup',
+      label: '正在创建快照…',
+      fail: false,
+      task: async () => {
+        const entry = await createSnapshot(storage);
+        if (entry === null) {
+          toast.error(fail('快照', null, '请查看「应用诊断日志」后重试'));
+          return;
+        }
+        const removed = await pruneSnapshots(storage, settings.backupKeep);
+        await refreshSnapshots();
+        setSnapshotMessage(said('已备份'));
+        toast.success(
+          `已生成快照 ${formatDateTime(entry.createdAt, settings.timeZone)}${removed > 0 ? `，清理了 ${removed} 份旧快照` : ''}`,
+        );
+      },
+    });
   }
 
   async function removeSnapshot(entry: SnapshotEntry): Promise<void> {
-    setSnapshotBusy(true);
-    try {
-      const ok = await deleteSnapshot(storage, entry);
-      await refreshSnapshots();
-      if (ok) {
-        toast.success('已删除该快照');
-        return;
-      }
-      toast.error(fail('删除快照', null, '请查看「应用诊断日志」后重试'));
-    } finally {
-      setSnapshotBusy(false);
-    }
+    await snapshotAction.run({
+      scope: 'backup',
+      label: '正在删除快照…',
+      fail: false,
+      task: async () => {
+        const ok = await deleteSnapshot(storage, entry);
+        await refreshSnapshots();
+        if (ok) {
+          toast.success('已删除该快照');
+          return;
+        }
+        toast.error(fail('删除快照', null, '请查看「应用诊断日志」后重试'));
+      },
+    });
   }
 
   /** 恢复/删除快照都要先确认；句式统一走 copy/zh.ts。 */
@@ -278,35 +286,37 @@ export function DevicesView({
 
   /** 恢复：文件快照排队到重启后套用，JSON 快照当场覆盖数据。 */
   async function restoreSnapshotNow(entry: SnapshotEntry): Promise<void> {
-    setSnapshotBusy(true);
     setSnapshotMessage(null);
-    try {
-      const safe = await createSnapshot(storage);
-      await pruneSnapshots(storage, settings.backupKeep);
-      const outcome = await restoreSnapshot(storage, entry);
-      if (!outcome.ok) {
-        toast.error(fail('恢复快照', outcome.error, '请查看「应用诊断日志」后重试'));
-        return;
-      }
-      await refreshSnapshots();
-      if (outcome.needsRestart) {
-        // 文件快照要重启后才套用：登记给统一待重启条
-        registerPendingRestart('snapshot-restore');
-        setSnapshotMessage(said('已排好快照恢复'));
-        toast.success('已排好快照恢复');
-        return;
-      }
-      const result = outcome.result;
-      const text =
-        result === null
-          ? '已恢复快照'
-          : `已恢复快照：写入 ${result.imported} 条，清空 ${result.removed} 条${safe === null ? '' : '（恢复前已创建快照）'}`;
-      setSnapshotMessage(said(text));
-      toast.success(text);
-      onChanged();
-    } finally {
-      setSnapshotBusy(false);
-    }
+    await snapshotAction.run({
+      scope: 'backup',
+      label: '正在恢复快照…',
+      fail: false,
+      task: async () => {
+        const safe = await createSnapshot(storage);
+        await pruneSnapshots(storage, settings.backupKeep);
+        const outcome = await restoreSnapshot(storage, entry);
+        if (!outcome.ok) {
+          toast.error(fail('恢复快照', outcome.error, '请查看「应用诊断日志」后重试'));
+          return;
+        }
+        await refreshSnapshots();
+        if (outcome.needsRestart) {
+          // 文件快照要重启后才套用：登记给统一待重启条
+          registerPendingRestart('snapshot-restore');
+          setSnapshotMessage(said('已排好快照恢复'));
+          toast.success('已排好快照恢复');
+          return;
+        }
+        const result = outcome.result;
+        const text =
+          result === null
+            ? '已恢复快照'
+            : `已恢复快照：写入 ${result.imported} 条，清空 ${result.removed} 条${safe === null ? '' : '（恢复前已创建快照）'}`;
+        setSnapshotMessage(said(text));
+        toast.success(text);
+        onChanged();
+      },
+    });
   }
 
   useEffect(() => {
@@ -329,84 +339,90 @@ export function DevicesView({
   };
 
   async function testDav(): Promise<void> {
-    setDavBusy(true);
     setDavStatus(said('正在测试连接…'));
-    try {
-      const status = await testConnection(dav);
-      if (!status.ok) {
-        const message = fail('连接 WebDAV', status.error ?? `服务器返回 ${status.status}`, '请检查地址、账号与网络');
+    await davAction.run({
+      scope: 'webdav',
+      label: '正在测试连接…',
+      fail: false,
+      task: async () => {
+        const status = await testConnection(dav);
+        if (!status.ok) {
+          const message = fail('连接 WebDAV', status.error ?? `服务器返回 ${status.status}`, '请检查地址、账号与网络');
+          setDavStatus(said(message));
+          toast.error(message);
+          return;
+        }
+        const remote =
+          status.lastModified === null
+            ? status.exists
+              ? '远端已有备份'
+              : '远端暂无备份'
+            : `远端备份时间 ${formatDateTime(status.lastModified, settings.timeZone)}`;
+        const message = `连接正常，${remote}`;
         setDavStatus(said(message));
-        toast.error(message);
-        return;
-      }
-      const remote =
-        status.lastModified === null
-          ? status.exists
-            ? '远端已有备份'
-            : '远端暂无备份'
-          : `远端备份时间 ${formatDateTime(status.lastModified, settings.timeZone)}`;
-      const message = `连接正常，${remote}`;
-      setDavStatus(said(message));
-      toast.success(message);
-    } finally {
-      setDavBusy(false);
-    }
+        toast.success(message);
+      },
+    });
   }
 
   async function uploadDav(): Promise<void> {
-    setDavBusy(true);
     setDavStatus(null);
-    try {
-      const result = await uploadPackage(storage, dav);
-      if (!result.ok) {
-        const message = fail('上传', result.error, '请检查网络后重试');
+    await davAction.run({
+      scope: 'webdav',
+      label: '正在上传到 WebDAV…',
+      fail: false,
+      task: async () => {
+        const result = await uploadPackage(storage, dav);
+        if (!result.ok) {
+          const message = fail('上传', result.error, '请检查网络后重试');
+          setDavStatus(said(message));
+          toast.error(message);
+          return;
+        }
+        await refreshSnapshots();
+        const message = `已上传 ${result.name}（${formatBytes(result.bytes)}）`;
         setDavStatus(said(message));
-        toast.error(message);
-        return;
-      }
-      await refreshSnapshots();
-      const message = `已上传 ${result.name}（${formatBytes(result.bytes)}）`;
-      setDavStatus(said(message));
-      toast.success(message);
-    } finally {
-      setDavBusy(false);
-    }
+        toast.success(message);
+      },
+    });
   }
 
   /** 下载并应用：先备份本机再覆盖 */
   async function downloadDav(mode: ApplyMode): Promise<void> {
-    setDavBusy(true);
     setDavConfirmOpen(false);
     setDavStatus(null);
-    try {
-      const safe = await createSnapshot(storage);
-      await pruneSnapshots(storage, settings.backupKeep);
-      const result = await downloadAndApply(storage, dav, mode);
-      await refreshSnapshots();
-      if (!result.ok) {
-        const message = fail('下载', result.error, '请检查网络后重试');
-        setDavStatus(said(message));
-        toast.error(message);
-        return;
-      }
-      const outcome = result.outcome;
-      if (mode === 'settings') {
-        const count = outcome?.settings?.imported ?? 0;
-        const message = `已应用设置与预设（写入 ${count} 条${outcome?.presets === true ? '，含预设' : ''}）${safe === null ? '' : '，下载前已创建快照'}`;
+    await davAction.run({
+      scope: 'webdav',
+      label: '正在下载并应用…',
+      fail: false,
+      task: async () => {
+        const safe = await createSnapshot(storage);
+        await pruneSnapshots(storage, settings.backupKeep);
+        const result = await downloadAndApply(storage, dav, mode);
+        await refreshSnapshots();
+        if (!result.ok) {
+          const message = fail('下载', result.error, '请检查网络后重试');
+          setDavStatus(said(message));
+          toast.error(message);
+          return;
+        }
+        const outcome = result.outcome;
+        if (mode === 'settings') {
+          const count = outcome?.settings?.imported ?? 0;
+          const message = `已应用设置与预设（写入 ${count} 条${outcome?.presets === true ? '，含预设' : ''}）${safe === null ? '' : '，下载前已创建快照'}`;
+          setDavStatus(said(message));
+          toast.success(message);
+          await onSettingsReplaced();
+          return;
+        }
+        const message = `已恢复整库（写入 ${outcome?.full?.imported ?? 0} 条，清空 ${outcome?.full?.removed ?? 0} 条）${safe === null ? '' : '，下载前已创建快照'}`;
         setDavStatus(said(message));
         toast.success(message);
-        await onSettingsReplaced();
-        return;
-      }
-      const message = `已恢复整库（写入 ${outcome?.full?.imported ?? 0} 条，清空 ${outcome?.full?.removed ?? 0} 条）${safe === null ? '' : '，下载前已创建快照'}`;
-      setDavStatus(said(message));
-      toast.success(message);
-      // 整库恢复要重启才完全生效：统一登记给待重启条
-      registerPendingRestart('webdav-restore');
-      onChanged();
-    } finally {
-      setDavBusy(false);
-    }
+        // 整库恢复要重启才完全生效：统一登记给待重启条
+        registerPendingRestart('webdav-restore');
+        onChanged();
+      },
+    });
   }
 
   useEffect(() => {
@@ -429,89 +445,93 @@ export function DevicesView({
   }
 
   async function runUpdateCheck(): Promise<void> {
-    setUpdateBusy(true);
-    try {
-      const status = await checkForUpdate({
-        channel: CHANNEL,
-        receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
-        currentVersion: appVersion(),
-      });
-      if (status.error !== null) {
-        const message = fail('检查更新', status.error, '请稍后再试');
+    await updateAction.run({
+      scope: 'update',
+      label: '正在检查更新…',
+      log: '检查更新失败',
+      fail: { what: '检查更新', next: '请稍后再试' },
+      task: async () => {
+        const status = await checkForUpdate({
+          channel: CHANNEL,
+          receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
+          currentVersion: appVersion(),
+        });
+        if (status.error !== null) {
+          const message = fail('检查更新', status.error, '请稍后再试');
+          setUpdateResult(said(message));
+          toast.error(message);
+          logWarn('update', '检查更新失败', { error: status.error, feed: status.feed });
+          return;
+        }
+        const manifest = status.manifest;
+        const message = status.available
+          ? `发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在发布页下载`
+          : `已是最新版本（${CHANNEL_LABEL[status.feed]}）`;
         setUpdateResult(said(message));
-        toast.error(message);
-        logWarn('update', '检查更新失败', { error: status.error, feed: status.feed });
-        return;
-      }
-      const manifest = status.manifest;
-      const message = status.available
-        ? `发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在发布页下载`
-        : `已是最新版本（${CHANNEL_LABEL[status.feed]}）`;
-      setUpdateResult(said(message));
-      toast.success(message);
-      logInfo('update', '检查更新', {
-        feed: status.feed,
-        current: status.current,
-        latest: status.latest,
-        available: status.available,
-        verify: verifyHint(status.feed, 'windows'),
-        ...(manifest?.notes === undefined ? {} : { notes: manifest.notes }),
-      });
-    } finally {
-      setUpdateBusy(false);
-    }
+        toast.success(message);
+        logInfo('update', '检查更新', {
+          feed: status.feed,
+          current: status.current,
+          latest: status.latest,
+          available: status.available,
+          verify: verifyHint(status.feed, 'windows'),
+          ...(manifest?.notes === undefined ? {} : { notes: manifest.notes }),
+        });
+      },
+    });
   }
 
   /** 检查预设更新：快照写入缓存、下次启动由 resolvePresetSource 生效；失败时界面沿用内置预设。 */
   async function runPresetCheck(): Promise<void> {
-    setPresetBusy(true);
-    try {
-      const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
-      const status = await checkPresetUpdate({ cachedVersion: currentVersion });
-      if (status.error !== null) {
-        const message = fail('检查预设更新', status.error, '请稍后再试');
-        setPresetResult(said(message));
-        toast.error(message);
-        logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion });
-        return;
-      }
-      if (!status.available || status.version === null) {
-        const message = `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${PRESET_SOURCE_LABEL}`}`;
+    const result = await presetAction.run({
+      scope: 'preset',
+      label: '正在读取预设更新…',
+      log: '下载预设快照失败',
+      fail: { what: '检查预设更新', next: '请稍后再试' },
+      task: async () => {
+        const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
+        const status = await checkPresetUpdate({ cachedVersion: currentVersion });
+        if (status.error !== null) {
+          const message = fail('检查预设更新', status.error, '请稍后再试');
+          setPresetResult(said(message));
+          toast.error(message);
+          logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion });
+          return;
+        }
+        if (!status.available || status.version === null) {
+          const message = `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${PRESET_SOURCE_LABEL}`}`;
+          setPresetResult(said(message));
+          toast.success(message);
+          logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version, source: status.source });
+          return;
+        }
+        const snapshot = await fetchSnapshot(status.version);
+        await writeCachedSnapshot(storage, snapshot);
+        // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
+        const content = await cacheSnapshotContent(storage, snapshot);
+        if (!content.ok) {
+          logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
+            version: snapshot.version,
+            message: content.reason ?? '未知原因',
+          });
+        }
+        setPresetSource(await resolvePresetSource(storage));
+        const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统），下次启动生效`;
         setPresetResult(said(message));
         toast.success(message);
-        logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version, source: status.source });
-        return;
-      }
-      const snapshot = await fetchSnapshot(status.version);
-      await writeCachedSnapshot(storage, snapshot);
-      // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
-      const content = await cacheSnapshotContent(storage, snapshot);
-      if (!content.ok) {
-        logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
-          version: snapshot.version,
-          message: content.reason ?? '未知原因',
-        });
-      }
-      setPresetSource(await resolvePresetSource(storage));
-      const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统），下次启动生效`;
-      setPresetResult(said(message));
-      toast.success(message);
-      // 预设要下次启动才套用：与其它待重启改动共用一条提示
-      registerPendingRestart('preset-update');
-      logInfo('preset', '已下载预设快照', { version: snapshot.version, hash: snapshot.hash });
-    } catch (cause: unknown) {
-      const message = fail('检查预设更新', cause instanceof Error ? cause.message : String(cause), '请稍后再试');
-      setPresetResult(said(message));
-      toast.error(message);
-      logWarn('preset', '下载预设快照失败', {
-        message: cause instanceof Error ? cause.message : String(cause),
-      });
-    } finally {
-      setPresetBusy(false);
+        // 预设要下次启动才套用：与其它待重启改动共用一条提示
+        registerPendingRestart('preset-update');
+        logInfo('preset', '已下载预设快照', { version: snapshot.version, hash: snapshot.hash });
+      },
+    });
+    if (!result.ok && result.error !== null) {
+      setPresetResult(said(fail('检查预设更新', result.error, '请稍后再试')));
     }
   }
 
-  const [busy, setBusy] = useState(false);
+  const exportAction = useAction();
+  const importAction = useAction();
+  const logAction = useAction();
   const [exportOpen, setExportOpen] = useState(false);
   /** 导出格式：JSON 文件、Base64 文本，或带预设与日志的整包 zip */
   const [exportFormat, setExportFormat] = useState<ExportFormat>('json');
@@ -579,38 +599,40 @@ export function DevicesView({
   }
 
   async function downloadBackup(): Promise<void> {
-    setBusy(true);
-    try {
-      const modules = [...exportModules];
-      if (modules.length === 0) {
-        toast.error('请至少勾选一个模块');
-        return;
-      }
-      const outcome = await exportConfig(storage, {
-        modules,
-        format: exportFormat,
-        bundlePresets,
-        bundleLogs,
-      });
-      if (outcome.cancelled) {
-        toast.info('已取消保存');
-        return;
-      }
-      if (!outcome.ok) {
-        toast.error(fail('导出', outcome.error, '请重试或换一个保存位置'));
-        return;
-      }
-      const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、');
-      if (exportFormat === 'base64' && outcome.text !== null) {
-        setExportText(outcome.text);
-        toast.success(`已生成 Base64 文本（${label}）`);
-        return;
-      }
-      toast.success(outcome.path === null ? `已下载 ${outcome.name}` : `已保存到 ${outcome.path}`);
-      setExportOpen(false);
-    } finally {
-      setBusy(false);
-    }
+    await exportAction.run({
+      scope: 'backup',
+      label: '正在导出备份…',
+      fail: false,
+      task: async () => {
+        const modules = [...exportModules];
+        if (modules.length === 0) {
+          toast.error('请至少勾选一个模块');
+          return;
+        }
+        const outcome = await exportConfig(storage, {
+          modules,
+          format: exportFormat,
+          bundlePresets,
+          bundleLogs,
+        });
+        if (outcome.cancelled) {
+          toast.info('已取消保存');
+          return;
+        }
+        if (!outcome.ok) {
+          toast.error(fail('导出', outcome.error, '请重试或换一个保存位置'));
+          return;
+        }
+        const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、');
+        if (exportFormat === 'base64' && outcome.text !== null) {
+          setExportText(outcome.text);
+          toast.success(`已生成 Base64 文本（${label}）`);
+          return;
+        }
+        toast.success(outcome.path === null ? `已下载 ${outcome.name}` : `已保存到 ${outcome.path}`);
+        setExportOpen(false);
+      },
+    });
   }
 
   /** 导出 Base64 文本到文件：内容与文本框一致。 */
@@ -639,7 +661,7 @@ export function DevicesView({
       setImportOpen(false);
       toast.success('已解析粘贴的备份文本');
     } catch (cause: unknown) {
-      toast.error(fail('解析备份文本', cause instanceof Error ? cause.message : String(cause), '请检查文本是否完整'));
+      toast.error(fail('解析备份文本', errorMessage(cause), '请检查文本是否完整'));
     }
   }
 
@@ -658,25 +680,28 @@ export function DevicesView({
 
   async function confirmImport(): Promise<void> {
     if (pendingImport === null) return;
-    setBusy(true);
-    try {
-      const modules = [...importModules];
-      if (modules.length === 0) {
-        toast.error('请至少勾选一个模块');
-        return;
-      }
-      const result = await importConfig(storage, pendingImport, {
-        mode: importMode,
-        modules,
-        extras: pendingImportExtras,
-      });
-      toast.success(importResultText(result, importMode));
-      setPendingImport(null);
-      setPendingImportExtras(null);
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    const target = pendingImport;
+    await importAction.run({
+      scope: 'backup',
+      label: '正在导入备份…',
+      fail: { what: '导入备份失败', next: '请检查备份文件与勾选模块后重试。' },
+      task: async () => {
+        const modules = [...importModules];
+        if (modules.length === 0) {
+          toast.error('请至少勾选一个模块');
+          return;
+        }
+        const result = await importConfig(storage, target, {
+          mode: importMode,
+          modules,
+          extras: pendingImportExtras,
+        });
+        toast.success(importResultText(result, importMode));
+        setPendingImport(null);
+        setPendingImportExtras(null);
+        onChanged();
+      },
+    });
   }
 
   const bodies: Record<string, ReactNode> = {
@@ -708,8 +733,8 @@ export function DevicesView({
                   size="sm"
                   variant="secondary"
                   aria-label="保存存储位置"
-                  disabled={storageBusy}
-                  onClick={() => void runBusy('正在保存存储位置…', () => saveStorage(storagePathInput))}
+                  loading={storageAction.busy}
+                  onClick={() => void saveStorage(storagePathInput)}
                 >
                   保存位置
                 </Button>
@@ -717,7 +742,7 @@ export function DevicesView({
                   size="sm"
                   variant="ghost"
                   aria-label="恢复默认存储位置"
-                  disabled={storageBusy}
+                  loading={storageAction.busy}
                   onClick={() => void saveStorage('')}
                 >
                   恢复默认
@@ -819,8 +844,8 @@ export function DevicesView({
               size="sm"
               variant="secondary"
               aria-label="立即创建快照"
-              disabled={snapshotBusy}
-              onClick={() => void runBusy('正在创建快照…', () => backupNow())}
+              loading={snapshotAction.busy}
+              onClick={() => void backupNow()}
             >
               立即创建快照
             </Button>
@@ -849,7 +874,7 @@ export function DevicesView({
                     size="sm"
                     variant="ghost"
                     aria-label={`恢复快照 ${entry.id}`}
-                    disabled={snapshotBusy}
+                    disabled={snapshotAction.busy}
                     onClick={() => void confirmRestoreSnapshot(entry)}
                   >
                     恢复
@@ -858,7 +883,7 @@ export function DevicesView({
                     size="sm"
                     variant="ghost"
                     aria-label={`删除快照 ${entry.id}`}
-                    disabled={snapshotBusy}
+                    disabled={snapshotAction.busy}
                     onClick={() => void confirmRemoveSnapshot(entry)}
                   >
                     删除
@@ -928,8 +953,9 @@ export function DevicesView({
               size="sm"
               variant="secondary"
               aria-label="测试 WebDAV 连接"
-              disabled={davBusy || !davConfigured(dav)}
-              onClick={() => void runBusy('正在测试连接…', () => testDav())}
+              loading={davAction.busy}
+              disabled={!davConfigured(dav)}
+              onClick={() => void testDav()}
             >
               测试连接
             </Button>
@@ -937,8 +963,9 @@ export function DevicesView({
               size="sm"
               variant="secondary"
               aria-label="上传到 WebDAV"
-              disabled={davBusy || !davConfigured(dav)}
-              onClick={() => void runBusy('正在上传到 WebDAV…', () => uploadDav())}
+              loading={davAction.busy}
+              disabled={!davConfigured(dav)}
+              onClick={() => void uploadDav()}
             >
               立即上传
             </Button>
@@ -946,7 +973,7 @@ export function DevicesView({
               size="sm"
               variant="secondary"
               aria-label="从 WebDAV 下载"
-              disabled={davBusy || !davConfigured(dav)}
+              disabled={davAction.busy || !davConfigured(dav)}
               onClick={() => setDavConfirmOpen(true)}
             >
               立即下载
@@ -959,13 +986,13 @@ export function DevicesView({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
+          <Button size="sm" variant="secondary" disabled={exportAction.busy} onClick={() => setExportOpen(true)}>
             导出备份
           </Button>
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy}
+            disabled={importAction.busy}
             aria-label="导入备份"
             onClick={() => setImportOpen(true)}
           >
@@ -973,7 +1000,11 @@ export function DevicesView({
             导入备份
           </Button>
           {diagnosticsVisible && (
-            <Button size="sm" variant="secondary" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
+            >
               导出日志
             </Button>
           )}
@@ -1004,8 +1035,8 @@ export function DevicesView({
             size="sm"
             variant="secondary"
             aria-label="检查更新"
-            disabled={updateBusy}
-            onClick={() => void runBusy('正在检查更新…', () => runUpdateCheck())}
+            loading={updateAction.busy}
+            onClick={() => void runUpdateCheck()}
           >
             检查更新
           </Button>
@@ -1058,7 +1089,12 @@ export function DevicesView({
             写入文件的门槛
           </span>
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" aria-label="打开日志" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="打开日志"
+              onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
+            >
               打开日志
             </Button>
             <span className="text-xs text-muted">导出当前缓冲区</span>
@@ -1106,8 +1142,8 @@ export function DevicesView({
             size="sm"
             variant="secondary"
             aria-label="检查预设更新"
-            disabled={presetBusy}
-            onClick={() => void runBusy('正在读取预设更新…', () => runPresetCheck())}
+            loading={presetAction.busy}
+            onClick={() => void runPresetCheck()}
           >
             检查预设更新
           </Button>
@@ -1269,7 +1305,7 @@ export function DevicesView({
         >
           恢复快照
         </Button>
-        <Button size="sm" variant="secondary" disabled={updateBusy} onClick={() => void runUpdateCheck()}>
+        <Button size="sm" variant="secondary" loading={updateAction.busy} onClick={() => void runUpdateCheck()}>
           检查更新
         </Button>
       </div>
@@ -1331,16 +1367,16 @@ export function DevicesView({
             <Button
               variant="secondary"
               aria-label="下载并只应用设置与预设"
-              disabled={davBusy}
-              onClick={() => void runBusy('正在下载并应用…', () => downloadDav('settings'))}
+              loading={davAction.busy}
+              onClick={() => void downloadDav('settings')}
             >
               只应用设置与预设
             </Button>
             <Button
               variant="danger"
               aria-label="下载并恢复整库"
-              disabled={davBusy}
-              onClick={() => void runBusy('正在下载并应用…', () => downloadDav('all'))}
+              loading={davAction.busy}
+              onClick={() => void downloadDav('all')}
             >
               恢复全部
             </Button>
@@ -1359,7 +1395,7 @@ export function DevicesView({
         title="导出备份"
         description="勾选要导出的模块，并选择导出格式"
         submitLabel={exportFormat === 'base64' ? '生成文本' : '导出'}
-        submitting={busy}
+        submitting={exportAction.busy}
         submitDisabled={exportModules.size === 0}
         onSubmit={() => void downloadBackup()}
       >
@@ -1503,7 +1539,7 @@ export function DevicesView({
               size="sm"
               variant="secondary"
               aria-label="选择备份文件"
-              disabled={busy}
+              disabled={importAction.busy}
               onClick={() => fileInput.current?.click()}
             >
               选择备份文件
@@ -1528,7 +1564,7 @@ export function DevicesView({
         title="导入备份"
         description="选模块与冲突处理"
         submitLabel="导入"
-        submitting={busy}
+        submitting={importAction.busy}
         submitDisabled={importModules.size === 0}
         onSubmit={() => void confirmImport()}
       >

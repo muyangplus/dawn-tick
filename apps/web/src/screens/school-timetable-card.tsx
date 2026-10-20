@@ -7,7 +7,8 @@ import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { describeError, logInfo, logWarn } from '../log.ts';
+import { useAction } from '../lib/action.ts';
+import { logInfo } from '../log.ts';
 import { fail } from '../lib/fail.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 import {
@@ -43,7 +44,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
   const [slots, setSlots] = useState<readonly TimeSlotRow[]>([]);
   const [applied, setApplied] = useState<AppliedSchoolTimetable | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
 
   const reloadSlots = useCallback(async () => {
     if (semesterId === '') {
@@ -77,46 +78,44 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
 
   /** 选中学校后套用作息：专属优先，否则内置通用；落库失败只提示，不改现状。 */
   async function applyForSchool(school: School): Promise<void> {
-    // 连点两行会并发写 time_slots，第二次覆盖第一次；套用期间直接忽略后续点击
-    if (busy) return;
-    setBusy(true);
-    try {
-      const result = await applySchoolTimetable(storage, semesterId, school);
-      setPickedId(school.id);
-      setRecent(school);
-      await writeRecentSchool(storage, school);
-      setApplied({
-        school: school.name,
-        timetable: result.timetableName,
-        periods: result.periods,
-        exclusive: result.exclusive,
-        source: result.source,
-      });
-      setMessage(result.message);
-      logInfo('timetable', '按学校套用作息', {
-        school: school.name,
-        timetable: result.timetableId,
-        exclusive: result.exclusive,
-        periods: result.periods,
-        source: result.source,
-      });
-      toast.success(
-        result.exclusive
-          ? `已套用「${school.name}」作息（${result.periods} 节）`
-          : `该校暂无专属作息，已套用通用作息（${result.periods} 节）`,
-      );
-      setPickerOpen(false);
-      await reloadSlots();
-      onChanged();
-    } catch (cause: unknown) {
-      // 落库失败的具体原因只进日志；界面按统一句式给原因与下一步
-      logWarn('timetable', '按学校套用作息失败', {
-        school: school.name,
-        message: describeError(cause),
-      });
+    // 套用期间直接忽略后续点击：连点两行会并发写 time_slots，第二次覆盖第一次
+    const result = await run({
+      scope: 'timetable',
+      label: '正在按学校套用作息…',
+      log: '按学校套用作息失败',
+      task: async () => {
+        const outcome = await applySchoolTimetable(storage, semesterId, school);
+        setPickedId(school.id);
+        setRecent(school);
+        await writeRecentSchool(storage, school);
+        setApplied({
+          school: school.name,
+          timetable: outcome.timetableName,
+          periods: outcome.periods,
+          exclusive: outcome.exclusive,
+          source: outcome.source,
+        });
+        setMessage(outcome.message);
+        logInfo('timetable', '按学校套用作息', {
+          school: school.name,
+          timetable: outcome.timetableId,
+          exclusive: outcome.exclusive,
+          periods: outcome.periods,
+          source: outcome.source,
+        });
+        toast.success(
+          outcome.exclusive
+            ? `已套用「${school.name}」作息（${outcome.periods} 节）`
+            : `该校暂无专属作息，已套用通用作息（${outcome.periods} 节）`,
+        );
+        setPickerOpen(false);
+        await reloadSlots();
+        onChanged();
+      },
+    });
+    // 落库失败的具体原因只进日志；界面按统一句式给原因与下一步
+    if (!result.ok && result.error !== null) {
       setMessage(fail('套用失败', '作息没能写入本机', '请重试；仍失败请重启应用。').text);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -137,7 +136,8 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
           size="sm"
           variant="secondary"
           aria-label="按学校套用作息"
-          disabled={busy || semesterId === ''}
+          loading={busy}
+          disabled={semesterId === ''}
           onClick={() => void openPicker()}
         >
           选择学校
@@ -147,7 +147,8 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
             size="sm"
             variant="primary"
             aria-label={`一键套用 ${recent.name} 的作息`}
-            disabled={busy || semesterId === ''}
+            loading={busy}
+            disabled={semesterId === ''}
             data-role="recent-school-apply"
             onClick={() => void applyForSchool(recent)}
           >

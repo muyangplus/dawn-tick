@@ -9,6 +9,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { supportsNativeHttp } from './lib/capabilities.ts';
+import { errorMessage } from './lib/errors.ts';
 import { readMetaNumber } from './lib/meta.ts';
 import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
@@ -84,10 +85,6 @@ export interface DavStatus {
   error: string | null;
 }
 
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
 function statusOf(response: Response): DavStatus {
   const modified = response.headers.get('last-modified');
   const length = response.headers.get('content-length');
@@ -117,7 +114,7 @@ export async function remoteStatus(settings: DavSettings): Promise<DavStatus> {
       status: 0,
       lastModified: null,
       size: null,
-      error: describe(cause),
+      error: errorMessage(cause),
     };
   }
 }
@@ -189,7 +186,7 @@ export async function uploadPackage(
     logInfo('webdav', '已上传同步包', { name, bytes: bytes.length });
     return { ok: true, name, bytes: bytes.length, error: null };
   } catch (cause: unknown) {
-    const error = describe(cause);
+    const error = errorMessage(cause);
     logWarn('webdav', '上传失败', { name, error });
     return { ok: false, name, bytes: 0, error };
   }
@@ -222,7 +219,7 @@ export async function downloadPackage(
     logInfo('webdav', '已下载同步包', { name, bytes: buffer.byteLength });
     return { ok: true, name, bytes: new Uint8Array(buffer), error: null };
   } catch (cause: unknown) {
-    const error = describe(cause);
+    const error = errorMessage(cause);
     logWarn('webdav', '下载失败', { name, error });
     return { ok: false, name, bytes: null, error };
   }
@@ -272,7 +269,7 @@ export async function applyPackage(
       presets,
     };
   } catch (cause: unknown) {
-    const error = describe(cause);
+    const error = errorMessage(cause);
     logWarn('webdav', '应用同步包失败', { mode, error });
     return { ok: false, error, full: null, settings: null, presets: false };
   }

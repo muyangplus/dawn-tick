@@ -18,6 +18,7 @@ import {
 } from '@dawn-tick/core';
 import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
+import { errorMessage } from '../lib/errors.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 import { Button } from '../components/ui/button.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
@@ -306,7 +307,7 @@ export function TodoForm({
       onOpenChange(false);
     } catch (cause: unknown) {
       // 保存失败要看得见：写日志 + 弹提示，不再静默
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = errorMessage(cause);
       logError('todo', '保存失败', { message, type: current, editing: editing?.id ?? null });
       toast.error(`保存失败：${message}`);
     }
@@ -331,7 +332,7 @@ export function TodoForm({
         onCreated();
         onOpenChange(false);
       } catch (cause: unknown) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = errorMessage(cause);
         logError('todo', '删除失败', { message, id: target.id });
         toast.error(`删除失败：${message}`);
       }
@@ -373,7 +374,7 @@ export function TodoForm({
         onCreated();
         onOpenChange(false);
       } catch (cause: unknown) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = errorMessage(cause);
         logError('todo', '复制失败', { message, id: target.id });
         toast.error(`复制失败：${message}`);
       }

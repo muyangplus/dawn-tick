@@ -13,6 +13,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { logInfo, logWarn, logsText } from './log.ts';
+import { errorMessage } from './lib/errors.ts';
 import { dayStampUtc } from './lib/dates.ts';
 import { saveBinaryFile, saveTextFile } from './system-actions.ts';
 import {
@@ -180,7 +181,7 @@ export async function readImportFile(file: File): Promise<ImportFileResult> {
     }
     return { payload: parseImportText(await file.text()), extras: null, error: null };
   } catch (cause: unknown) {
-    const error = cause instanceof Error ? cause.message : String(cause);
+    const error = errorMessage(cause);
     logWarn('backup', '读取备份文件失败', { name: file.name, error });
     return { payload: null, extras: null, error };
   }

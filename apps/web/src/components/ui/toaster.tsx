@@ -1,6 +1,6 @@
 import { Toaster as SonnerToaster } from 'sonner';
 
-export { toast } from 'sonner';
+export { toast } from '../../lib/toast.ts';
 
 export function Toaster({ mode }: { mode: 'light' | 'dark' }) {
   return (

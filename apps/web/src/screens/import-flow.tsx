@@ -31,7 +31,8 @@ import { InlineError } from '../components/ui/inline-error.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { logError, logInfo, describeError } from '../log.ts';
+import { logError, logInfo } from '../log.ts';
+import { useAction } from '../lib/action.ts';
 import { fail } from '../lib/fail.ts';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import {
@@ -103,7 +104,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [duplicateRows, setDuplicateRows] = useState<boolean[]>([]);
   /** 只看冲突项：默认关，筛选只影响显示，不改变勾选语义 */
   const [conflictOnly, setConflictOnly] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const [failure, setFailure] = useState<ImportFailure | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const mappingDetails = useRef<HTMLDetailsElement>(null);
@@ -361,81 +362,82 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   }
 
   async function runFile(file: File): Promise<void> {
-    setBusy(true);
     setFailure(null);
-    try {
-      const semester = await loadSemester(storage, semesterId);
-      if (semester === undefined) throw new Error('学期不存在');
-      if (file.name.toLowerCase().endsWith('.ics')) {
-        const calendar = parseIcs(await file.text());
-        const timeSlots = await listTimeSlots(storage, semesterId);
-        const converted = icsToSchedules(
-          calendar,
-          {
-            id: semester.id,
-            start_date: semester.start_date,
-            total_weeks: semester.total_weeks,
-            time_zone: semester.time_zone,
-          },
-          timeSlots.map((slot) => ({
-            period_no: slot.period_no,
-            start_time: slot.start_time,
-            end_time: slot.end_time,
+    const result = await run({
+      scope: 'import',
+      label: '正在读取课表文件…',
+      log: '读取课表文件失败',
+      task: async () => {
+        const semester = await loadSemester(storage, semesterId);
+        if (semester === undefined) throw new Error('学期不存在');
+        if (file.name.toLowerCase().endsWith('.ics')) {
+          const calendar = parseIcs(await file.text());
+          const timeSlots = await listTimeSlots(storage, semesterId);
+          const converted = icsToSchedules(
+            calendar,
+            {
+              id: semester.id,
+              start_date: semester.start_date,
+              total_weeks: semester.total_weeks,
+              time_zone: semester.time_zone,
+            },
+            timeSlots.map((slot) => ({
+              period_no: slot.period_no,
+              start_time: slot.start_time,
+              end_time: slot.end_time,
+            })),
+          );
+          accept(converted.schedules, converted.warnings);
+          return;
+        }
+        const parsed = parseTimetableMatrix(await readMatrix(file), semester.total_weeks);
+        accept(
+          parsed.slots.map((slot) => ({
+            courseName: slot.name,
+            dayOfWeek: slot.dayOfWeek,
+            periodStart: slot.periodStart,
+            periodEnd: slot.periodEnd,
+            weeks: slot.weeks ?? Array.from({ length: semester.total_weeks }, (_, index) => index + 1),
+            room: slot.room,
+            teacher: slot.teacher,
           })),
+          parsed.warnings,
         );
-        accept(converted.schedules, converted.warnings);
-        return;
-      }
-      const parsed = parseTimetableMatrix(await readMatrix(file), semester.total_weeks);
-      accept(
-        parsed.slots.map((slot) => ({
-          courseName: slot.name,
-          dayOfWeek: slot.dayOfWeek,
-          periodStart: slot.periodStart,
-          periodEnd: slot.periodEnd,
-          weeks: slot.weeks ?? Array.from({ length: semester.total_weeks }, (_, index) => index + 1),
-          room: slot.room,
-          teacher: slot.teacher,
-        })),
-        parsed.warnings,
-      );
-    } catch (cause: unknown) {
+      },
+    });
+    if (!result.ok && result.error !== null) {
       // 解析器的内部报错只进日志；界面给用户能理解的原因与下一步
-      logError('import', '读取课表文件失败', {
-        name: file.name,
-        message: describeError(cause),
-      });
       setFailure({
         source: 'file',
         reason: '文件里的课表没能识别',
       });
-    } finally {
-      setBusy(false);
     }
   }
 
   async function confirm(): Promise<void> {
-    setBusy(true);
-    try {
-      const chosen = schedules.filter((_, index) => selected.has(index));
-      const applied = await applyImport(storage, semesterId, chosen);
-      setWarnings(applied.warnings);
-      logInfo('import', '应用导入', {
-        method,
-        selected: chosen.length,
-        courses: applied.createdCourses,
-        schedules: applied.createdSchedules,
-        skipped: applied.skippedSchedules,
-      });
-      toast.success(`新增课程 ${applied.createdCourses} · 排课 ${applied.createdSchedules} · 跳过重复 ${applied.skippedSchedules}`);
-      setStep(4);
-      // 导入完成就关掉内嵌教务窗口，避免用户还要自己关
-      await closeImportWindow();
-      logInfo('import', '导入完成并关闭内嵌窗口', { courses: applied.createdCourses });
-      onDone();
-    } finally {
-      setBusy(false);
-    }
+    await run({
+      scope: 'import',
+      label: '正在导入课表…',
+      fail: { what: '导入课表失败', next: '请检查文件与勾选项后重试。' },
+      task: async () => {
+        const chosen = schedules.filter((_, index) => selected.has(index));
+        const applied = await applyImport(storage, semesterId, chosen);
+        setWarnings(applied.warnings);
+        logInfo('import', '应用导入', {
+          method,
+          selected: chosen.length,
+          courses: applied.createdCourses,
+          schedules: applied.createdSchedules,
+          skipped: applied.skippedSchedules,
+        });
+        toast.success(`新增课程 ${applied.createdCourses} · 排课 ${applied.createdSchedules} · 跳过重复 ${applied.skippedSchedules}`);
+        setStep(4);
+        // 导入完成就关掉内嵌教务窗口，避免用户还要自己关
+        await closeImportWindow();
+        logInfo('import', '导入完成并关闭内嵌窗口', { courses: applied.createdCourses });
+        onDone();
+      },
+    });
   }
 
   return (
@@ -600,7 +602,8 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="primary"
-                  disabled={busy || importUrl.trim().length === 0}
+                  loading={busy}
+                  disabled={importUrl.trim().length === 0}
                   onClick={() => {
                     void (async () => {
                       const result = await openImportWindow(importUrl.trim());
@@ -657,7 +660,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             className="h-28 w-full rounded-md border border-line bg-surface p-2 text-xs text-ink"
           />
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={busy || pageText.trim().length === 0} onClick={runPage}>
+            <Button variant="primary" loading={busy} disabled={pageText.trim().length === 0} onClick={runPage}>
               识别并预览
             </Button>
             <Button variant="ghost" onClick={() => setStep(1)}>
@@ -914,7 +917,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
           )}
           {warnings.length > 0 && <InlineError>{warnings.join('；')}</InlineError>}
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={busy || selected.size === 0} onClick={() => void confirm()}>
+            <Button variant="primary" loading={busy} disabled={selected.size === 0} onClick={() => void confirm()}>
               确认导入
             </Button>
             <Button variant="ghost" onClick={() => setStep(2)}>

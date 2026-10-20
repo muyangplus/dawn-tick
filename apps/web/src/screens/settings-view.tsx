@@ -24,6 +24,7 @@ import {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { logInfo } from '../log.ts';
+import { useAction } from '../lib/action.ts';
 import { canUseWidget, hasMobileWidgets, isAndroidApp, isAutoStartSupported } from '../lib/capabilities.ts';
 import { hideWidget, showWidget } from '../widget-window.ts';
 import {
@@ -193,7 +194,7 @@ export function SettingsView({
     };
   }, []);
 
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   /** 正在等系统确认的尺寸：按钮转圈，避免重复点 */
   const [pinPending, setPinPending] = useState<MobileWidgetState['id'] | null>(null);
   /** 每种尺寸在桌面上的状态（已添加 / 被停用） */
@@ -315,82 +316,92 @@ export function SettingsView({
       toast.error('请检查学期名称、开学日期与时区');
       return;
     }
-    setBusy(true);
-    try {
-      await updateSemester(storage, editing.id, {
-        name: editName.trim(),
-        start_date: editStart,
-        total_weeks: Math.min(30, Math.max(1, editWeeks)),
-        time_zone: editZone,
-      });
-      logInfo('semester', '修改学期', {
-        id: editing.id,
-        startDate: editStart,
-        totalWeeks: editWeeks,
-        timeZone: editZone,
-      });
-      toast.success('已保存学期设置');
-      setEditing(null);
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    const target = editing;
+    await run({
+      scope: 'semester',
+      label: '正在保存学期设置…',
+      ok: '已保存学期设置',
+      fail: { what: '保存学期设置失败', next: '请重试；仍失败请重开应用后再改。' },
+      task: async () => {
+        await updateSemester(storage, target.id, {
+          name: editName.trim(),
+          start_date: editStart,
+          total_weeks: Math.min(30, Math.max(1, editWeeks)),
+          time_zone: editZone,
+        });
+        logInfo('semester', '修改学期', {
+          id: target.id,
+          startDate: editStart,
+          totalWeeks: editWeeks,
+          timeZone: editZone,
+        });
+        setEditing(null);
+        onChanged();
+      },
+    });
   }
 
   async function confirmRemove(): Promise<void> {
     if (removing === null) return;
-    setBusy(true);
-    try {
-      const report = await deleteSemesterDeep(storage, removing.id);
-      logInfo('semester', '删除学期', { id: removing.id, ...report });
-      toast.success(
-        `已删除「${removing.name}」：课程 ${COUNT('course', report.courses)}、排课 ${COUNT('schedule', report.schedules)}、节次 ${COUNT('period', report.slots)}、日程 ${COUNT('event', report.events)}、提醒 ${COUNT('reminder', report.reminders)}`,
-      );
-      setRemoving(null);
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    const target = removing;
+    await run({
+      scope: 'semester',
+      label: '正在删除学期…',
+      fail: { what: '删除学期失败', next: '请重试；仍失败请重开应用后再删。' },
+      task: async () => {
+        const report = await deleteSemesterDeep(storage, target.id);
+        logInfo('semester', '删除学期', { id: target.id, ...report });
+        toast.success(
+          `已删除「${target.name}」：课程 ${COUNT('course', report.courses)}、排课 ${COUNT('schedule', report.schedules)}、节次 ${COUNT('period', report.slots)}、日程 ${COUNT('event', report.events)}、提醒 ${COUNT('reminder', report.reminders)}`,
+        );
+        setRemoving(null);
+        onChanged();
+      },
+    });
   }
 
   async function addSemester(): Promise<void> {
     if (semesterName.trim().length === 0 || semesterStart.length === 0) return;
-    setBusy(true);
-    try {
-      await createSemester(storage, {
-        userId,
-        name: semesterName.trim(),
-        startDate: semesterStart,
-        totalWeeks: semesterWeeks,
-        timeZone: settings.timeZone,
-      });
-      logInfo('semester', '新建学期', {
-        name: semesterName.trim(),
-        startDate: semesterStart,
-        totalWeeks: semesterWeeks,
-      });
-      setSemesterName('');
-      toast.success('已新建学期并设为当前学期');
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    await run({
+      scope: 'semester',
+      label: '正在新建学期…',
+      ok: '已新建学期并设为当前学期',
+      fail: { what: '新建学期失败', next: '请重试；仍失败请重开应用后再试。' },
+      task: async () => {
+        await createSemester(storage, {
+          userId,
+          name: semesterName.trim(),
+          startDate: semesterStart,
+          totalWeeks: semesterWeeks,
+          timeZone: settings.timeZone,
+        });
+        logInfo('semester', '新建学期', {
+          name: semesterName.trim(),
+          startDate: semesterStart,
+          totalWeeks: semesterWeeks,
+        });
+        setSemesterName('');
+        onChanged();
+      },
+    });
   }
 
   async function activate(id: string): Promise<void> {
-    setBusy(true);
-    try {
-      for (const semester of semesters) {
-        if (semester.is_active === 1 && semester.id !== id) {
-          await updateSemester(storage, semester.id, { is_active: 0 });
+    await run({
+      scope: 'semester',
+      label: '正在切换当前学期…',
+      ok: '已切换当前学期',
+      fail: { what: '切换学期失败', next: '请重试；仍失败请重开应用后再试。' },
+      task: async () => {
+        for (const semester of semesters) {
+          if (semester.is_active === 1 && semester.id !== id) {
+            await updateSemester(storage, semester.id, { is_active: 0 });
+          }
         }
-      }
-      await updateSemester(storage, id, { is_active: 1 });
-      toast.success('已切换当前学期');
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+        await updateSemester(storage, id, { is_active: 1 });
+        onChanged();
+      },
+    });
   }
 
   const bodies: Record<string, ReactNode> = {
@@ -412,7 +423,7 @@ export function SettingsView({
                   {semester.id === activeSemesterId ? (
                     <span className="text-xs text-primary-strong">当前</span>
                   ) : (
-                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => void activate(semester.id)}>
+                    <Button size="sm" variant="secondary" loading={busy} onClick={() => void activate(semester.id)}>
                       切换
                     </Button>
                   )}
@@ -460,7 +471,7 @@ export function SettingsView({
                 onChange={(event) => setSemesterWeeks(Number(event.target.value))}
               />
             </Field>
-            <Button variant="primary" size="sm" disabled={busy} onClick={() => void addSemester()}>
+            <Button variant="primary" size="sm" loading={busy} onClick={() => void addSemester()}>
               创建并切换
             </Button>
           </div>

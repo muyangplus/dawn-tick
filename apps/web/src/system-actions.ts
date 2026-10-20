@@ -2,10 +2,6 @@ import { toBase64Bytes } from '@dawn-tick/core';
 import { isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
 import { logInfo, logWarn } from './log.ts';
-function describe(cause: unknown): string {
-  return nativeErrorMessage(cause);
-}
-
 /** 用系统默认浏览器打开链接：桌面端走原生命令，Android 走原生 ACTION_VIEW（WebView 的 window.open 会卡包可见性），Web 开新窗口。 */
 export async function openExternalUrl(url: string): Promise<boolean> {
   if (isDesktopApp()) {
@@ -14,7 +10,7 @@ export async function openExternalUrl(url: string): Promise<boolean> {
       logInfo('link', '用默认浏览器打开', { url });
       return true;
     } catch (cause: unknown) {
-      logWarn('link', '打开默认浏览器失败', { url, message: describe(cause) });
+      logWarn('link', '打开默认浏览器失败', { url, message: nativeErrorMessage(cause) });
       return false;
     }
   }
@@ -26,7 +22,7 @@ export async function openExternalUrl(url: string): Promise<boolean> {
         return true;
       }
     } catch (cause: unknown) {
-      logWarn('link', '原生打开失败，改用新窗口', { url, message: describe(cause) });
+      logWarn('link', '原生打开失败，改用新窗口', { url, message: nativeErrorMessage(cause) });
     }
   }
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
@@ -83,7 +79,7 @@ export async function readNativeNotifyStatus(asked: boolean): Promise<NotifyStat
       channelMuted: result?.channelMuted === true,
     };
   } catch (cause: unknown) {
-    logWarn('permission', '读取通知状态失败', { message: describe(cause) });
+    logWarn('permission', '读取通知状态失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -97,7 +93,7 @@ export async function openNotifySettings(channelId?: string | null): Promise<boo
     logInfo('permission', '已跳转通知设置页', { channelId: channelId ?? null, opened: result?.opened === true });
     return true;
   } catch (cause: unknown) {
-    logWarn('permission', '跳转通知设置页失败', { message: describe(cause) });
+    logWarn('permission', '跳转通知设置页失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -106,7 +102,7 @@ async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
   try {
     return await loadCapacitorPlugin<SystemActionsPlugin>('SystemActions');
   } catch (cause: unknown) {
-    logWarn('link', '系统动作插件不可用', { message: describe(cause) });
+    logWarn('link', '系统动作插件不可用', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -125,7 +121,7 @@ export async function isIgnoringBatteryOptimizations(): Promise<boolean | null> 
   try {
     return (await plugin.isIgnoringBatteryOptimizations()).ignoring === true;
   } catch (cause: unknown) {
-    logWarn('link', '读取电池优化状态失败', { message: describe(cause) });
+    logWarn('link', '读取电池优化状态失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -142,7 +138,7 @@ export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
     });
     return true;
   } catch (cause: unknown) {
-    logWarn('link', '跳转电池优化设置页失败', { message: describe(cause) });
+    logWarn('link', '跳转电池优化设置页失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -171,7 +167,7 @@ export async function copyText(text: string): Promise<boolean> {
     if (!copied) logWarn('link', '复制链接失败', { length: text.length });
     return copied;
   } catch (cause: unknown) {
-    logWarn('link', '复制链接异常', { message: describe(cause) });
+    logWarn('link', '复制链接异常', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -185,7 +181,7 @@ export async function openLogDirectory(): Promise<string | null> {
     logInfo('log', '打开日志目录', { dir });
     return dir;
   } catch (cause: unknown) {
-    logWarn('log', '打开日志目录失败', { message: describe(cause) });
+    logWarn('log', '打开日志目录失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -222,7 +218,7 @@ export async function saveTextFile(
       logInfo('export', '已写入文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
-      const message = describe(cause);
+      const message = nativeErrorMessage(cause);
       logWarn('export', '写入文件失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
@@ -232,7 +228,7 @@ export async function saveTextFile(
     logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('export', '浏览器下载失败', { name, message });
     return { ok: false, cancelled: false, path: null, error: message };
   }
@@ -279,7 +275,7 @@ export async function saveBinaryFile(
       logInfo('export', '已写入二进制文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
-      const message = describe(cause);
+      const message = nativeErrorMessage(cause);
       logWarn('export', '写入二进制文件失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
@@ -289,7 +285,7 @@ export async function saveBinaryFile(
     logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('export', '浏览器下载失败', { name, message });
     return { ok: false, cancelled: false, path: null, error: message };
   }

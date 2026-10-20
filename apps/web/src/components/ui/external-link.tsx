@@ -3,6 +3,7 @@ import { Button } from './button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './dialog.tsx';
 import { Input } from './input.tsx';
 import { toast } from './toaster.tsx';
+import { useAction } from '../../lib/action.ts';
 import { copyText, openExternalUrl } from '../../system-actions.ts';
 
 type Listener = (url: string | null) => void;
@@ -69,21 +70,20 @@ export function ExternalLink({ href, children, className, ariaLabel, dataRole }:
 /** 外部链接确认框：挂在应用根节点，全局只渲染一个。 */
 export function ExternalLinkConfirm() {
   const url = useExternalLinkRequest();
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
 
-  async function run(action: () => Promise<boolean>, done: string, failed: string): Promise<void> {
-    setBusy(true);
-    try {
-      const ok = await action();
-      if (!ok) {
-        toast.info(failed);
-        return;
-      }
-      closeExternalLink();
-      toast.success(done);
-    } finally {
-      setBusy(false);
+  async function act(action: () => Promise<boolean>, done: string, failed: string): Promise<void> {
+    const result = await run({ scope: 'link', label: '正在打开链接…', task: action });
+    if (!result.ok) {
+      if (result.error !== null) toast.info(failed);
+      return;
     }
+    if (result.value !== true) {
+      toast.info(failed);
+      return;
+    }
+    closeExternalLink();
+    toast.success(done);
   }
 
   return (
@@ -108,17 +108,17 @@ export function ExternalLinkConfirm() {
           <Button
             variant="secondary"
             data-role="external-link-copy"
-            disabled={busy}
-            onClick={() => void run(() => copyText(url ?? ''), '已复制链接', '复制失败，请手动复制链接')}
+            loading={busy}
+            onClick={() => void act(() => copyText(url ?? ''), '已复制链接', '复制失败，请手动复制链接')}
           >
             复制链接
           </Button>
           <Button
             variant="primary"
             data-role="external-link-open"
-            disabled={busy}
+            loading={busy}
             onClick={() =>
-              void run(() => openExternalUrl(url ?? ''), '已在默认浏览器打开', '打开浏览器失败，请改用复制链接')
+              void act(() => openExternalUrl(url ?? ''), '已在默认浏览器打开', '打开浏览器失败，请改用复制链接')
             }
           >
             用默认浏览器打开

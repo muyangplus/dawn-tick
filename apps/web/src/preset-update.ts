@@ -14,6 +14,7 @@ import {
 } from '@dawn-tick/core';
 import { compareVersions } from './update.ts';
 import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
+import { errorMessage } from './lib/errors.ts';
 
 /** 哈希口径与预设仓库 scripts/snapshot.mjs 一致，实现只有一份：core 的 packages/core/src/config/preset-hash.ts。 */
 /** 这里只是转出，不重复实现。 */
@@ -152,7 +153,7 @@ function describeSnapshotProblem(value: unknown): string | null {
 
 /** 网络类错误转成用户能看懂的一句话。 */
 function describeFetchError(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   if (/fetch failed|failed to fetch|network|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|offline|load failed/i.test(message)) {
     return `无法连接预设源（${message}）`;
   }
@@ -196,7 +197,7 @@ function base64ToText(base64: string): string {
     if (buffer === undefined) throw new Error('当前环境不支持 base64 解码');
     return buffer.from(compact, 'base64').toString('utf8');
   } catch (cause: unknown) {
-    throw new Error(`预设源返回的 base64 内容无法解码：${cause instanceof Error ? cause.message : String(cause)}`);
+    throw new Error(`预设源返回的 base64 内容无法解码：${errorMessage(cause)}`);
   }
 }
 
@@ -256,7 +257,7 @@ export async function checkPresetUpdate(options: {
     );
   } catch (cause: unknown) {
     // 文案已是可读句子（最后一条来源的原因，网络类已包成「无法连接预设源（…）」），不再二次包装
-    return { available: false, version: null, error: cause instanceof Error ? cause.message : String(cause) };
+    return { available: false, version: null, error: errorMessage(cause) };
   }
 
   const parsed = result.value;
@@ -298,7 +299,7 @@ export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): 
     );
     parsed = result.value;
   } catch (cause: unknown) {
-    throw new Error(`预设快照下载失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    throw new Error(`预设快照下载失败：${errorMessage(cause)}`);
   }
 
   const problem = describeSnapshotProblem(parsed);
@@ -547,7 +548,7 @@ export async function cacheSnapshotContent(
     await writeCachedPresetContent(storage, { version: snapshot.version, timetables, systems });
     return { ok: true };
   } catch (cause: unknown) {
-    return { ok: false, reason: cause instanceof Error ? cause.message : String(cause) };
+    return { ok: false, reason: errorMessage(cause) };
   }
 }
 
@@ -670,7 +671,7 @@ export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset
   } catch (cause: unknown) {
     // 兜底：缓存是外部数据，异常时退回内置，不影响启动
     setPresetOverride(null);
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     return { version: BUILTIN_PRESET_VERSION, kind: 'builtin', applied: false, reason: message };
   }
 }

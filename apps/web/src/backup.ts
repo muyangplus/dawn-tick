@@ -36,10 +36,6 @@ export function snapshotKind(): 'file' | 'json' {
   return usesNativeSnapshots() ? 'file' : 'json';
 }
 
-function describe(cause: unknown): string {
-  return nativeErrorMessage(cause);
-}
-
 /** 校验快照索引：结构不对时整份作废，回退一次全表扫描重建。 */
 function parseSnapshotIndex(value: unknown): SnapshotIndexEntry[] | null {
   if (!Array.isArray(value)) return null;
@@ -115,7 +111,7 @@ async function listFileSnapshots(): Promise<SnapshotEntry[]> {
       kind: 'file' as const,
     }));
   } catch (cause: unknown) {
-    logWarn('backup', '读取快照列表失败', { message: describe(cause) });
+    logWarn('backup', '读取快照列表失败', { message: nativeErrorMessage(cause) });
     return [];
   }
 }
@@ -197,7 +193,7 @@ export async function takeRecoveryNotice(): Promise<string | null> {
     const text = await invokeNative<string | null>('recovery_notice');
     return typeof text === 'string' && text.trim() !== '' ? text : null;
   } catch (cause: unknown) {
-    logWarn('backup', '读取启动自检结论失败', { message: describe(cause) });
+    logWarn('backup', '读取启动自检结论失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -215,7 +211,7 @@ export async function createSnapshot(
     logInfo('backup', '已生成快照', { kind: entry.kind, name: entry.id, bytes: entry.bytes });
     return entry;
   } catch (cause: unknown) {
-    logWarn('backup', '生成快照失败', { message: describe(cause) });
+    logWarn('backup', '生成快照失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -231,7 +227,7 @@ export async function deleteSnapshot(storage: Storage, entry: SnapshotEntry): Pr
     logInfo('backup', '已删除快照', { name: entry.id });
     return true;
   } catch (cause: unknown) {
-    logWarn('backup', '删除快照失败', { name: entry.id, message: describe(cause) });
+    logWarn('backup', '删除快照失败', { name: entry.id, message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -245,7 +241,7 @@ export async function pruneSnapshots(storage: Storage, keep: number): Promise<nu
     try {
       return (await invokeNative<number>('prune_backups', { keep: Math.max(1, keep) })) ?? 0;
     } catch (cause: unknown) {
-      logWarn('backup', '清理快照失败', { message: describe(cause) });
+      logWarn('backup', '清理快照失败', { message: nativeErrorMessage(cause) });
       return 0;
     }
   }
@@ -289,7 +285,7 @@ export async function restoreSnapshot(
     });
     return { ok: true, error: null, needsRestart: false, result };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('backup', '恢复快照失败', { name: entry.id, message });
     return { ok: false, error: message, needsRestart: false, result: null };
   }
