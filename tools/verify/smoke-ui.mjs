@@ -65,6 +65,20 @@ function setupDom() {
 
   window.matchMedia = mediaQueryStub;
   window.scrollTo = () => {};
+  // jsdom 没有 Notification：给一个可切换权限的桩，让「未申请 / 已允许 / 已拒绝」三态可断言
+  class NotificationStub {
+    static get permission() {
+      return globalThis.__notifyPermission ?? 'default';
+    }
+    static requestPermission() {
+      return Promise.resolve(globalThis.__notifyPermission ?? 'default');
+    }
+  }
+  Object.defineProperty(globalThis, 'Notification', {
+    value: NotificationStub,
+    configurable: true,
+    writable: true,
+  });
   window.ResizeObserver = ObserverStub;
   window.IntersectionObserver = ObserverStub;
   window.Element.prototype.scrollIntoView = () => {};
