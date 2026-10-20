@@ -12,7 +12,8 @@ import {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { Button } from '../components/ui/button.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { DialogFooter } from '../components/ui/dialog.tsx';
+import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -121,6 +122,8 @@ export interface CourseFormProps {
   course?: ManagedCourse | null;
   /** 新建时的预填星期与节次范围（编辑模式忽略） */
   presetDraft?: CourseFormPreset | null | undefined;
+  /** 容器形态由挂载处按断点决定：移动端底部 Sheet，桌面端居中 Dialog */
+  container?: FormContainer;
 }
 
 export function CourseForm({
@@ -134,6 +137,7 @@ export function CourseForm({
   onCreated,
   course = null,
   presetDraft = null,
+  container = 'dialog',
 }: CourseFormProps) {
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
@@ -282,240 +286,245 @@ export function CourseForm({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={course === null ? '添加课程' : '编辑课程'} description="课程信息与排课时段">
-        <Field label="课程名">
-          <Input
-            value={name}
-            aria-required="true"
-            aria-invalid={nameEmpty}
-            aria-describedby={nameEmpty ? 'course-name-error' : undefined}
-            onChange={(event) => setName(event.target.value)}
-          />
+    <FormSurface
+      open={open}
+      onOpenChange={onOpenChange}
+      container={container}
+      title={course === null ? '添加课程' : '编辑课程'}
+      description="课程信息与排课时段"
+      contentAttrs={{ 'data-role': 'course-form' }}
+    >
+      <Field label="课程名">
+        <Input
+          value={name}
+          aria-required="true"
+          aria-invalid={nameEmpty}
+          aria-describedby={nameEmpty ? 'course-name-error' : undefined}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </Field>
+      {nameEmpty && (
+        <p id="course-name-error" className="text-xs text-danger-strong">
+          课程名不能为空
+        </p>
+      )}
+      <div className="grid gap-2 tablet:grid-cols-3">
+        <Field label="简称">
+          <Input value={shortName} onChange={(event) => setShortName(event.target.value)} />
         </Field>
-        {nameEmpty && (
-          <p id="course-name-error" className="text-xs text-danger-strong">
-            课程名不能为空
-          </p>
-        )}
-        <div className="grid gap-2 tablet:grid-cols-3">
-          <Field label="简称">
-            <Input value={shortName} onChange={(event) => setShortName(event.target.value)} />
-          </Field>
-          <Field label="教师">
-            <Input value={teacher} onChange={(event) => setTeacher(event.target.value)} />
-          </Field>
-          <Field label="地点">
-            <Input value={location} onChange={(event) => setLocation(event.target.value)} />
-          </Field>
-        </div>
-        <div className="grid gap-2 tablet:grid-cols-2">
-          <Field label="学分">
-            <Input type="number" step="0.5" value={credits} onChange={(event) => setCredits(event.target.value)} />
-          </Field>
-          <Field label="备注">
-            <Input value={note} onChange={(event) => setNote(event.target.value)} />
-          </Field>
-        </div>
+        <Field label="教师">
+          <Input value={teacher} onChange={(event) => setTeacher(event.target.value)} />
+        </Field>
+        <Field label="地点">
+          <Input value={location} onChange={(event) => setLocation(event.target.value)} />
+        </Field>
+      </div>
+      <div className="grid gap-2 tablet:grid-cols-2">
+        <Field label="学分">
+          <Input type="number" step="0.5" value={credits} onChange={(event) => setCredits(event.target.value)} />
+        </Field>
+        <Field label="备注">
+          <Input value={note} onChange={(event) => setNote(event.target.value)} />
+        </Field>
+      </div>
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted">排课时段</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setDrafts((current) => [...current, newDraft(totalWeeks, 1, firstPeriod)])}
-            >
-              <Plus className="size-4" aria-hidden />
-              增加时段
-            </Button>
-          </div>
-          {drafts.map((draft) => (
-            <div key={draft.key} className="flex flex-col gap-2 rounded-md border border-line p-2">
-              <div className="grid grid-cols-3 gap-2">
-                <Select
-                  value={String(draft.dayOfWeek)}
-                  onValueChange={(value) => patchDraft(draft.key, { dayOfWeek: Number(value) })}
-                >
-                  <SelectTrigger aria-label="星期">
-                    <span>{WEEKDAYS[draft.dayOfWeek - 1]}</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WEEKDAYS.map((label, index) => (
-                      <SelectItem key={label} value={String(index + 1)}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={String(draft.periodStart)}
-                  onValueChange={(value) => patchDraft(draft.key, { periodStart: Number(value) })}
-                >
-                  <SelectTrigger aria-label="起始节">
-                    <span>第 {draft.periodStart} 节</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {slots.map((slot) => (
-                      <SelectItem key={slot.period_no} value={String(slot.period_no)}>
-                        第 {slot.period_no} 节
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={String(draft.periodEnd)}
-                  onValueChange={(value) => patchDraft(draft.key, { periodEnd: Number(value) })}
-                >
-                  <SelectTrigger aria-label="结束节">
-                    <span>第 {draft.periodEnd} 节</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {slots.map((slot) => (
-                      <SelectItem key={slot.period_no} value={String(slot.period_no)}>
-                        第 {slot.period_no} 节
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex min-h-tap items-center gap-2 text-xs text-muted">
-                  <Switch
-                    aria-label="自定义时间"
-                    checked={draft.customTime}
-                    onCheckedChange={(checked) => patchDraft(draft.key, { customTime: checked })}
-                  />
-                  自定义时间
-                </label>
-                {draft.customTime && (
-                  <>
-                    <Input
-                      type="time"
-                      className="w-28"
-                      aria-label="开始时间"
-                      value={draft.startTime}
-                      onChange={(event) => patchDraft(draft.key, { startTime: event.target.value })}
-                    />
-                    <Input
-                      type="time"
-                      className="w-28"
-                      aria-label="结束时间"
-                      value={draft.endTime}
-                      onChange={(event) => patchDraft(draft.key, { endTime: event.target.value })}
-                    />
-                  </>
-                )}
-              </div>
-              <div className="flex flex-col gap-2 rounded-md border border-line p-2">
-                <div className="flex flex-wrap items-end gap-2">
-                  <Field label="周次">
-                    <div className="flex flex-wrap gap-1">
-                      {(
-                        [
-                          { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
-                          { id: 'odd', label: '单周', weeks: oddWeeks(totalWeeks) },
-                          { id: 'even', label: '双周', weeks: evenWeeks(totalWeeks) },
-                          { id: 'none', label: '清空', weeks: [] },
-                        ] as const
-                      ).map((item) => (
-                        <Button
-                          key={item.id}
-                          size="sm"
-                          variant="secondary"
-                          aria-label={`周次${item.label}`}
-                          onClick={() => patchDraft(draft.key, { weeks: [...item.weeks] })}
-                        >
-                          {item.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </Field>
-                  <span className="text-xs text-muted">
-                    已选 {draft.weeks.length}/{totalWeeks} 周
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-1" role="group" aria-label="周次选择">
-                  {allWeeks(totalWeeks).map((week) => {
-                    const selected = draft.weeks.includes(week);
-                    return (
-                      <button
-                        key={week}
-                        type="button"
-                        aria-label={`第 ${week} 周`}
-                        aria-pressed={selected}
-                        onClick={() =>
-                          patchDraft(draft.key, {
-                            weeks: selected
-                              ? draft.weeks.filter((item) => item !== week)
-                              : [...draft.weeks, week].sort((left, right) => left - right),
-                          })
-                        }
-                        className={cn(
-                          'tabular size-tap rounded-sm border text-xs',
-                          selected ? 'border-primary-strong bg-primary text-on-primary' : 'border-line text-muted',
-                        )}
-                      >
-                        {week}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-end gap-2">
-                <Field label="教室">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted">排课时段</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setDrafts((current) => [...current, newDraft(totalWeeks, 1, firstPeriod)])}
+          >
+            <Plus className="size-4" aria-hidden />
+            增加时段
+          </Button>
+        </div>
+        {drafts.map((draft) => (
+          <div key={draft.key} className="flex flex-col gap-2 rounded-md border border-line p-2">
+            <div className="grid grid-cols-3 gap-2">
+              <Select
+                value={String(draft.dayOfWeek)}
+                onValueChange={(value) => patchDraft(draft.key, { dayOfWeek: Number(value) })}
+              >
+                <SelectTrigger aria-label="星期">
+                  <span>{WEEKDAYS[draft.dayOfWeek - 1]}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKDAYS.map((label, index) => (
+                    <SelectItem key={label} value={String(index + 1)}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={String(draft.periodStart)}
+                onValueChange={(value) => patchDraft(draft.key, { periodStart: Number(value) })}
+              >
+                <SelectTrigger aria-label="起始节">
+                  <span>第 {draft.periodStart} 节</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {slots.map((slot) => (
+                    <SelectItem key={slot.period_no} value={String(slot.period_no)}>
+                      第 {slot.period_no} 节
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={String(draft.periodEnd)}
+                onValueChange={(value) => patchDraft(draft.key, { periodEnd: Number(value) })}
+              >
+                <SelectTrigger aria-label="结束节">
+                  <span>第 {draft.periodEnd} 节</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {slots.map((slot) => (
+                    <SelectItem key={slot.period_no} value={String(slot.period_no)}>
+                      第 {slot.period_no} 节
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex min-h-tap items-center gap-2 text-xs text-muted">
+                <Switch
+                  aria-label="自定义时间"
+                  checked={draft.customTime}
+                  onCheckedChange={(checked) => patchDraft(draft.key, { customTime: checked })}
+                />
+                自定义时间
+              </label>
+              {draft.customTime && (
+                <>
                   <Input
+                    type="time"
                     className="w-28"
-                    value={draft.room}
-                    onChange={(event) => patchDraft(draft.key, { room: event.target.value })}
+                    aria-label="开始时间"
+                    value={draft.startTime}
+                    onChange={(event) => patchDraft(draft.key, { startTime: event.target.value })}
                   />
+                  <Input
+                    type="time"
+                    className="w-28"
+                    aria-label="结束时间"
+                    value={draft.endTime}
+                    onChange={(event) => patchDraft(draft.key, { endTime: event.target.value })}
+                  />
+                </>
+              )}
+            </div>
+            <div className="flex flex-col gap-2 rounded-md border border-line p-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="周次">
+                  <div className="flex flex-wrap gap-1">
+                    {(
+                      [
+                        { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
+                        { id: 'odd', label: '单周', weeks: oddWeeks(totalWeeks) },
+                        { id: 'even', label: '双周', weeks: evenWeeks(totalWeeks) },
+                        { id: 'none', label: '清空', weeks: [] },
+                      ] as const
+                    ).map((item) => (
+                      <Button
+                        key={item.id}
+                        size="sm"
+                        variant="secondary"
+                        aria-label={`周次${item.label}`}
+                        onClick={() => patchDraft(draft.key, { weeks: [...item.weeks] })}
+                      >
+                        {item.label}
+                      </Button>
+                    ))}
+                  </div>
                 </Field>
-                {drafts.length > 1 && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="删除此时段"
-                    onClick={() => setDrafts((current) => current.filter((item) => item.key !== draft.key))}
-                  >
-                    <Trash2 className="size-4 text-danger-strong" aria-hidden />
-                  </Button>
-                )}
+                <span className="text-xs text-muted">
+                  已选 {draft.weeks.length}/{totalWeeks} 周
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1" role="group" aria-label="周次选择">
+                {allWeeks(totalWeeks).map((week) => {
+                  const selected = draft.weeks.includes(week);
+                  return (
+                    <button
+                      key={week}
+                      type="button"
+                      aria-label={`第 ${week} 周`}
+                      aria-pressed={selected}
+                      onClick={() =>
+                        patchDraft(draft.key, {
+                          weeks: selected
+                            ? draft.weeks.filter((item) => item !== week)
+                            : [...draft.weeks, week].sort((left, right) => left - right),
+                        })
+                      }
+                      className={cn(
+                        'tabular size-tap rounded-sm border text-xs',
+                        selected ? 'border-primary-strong bg-primary text-on-primary' : 'border-line text-muted',
+                      )}
+                    >
+                      {week}
+                    </button>
+                  );
+                })}
               </div>
             </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="教室">
+                <Input
+                  className="w-28"
+                  value={draft.room}
+                  onChange={(event) => patchDraft(draft.key, { room: event.target.value })}
+                />
+              </Field>
+              {drafts.length > 1 && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="删除此时段"
+                  onClick={() => setDrafts((current) => current.filter((item) => item.key !== draft.key))}
+                >
+                  <Trash2 className="size-4 text-danger-strong" aria-hidden />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted">颜色</span>
+        <div className="flex flex-wrap gap-2">
+          {palette.map((color, index) => (
+            <button
+              key={color}
+              type="button"
+              aria-label={`课程色 ${index + 1}`}
+              aria-pressed={index === colorIndex}
+              onClick={() => setColorIndex(index)}
+              className={cn('size-tap rounded-full border-2', index === colorIndex ? 'border-ink' : 'border-transparent')}
+              style={{ backgroundColor: color }}
+            />
           ))}
         </div>
-
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">颜色</span>
-          <div className="flex flex-wrap gap-2">
-            {palette.map((color, index) => (
-              <button
-                key={color}
-                type="button"
-                aria-label={`课程色 ${index + 1}`}
-                aria-pressed={index === colorIndex}
-                onClick={() => setColorIndex(index)}
-                className={cn('size-tap rounded-full border-2', index === colorIndex ? 'border-ink' : 'border-transparent')}
-                style={{ backgroundColor: color }}
-              />
-            ))}
-          </div>
-        </div>
-        {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
-        <DialogFooter>
-          <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            loading={busy}
-            disabled={nameEmpty || drafts.length === 0 || lastPeriod < firstPeriod}
-            onClick={() => void submit()}
-          >
-            保存
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+      {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
+      <DialogFooter>
+        <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
+          取消
+        </Button>
+        <Button
+          variant="primary"
+          loading={busy}
+          disabled={nameEmpty || drafts.length === 0 || lastPeriod < firstPeriod}
+          onClick={() => void submit()}
+        >
+          保存
+        </Button>
+      </DialogFooter>
+    </FormSurface>
   );
 }

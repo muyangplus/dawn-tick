@@ -1087,17 +1087,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       emptyNameErrorShown ? '有' : '无'
     }`,
   );
-  // 内容超过屏高的弹窗必须留在视口内，并由正文区滚动
+  // 内容超过屏高的弹层必须留在视口内，并由正文区滚动（桌面居中 Dialog / 移动底部 Sheet 两种容器）
   const tallDialog = document.querySelector<HTMLElement>('[role="dialog"]');
-  const tallBody = tallDialog?.querySelector<HTMLElement>('[data-role="dialog-body"]');
+  const tallBody = tallDialog?.querySelector<HTMLElement>('[data-role="dialog-body"], [data-role="sheet-body"]');
+  const tallCapped = tallDialog?.className.includes('max-h-') === true;
   check(
-    '弹窗有高度上限且正文区可滚动',
+    '弹层有高度上限且正文区可滚动',
     tallDialog !== null &&
       tallBody !== null &&
-      tallDialog.className.includes('max-h-') &&
-      tallDialog.className.includes('overflow-hidden') &&
+      tallCapped &&
       tallBody.className.includes('overflow-y-auto'),
-    `弹窗=${tallDialog?.className.includes('max-h-') === true ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
+    `弹层=${tallCapped ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
   );
   // P2-05：弹窗打开时全局快捷键不再动背景 —— ←/→ 不翻窗口、/ 不叠第二层搜索
   const windowStartInDialog = windowStartOf();
@@ -4273,6 +4273,122 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       desktopScheduleLabels.join(' / ') || '(无)',
     );
     desktopApp.root.unmount();
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: originalMatchMedia,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  // P2-17：加课 / 加待办 / 调课三个高频短表单按断点换容器 —— 移动端底部 Sheet，桌面仍居中 Dialog
+  {
+    const originalMatchMedia = globalThis.matchMedia;
+    const setViewport = (desktop: boolean): void => {
+      Object.defineProperty(globalThis, 'matchMedia', {
+        value: (query: string) => ({
+          matches: desktop && /min-width: (?:1024|1440)px/.test(query),
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }),
+        configurable: true,
+        writable: true,
+      });
+    };
+    const surfaceOf = (role: string): Element | null => document.querySelector(`[data-role="${role}"]`);
+    const asSheet = (role: string): boolean => {
+      const element = surfaceOf(role);
+      return (
+        element instanceof HTMLElement &&
+        element.dataset.container === 'sheet' &&
+        element.className.includes('dt-sheet')
+      );
+    };
+    const asDialog = (role: string): boolean => {
+      const element = surfaceOf(role);
+      return (
+        element instanceof HTMLElement &&
+        element.dataset.container === 'dialog' &&
+        element.className.includes('dt-panel')
+      );
+    };
+    const closeByCancel = async (): Promise<void> => {
+      if (clickByText(document.body, '取消')) await flush(10);
+    };
+    const openFromAddMenu = async (app: { container: HTMLElement }, desktop: boolean, label: string): Promise<void> => {
+      if (desktop) {
+        clickMenu(app.container, '添加', label);
+      } else {
+        const fab = app.container.querySelector<HTMLElement>('button[aria-label="添加"]');
+        fab?.click();
+        await flush(8);
+        clickByText(document.body, label);
+      }
+      await flush(14);
+    };
+    // 与用户路径一致：课表点课程卡开详情，再从详情点「调课」
+    const openAdjustFromDetail = async (app: { container: HTMLElement }): Promise<boolean> => {
+      const card = app.container.querySelector<HTMLElement>('[data-role="course-card"]');
+      if (card === null) return false;
+      card.click();
+      await flush(14);
+      if (!clickByLabel(document.body, '调课')) return false;
+      await flush(14);
+      return surfaceOf('adjust-dialog') !== null;
+    };
+
+    // 移动视口：冒烟默认 matchMedia 全 false，与底部导航同口径（非桌面即移动形态）
+    setViewport(false);
+    const mobileFormApp = mount(<App />);
+    await flush(24);
+    await openFromAddMenu(mobileFormApp, false, '加课程');
+    const mobileCourseSheet = asSheet('course-form');
+    await closeByCancel();
+    await openFromAddMenu(mobileFormApp, false, '加待办');
+    const mobileTodoSheet = asSheet('todo-form');
+    await closeByCancel();
+    const mobileAdjustOpened = await openAdjustFromDetail(mobileFormApp);
+    const mobileAdjustSheet = asSheet('adjust-dialog');
+    await closeByCancel();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(8);
+    check(
+      'P2-17 移动视口加课/加待办/调课渲染为底部 Sheet',
+      mobileCourseSheet && mobileTodoSheet && mobileAdjustOpened && mobileAdjustSheet,
+      `加课=${mobileCourseSheet ? 'sheet' : '非 sheet'} / 加待办=${mobileTodoSheet ? 'sheet' : '非 sheet'} / 调课=${
+        mobileAdjustOpened ? (mobileAdjustSheet ? 'sheet' : '非 sheet') : '未打开'
+      }`,
+    );
+    mobileFormApp.root.unmount();
+
+    // 桌面视口：三个表单仍是居中 Dialog
+    setViewport(true);
+    const desktopFormApp = mount(<App />);
+    await flush(24);
+    await openFromAddMenu(desktopFormApp, true, '加课程');
+    const desktopCourseDialog = asDialog('course-form');
+    await closeByCancel();
+    await openFromAddMenu(desktopFormApp, true, '加待办');
+    const desktopTodoDialog = asDialog('todo-form');
+    await closeByCancel();
+    const desktopAdjustOpened = await openAdjustFromDetail(desktopFormApp);
+    const desktopAdjustDialog = asDialog('adjust-dialog');
+    await closeByCancel();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(8);
+    check(
+      'P2-17 桌面视口加课/加待办/调课仍为居中 Dialog',
+      desktopCourseDialog && desktopTodoDialog && desktopAdjustOpened && desktopAdjustDialog,
+      `加课=${desktopCourseDialog ? 'dialog' : '非 dialog'} / 加待办=${
+        desktopTodoDialog ? 'dialog' : '非 dialog'
+      } / 调课=${desktopAdjustOpened ? (desktopAdjustDialog ? 'dialog' : '非 dialog') : '未打开'}`,
+    );
+    desktopFormApp.root.unmount();
+
     Object.defineProperty(globalThis, 'matchMedia', {
       value: originalMatchMedia,
       configurable: true,
