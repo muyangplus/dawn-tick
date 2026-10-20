@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 
+// 固定产品主时区：CI runner 默认 UTC 会让首次启动的「系统时区对齐」把设置改成 UTC，时间文案断言全飘
+process.env.TZ = 'Asia/Shanghai';
+
 const repo = process.cwd();
 const webDir = join(repo, 'apps/web');
 const outDir = join(webDir, 'smoke-dist');

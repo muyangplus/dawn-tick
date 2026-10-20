@@ -32,6 +32,9 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - name: 界面冒烟
+        env:
+          # 冒烟固定在产品主时区：runner 默认 UTC 会让「首次启动按系统时区对齐」把设置改成 UTC，时间文案全飘
+          TZ: Asia/Shanghai
         run: pnpm ui:smoke
 
   schema:
