@@ -25,6 +25,13 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      // exceljs 只在导入表格时动态加载；按包名显式拆成独立 chunk，主包与它分开缓存。
+      output: {
+        manualChunks(id) {
+          const path = id.replaceAll('\\', '/');
+          return path.includes('/node_modules/exceljs/') ? 'exceljs' : undefined;
+        },
+      },
       input: {
         main: `${root}index.html`,
         mini: `${root}mini.html`,
