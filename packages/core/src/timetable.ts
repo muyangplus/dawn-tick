@@ -21,6 +21,13 @@ export interface TimetableInput {
   blocks: readonly TimeBlockInput[];
 }
 
+/** 每节时长的可接受范围（分钟）：与 `generatePeriods` / `reflowPeriods` 同一口径 */
+export const PERIOD_DURATION_MIN = 10;
+export const PERIOD_DURATION_MAX = 240;
+/** 课间间隔的可接受范围（分钟）：同上 */
+export const PERIOD_BREAK_MIN = 0;
+export const PERIOD_BREAK_MAX = 120;
+
 export function parseClock(time: string): number {
   const match = /^(\d{1,2}):(\d{2})$/.exec(time.trim());
   if (match === null) throw new Error(`时间格式应为 HH:MM：${time}`);
@@ -28,6 +35,16 @@ export function parseClock(time: string): number {
   const minutes = Number(match[2]);
   if (hours > 23 || minutes > 59) throw new Error(`时间超出范围：${time}`);
   return hours * 60 + minutes;
+}
+
+/** 是否是完整的 HH:MM 时刻：输入过程中的半成品返回 false。 */
+export function isClockText(time: string): boolean {
+  try {
+    parseClock(time);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function formatClock(totalMinutes: number): string {
@@ -39,6 +56,76 @@ export function formatClock(totalMinutes: number): string {
 
 export function addMinutes(time: string, minutes: number): string {
   return formatClock(parseClock(time) + minutes);
+}
+
+/** 由起止时间推算单节时长；任一端不是完整时刻或时长不为正时返回 null。 */
+export function durationBetween(startTime: string, endTime: string): number | null {
+  let start: number;
+  let end: number;
+  try {
+    start = parseClock(startTime);
+    end = parseClock(endTime);
+  } catch {
+    return null;
+  }
+  const minutes = end - start;
+  return minutes > 0 ? minutes : null;
+}
+
+/** 出现次数最多的值；并列时取较小的那个，结果可复现。 */
+function mostFrequent(counts: ReadonlyMap<number, number>): number | null {
+  let best: number | null = null;
+  let bestCount = 0;
+  for (const [value, count] of counts) {
+    if (count > bestCount || (count === bestCount && best !== null && value < best)) {
+      best = value;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * 从一套课次推算每节时长与课间，都取出现次数最多的值，并夹进可接受范围。
+ * 这段推算就是「从这一节起顺延重排」的默认参数来源：套用作息后照它的节距继续排。
+ */
+export function presetSpacing(periods: readonly { start: string; end: string }[]): {
+  durationMinutes: number | null;
+  breakMinutes: number | null;
+} {
+  const durations = new Map<number, number>();
+  const breaks = new Map<number, number>();
+  let previousEnd: number | null = null;
+  for (const period of periods) {
+    let start: number;
+    let end: number;
+    try {
+      start = parseClock(period.start);
+      end = parseClock(period.end);
+    } catch {
+      continue;
+    }
+    if (end > start) durations.set(end - start, (durations.get(end - start) ?? 0) + 1);
+    if (previousEnd !== null && start > previousEnd) {
+      const gap = start - previousEnd;
+      breaks.set(gap, (breaks.get(gap) ?? 0) + 1);
+    }
+    previousEnd = end;
+  }
+  const durationMinutes = mostFrequent(durations);
+  const breakMinutes = mostFrequent(breaks);
+  return {
+    durationMinutes:
+      durationMinutes !== null &&
+      durationMinutes >= PERIOD_DURATION_MIN &&
+      durationMinutes <= PERIOD_DURATION_MAX
+        ? durationMinutes
+        : null,
+    breakMinutes:
+      breakMinutes !== null && breakMinutes >= PERIOD_BREAK_MIN && breakMinutes <= PERIOD_BREAK_MAX
+        ? breakMinutes
+        : null,
+  };
 }
 
 /** 节次表的槽位：只取判定所需的三列，不依赖具体的行类型。 */
@@ -150,11 +237,11 @@ export function periodsForClockRange(
 export function generatePeriods(input: TimetableInput): GeneratedPeriod[] {
   const duration = Math.round(input.durationMinutes);
   const gap = Math.round(input.breakMinutes);
-  if (!Number.isFinite(duration) || duration < 10 || duration > 240) {
-    throw new Error('上课时长需在 10 到 240 分钟之间');
+  if (!Number.isFinite(duration) || duration < PERIOD_DURATION_MIN || duration > PERIOD_DURATION_MAX) {
+    throw new Error(`上课时长需在 ${PERIOD_DURATION_MIN} 到 ${PERIOD_DURATION_MAX} 分钟之间`);
   }
-  if (!Number.isFinite(gap) || gap < 0 || gap > 120) {
-    throw new Error('课间间隔需在 0 到 120 分钟之间');
+  if (!Number.isFinite(gap) || gap < PERIOD_BREAK_MIN || gap > PERIOD_BREAK_MAX) {
+    throw new Error(`课间间隔需在 ${PERIOD_BREAK_MIN} 到 ${PERIOD_BREAK_MAX} 分钟之间`);
   }
 
   const periods: GeneratedPeriod[] = [];
@@ -260,11 +347,11 @@ export function reflowPeriods(
 ): ReflowPeriodInput[] {
   const duration = Math.round(options.durationMinutes);
   const gap = Math.round(options.breakMinutes);
-  if (!Number.isFinite(duration) || duration < 10 || duration > 240) {
-    throw new Error('上课时长需在 10 到 240 分钟之间');
+  if (!Number.isFinite(duration) || duration < PERIOD_DURATION_MIN || duration > PERIOD_DURATION_MAX) {
+    throw new Error(`上课时长需在 ${PERIOD_DURATION_MIN} 到 ${PERIOD_DURATION_MAX} 分钟之间`);
   }
-  if (!Number.isFinite(gap) || gap < 0 || gap > 120) {
-    throw new Error('课间间隔需在 0 到 120 分钟之间');
+  if (!Number.isFinite(gap) || gap < PERIOD_BREAK_MIN || gap > PERIOD_BREAK_MAX) {
+    throw new Error(`课间间隔需在 ${PERIOD_BREAK_MIN} 到 ${PERIOD_BREAK_MAX} 分钟之间`);
   }
   if (periods.length === 0) throw new Error('节次列表不能为空');
 
