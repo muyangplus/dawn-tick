@@ -5,6 +5,7 @@ import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx
 import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } from './cards/registry.ts';
 import { readLayout } from './cards/layout-store.ts';
 import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
+import { useScheduleActions } from './cards/use-schedule-actions.ts';
 
 // 显式引用这几张卡片，保证注册先于首次渲染完成。
 void [actionsCard, timelineCard, examsCard, tomorrowCard];
@@ -45,6 +46,8 @@ export function ScheduleView({
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const [layout, setLayout] = useState<LayoutConfig>({});
+  // 卡片写库统一入口：卡片拿到的是 intent，不直接持有 core 的 mutations
+  const actions = useScheduleActions({ storage, data, onChanged });
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +76,7 @@ export function ScheduleView({
       setAdjustOpen(true);
     },
     onChanged,
+    actions,
     semesterCountdown,
     holidayCountdown,
     tomorrowPreview,

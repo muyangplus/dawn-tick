@@ -11,20 +11,10 @@ import {
   MoreHorizontal,
   Plus,
 } from 'lucide-react';
-import {
-  addDays,
-  createEvent,
-  createReschedule,
-  dateRange,
-  deleteEvent,
-  formatDate,
-  updateEvent,
-  type EventRow,
-} from '@dawn-tick/core';
+import { addDays, formatDate, type EventRow } from '@dawn-tick/core';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { ADD_ACTIONS, useAddActions } from '../../components/add-menu.tsx';
 import { ScheduleFocusContext } from '../../components/schedule-focus.ts';
-import { logInfo } from '../../log.ts';
 import { Card } from '../../components/ui/card.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { confirmAction } from '../../components/ui/confirm-dialog.tsx';
@@ -32,7 +22,6 @@ import { DELETE } from '../../copy/zh.ts';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
 import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
-import { toast } from '../../components/ui/toaster.tsx';
 import { cn } from '../../lib/cn.ts';
 import { formatDayCountdown } from '../../lib/format.ts';
 import { useNowTick } from '../../lib/use-now.ts';
@@ -55,7 +44,7 @@ export const actionsCard = defineCard({
 });
 
 function ScheduleActions(ctx: ScheduleCardContext) {
-  const { data, storage, viewDate, onViewDateChange, onOpenAdjust, onChanged } = ctx;
+  const { data, viewDate, onViewDateChange, onOpenAdjust, actions } = ctx;
   // 「添加」菜单与桌面工具栏、移动 FAB 同源：只派发动作，表单仍由 App 打开
   const addActions = useAddActions();
   const addItems =
@@ -67,102 +56,10 @@ function ScheduleActions(ctx: ScheduleCardContext) {
   const [rangeTo, setRangeTo] = useState(viewDate);
   const holidayName = data.holidayLabels.get(viewDate);
 
-  async function setHoliday(): Promise<void> {
-    if (data.semester === null) return;
-    await createEvent(storage, {
-      userId: 'u1',
-      semesterId: data.semester.id,
-      type: 'holiday',
-      title: holidayName ?? '放假',
-      onDate: viewDate,
-    });
-    toast.success('已设为假日');
-    onChanged();
-  }
-
-  async function clearHoliday(): Promise<void> {
-    if (data.semester === null) return;
-    await createEvent(storage, {
-      userId: 'u1',
-      semesterId: data.semester.id,
-      type: 'workday',
-      title: '非假日',
-      onDate: viewDate,
-    });
-    toast.success('已设为非假日');
-    onChanged();
-  }
-
-  /** 一次性把一段日期设为假日（最多 60 天）。 */
+  /** 一次性把一段日期设为假日（最多 60 天；校验与写库在 actions 里）。 */
   async function setHolidayRange(): Promise<void> {
-    if (data.semester === null) return;
-    const from = rangeFrom <= rangeTo ? rangeFrom : rangeTo;
-    const to = rangeFrom <= rangeTo ? rangeTo : rangeFrom;
-    const dates = dateRange(from, to);
-    if (dates.length === 0 || dates.length > 60) {
-      toast.error('请选择不超过 60 天的连续日期');
-      return;
-    }
-    for (const date of dates) {
-      await createEvent(storage, {
-        userId: 'u1',
-        semesterId: data.semester.id,
-        type: 'holiday',
-        title: '连续假期',
-        onDate: date,
-      });
-    }
-    setRangeOpen(false);
-    toast.success(`已把 ${dates.length} 天设为假日`);
-    onChanged();
-  }
-
-  /** 把所选日期的课全部停掉。 */
-  async function cancelDayLessons(): Promise<void> {
-    if (data.semester === null) return;
-    const lessons = data.lessonsByDate.get(viewDate) ?? [];
-    if (lessons.length === 0) {
-      toast.error('这一天没有课');
-      return;
-    }
-    for (const lesson of lessons) {
-      await createReschedule(storage, {
-        userId: 'u1',
-        semesterId: data.semester.id,
-        refScheduleId: lesson.scheduleId,
-        onDate: viewDate,
-        action: 'cancel',
-        title: `停课：${lesson.courseName}`,
-      });
-    }
-    toast.success(`已停掉当天 ${lessons.length} 节课`);
-    onChanged();
-  }
-
-  /** 把所选日期的课顺延到次日同节次。 */
-  async function moveDayLessons(): Promise<void> {
-    if (data.semester === null) return;
-    const lessons = data.lessonsByDate.get(viewDate) ?? [];
-    if (lessons.length === 0) {
-      toast.error('这一天没有课');
-      return;
-    }
-    const target = addDays(viewDate, 1);
-    for (const lesson of lessons) {
-      await createReschedule(storage, {
-        userId: 'u1',
-        semesterId: data.semester.id,
-        refScheduleId: lesson.scheduleId,
-        onDate: viewDate,
-        action: 'move',
-        title: `调课：${lesson.courseName}`,
-        newDate: target,
-        newPeriodStart: lesson.periodStart,
-        newPeriodEnd: lesson.periodEnd,
-      });
-    }
-    toast.success(`已把当天 ${lessons.length} 节课顺延到 ${target}`);
-    onChanged();
+    const saved = await actions.setHolidayRange(rangeFrom, rangeTo);
+    if (saved) setRangeOpen(false);
   }
 
   return (
@@ -206,11 +103,11 @@ function ScheduleActions(ctx: ScheduleCardContext) {
           // 调课不属于新增动作：留在「⋯」里，四个新增动作统一在「＋」
           { label: '调课', onSelect: () => onOpenAdjust(null) },
           holidayName === undefined
-            ? { label: '设为假日', onSelect: () => void setHoliday() }
-            : { label: '设为非假日', onSelect: () => void clearHoliday() },
+            ? { label: '设为假日', onSelect: () => void actions.setHoliday(viewDate) }
+            : { label: '设为非假日', onSelect: () => void actions.setWorkday(viewDate) },
           { label: '连续假期', onSelect: () => setRangeOpen(true) },
-          { label: '当天全部停课', onSelect: () => void cancelDayLessons() },
-          { label: '当天顺延到次日', onSelect: () => void moveDayLessons() },
+          { label: '当天全部停课', onSelect: () => void actions.cancelDayLessons(viewDate) },
+          { label: '当天顺延到次日', onSelect: () => void actions.moveDayLessons(viewDate) },
         ]}
       />
 
@@ -264,13 +161,12 @@ export const timelineCard = defineCard({
 
 function ScheduleTimeline({
   data,
-  storage,
   viewDate,
   onViewDateChange,
-  onChanged,
   tomorrowPreview,
   onOpenEvent,
   onAddTodo,
+  actions,
 }: ScheduleCardContext) {
   // 时刻每秒走一格：正在上的课、到点自动完成的条目不用等下一次数据加载
   const now = useNowTick(1000);
@@ -294,12 +190,11 @@ function ScheduleTimeline({
   const completedOpen =
     manualCompleted !== null && manualCompleted.date === viewDate ? manualCompleted.open : main.length === 0;
 
-  async function toggleDone(event: EventRow): Promise<void> {
-    await updateEvent(storage, event.id, { done: event.done === 1 ? 0 : 1 });
-    onChanged();
+  function toggleDone(event: EventRow): void {
+    void actions.setDone(event, event.done !== 1);
   }
 
-  /** 删除一条调课/调休（沿用原来的软删除方式）。 */
+  /** 删除一条调课/调休（沿用原来的软删除方式）：确认留在卡片，写库交给 actions。 */
   async function deleteAdjust(event: EventRow): Promise<void> {
     const ok = await confirmAction({
       title: '删除调课记录',
@@ -307,8 +202,7 @@ function ScheduleTimeline({
       confirmLabel: '确认删除',
     });
     if (!ok) return;
-    await updateEvent(storage, event.id, { deleted_at: Date.now() });
-    onChanged();
+    await actions.deleteAdjust(event);
   }
 
   /** 长按时间线行删除待办/作业/考试/实验：与详情页同一确认口径。 */
@@ -319,8 +213,7 @@ function ScheduleTimeline({
       confirmLabel: '确认删除',
     });
     if (!ok) return;
-    await deleteEvent(storage, event.id);
-    onChanged();
+    await actions.removeEvent(event);
   }
 
   return (
@@ -757,7 +650,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                     aria-label={`标记完成：${row.title}`}
                     onChange={(event) => {
                       event.stopPropagation();
-                      void toggleCountdownDone(ctx, row, event.target.checked);
+                      void ctx.actions.setDone(row, event.target.checked);
                     }}
                   />
                 </label>
@@ -782,17 +675,6 @@ const COUNTDOWN_TYPE_LABEL: Record<string, string> = {
 /** 条目关联的课程名。 */
 function courseNameOf(data: ScheduleCardContext['data'], courseId: string): string | null {
   return data.courses.find((course) => course.id === courseId)?.name ?? null;
-}
-
-/** 倒计时条目勾完成：写回同一条并刷新。 */
-async function toggleCountdownDone(
-  ctx: Extract<ScheduleCardContext, { scope: 'schedule' }>,
-  row: EventRow,
-  done: boolean,
-): Promise<void> {
-  await updateEvent(ctx.storage, row.id, { done: done ? 1 : 0 });
-  logInfo('schedule', done ? '倒计时条目标记完成' : '倒计时条目取消完成', { id: row.id, title: row.title });
-  ctx.onChanged();
 }
 
 /** 倒计时条目的目标时刻：开考时间优先，其次截止时间，再退到当天 00:00。 */
