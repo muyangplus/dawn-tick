@@ -971,7 +971,12 @@ export function App() {
             onNextWindow={() => shiftWindow(settings.viewDays)}
           />
         ) : (
-          <TodayView data={data} date={viewDay} isToday={viewDay === data.today} />
+          <TodayView
+            data={data}
+            date={viewDay}
+            isToday={viewDay === data.today}
+            onOpenWeek={() => setMode('week')}
+          />
         ))}
       {view === 'schedule' && (
         <LessonDetailOpener.Provider value={(target) => void openLessonFromSchedule(target)}>

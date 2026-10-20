@@ -2297,6 +2297,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       dayDateText() === '10/18 周日',
     dayDateText(),
   );
+  // 空态的主行动要真能切回周模式，不能是死按钮
+  const openWeekButton = view.container.querySelector<HTMLButtonElement>('[aria-label="查看周视图"]');
+  check('日视图空态提供「查看周视图」按钮', openWeekButton !== null, openWeekButton ? '有' : '无');
+  if (openWeekButton !== null) {
+    openWeekButton.click();
+    await flush(12);
+    check(
+      '点「查看周视图」切回周模式',
+      view.container.querySelector('[data-role="week-nav"]') !== null &&
+        view.container.querySelector('[data-role="day-nav"]') === null,
+      view.container.querySelector('[data-role="week-nav"]') !== null ? '已切回周' : '仍在日',
+    );
+    clickTab(view.container, '日');
+    await flush(12);
+  }
   if (clickByLabel(view.container, '后一天')) await flush(12);
   check('日模式翻到下一天', dayDateText() === '10/19 周一', dayDateText());
   if (clickByLabel(view.container, '前一天')) await flush(12);
