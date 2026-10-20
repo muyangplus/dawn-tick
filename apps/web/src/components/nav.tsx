@@ -2,17 +2,17 @@ import { useState } from 'react';
 import {
   CalendarDays,
   ListChecks,
+  MonitorSmartphone,
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
   Sun,
-  UserRound,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 import { isCollapsed, rememberCollapsed } from '../lib/collapse-store.ts';
 
-export type NavId = 'timetable' | 'schedule' | 'settings' | 'mine';
+export type NavId = 'timetable' | 'schedule' | 'settings' | 'devices';
 
 export interface NavItem {
   id: NavId;
@@ -20,12 +20,12 @@ export interface NavItem {
   icon: LucideIcon;
 }
 
-/** 导入已并入设置；「我的」排在设置后面。 */
+/** 导入已并入设置；「设备与同步」排在设置后面，承载存储、同步、更新与关于。 */
 export const DESKTOP_NAV: readonly NavItem[] = [
   { id: 'timetable', label: '课表', icon: CalendarDays },
   { id: 'schedule', label: '日程', icon: ListChecks },
   { id: 'settings', label: '设置', icon: Settings },
-  { id: 'mine', label: '我的', icon: UserRound },
+  { id: 'devices', label: '设备与同步', icon: MonitorSmartphone },
 ];
 
 export const MOBILE_NAV: readonly NavItem[] = DESKTOP_NAV;

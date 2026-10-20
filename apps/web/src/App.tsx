@@ -48,6 +48,7 @@ import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
 import { ScheduleView } from './screens/schedule-view.tsx';
+import { DevicesView } from './screens/devices-view.tsx';
 import { SettingsView } from './screens/settings-view.tsx';
 import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
@@ -1009,20 +1010,22 @@ export function App() {
           activeStartDate={data.semester.start_date}
           totalWeeks={data.semester.total_weeks}
           slots={data.slots}
-          persistent={persistent}
           reminders={reminders}
+          onPatch={patch}
+          onChanged={refresh}
+          importSignal={settingsImportSignal}
+        />
+      )}
+      {view === 'devices' && (
+        <DevicesView
+          storage={storage}
+          settings={settings}
+          persistent={persistent}
           storageKind={STORAGE_LABEL[storage.kind]}
           onPatch={patch}
           onChanged={refresh}
           onSettingsReplaced={reloadSettings}
-          importSignal={settingsImportSignal}
         />
-      )}
-      {view === 'mine' && (
-        <section className="flex flex-col items-center justify-center gap-2 py-16" aria-label="我的">
-          <span className="text-base font-semibold text-ink">我的</span>
-          <span className="text-sm text-muted">建设中</span>
-        </section>
       )}
     </div>
   );

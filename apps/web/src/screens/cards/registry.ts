@@ -4,7 +4,7 @@ import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 
 /** 卡片所在页面 */
-export type CardScope = 'schedule' | 'settings';
+export type CardScope = 'schedule' | 'settings' | 'devices';
 /** 卡片所在区域：主列 / 侧列 */
 export type CardZone = 'main' | 'side';
 
@@ -53,7 +53,14 @@ export interface SettingsCardContext {
   onLayoutChange: (layout: LayoutConfig) => void;
 }
 
-export type CardContext = ScheduleCardContext | SettingsCardContext;
+/** 设备与同步页卡片的渲染上下文：同样只由布局注册表驱动 */
+export interface DevicesCardContext {
+  scope: 'devices';
+  layout: LayoutConfig;
+  onLayoutChange: (layout: LayoutConfig) => void;
+}
+
+export type CardContext = ScheduleCardContext | SettingsCardContext | DevicesCardContext;
 
 /** 某页面自己的上下文类型 */
 export type CardContextOf<S extends CardScope> = Extract<CardContext, { scope: S }>;
