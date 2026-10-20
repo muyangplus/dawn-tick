@@ -1,3 +1,4 @@
+import { DEFAULT_COURSE_COLOR, DEFAULT_COURSE_COLORS } from '../colors.ts';
 import { describeWeeks, weeksToMask } from '../weeks.ts';
 import { createCourse, createSchedule, type WriteOptions } from '../mutations.ts';
 import type { Storage } from '../storage.ts';
@@ -12,12 +13,6 @@ export interface ImportedSchedule {
   room: string | null;
   teacher: string | null;
 }
-
-/** 默认取色，与 `docs/06-配色方案.md` 的青春活力色板一致。 */
-export const DEFAULT_COURSE_COLORS: readonly string[] = [
-  '#FF6B4A', '#FF9F43', '#FFD93D', '#6BCB77', '#2ED573', '#17C3B2',
-  '#4D96FF', '#6C5CE7', '#B15CFF', '#FF6FB5', '#FF8FA3', '#8D6E63',
-];
 
 export interface ApplyImportOptions extends WriteOptions {
   colorPalette?: readonly string[];
@@ -130,7 +125,7 @@ export async function applyImport(
           name,
           teacher: item.teacher,
           location: item.room,
-          color: palette[byName.size % palette.length] ?? '#4F8DFD',
+          color: palette[byName.size % palette.length] ?? DEFAULT_COURSE_COLOR,
         },
         options,
       );

@@ -1,4 +1,5 @@
 import { normalizeRow } from './columns.ts';
+import { DEFAULT_COURSE_COLOR } from './colors.ts';
 import { DEFAULT_TIME_ZONE } from './time.ts';
 import { addMinutes, parseClock, sectionOf } from './timetable.ts';
 import { MAX_WEEKS, describeWeeks, maskToWeeks, weeksToMask } from './weeks.ts';
@@ -463,7 +464,7 @@ export async function createCourse(
     short_name: input.shortName ?? null,
     teacher: input.teacher ?? null,
     location: input.location ?? null,
-    color: input.color ?? '#4F8DFD',
+    color: input.color ?? DEFAULT_COURSE_COLOR,
     credits: input.credits ?? null,
     note: input.note ?? null,
     created_at: ctx.now(),

@@ -1,4 +1,4 @@
-import { dateWallClockToEpoch, formatDate, formatTime, WEEKDAY_LABELS, type EventRow } from '@dawn-tick/core';
+import { dateWallClockToEpoch, formatDate, formatTime, LAB_COLOR, WEEKDAY_LABELS, type EventRow } from '@dawn-tick/core';
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { formatDayCountdown, formatPeriodRange } from '../../lib/format.ts';
@@ -249,7 +249,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       completed: lab.done === 1,
       checkable: true,
       countdownText: null,
-      color: '#8E7CC3',
+      color: LAB_COLOR,
       event: lab,
     });
   }

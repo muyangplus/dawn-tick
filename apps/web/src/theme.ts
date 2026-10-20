@@ -9,11 +9,6 @@ export function resolveMode(mode: ThemeMode, prefersDark: boolean): 'light' | 'd
   return mode;
 }
 
-export function courseColor(preset: ThemePreset, index: number): string {
-  const palette = PRESETS[preset].courses;
-  return palette[index % palette.length] ?? palette[0] ?? '#4F8DFD';
-}
-
 export { courseTint, resolveTokens };
 
 export function applyTheme(

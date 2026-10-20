@@ -1,3 +1,4 @@
+import { DEFAULT_COURSE_COLOR } from './colors.ts';
 import { hasWeek } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { expand, type ExpandCourse, type ExpandDayKind, type ExpandInput, type ExpandReschedule, type ExpandSchedule, type ExpandTimeSlot, type Occurrence } from './expand.ts';
@@ -71,7 +72,7 @@ export async function weekView(
         course_id: schedule.course_id,
         name: course?.name ?? '',
         short_name: course?.short_name ?? null,
-        color: course?.color ?? '#4F8DFD',
+        color: course?.color ?? DEFAULT_COURSE_COLOR,
         period_start: schedule.period_start,
         period_end: schedule.period_end,
         room: schedule.room ?? course?.location ?? null,

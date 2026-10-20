@@ -24,6 +24,7 @@ import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { DELETE } from '../copy/zh.ts';
 import { DialogFooter } from '../components/ui/dialog.tsx';
 import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
+import { WeekPicker } from '../components/week-picker.tsx';
 import { Field, Input, Textarea } from '../components/ui/input.tsx';
 import { HelpHint } from '../components/ui/help-hint.tsx';
 import {
@@ -519,26 +520,15 @@ export function TodoForm({
                   </SelectContent>
                 </Select>
               </Field>
-              <div className="flex flex-wrap gap-1" data-role="lab-weeks">
-                {Array.from({ length: semester?.total_weeks ?? 20 }, (_, index) => index + 1).map((week) => (
-                  <Button
-                    key={week}
-                    size="sm"
-                    variant={labWeeks.includes(week) ? 'primary' : 'secondary'}
-                    aria-label={`第 ${week} 周`}
-                    aria-pressed={labWeeks.includes(week)}
-                    onClick={() =>
-                      setLabWeeks((current) =>
-                        current.includes(week) ? current.filter((item) => item !== week) : [...current, week].sort((a, b) => a - b),
-                      )
-                    }
-                  >
-                    {week}
-                  </Button>
-                ))}
-              </div>
+              <WeekPicker
+                totalWeeks={semester?.total_weeks ?? 20}
+                value={labWeeks}
+                onValueChange={setLabWeeks}
+                showShortcuts={false}
+                dataRole="lab-weeks"
+              />
               <span className="flex items-center gap-1 text-xs text-muted">
-                已选 {labWeeks.length} 周 · 每周重复按上面的「星期」
+                每周重复按上面的「星期」
                 <HelpHint label="每周重复">起始日期只决定首次上课日，之后按「星期」与所选周次重复</HelpHint>
               </span>
             </>

@@ -1,4 +1,4 @@
-import type { ThemeMode, ThemePreset } from '@dawn-tick/core';
+import { DEFAULT_COURSE_COLOR, DEFAULT_COURSE_COLORS, type ThemeMode, type ThemePreset } from '@dawn-tick/core';
 import { AA_LARGE, AA_TEXT, ensureContrast, mix, pickTextOn, rgba } from './contrast.ts';
 
 /** 语义色令牌：`*Strong` 为可用于文字与图标的达标变体，原色只用于填充与大面积色块。 */
@@ -104,10 +104,8 @@ export const PRESETS: Record<ThemePreset, PresetTokens> = {
       accent: '#8B7CF0',
       ...SHARED,
     }),
-    courses: [
-      '#FF6B4A', '#FF9F43', '#FFD93D', '#6BCB77', '#2ED573', '#17C3B2',
-      '#4D96FF', '#6C5CE7', '#B15CFF', '#FF6FB5', '#FF8FA3', '#8D6E63',
-    ],
+    // 课程色板取自 core：默认取色板与「青春活力」主题共用同一份色值
+    courses: [...DEFAULT_COURSE_COLORS],
   },
   fresh: {
     label: '清爽学院',
@@ -171,7 +169,8 @@ export const PRESETS: Record<ThemePreset, PresetTokens> = {
       info: '#7BAAF7',
     }),
     courses: [
-      '#4F8DFD', '#5C7CFA', '#748FFC', '#94A3B8', '#64748B', '#475569',
+      // 与兜底课程色同值：极简墨色的蓝正是课卡缺色时的兜底色
+      DEFAULT_COURSE_COLOR, '#5C7CFA', '#748FFC', '#94A3B8', '#64748B', '#475569',
       '#0EA5E9', '#14B8A6', '#F59E0B', '#EF4444', '#A855F7', '#334155',
     ],
   },
