@@ -16,6 +16,7 @@ import {
   parseCsv,
   parseIcs,
   parseTimetableMatrix,
+  previewDuplicates,
   listTimeSlots,
   stripPageMarkers,
   systemEntry,
@@ -91,6 +92,10 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
   const [schedules, setSchedules] = useState<ImportedSchedule[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  /** 预览重复预检：与 schedules 下标对齐，true 表示写入时会因重复被跳过 */
+  const [duplicateRows, setDuplicateRows] = useState<boolean[]>([]);
+  /** 只看冲突项：默认关，筛选只影响显示，不改变勾选语义 */
+  const [conflictOnly, setConflictOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<ImportFailure | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -266,11 +271,46 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     accept(result.schedules, result.warnings);
   }
 
+  /**
+   * 进入预览后跑一次只读重复预检：与写入共用 core 的判定口径，结果只用于标注与筛选。
+   * 预检期间（长度未对齐）不做筛选，避免闪一屏空列表。
+   */
+  useEffect(() => {
+    if (step !== 3 || schedules.length === 0) return;
+    let cancelled = false;
+    void previewDuplicates(storage, semesterId, schedules)
+      .then((flags) => {
+        if (!cancelled) setDuplicateRows(flags);
+      })
+      .catch(() => {
+        // 预检只是标注与筛选：失败时退回全量显示，不拦导入
+        if (!cancelled) {
+          setDuplicateRows([]);
+          setConflictOnly(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, schedules, storage, semesterId]);
+
+  const duplicatesKnown = duplicateRows.length === schedules.length && schedules.length > 0;
+  const conflictCount = duplicatesKnown ? duplicateRows.filter((flag) => flag).length : 0;
+  /** 筛选生效时只渲染冲突行；预检未完成前先按全量显示 */
+  const filteringConflicts = conflictOnly && duplicatesKnown;
+  const visibleIndexes = schedules
+    .map((_, index) => index)
+    .filter((index) => !filteringConflicts || duplicateRows[index] === true);
+  const visibleSelectedCount = visibleIndexes.filter((index) => selected.has(index)).length;
+
   function accept(next: ImportedSchedule[], nextWarnings: string[]): void {
     setFailure(null);
     setSchedules(next);
     setWarnings(nextWarnings);
     setSelected(new Set(next.map((_, index) => index)));
+    // 换了一批解析结果就重跑预检；筛选一并复位，默认仍显示全量
+    setDuplicateRows([]);
+    setConflictOnly(false);
     setStep(3);
   }
 
@@ -284,19 +324,32 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     });
   }
 
+  /** 批选只作用于当前可见行：筛选态下隐藏行的勾选状态原样保留。 */
   function selectAll(): void {
-    setSelected(new Set(schedules.map((_, index) => index)));
+    const targets = visibleIndexes;
+    setSelected((current) => {
+      const next = new Set(current);
+      targets.forEach((index) => next.add(index));
+      return next;
+    });
   }
 
   function clearSelection(): void {
-    setSelected(new Set());
+    const targets = visibleIndexes;
+    setSelected((current) => {
+      const next = new Set(current);
+      targets.forEach((index) => next.delete(index));
+      return next;
+    });
   }
 
   function invertSelection(): void {
+    const targets = visibleIndexes;
     setSelected((current) => {
-      const next = new Set<number>();
-      schedules.forEach((_, index) => {
-        if (!current.has(index)) next.add(index);
+      const next = new Set(current);
+      targets.forEach((index) => {
+        if (next.has(index)) next.delete(index);
+        else next.add(index);
       });
       return next;
     });
@@ -756,22 +809,36 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         <div className="flex flex-col gap-3" data-role="import-preview">
           <span className="text-sm text-ink">
             解析到 {schedules.length} 条排课，已选 {selected.size} 条
+            {duplicatesKnown && conflictCount > 0 ? ` · 其中 ${conflictCount} 条重复` : ''}
           </span>
+          {/* 冲突项通常占少数：筛选只改显示，默认仍显示全量 */}
+          <label className="flex min-h-tap items-center gap-2 text-xs text-ink">
+            <input
+              type="checkbox"
+              className="size-4"
+              data-role="import-conflict-only"
+              checked={conflictOnly}
+              disabled={!duplicatesKnown}
+              onChange={(event) => setConflictOnly(event.target.checked)}
+            />
+            只看冲突项{conflictCount > 0 ? `（${conflictCount}）` : ''}
+          </label>
           <div className="flex flex-wrap items-center gap-2" data-role="import-batch">
             <Button
               size="sm"
               variant="secondary"
-              disabled={schedules.length === 0 || selected.size === schedules.length}
+              disabled={visibleIndexes.length === 0 || visibleSelectedCount === visibleIndexes.length}
               onClick={selectAll}
             >
               全选
             </Button>
-            <Button size="sm" variant="secondary" disabled={selected.size === 0} onClick={clearSelection}>
+            <Button size="sm" variant="secondary" disabled={visibleSelectedCount === 0} onClick={clearSelection}>
               清空
             </Button>
-            <Button size="sm" variant="secondary" disabled={schedules.length === 0} onClick={invertSelection}>
+            <Button size="sm" variant="secondary" disabled={visibleIndexes.length === 0} onClick={invertSelection}>
               反选
             </Button>
+            {filteringConflicts && <span className="text-xs text-muted">筛选态：批选只作用于可见行</span>}
           </div>
           <div className="max-h-72 overflow-auto rounded-md border border-line">
             <table className="w-full text-left text-xs">
@@ -786,36 +853,60 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                 </tr>
               </thead>
               <tbody>
-                {schedules.map((item, index) => (
-                  <tr key={`${item.courseName}-${index}`} className="border-t border-line">
-                    <td className="p-2">
-                      <input
-                        type="checkbox"
-                        className="size-4"
-                        checked={selected.has(index)}
-                        aria-label={`选择 ${item.courseName}`}
-                        onChange={() =>
-                          setSelected((current) => {
-                            const next = new Set(current);
-                            if (next.has(index)) next.delete(index);
-                            else next.add(index);
-                            return next;
-                          })
-                        }
-                      />
-                    </td>
-                    <td className="p-2 text-ink">{item.courseName}</td>
-                    <td className="p-2">周{item.dayOfWeek}</td>
-                    <td className="tabular p-2">
-                      {item.periodStart}-{item.periodEnd}
-                    </td>
-                    <td className="p-2">{item.weeks.length} 周</td>
-                    <td className="p-2">{item.room ?? '—'}</td>
-                  </tr>
-                ))}
+                {visibleIndexes.map((index) => {
+                  const item = schedules[index];
+                  if (item === undefined) return null;
+                  const duplicate = duplicatesKnown && duplicateRows[index] === true;
+                  return (
+                    <tr
+                      key={`${item.courseName}-${index}`}
+                      className="border-t border-line"
+                      data-role={duplicate ? 'import-conflict-row' : 'import-row'}
+                    >
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          className="size-4"
+                          checked={selected.has(index)}
+                          aria-label={`选择 ${item.courseName}`}
+                          onChange={() =>
+                            setSelected((current) => {
+                              const next = new Set(current);
+                              if (next.has(index)) next.delete(index);
+                              else next.add(index);
+                              return next;
+                            })
+                          }
+                        />
+                      </td>
+                      <td className="p-2 text-ink">
+                        {item.courseName}
+                        {duplicate && (
+                          <span
+                            data-role="import-duplicate"
+                            className="ml-2 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] text-danger-strong"
+                          >
+                            重复，将被跳过
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2">周{item.dayOfWeek}</td>
+                      <td className="tabular p-2">
+                        {item.periodStart}-{item.periodEnd}
+                      </td>
+                      <td className="p-2">{item.weeks.length} 周</td>
+                      <td className="p-2">{item.room ?? '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          {filteringConflicts && visibleIndexes.length === 0 && (
+            <p data-role="import-no-conflict" className="text-xs text-muted">
+              没有冲突项
+            </p>
+          )}
           {warnings.length > 0 && <p className="text-xs text-danger-strong">{warnings.join('；')}</p>}
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" disabled={busy || selected.size === 0} onClick={() => void confirm()}>

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyImport } from '../src/import/apply.ts';
+import { applyImport, previewDuplicates } from '../src/import/apply.ts';
 import { createSemester } from '../src/mutations.ts';
 import { weekView } from '../src/repository.ts';
 import type { ImportedSchedule } from '../src/import/apply.ts';
@@ -95,4 +95,51 @@ test('可指定取色板', async () => {
   const courses = await storage.collection<Record<string, unknown>>('courses').getAll();
   const colors = courses.map((row) => row['color']).sort();
   assert.deepEqual(colors, ['#111111', '#222222']);
+});
+
+test('预检结果与写入跳过一致', async () => {
+  const { storage, semesterId } = await newSemester();
+  await applyImport(storage, semesterId, sample());
+
+  const incoming: ImportedSchedule[] = [
+    // 两条已存在：写入必跳过
+    ...sample(),
+    // 已存在课程的新排课：不跳过
+    { courseName: '高等数学', dayOfWeek: 5, periodStart: 1, periodEnd: 2, weeks: weekRange(1, 16), room: null, teacher: null },
+    // 新课程：第一次写入不跳过，同批第二次重复
+    { courseName: '新课程', dayOfWeek: 2, periodStart: 5, periodEnd: 6, weeks: weekRange(1, 4), room: null, teacher: null },
+    { courseName: '新课程', dayOfWeek: 2, periodStart: 5, periodEnd: 6, weeks: weekRange(1, 4), room: null, teacher: null },
+    // 无名称：走警告跳过，不算重复
+    { courseName: '   ', dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: [1], room: null, teacher: null },
+  ];
+
+  const flags = await previewDuplicates(storage, semesterId, incoming);
+  assert.deepEqual(flags, [true, true, false, false, true, false]);
+
+  // 预检只读：不会替用户写库
+  const before = await storage.collection('course_schedules').getAll();
+  assert.equal(before.length, 2);
+
+  const applied = await applyImport(storage, semesterId, incoming);
+  assert.equal(applied.skippedSchedules, flags.filter((flag) => flag).length);
+  // 非重复的 3 条里，无名称那条只产生警告、不写排课
+  assert.equal(applied.createdSchedules, flags.filter((flag) => !flag).length - 1);
+  assert.equal(applied.createdCourses, 1);
+  assert.equal(applied.warnings.length, 1);
+});
+
+test('预检不把其他学期的同名课程当冲突', async () => {
+  const { storage, semesterId } = await newSemester();
+  await applyImport(storage, semesterId, sample());
+
+  const other = await createSemester(storage, { userId: USER_ID, name: '第二学期', startDate: START_DATE });
+  const otherId = String(other['id']);
+
+  const flags = await previewDuplicates(storage, otherId, sample());
+  assert.deepEqual(flags, [false, false]);
+
+  const applied = await applyImport(storage, otherId, sample());
+  assert.equal(applied.createdCourses, 2);
+  assert.equal(applied.createdSchedules, 2);
+  assert.equal(applied.skippedSchedules, 0);
 });
