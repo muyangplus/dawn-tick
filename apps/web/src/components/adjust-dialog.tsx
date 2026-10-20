@@ -6,10 +6,12 @@ import {
   createReschedule,
   createSchedule,
   dayOfWeek,
+  rangesOverlap,
   updateSchedule,
   weekOfDate,
   weekStart,
   WEEKDAY_LABELS,
+  weeksIntersect,
   type ManagedCourse,
   type Storage,
 } from '@dawn-tick/core';
@@ -77,16 +79,20 @@ export interface AdjustDialogProps {
 /** 目标位置已有的课：课程允许重叠，只用来提醒；week 为 null 表示不限周次（每周生效）。 */
 function overlapAt(
   courses: readonly ManagedCourse[],
-  target: { dayOfWeek: number; period: number; span: number; week: number | null; excludeCourseId: string },
+  target: {
+    dayOfWeek: number;
+    periodStart: number;
+    periodEnd: number;
+    week: number | null;
+    excludeCourseId: string;
+  },
 ): { name: string; start: number; end: number } | null {
-  const start = target.period;
-  const end = target.period + target.span;
   for (const course of courses) {
     if (course.id === target.excludeCourseId) continue;
     for (const schedule of course.schedules) {
       if (schedule.dayOfWeek !== target.dayOfWeek) continue;
-      if (schedule.periodEnd < start || schedule.periodStart > end) continue;
-      if (target.week !== null && !schedule.weeks.includes(target.week)) continue;
+      if (!rangesOverlap(schedule.periodStart, schedule.periodEnd, target.periodStart, target.periodEnd)) continue;
+      if (target.week !== null && !weeksIntersect(schedule.weeks, [target.week])) continue;
       return { name: course.name, start: schedule.periodStart, end: schedule.periodEnd };
     }
   }
@@ -276,8 +282,8 @@ export function AdjustDialog({
         if (!done) return;
         const overlap = overlapAt(data.courses, {
           dayOfWeek: targetDay,
-          period: periodStart,
-          span: periodEnd - periodStart,
+          periodStart,
+          periodEnd,
           week: null,
           excludeCourseId: courseId,
         });
@@ -341,8 +347,8 @@ export function AdjustDialog({
       if (!done) return;
       const overlap = overlapAt(data.courses, {
         dayOfWeek: dayOfWeek(finalDate),
-        period: periodStart,
-        span: periodEnd - periodStart,
+        periodStart,
+        periodEnd,
         week: weekOfDate(finalDate, semester.start_date),
         excludeCourseId: courseId,
       });

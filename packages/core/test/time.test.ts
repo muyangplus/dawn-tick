@@ -12,6 +12,7 @@ import {
   formatTime,
   isWeekend,
   nextWorkday,
+  plusMinutesText,
   previousWorkday,
   resolveTimeZone,
   weekOfDate,
@@ -81,4 +82,12 @@ test('显示时区解析', () => {
   assert.equal(resolveTimeZone('Asia/Shanghai', true, 'America/New_York'), 'America/New_York');
   assert.equal(resolveTimeZone('Bad/Zone', false), DEFAULT_TIME_ZONE);
   assert.equal(resolveTimeZone(undefined, true, 'Bad/Zone'), DEFAULT_TIME_ZONE);
+});
+
+test('HH:MM 加分钟跨天回绕', () => {
+  assert.equal(plusMinutesText('08:00', 45), '08:45');
+  assert.equal(plusMinutesText('08:55', 10), '09:05');
+  assert.equal(plusMinutesText('23:30', 45), '00:15');
+  assert.equal(plusMinutesText('23:30', 60), '00:30');
+  assert.equal(plusMinutesText('01:00', -90), '23:30', '负偏移不前移成非法时刻');
 });

@@ -5,9 +5,11 @@ import {
   listManagedCourses,
   maskToWeeks,
   parityMask,
+  rangesOverlap,
   setSchedules,
   updateCourse,
   WEEKDAY_LABELS,
+  weeksIntersect,
   type ManagedCourse,
   type Storage,
   type ThemePreset,
@@ -96,8 +98,8 @@ function findOverlap(
     for (const other of course.schedules) {
       for (const draft of schedules) {
         if (other.dayOfWeek !== draft.dayOfWeek) continue;
-        if (other.periodEnd < draft.periodStart || other.periodStart > draft.periodEnd) continue;
-        if (!other.weeks.some((week) => draft.weeks.includes(week))) continue;
+        if (!rangesOverlap(other.periodStart, other.periodEnd, draft.periodStart, draft.periodEnd)) continue;
+        if (!weeksIntersect(other.weeks, draft.weeks)) continue;
         return { name: course.name, start: other.periodStart, end: other.periodEnd };
       }
     }

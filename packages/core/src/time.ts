@@ -121,6 +121,14 @@ export function formatDateTime(epochMs: number, timeZone: string): string {
   return `${formatDate(epochMs, timeZone)} ${formatTime(epochMs, timeZone)}`;
 }
 
+/** HH:MM 加分钟数，跨天回绕到 00:00（用于缺结束时间时按一节时长估计）。 */
+export function plusMinutesText(clock: string, minutes: number): string {
+  const [hour, minute] = clock.split(':').map(Number);
+  const total = (hour ?? 0) * 60 + (minute ?? 0) + minutes;
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  return `${pad2(Math.floor(wrapped / 60))}:${pad2(wrapped % 60)}`;
+}
+
 /** 纯日期加减，不受时区影响。 */
 export function addDays(date: string, days: number): string {
   return dateFromUtcMs(dateToUtcMs(date) + days * 86400000);

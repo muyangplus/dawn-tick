@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
-import { addDays, dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
+import { addDays, dayOfWeek as nextDayOfWeek, rangesOverlap, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
@@ -70,7 +70,7 @@ function clashingLessons(data: AppData, date: string, start: number, end: number
   for (const list of data.grid.values()) {
     for (const cell of list) {
       if (!cell.inWeek || cell.date !== date) continue;
-      if (cell.periodEnd < start || cell.periodStart > end) continue;
+      if (!rangesOverlap(cell.periodStart, cell.periodEnd, start, end)) continue;
       if (seen.has(cell.scheduleId)) continue;
       seen.add(cell.scheduleId);
       out.push(cell);
