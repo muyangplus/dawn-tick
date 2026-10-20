@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS } from '@dawn-tick/core';
 import { buildWidgetSnapshot } from '../src/widget-snapshot.ts';
+import { PRESETS } from '../src/design/tokens.ts';
 import type { AppData, LessonCell } from '../src/data.ts';
 
 function appData(overrides: Partial<AppData> = {}): AppData {
@@ -167,4 +168,38 @@ test('不显示周末时一周概览的快照不含周六日课程', () => {
 
   const shown = buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1);
   assert.equal(shown.grid.length, 3);
+});
+
+test('快照携带设计令牌语义色', () => {
+  const snapshot = buildWidgetSnapshot(appData(), DEFAULT_SETTINGS, 1);
+  assert.deepEqual(snapshot.colors, {
+    ink: PRESETS.vivid.light.text,
+    muted: PRESETS.vivid.light.muted,
+    danger: PRESETS.vivid.light.dangerStrong,
+  });
+});
+
+test('深色底取暗色令牌、浅色底取亮色令牌', () => {
+  const dark = buildWidgetSnapshot(appData(), { ...DEFAULT_SETTINGS, widgetBackground: 'dark' }, 1);
+  assert.equal(dark.colors?.ink, PRESETS.vivid.dark.text);
+  assert.equal(dark.colors?.muted, PRESETS.vivid.dark.muted);
+
+  const light = buildWidgetSnapshot(
+    appData(),
+    { ...DEFAULT_SETTINGS, widgetBackground: 'light', theme: 'dark' },
+    1,
+  );
+  assert.equal(light.colors?.ink, PRESETS.vivid.light.text);
+});
+
+test('透明底与主题预设都会影响快照配色', () => {
+  const transparent = buildWidgetSnapshot(
+    appData(),
+    { ...DEFAULT_SETTINGS, widgetBackground: 'transparent', theme: 'dark' },
+    1,
+  );
+  assert.equal(transparent.colors?.ink, PRESETS.vivid.dark.text);
+
+  const mono = buildWidgetSnapshot(appData(), { ...DEFAULT_SETTINGS, themePreset: 'mono' }, 1);
+  assert.equal(mono.colors?.ink, PRESETS.mono.light.text);
 });

@@ -5,6 +5,10 @@ import android.database.sqlite.SQLiteDatabase
 import org.json.JSONObject
 import java.io.File
 
+/**
+ * 快照结构由 Web 层 `apps/web/src/widget-snapshot.ts` 定义，本文件只做读取。
+ * 字段名与 JSON 键名必须与该文件里的接口一致，由 `tools/verify/check-widget-contract.mjs` 校验。
+ */
 data class WidgetLesson(
     val title: String,
     val room: String?,
@@ -29,13 +33,23 @@ data class WidgetExam(
     val startAt: Long,
 )
 
+/** 设计令牌语义色；旧快照没有该对象，渲染器回退内置常量。 */
+data class WidgetColors(
+    val ink: String,
+    val muted: String,
+    val danger: String,
+)
+
 data class WidgetSnapshot(
-    val week: Int,
     val updatedAt: Long,
+    val week: Int,
+    /** 快照写入时的时区；小组件目前按设备时区渲染，保留字段供后续按快照时区格式化。 */
+    val timeZone: String,
     val background: String,
-    val next: WidgetLesson?,
+    val colors: WidgetColors?,
     /** 当前正在进行中的课程，没有进行中的课程时为 null。 */
     val current: WidgetLesson?,
+    val next: WidgetLesson?,
     val today: List<WidgetLesson>,
     val grid: List<WidgetGridLesson>,
     val exams: List<WidgetExam>,
@@ -97,11 +111,13 @@ object WidgetStore {
             }
 
             WidgetSnapshot(
-                week = root.optInt("week", 0),
                 updatedAt = root.optLong("updatedAt", 0L),
+                week = root.optInt("week", 0),
+                timeZone = root.optString("timeZone", ""),
                 background = root.optString("background", "light"),
-                next = root.optJSONObject("next")?.let { parseLesson(it) },
+                colors = root.optJSONObject("colors")?.let { parseColors(it) },
                 current = root.optJSONObject("current")?.let { parseLesson(it) },
+                next = root.optJSONObject("next")?.let { parseLesson(it) },
                 today = today,
                 grid = grid,
                 exams = exams,
@@ -116,6 +132,13 @@ object WidgetStore {
         room = if (item.isNull("room")) null else item.optString("room").ifEmpty { null },
         startsAt = item.optLong("startsAt"),
         endsAt = item.optLong("endsAt"),
+    )
+
+    /** 空串表示旧快照或字段缺失，渲染器会回退内置常量。 */
+    private fun parseColors(item: JSONObject): WidgetColors = WidgetColors(
+        ink = item.optString("ink"),
+        muted = item.optString("muted"),
+        danger = item.optString("danger"),
     )
 
     private fun readSnapshot(context: Context): String? {
