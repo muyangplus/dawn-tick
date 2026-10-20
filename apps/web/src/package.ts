@@ -1,5 +1,5 @@
 import { parseBackup, zipStore, type BackupPayload, type Storage } from '@dawn-tick/core';
-import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './preset-update.ts';
+import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { pickBackupText, readZipEntries } from './zip-read.ts';
 
 /**

@@ -1,9 +1,11 @@
 import type { AppSettings, Storage } from '@dawn-tick/core';
 import type { AppData } from './data.ts';
 import { resolveTokens } from './design/tokens.ts';
+import { writeMetaJson } from './lib/meta.ts';
+import { WIDGET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { detectPlatform } from './platform-detect.ts';
 
-export const WIDGET_SNAPSHOT_KEY = 'widget_snapshot';
+export const WIDGET_SNAPSHOT_KEY = WIDGET_SNAPSHOT_META_KEY;
 
 /** 小组件配色：取设计令牌的语义色，Kotlin 侧缺失时回退内置常量。 */
 export interface WidgetColors {
@@ -131,7 +133,7 @@ export async function writeWidgetSnapshot(
   data: AppData,
   settings: AppSettings,
 ): Promise<void> {
-  await storage.writeMeta(WIDGET_SNAPSHOT_KEY, JSON.stringify(buildWidgetSnapshot(data, settings)));
+  await writeMetaJson(storage, WIDGET_SNAPSHOT_KEY, buildWidgetSnapshot(data, settings), { scope: 'widget' });
   if (detectPlatform() !== 'capacitor') return;
   try {
     const { registerPlugin } = await import('@capacitor/core');
