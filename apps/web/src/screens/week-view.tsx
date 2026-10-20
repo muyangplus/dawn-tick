@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
-import { addDays, dayOfWeek as nextDayOfWeek, rangesOverlap, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
+import { addDays, dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
@@ -10,6 +10,25 @@ import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
 import { formatMonthDayRange } from '../lib/dates.ts';
 import { formatPeriodRange } from '../lib/format.ts';
+import {
+  LONG_PRESS_MS,
+  MOVE_TOLERANCE,
+  SUPPRESS_SLOT_CLICK_MS,
+  bodyRangeOf,
+  clashLabel,
+  dragRows,
+  emptyDragEdgeOf,
+  firstClash,
+  lessonDropPeriod,
+  periodAt,
+  resizeEmptyRange,
+  stepEmptyRange,
+  wheelRangeOf,
+  type EmptyDragEdge,
+  type EmptyDragMode,
+  type EmptyDragState,
+  type EmptyTarget,
+} from './timetable/drag-session.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
 import { weekEmptyKind } from '../lib/week-empty.ts';
@@ -19,13 +38,6 @@ import { logDebug, logWarn } from '../log.ts';
 /** 同一宽度下最多连调两次行高：滚动条出现/消失会让宽度抖动，再调就会来回跳。 */
 const MAX_ROW_HEIGHT_ADJUSTS = 2;
 const ROW_HEIGHT_ADJUST_WINDOW_MS = 3000;
-/** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
-const LONG_PRESS_MS = 350;
-/** 长按期间允许的手指/鼠标抖动半径（像素），超过就取消长按。 */
-const MOVE_TOLERANCE = 8;
-/** 拖动占位块松手后，抑制紧随那次 click 的时间窗（毫秒）。 */
-const SUPPRESS_SLOT_CLICK_MS = 500;
-
 /**
  * 44px 透明命中区：视觉尺寸不变，用伪元素把命中区外扩到触控口径（见 `--spacing-tap` 的 min-h-tap / size-tap 口径）。
  * 往上多扩 28px 是因为占位块只有一节高时，向下外扩会被 overflow-hidden 裁掉；左右各 14px 只占相邻留白。
@@ -52,71 +64,6 @@ function occupied(data: AppData, date: string, period: number): boolean {
   return false;
 }
 
-/** 落点所在的节次（按列高度换算，越界夹到首尾节）；padTop 是头部补白的高度。 */
-function periodAt(
-  clientY: number,
-  columnTop: number,
-  periodCount: number,
-  rowHeightPx: number,
-  padTop = 0,
-): number {
-  return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop - padTop) / rowHeightPx) + 1));
-}
-
-/** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
-function clashingLessons(data: AppData, date: string, start: number, end: number): LessonCell[] {
-  const out: LessonCell[] = [];
-  const seen = new Set<string>();
-  for (const list of data.grid.values()) {
-    for (const cell of list) {
-      if (!cell.inWeek || cell.date !== date) continue;
-      if (!rangesOverlap(cell.periodStart, cell.periodEnd, start, end)) continue;
-      if (seen.has(cell.scheduleId)) continue;
-      seen.add(cell.scheduleId);
-      out.push(cell);
-    }
-  }
-  return out;
-}
-
-interface Clash {
-  name: string;
-  start: number;
-  end: number;
-}
-
-/** 范围里第一门重叠的课，用课程全名，提示文案更清楚。 */
-function firstClash(data: AppData, date: string, start: number, end: number): Clash | null {
-  const cell = clashingLessons(data, date, start, end)[0];
-  if (cell === undefined) return null;
-  const name = data.courses.find((course) => course.id === cell.courseId)?.name ?? cell.name;
-  return { name, start: cell.periodStart, end: cell.periodEnd };
-}
-
-/** 重叠提示：与「高等数学」第 1–2 节重叠。 */
-function clashLabel(clash: Clash): string {
-  return `与「${clash.name}」${formatPeriodRange(clash.start, clash.end)}重叠`;
-}
-
-/** 按住的位置决定哪条边跟着指针：单节时上下都算扩展，否则按上半/下半取边。 */
-function emptyDragEdgeOf(
-  element: HTMLElement,
-  clientY: number,
-  target: EmptyTarget,
-  mode: EmptyDragMode,
-): EmptyDragEdge {
-  if (mode === 'wheel' || target.start === target.end) return 'both';
-  const bounds = element.getBoundingClientRect();
-  return clientY < bounds.top + bounds.height / 2 ? 'top' : 'bottom';
-}
-
-interface EmptyTarget {
-  /** 目标日期（YYYY-MM-DD）：空白格与拖动落点都按日期定位 */
-  date: string;
-  start: number;
-  end: number;
-}
-
 interface DragState {
   cell: LessonCell;
   date: string;
@@ -134,23 +81,6 @@ interface DragSession {
   active: boolean;
   /** 长按生效后接收指针事件的卡片节点：指针移出卡片后事件仍可达 */
   element: HTMLElement | null;
-}
-
-/** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩，空白格按下直接拖出范围。 */
-type EmptyDragMode = 'wheel' | 'body' | 'select';
-
-/** 块本体拖动时跟着指针的边：both 为上下都扩展，否则按按住位置取 top / bottom。 */
-type EmptyDragEdge = 'both' | 'top' | 'bottom';
-
-interface EmptyDragState {
-  pointerId: number;
-  mode: EmptyDragMode;
-  edge: EmptyDragEdge;
-  startY: number;
-  startPeriod: number;
-  endPeriod: number;
-  /** 是否已经超过点击抖动阈值：仅实际拖动过才在松手时弹窗 */
-  moved: boolean;
 }
 
 /** 拖动过程中需要的最小指针信息：React 合成事件与原生 PointerEvent 都满足。 */
@@ -467,21 +397,17 @@ export function WeekView({
 
   /** 调整占位节次：delta > 0 向下、delta < 0 向上；只受节次上下限约束，重叠仍可继续。 */
   function step(target: EmptyTarget, delta: number): void {
-    let start = target.start;
-    let end = target.end;
-    if (delta > 0) end = Math.min(periodCount, end + delta);
-    else if (start > 1) start = start - 1;
-    start = Math.max(1, Math.min(start, end));
-    setEmptyTarget({ date: target.date, start, end });
-    warnClash(target.date, start, end);
+    const next = stepEmptyRange(target, delta, periodCount);
+    setEmptyTarget(next);
+    warnClash(next.date, next.start, next.end);
   }
 
   /** 键盘调范围：↓ 把结束节向下扩一节（最多到总节数），↑ 收回一节（最少回到起始节）。 */
   function resizeRange(target: EmptyTarget, direction: -1 | 1): void {
-    const end = Math.min(periodCount, Math.max(target.start, target.end + direction));
-    if (end === target.end) return;
-    setEmptyTarget({ date: target.date, start: target.start, end });
-    warnClash(target.date, target.start, end);
+    const next = resizeEmptyRange(target, direction, periodCount);
+    if (next === null) return;
+    setEmptyTarget(next);
+    warnClash(next.date, next.start, next.end);
   }
 
   /** 按下占位块（滚轮条或块本体）：记录起点，之后由 pointermove 改范围。 */
@@ -496,7 +422,7 @@ export function WeekView({
     emptyDrag.current = {
       pointerId: event.pointerId,
       mode,
-      edge: emptyDragEdgeOf(event.currentTarget, event.clientY, current, mode),
+      edge: emptyDragEdgeOf(event.currentTarget.getBoundingClientRect(), event.clientY, current, mode),
       startY: event.clientY,
       startPeriod: current.start,
       endPeriod: current.end,
@@ -530,7 +456,7 @@ export function WeekView({
     const current = emptyRef.current;
     if (current === null) return;
     event.preventDefault();
-    const rows = Math.round((event.clientY - active.startY) / rowHeight);
+    const rows = dragRows(active.startY, event.clientY, rowHeight);
     if (active.mode === 'select') {
       // 按下的那一次若只是轻微抖动，仍算单击选格；真的跨了一节才当拖动
       if (rows !== 0) {
@@ -540,33 +466,10 @@ export function WeekView({
     } else if (Math.abs(event.clientY - active.startY) > MOVE_TOLERANCE) {
       active.moved = true;
     }
-    const range = active.mode === 'wheel' ? wheelRangeOf(active, rows) : bodyRangeOf(active, rows);
+    const range =
+      active.mode === 'wheel' ? wheelRangeOf(active, rows, periodCount) : bodyRangeOf(active, rows, periodCount);
     setEmptyTarget({ date: current.date, start: range.start, end: range.end });
     warnClash(current.date, range.start, range.end);
-  }
-
-  /** 滚轮条：整段上下平移。 */
-  function wheelRangeOf(active: EmptyDragState, rows: number): { start: number; end: number } {
-    const start = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
-    const end = Math.min(periodCount, Math.max(start, active.endPeriod + rows));
-    return { start, end };
-  }
-
-  /** 块本体：按住的那条边跟着指针走，另一边不动（起始单节时上下都算扩展）。 */
-  function bodyRangeOf(active: EmptyDragState, rows: number): { start: number; end: number } {
-    if (active.edge === 'top') {
-      const start = Math.min(active.endPeriod, Math.max(1, active.startPeriod + rows));
-      return { start, end: active.endPeriod };
-    }
-    if (active.edge === 'bottom') {
-      const end = Math.min(periodCount, Math.max(active.startPeriod, active.endPeriod + rows));
-      return { start: active.startPeriod, end };
-    }
-    const pointer = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
-    return {
-      start: Math.min(active.startPeriod, pointer),
-      end: Math.max(active.endPeriod, pointer),
-    };
   }
 
   function endEmptyDrag(event: DragPointer): void {
@@ -699,9 +602,7 @@ export function WeekView({
     if (drop === null || periodCount === 0) return;
     // 落回原处（同一天同一节）不算调整
     if (drop.date === lesson.date && drop.period === lesson.periodStart) return;
-    const span = lesson.periodEnd - lesson.periodStart + 1;
-    const period = Math.min(periodCount - span + 1, Math.max(1, drop.period));
-    onMoveLesson(lesson, drop.date, period);
+    onMoveLesson(lesson, drop.date, lessonDropPeriod(drop.period, lesson, periodCount));
   }
 
   function onLessonPointerCancel(event: React.PointerEvent<HTMLDivElement>): void {
