@@ -189,7 +189,7 @@ function ScheduleActions(ctx: ScheduleCardContext) {
         icon={Plus}
         items={[
           { label: '加待办', onSelect: onAddTodo },
-          { label: '课程调整', onSelect: () => onOpenAdjust(null) },
+          { label: '调课', onSelect: () => onOpenAdjust(null) },
         ]}
       />
 
