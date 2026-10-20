@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_SETTINGS,
   addDays,
@@ -30,7 +30,7 @@ import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
 import { Field, Input } from './components/ui/input.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
-import { Plus } from 'lucide-react';
+import { Database, Loader2, Plus, TriangleAlert } from 'lucide-react';
 import {
   defaultWindowStart,
   loadAppData,
@@ -44,6 +44,15 @@ import { maybeAutoBackup, createSnapshot, pruneSnapshots, takeRecoveryNotice } f
 import { downloadAndApply, maybeAutoSync, type ApplyMode } from './webdav.ts';
 import { openStorage } from './db/platform.ts';
 import { corruptMessage, isCorruptDatabase } from './db/health.ts';
+import {
+  STORAGE_FALLBACK_BADGE,
+  STORAGE_FALLBACK_BANNER,
+  STORAGE_READ_ONLY_MESSAGE,
+  isFallbackStorage,
+  readOnlyStorage,
+} from './db/fallback.ts';
+import { fail, type Failure } from './lib/fail.ts';
+import { restoreLatestBackupSnapshot } from './lib/recovery.ts';
 import { CourseForm, type CourseFormPreset } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
@@ -56,16 +65,16 @@ import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
 import { ensureStartupPermissions, type PermissionReport } from './permissions.ts';
 import { markNotifyAsked } from './notify.ts';
-import { attachLogStorage, loadLogs, logDebug, logError, logInfo, logWarn } from './log.ts';
+import { attachLogStorage, clearLogs, describeError, loadLogs, logDebug, logError, logInfo, logWarn, logsText } from './log.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
 import { clampDayDate, dayRangeOf, defaultDayDate, stepDay } from './lib/day-nav.ts';
 import { useReminders } from './useReminders.ts';
 import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from './update.ts';
-import { relaunchApplication } from './storage-config.ts';
+import { openDataDirectory, relaunchApplication, storageStatusLabel } from './storage-config.ts';
 import { applyDevFeatures } from './dev-features.ts';
 import { applyLogSettings, defaultLogLevel } from './log.ts';
-import { openExternalUrl } from './system-actions.ts';
+import { openExternalUrl, saveTextFile } from './system-actions.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from './channel.ts';
 import { notifyWidgetWindows, writeWidgetSnapshot } from './widget-snapshot.ts';
 import './styles.css';
@@ -93,6 +102,12 @@ interface MoveState {
   /** 拖动落到的日期（YYYY-MM-DD）与节次 */
   date: string;
   period: number;
+}
+
+/** 启动失败：区分损坏（走备份恢复）与其它（重试/日志），文案统一由 fail() 生成。 */
+interface BootFailure {
+  kind: 'corrupt' | 'other';
+  failure: Failure;
 }
 
 /** 拖动吸附后的四种作用范围（互不重叠）。 */
@@ -193,14 +208,134 @@ function overlapAt(
   return null;
 }
 
-async function withToast(action: () => Promise<void>, ok: string, fail: string): Promise<boolean> {
+/** 加载页的「仍在载入…」阈值：冷启动超过 3 秒才追加，避免正常启动闪一下。 */
+export const LOADING_SLOW_MS = 3000;
+
+/** 冷启动加载页：图标 + 进度文案；3 秒后追加「仍在载入…」。 */
+export function LoadingScreen({ slowAfterMs = LOADING_SLOW_MS }: { slowAfterMs?: number }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = globalThis.setTimeout(() => setSlow(true), slowAfterMs);
+    return () => globalThis.clearTimeout(timer);
+  }, [slowAfterMs]);
+  return (
+    <main
+      className="flex h-full flex-col items-center justify-center gap-3 bg-page p-4"
+      role="status"
+      aria-live="polite"
+      data-role="loading-screen"
+    >
+      <div className="flex size-12 items-center justify-center rounded-2xl bg-surface-muted text-primary-strong">
+        <Loader2 className="dt-spinner size-6" aria-hidden />
+      </div>
+      <p className="text-sm text-ink">正在载入…</p>
+      {slow && (
+        <p className="text-xs text-muted" data-role="loading-slow">
+          仍在载入…
+        </p>
+      )}
+    </main>
+  );
+}
+
+export interface ErrorScreenProps {
+  kind: 'corrupt' | 'other';
+  failure: Failure;
+  onRetry: () => void;
+  onRestore: () => void;
+  onOpenBackupDir: () => void;
+  onOpenLogs: () => void;
+}
+
+/** 页面级错误：图标 + 标题 + 说明 + 最多两个修复按钮（损坏走备份，其它走重试/日志）。 */
+export function ErrorScreen({
+  kind,
+  failure,
+  onRetry,
+  onRestore,
+  onOpenBackupDir,
+  onOpenLogs,
+}: ErrorScreenProps) {
+  const corrupt = kind === 'corrupt';
+  const Icon = corrupt ? Database : TriangleAlert;
+  return (
+    <main
+      className="flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4"
+      data-role="error-screen"
+    >
+      <div className="my-auto flex w-full max-w-md flex-col items-center gap-3 text-center" role="alert">
+        <div className="flex size-12 items-center justify-center rounded-2xl bg-danger/10 text-danger-strong">
+          <Icon className="size-6" aria-hidden />
+        </div>
+        <h1 className="text-base font-semibold text-ink">{failure.title}</h1>
+        <p className="text-sm text-muted">{failure.body}</p>
+        <div className="flex flex-wrap justify-center gap-2">
+          {corrupt ? (
+            <>
+              <Button variant="primary" onClick={onRestore}>
+                从备份文件恢复
+              </Button>
+              <Button variant="secondary" onClick={onOpenBackupDir}>
+                打开备份目录
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button variant="primary" onClick={onRetry}>
+                重试
+              </Button>
+              <Button variant="secondary" onClick={onOpenLogs}>
+                打开日志
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export interface StorageFallbackBannerProps {
+  onRetry: () => void;
+  onOpenLogs: () => void;
+}
+
+/** 主壳顶部的临时回退警告条：常驻、首屏可见，并说明回退期间只读。 */
+export function StorageFallbackBanner({ onRetry, onOpenLogs }: StorageFallbackBannerProps) {
+  return (
+    <div
+      role="alert"
+      data-role="storage-fallback-banner"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning-strong"
+    >
+      <TriangleAlert className="size-4 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">{STORAGE_FALLBACK_BANNER}</span>
+      <span className="rounded-full bg-warning/10 px-2 py-0.5 font-medium">{STORAGE_FALLBACK_BADGE}</span>
+      <span className="text-[11px]">{STORAGE_READ_ONLY_MESSAGE}</span>
+      <Button size="sm" variant="secondary" onClick={onRetry}>
+        重试
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onOpenLogs}>
+        打开日志
+      </Button>
+    </div>
+  );
+}
+
+async function withToast(
+  action: () => Promise<void>,
+  ok: string,
+  what: string,
+  next = '请重试；仍失败请重启应用。',
+): Promise<boolean> {
   try {
     await action();
     toast.success(ok);
     return true;
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    toast.error(`${fail}：${message}`);
+    const reason = describeError(cause);
+    logWarn('ui', what, { message: reason });
+    toast.error(fail(what, reason, next).text);
     return false;
   }
 }
@@ -227,9 +362,14 @@ async function readSeenNotices(storage: Storage): Promise<string[]> {
 }
 
 async function markNoticeSeen(storage: Storage, id: string): Promise<void> {
-  const seen = await readSeenNotices(storage);
-  if (seen.includes(id)) return;
-  await storage.writeMeta(SEEN_NOTICES_KEY, JSON.stringify([...seen, id]));
+  try {
+    const seen = await readSeenNotices(storage);
+    if (seen.includes(id)) return;
+    await storage.writeMeta(SEEN_NOTICES_KEY, JSON.stringify([...seen, id]));
+  } catch (cause: unknown) {
+    // 提示已读只是本地记录：临时回退（只读）或写失败都不该打断用户
+    logWarn('notice', '记录提示已读失败', { message: describeError(cause) });
+  }
 }
 
 export function App() {
@@ -262,7 +402,9 @@ export function App() {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<BootFailure | null>(null);
+  /** 递增触发一次启动重试（错误页「重试」） */
+  const [bootTick, setBootTick] = useState(0);
   /** 待展示的渠道提示（开发版频繁更新 / 测试版不稳定），按 id 记录已提示过 */
   const [notice, setNotice] = useState<string | null>(null);
   /** 启动权限检查结果：安卓侧展示在设置页「提醒设置」里 */
@@ -279,6 +421,23 @@ export function App() {
   const wideEnoughForSidePanel = useMediaQuery('(min-width: 1440px)');
   /** 课表页的日模式：←/→ 翻一天，顶部换日期翻页 */
   const dayMode = view === 'timetable' && mode === 'today';
+  /** 临时回退（原生库打不开）：主壳常驻警告条，界面一律只读 */
+  const fallback = storage !== null && isFallbackStorage(storage);
+  /** 各屏拿到的存储：回退时包成只读，统一拦截所有写入口 */
+  const uiStorage = useMemo(
+    () => (storage === null ? null : fallback ? readOnlyStorage(storage) : storage),
+    [storage, fallback],
+  );
+  /** 写入口统一提示：返回 false 表示这次操作被拦下 */
+  const guardWrite = useCallback(
+    (action: string): boolean => {
+      if (!fallback) return true;
+      logWarn('storage', '临时回退期间拦截写操作', { action });
+      toast.error(STORAGE_READ_ONLY_MESSAGE);
+      return false;
+    },
+    [fallback],
+  );
   const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
     enabled: settings.classReminderEnabled,
     minutes: settings.classReminderMinutes,
@@ -345,26 +504,33 @@ export function App() {
       let stage = { scope: 'storage', label: '存储初始化' };
       try {
         const opened = await openStorage();
+        /** 临时回退：原生库打不开，改用浏览器存储；按 Q5 只读，启动阶段也不写任何数据 */
+        const readOnly = isFallbackStorage(opened);
         stage = { scope: 'data', label: '数据载入' };
-        attachLogStorage(opened);
+        // 回退期间连日志也不写临时库：只留在内存与原生日志里
+        attachLogStorage(readOnly ? readOnlyStorage(opened) : opened);
         await loadLogs();
         // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，运行时不替换。
-        try {
-          const preset = await applyCachedPreset(opened);
-          logInfo('preset', '启动套用预设', {
-            version: preset.version,
-            source: preset.applied ? 'cached' : 'builtin',
-            applied: preset.applied,
-            ...(preset.reason === undefined ? {} : { reason: preset.reason }),
-          });
-        } catch (cause: unknown) {
-          const message = cause instanceof Error ? cause.message : String(cause);
-          logWarn('preset', '启动套用预设失败，继续使用内置预设', { message });
+        if (readOnly) {
+          logWarn('storage', '临时回退期间跳过启动预设写入', { kind: opened.kind });
+        } else {
+          try {
+            const preset = await applyCachedPreset(opened);
+            logInfo('preset', '启动套用预设', {
+              version: preset.version,
+              source: preset.applied ? 'cached' : 'builtin',
+              applied: preset.applied,
+              ...(preset.reason === undefined ? {} : { reason: preset.reason }),
+            });
+          } catch (cause: unknown) {
+            const message = describeError(cause);
+            logWarn('preset', '启动套用预设失败，继续使用内置预设', { message });
+          }
         }
         // 首次启动按系统时区对齐一次；之后完全以用户选择为准（默认上海）
         const aligned = await opened.readMeta(TIME_ZONE_ALIGNED_KEY);
         let loaded = await readSettings(opened);
-        if (aligned === undefined || aligned === null || aligned === '') {
+        if (!readOnly && (aligned === undefined || aligned === null || aligned === '')) {
           const systemZone =
             typeof Intl === 'object' && typeof Intl.DateTimeFormat === 'function'
               ? Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -377,7 +543,7 @@ export function App() {
         }
         // 日志级别默认随渠道定：dev 最详细，其余 info（只写一次，之后跟随用户选择）
         const storedLogLevel = await opened.readMeta('log_level');
-        if (storedLogLevel === undefined || storedLogLevel === null || storedLogLevel === '') {
+        if (!readOnly && (storedLogLevel === undefined || storedLogLevel === null || storedLogLevel === '')) {
           loaded = await writeSettings(opened, { logLevel: defaultLogLevel(CHANNEL) });
           logInfo('settings', '初始化日志级别', { level: loaded.logLevel, channel: CHANNEL });
         }
@@ -385,20 +551,29 @@ export function App() {
         setStorage(opened);
         setSettings(loaded);
         setResolvedMode(applyTheme(loaded.themePreset, loaded.theme));
-        logInfo('storage', '存储就绪', { kind: opened.kind, theme: loaded.themePreset, mode: loaded.theme });
+        logInfo('storage', '存储就绪', {
+          kind: opened.kind,
+          fallback: readOnly,
+          theme: loaded.themePreset,
+          mode: loaded.theme,
+        });
         const recovered = await takeRecoveryNotice();
         if (recovered !== null) toast.info(recovered);
-        const snapshot = await maybeAutoBackup(opened, loaded, { startup: true });
-        if (snapshot !== null) {
-          logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
-        }
-        const sync = await maybeAutoSync(opened, loaded, { startup: true });
-        if (sync.action === 'remote-newer') {
-          setRemoteNewer({ name: sync.name, detail: sync.detail });
-        } else if (sync.action === 'uploaded') {
-          logInfo('webdav', '启动自动同步已上传', { name: sync.name });
-        } else if (sync.action === 'error') {
-          logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
+        if (readOnly) {
+          logWarn('storage', '临时回退期间跳过自动备份与自动同步', { kind: opened.kind });
+        } else {
+          const snapshot = await maybeAutoBackup(opened, loaded, { startup: true });
+          if (snapshot !== null) {
+            logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
+          }
+          const sync = await maybeAutoSync(opened, loaded, { startup: true });
+          if (sync.action === 'remote-newer') {
+            setRemoteNewer({ name: sync.name, detail: sync.detail });
+          } else if (sync.action === 'uploaded') {
+            logInfo('webdav', '启动自动同步已上传', { name: sync.name });
+          } else if (sync.action === 'error') {
+            logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
+          }
         }
         await reload(opened, loaded);
         const manager = globalThis.navigator?.storage;
@@ -408,24 +583,42 @@ export function App() {
           logInfo('storage', '持久化申请', { granted });
         }
       } catch (cause: unknown) {
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = describeError(cause);
         if (isCorruptDatabase(cause)) {
           logError('storage', '数据库损坏，未载入数据', { message });
-          if (!cancelled) setError(corruptMessage());
+          if (!cancelled) {
+            setError({
+              kind: 'corrupt',
+              failure: fail(
+                '载入失败',
+                corruptMessage(),
+                '请从最近的备份恢复，或打开备份目录手动处理。',
+              ),
+            });
+          }
           return;
         }
         logError(stage.scope, `${stage.label}失败`, { message });
-        if (!cancelled) setError(message);
+        if (!cancelled) {
+          setError({
+            kind: 'other',
+            failure: fail(
+              '载入失败',
+              `${stage.label}没有完成`,
+              '请重启应用；仍失败请在「设置 → 同步与数据」导入备份，并附日志反馈。',
+            ),
+          });
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [reload]);
+  }, [reload, bootTick]);
 
   // 每天一次自动备份与自动同步：应用一直开着时也要能补上当天那次
   useEffect(() => {
-    if (storage === null) return;
+    if (storage === null || isFallbackStorage(storage)) return;
     const timer = globalThis.setInterval(() => {
       void maybeAutoBackup(storage, settings, { startup: false }).then((snapshot) => {
         if (snapshot !== null) {
@@ -469,8 +662,8 @@ export function App() {
     startupPermissionsDone.current = true;
     void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then(async (report) => {
       setPermissionReport(report);
-      // 记下「申请过」：之后才能区分「还没问过」与「被永久拒绝」
-      await markNotifyAsked(storage);
+      // 记下「申请过」：之后才能区分「还没问过」与「被永久拒绝」；临时回退期间不写
+      if (!isFallbackStorage(storage)) await markNotifyAsked(storage);
     });
     // 存储就绪后只跑一次：权限弹窗不该随设置变化重复弹
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -543,6 +736,7 @@ export function App() {
   const patch = useCallback(
     async (partial: Partial<AppSettings>) => {
       if (storage === null) return;
+      if (!guardWrite('修改设置')) return;
       const next = await writeSettings(storage, partial);
       setSettings(next);
       // 视图相关设置变了就回到默认起点（今天或本周周一），否则保持用户当前翻到的位置
@@ -550,7 +744,7 @@ export function App() {
       if (viewChanged) setWindowStart(null);
       await reload(storage, next, viewChanged ? null : windowStart);
     },
-    [storage, reload, windowStart],
+    [storage, reload, windowStart, guardWrite],
   );
 
   const refresh = useCallback(() => {
@@ -572,11 +766,12 @@ export function App() {
   /** 远端备份比本机新时的提示：下载前先给本机做快照，避免静默覆盖。 */
   async function applyRemote(mode: ApplyMode): Promise<void> {
     if (storage === null) return;
+    if (!guardWrite('应用远端备份')) return;
     const safe = await createSnapshot(storage);
     await pruneSnapshots(storage, settings.backupKeep);
     const result = await downloadAndApply(storage, settings, mode, remoteNewer?.name);
     if (!result.ok) {
-      toast.error(`下载失败：${result.error ?? '未知原因'}`);
+      toast.error(fail('下载失败', result.error ?? '未知原因', '请检查同步设置后重试。').text);
       logWarn('webdav', '下载同步包失败', { error: result.error });
       return;
     }
@@ -589,6 +784,79 @@ export function App() {
     await reloadSettings();
     setRemoteRestartNeeded(true);
     toast.success(`已恢复整库（写入 ${result.outcome?.full?.imported ?? 0} 条），重启后完全生效`);
+  }
+
+  /** 错误页「重试」：重新走一遍启动流程，不用接受用户手动重启。 */
+  const retryBoot = useCallback(() => {
+    logInfo('storage', '用户点击载入失败页的重试');
+    setError(null);
+    setBootTick((value) => value + 1);
+  }, []);
+
+  /** 回退警告条「重试」：原生侧重启会重新打开数据库；浏览器侧退回整页刷新。 */
+  async function retryStorage(): Promise<void> {
+    logInfo('storage', '用户请求重试打开原生存储', { fallback });
+    if (await relaunchApplication()) return;
+    try {
+      globalThis.location.reload();
+    } catch (cause: unknown) {
+      logWarn('storage', '自动重启失败', { message: describeError(cause) });
+      toast.error(fail('重试失败', '当前环境不能自动重启', '请手动关闭并重新打开应用。').text);
+    }
+  }
+
+  /** 「打开日志」：走现有导出入口（桌面端另存、其余端下载），日志本身只进文件。 */
+  async function exportDiagnosticLogs(): Promise<void> {
+    try {
+      const entries = logsText();
+      const name = `DawnTick-log-${new Date().toISOString().slice(0, 10)}.txt`;
+      const saved = await saveTextFile(name, entries === '' ? '暂无日志' : entries, {
+        extension: 'txt',
+        filterName: '日志文件',
+      });
+      if (saved.cancelled) return;
+      if (!saved.ok) {
+        toast.error(
+          fail('打开日志失败', saved.error ?? '日志没能写出', '请稍后重试；仍失败请在「设备与同步」里打开日志目录。').text,
+        );
+        return;
+      }
+      logInfo('log', '已导出诊断日志', { path: saved.path, bytes: entries.length });
+      toast.success(saved.path === null ? '已下载日志' : '已导出日志');
+      // 回退期间不写临时存储：导出已经完成，清空留到原生库恢复后
+      if (!fallback) await clearLogs();
+    } catch (cause: unknown) {
+      logError('log', '打开日志失败', { message: describeError(cause) });
+      toast.error(fail('打开日志失败', '日志暂时读不出来', '请稍后重试；仍失败请在「设备与同步」里查看。').text);
+    }
+  }
+
+  /** 损坏页「从备份文件恢复」：用最近一份通过自检的快照排队恢复，随后重启生效。 */
+  async function restoreFromBackup(): Promise<void> {
+    const outcome = await restoreLatestBackupSnapshot();
+    if (!outcome.ok) {
+      toast.error(
+        fail('恢复失败', outcome.error ?? '没有读到可用备份', '请打开备份目录手动处理，或重启应用后再试。').text,
+      );
+      return;
+    }
+    toast.success(`已排队恢复 ${outcome.name ?? '最近的快照'}，正在重启…`);
+    if (!(await relaunchApplication())) {
+      toast.info('请手动关闭并重新打开应用，恢复才会生效');
+    }
+  }
+
+  /** 损坏页「打开备份目录」：备份在数据目录的 backups 子目录里。 */
+  async function openBackupDirectory(): Promise<void> {
+    const dir = await openDataDirectory();
+    if (dir === null) {
+      toast.error(
+        fail('打开备份目录失败', '当前平台不支持打开数据目录', '请在「设备与同步」里导出或导入备份。').text,
+      );
+      return;
+    }
+    logInfo('storage', '打开数据目录', { dir });
+    toast.info(`已打开数据目录；备份在其中 backups 子目录：${dir}`);
   }
 
   // 窗口改尺寸后记录一次视口与滚动区高度：滑不动时日志里能看出是哪一层算错
@@ -722,6 +990,7 @@ export function App() {
 
   /** 详情页的「调课」：以当前这一课次为预设目标，打开课程调整弹窗。 */
   function openAdjustForLesson(cell: LessonCell, date: string): void {
+    if (!guardWrite('调课')) return;
     setAdjust({
       scheduleId: cell.scheduleId,
       courseId: cell.courseId,
@@ -789,10 +1058,11 @@ export function App() {
 
   async function applyMove(target: MoveTarget): Promise<void> {
     if (storage === null || data?.semester == null || move === null || moveBusy) return;
+    if (!guardWrite('调整课程时间')) return;
     const semester = data.semester;
     const resolved = resolveMove(target);
     if (!resolved.ok) {
-      toast.error(resolved.message);
+      toast.error(fail('无法调整', resolved.message, '请换一个目标位置再试。').text);
       return;
     }
     const { date, dayOfWeek, period, span } = resolved;
@@ -825,6 +1095,7 @@ export function App() {
             }).then(() => undefined),
           `已改为每周 ${where}`,
           '改为每周失败',
+          '请重试；仍失败请重新打开调整弹窗。',
         );
         if (!done) return;
       } else if (target.kind === 'date') {
@@ -832,6 +1103,7 @@ export function App() {
           reschedule,
           `已把这一次课调到 ${date} ${formatPeriodLabel(period, period + span)}`,
           '按日期调课失败',
+          '请重试；仍失败请重新打开调整弹窗。',
         );
         if (!done) return;
       } else {
@@ -841,7 +1113,7 @@ export function App() {
           target.kind === 'week'
             ? `本周的这节课已改到 ${where}`
             : `已把第 ${fromWeek} 周的这节课改到第 ${weeks} 周 ${formatPeriodLabel(period, period + span)}`;
-        const done = await withToast(reschedule, label, '仅调整这一次失败');
+        const done = await withToast(reschedule, label, '仅调整这一次失败', '请重试；仍失败请重新打开调整弹窗。');
         if (!done) return;
       }
       // 重叠只提醒不阻止：上面已经保存成功
@@ -872,6 +1144,7 @@ export function App() {
 
   async function switchSemester(id: string): Promise<void> {
     if (storage === null || data === null) return;
+    if (!guardWrite('切换学期')) return;
     for (const semester of data.semesters) {
       if (semester.id !== id && semester.is_active === 1) {
         await updateSemester(storage, semester.id, { is_active: 0 });
@@ -903,25 +1176,36 @@ export function App() {
 
   if (error !== null) {
     return (
-      <main className="flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4">
-        <p className="my-auto text-sm text-danger-strong">{error}</p>
-      </main>
+      <ErrorScreen
+        kind={error.kind}
+        failure={error.failure}
+        onRetry={retryBoot}
+        onRestore={() => void restoreFromBackup()}
+        onOpenBackupDir={() => void openBackupDirectory()}
+        onOpenLogs={() => void exportDiagnosticLogs()}
+      />
     );
   }
 
   if (storage === null || data === null) {
-    return (
-      <main className="flex h-full items-center justify-center bg-page">
-        <p className="text-sm text-muted">载入中</p>
-      </main>
-    );
+    return <LoadingScreen />;
   }
 
+  /** 存储就绪后各屏共用：回退时是只读包装，写操作会统一被拒绝 */
+  const screenStorage = uiStorage ?? storage;
+
   if (data.semester === null) {
+    const fallbackBanner = fallback ? (
+      <StorageFallbackBanner
+        onRetry={() => void retryStorage()}
+        onOpenLogs={() => void exportDiagnosticLogs()}
+      />
+    ) : null;
     return (
       <>
+        {fallbackBanner !== null && <div className="fixed inset-x-0 top-0 z-40">{fallbackBanner}</div>}
         <Onboarding
-          storage={storage}
+          storage={screenStorage}
           userId={USER_ID}
           timeZone={settings.timeZone}
           onDone={() => {
@@ -964,6 +1248,7 @@ export function App() {
             onSelectLesson={(cell) => void openLesson(cell)}
             onMoveLesson={(cell, date, period) => openMove(cell, date, period)}
             onQuickCreate={(preset) => {
+              if (!guardWrite('新建课程')) return;
               setEditingCourse(null);
               setQuickCreate(preset);
               setCourseFormOpen(true);
@@ -983,19 +1268,22 @@ export function App() {
         <LessonDetailOpener.Provider value={(target) => void openLessonFromSchedule(target)}>
           <ScheduleView
             data={data}
-            storage={storage}
+            storage={screenStorage}
             onChanged={refresh}
             onAddTodo={() => {
+              if (!guardWrite('添加待办')) return;
               setEditingEvent(null);
               setEventFormKind('todo');
               setTodoFormOpen(true);
             }}
             onAddExam={() => {
+              if (!guardWrite('添加考试')) return;
               setEditingEvent(null);
               setEventFormKind('exam');
               setTodoFormOpen(true);
             }}
             onOpenEvent={(event) => {
+              if (!guardWrite('编辑日程')) return;
               setEditingEvent(event);
               setTodoFormOpen(true);
             }}
@@ -1007,7 +1295,7 @@ export function App() {
       )}
       {view === 'settings' && (
         <SettingsView
-          storage={storage}
+          storage={screenStorage}
           userId={USER_ID}
           settings={settings}
           semesters={[data.semester, ...data.semesters.filter((item) => item.id !== data.semester?.id)]}
@@ -1023,10 +1311,10 @@ export function App() {
       )}
       {view === 'devices' && (
         <DevicesView
-          storage={storage}
+          storage={screenStorage}
           settings={settings}
           persistent={persistent}
-          storageKind={STORAGE_LABEL[storage.kind]}
+          storageKind={storageStatusLabel(STORAGE_LABEL[storage.kind], fallback)}
           onPatch={patch}
           onChanged={refresh}
           onSettingsReplaced={reloadSettings}
@@ -1039,13 +1327,14 @@ export function App() {
   const detailPanel =
     detail === null ? null : (
       <LessonDetail
-        storage={storage}
+        storage={screenStorage}
         userId={USER_ID}
         cell={detail.cell}
         detail={detail.detail}
         onChanged={refresh}
         onClose={() => setDetail(null)}
         onEditCourse={(id) => {
+          if (!guardWrite('编辑课程')) return;
           const managed = data.courses.find((item) => item.id === id) ?? null;
           if (managed === null) {
             toast.error('找不到这门课');
@@ -1071,6 +1360,12 @@ export function App() {
       )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {fallback && (
+          <StorageFallbackBanner
+            onRetry={() => void retryStorage()}
+            onOpenLogs={() => void exportDiagnosticLogs()}
+          />
+        )}
         {/* 周次标签给的是窗口起点所在周；上面挂窗口覆盖的日期区间，供自检与读屏 */}
         {view === 'timetable' && (
           <div
@@ -1104,6 +1399,7 @@ export function App() {
               onToday={backToToday}
               onSearch={() => setSearchOpen(true)}
               onAdd={() => {
+                if (!guardWrite('新建课程')) return;
                 setEditingCourse(null);
                 setQuickCreate(null);
                 setCourseFormOpen(true);
@@ -1161,7 +1457,7 @@ export function App() {
           setAdjustOpen(open);
           if (!open) setAdjust(null);
         }}
-        storage={storage}
+        storage={screenStorage}
         data={data}
         target={adjust}
         onChanged={refresh}
@@ -1173,6 +1469,7 @@ export function App() {
             <Button
               variant="secondary"
               onClick={() => {
+                if (!guardWrite('添加课程')) return;
                 setAddMenuOpen(false);
                 setCourseFormOpen(true);
               }}
@@ -1182,6 +1479,7 @@ export function App() {
             <Button
               variant="secondary"
               onClick={() => {
+                if (!guardWrite('添加待办')) return;
                 setAddMenuOpen(false);
                 setTodoFormOpen(true);
               }}
@@ -1298,7 +1596,7 @@ export function App() {
       <SearchDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}
-        storage={storage}
+        storage={screenStorage}
         semesterId={data.semester.id}
         onPick={pickSearchHit}
       />
@@ -1309,7 +1607,7 @@ export function App() {
           setCourseFormOpen(open);
           if (!open) setQuickCreate(null);
         }}
-        storage={storage}
+        storage={screenStorage}
         semesterId={data.semester.id}
         semesterStart={data.semester.start_date}
         totalWeeks={data.semester.total_weeks}
@@ -1326,7 +1624,7 @@ export function App() {
           setTodoFormOpen(open);
           if (!open) setEditingEvent(null);
         }}
-        storage={storage}
+        storage={screenStorage}
         userId={USER_ID}
         semesterId={data.semester.id}
         timeZone={data.timeZone}
@@ -1341,8 +1639,8 @@ export function App() {
       <Dialog
         open={notice !== null}
         onOpenChange={(open) => {
-          if (open || storage === null || notice === null) return;
-          void markNoticeSeen(storage, notice);
+          if (open || notice === null) return;
+          void markNoticeSeen(screenStorage, notice);
           const wasBetaNotice = notice === NOTICE_BETA;
           setNotice(null);
           // 切到测试版后自动检查一次更新
@@ -1364,8 +1662,8 @@ export function App() {
             <Button
               variant="secondary"
               onClick={() => {
-                if (storage === null || notice === null) return;
-                void markNoticeSeen(storage, notice);
+                if (notice === null) return;
+                void markNoticeSeen(screenStorage, notice);
                 setNotice(null);
                 openExternalUrl(RELEASES_URL);
               }}
@@ -1375,8 +1673,8 @@ export function App() {
             <Button
               variant="primary"
               onClick={() => {
-                if (storage === null || notice === null) return;
-                void markNoticeSeen(storage, notice);
+                if (notice === null) return;
+                void markNoticeSeen(screenStorage, notice);
                 setNotice(null);
               }}
             >
