@@ -24,7 +24,6 @@ import {
   resizeEmptyRange,
   stepEmptyRange,
   wheelRangeOf,
-  type EmptyDragEdge,
   type EmptyDragMode,
   type EmptyDragState,
   type EmptyTarget,
