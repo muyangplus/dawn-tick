@@ -965,8 +965,8 @@
 - 优先级：P1；ICE（I6/C8/E7=336）
 - 依赖：A-06（文案函数归位后可共用）
 - 验收指标：`grep -rn "#4F8DFD" apps/web/src` 除 tokens 语义色定义为 0；`DEFAULT_COURSE_COLORS` 仅 1 处定义；两表单周次按钮 DOM 结构一致（冒烟断言）。
-- 来源：主审；分歧与裁决：无
-- 状态：待办
+- 来源：主审；分歧与裁决：无。本轮实现：`51275d5`（合入 `2fc95de`）。
+- 状态：待验收
 
 ### [A-09] 原生桥与平台能力收口
 - 轨道：技术演进
@@ -982,8 +982,8 @@
 - 优先级：P1；ICE（I6/C8/E7=336）
 - 依赖：A-05（错误归一先落地，桥内错误文案复用 `errorMessage`）
 - 验收指标：`grep -rn "import('@tauri-apps/api/core')" apps/web/src` ≤2；`screens/`、`components/` 下为 0；`detectPlatform()` 调用点 ≤10；`typecheck` 通过（命令名常量必填）。
-- 来源：主审+盲审；分歧与裁决：无
-- 状态：待办
+- 来源：主审+盲审；分歧与裁决：无。本轮实现：`025f17b`（合入 `635da57`）。
+- 状态：待验收
 
 ### [A-10] 大文件按职责拆分：App 壳、日程卡片、周视图、数据加载、作息设置
 - 轨道：技术演进
@@ -1541,6 +1541,8 @@
 | A-15 小组件快照契约 | `e420af0` | `c531097` | `check-widget-contract.mjs` 双向差集、快照 `colors`、Kotlin 契约对齐（未编译验证） |
 | A-17 学校检索收编 | `93e459d` | `70758b3` | `filterSchools` 退场，`searchSchools` 单源，三入口首条一致 |
 | A-19 依赖与构建清理 | `23cac3a` | `b4eb35b` | 删 6 个未用 Radix 依赖、exceljs 独立 chunk（冒烟拆分未做） |
+| A-08 课程色与周次选择器单源 | `51275d5` | `2fc95de` | core `colors.ts`、`week-picker.tsx`、删死函数；两表单周次 DOM 一致 |
+| A-09 原生桥与平台能力收口 | `025f17b` | `635da57` | `lib/native`/`lib/capabilities`，tauri 动态 import 20→1，Rust 命令 30/30 对齐，修 `relaunch_elevated_autostart` 运行时 bug |
 | A-16 远端制品共享 | — | — | 按 Q14 量重合度后关闭（共享部分仅约 25 行/条） |
 
 - 发版过程修掉两个阻塞：① 界面冒烟在 CI runner 默认 UTC 下时间文案漂移（首次把冒烟接进 CI 时暴露）→ 冒烟脚本与 CI 步骤固定 `TZ=Asia/Shanghai`；② 发布正文的 Full Changelog 拼装跑在 `PREV` 计算之前，正文缺比较链接且 `gh release create` 失败 → 发布逻辑抽到 `tools/release/publish.sh`，正文自行拼好 Full Changelog（不再传 `--notes-start-tag`），失败时把日志推到 `ci-debug` 分支便于无权限读 Actions 日志时排查。
