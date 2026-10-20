@@ -34,7 +34,7 @@ export interface ScheduleCardContext {
   onAddExam: () => void;
   /** 单击时间线里的日程：进入详情编辑 */
   onOpenEvent: (event: EventRow) => void;
-  /** 打开课程调整弹窗；null 表示不预选某节课 */
+  /** 打开调课弹窗；null 表示不预选某节课 */
   onOpenAdjust: (target: AdjustTarget | null) => void;
   /** 新增调课、调整、节假日后刷新数据 */
   onChanged: () => void;

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  addDays,
   createCourse,
   createEvent,
-  updateEvent,
   createReschedule,
   createSchedule,
   dayOfWeek,
+  updateSchedule,
   weekOfDate,
+  weekStart,
+  type ManagedCourse,
   type Storage,
 } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
+import { weekDateOf } from '../data.ts';
 import { logError, logInfo } from '../log.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
@@ -19,15 +23,40 @@ import { toast } from './ui/toaster.tsx';
 
 const USER_ID = 'u1';
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 调课弹窗的四个主操作。 */
+export type AdjustMode = 'move' | 'cancel' | 'swap' | 'extra';
+
+/** 改期的四种生效范围。 */
+type AdjustScope = 'this' | 'weekly' | 'week' | 'date';
+
+const MODE_ITEMS = [
+  { id: 'move', label: '改期' },
+  { id: 'cancel', label: '停课' },
+  { id: 'swap', label: '调休' },
+  { id: 'extra', label: '临时加课' },
+] as const;
+
+const SCOPE_ITEMS = [
+  { id: 'this', label: '这一次', hint: '只改原日期所在周的这一次课' },
+  { id: 'weekly', label: '每周', hint: '直接改课表本身，之后每周都在新时间' },
+  { id: 'week', label: '指定周', hint: '把这节课调到一个指定周次' },
+  { id: 'date', label: '指定日期', hint: '把这节课调到某一天，可跨周、可换星期' },
+] as const;
 
 export interface AdjustTarget {
   scheduleId: string;
   courseId: string;
   courseName: string;
-  /** 被调整的那一天，YYYY-MM-DD */
+  /** 原日期，YYYY-MM-DD */
   date: string;
   periodStart: number;
   periodEnd: number;
+  /** 拖动入口的落点：目标日期与目标起始节，打开时预填进「改期」 */
+  drop?: { date: string; periodStart: number } | undefined;
+  /** 入口预选的主操作，缺省为「改期」 */
+  mode?: AdjustMode | undefined;
 }
 
 export interface AdjustDialogProps {
@@ -40,27 +69,66 @@ export interface AdjustDialogProps {
   onChanged: () => void;
 }
 
-type Mode = 'move' | 'rest' | 'extra';
+/** 目标位置已有的课：课程允许重叠，只用来提醒；week 为 null 表示不限周次（每周生效）。 */
+function overlapAt(
+  courses: readonly ManagedCourse[],
+  target: { dayOfWeek: number; period: number; span: number; week: number | null; excludeCourseId: string },
+): { name: string; start: number; end: number } | null {
+  const start = target.period;
+  const end = target.period + target.span;
+  for (const course of courses) {
+    if (course.id === target.excludeCourseId) continue;
+    for (const schedule of course.schedules) {
+      if (schedule.dayOfWeek !== target.dayOfWeek) continue;
+      if (schedule.periodEnd < start || schedule.periodStart > end) continue;
+      if (target.week !== null && !schedule.weeks.includes(target.week)) continue;
+      return { name: course.name, start: schedule.periodStart, end: schedule.periodEnd };
+    }
+  }
+  return null;
+}
 
-/** 调课 / 调休 / 临时加课入口。 */
+/** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
+function periodLabel(start: number, end: number): string {
+  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
+}
+
+async function withToast(action: () => Promise<void>, ok: string, fail: string): Promise<boolean> {
+  try {
+    await action();
+    toast.success(ok);
+    return true;
+  } catch (cause: unknown) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    logError('adjust', fail, { message });
+    toast.error(`${fail}：${message}`);
+    return false;
+  }
+}
+
+/**
+ * 全仓唯一的调课弹窗：改期 / 停课 / 调休 / 临时加课四选一。
+ * 课程详情、日程卡与拖拽三个入口都打开它，只传预填参数（`target`）。
+ */
 export function AdjustDialog({ open, onOpenChange, storage, data, target, onChanged }: AdjustDialogProps) {
-  const [mode, setMode] = useState<Mode>('move');
+  const [mode, setMode] = useState<AdjustMode>('move');
+  const [scope, setScope] = useState<AdjustScope>('this');
   const [busy, setBusy] = useState(false);
   const semester = data.semester;
 
-  // 调课
+  // 改期 / 停课共用
   const [courseId, setCourseId] = useState('');
   const [scheduleId, setScheduleId] = useState('');
   const [sourceDate, setSourceDate] = useState(data.today);
-  const [cancelOnly, setCancelOnly] = useState(false);
-  /** 调课后的性质标签：课程 / 实验（只改标签，不动排课） */
-  const [nature, setNature] = useState<'course' | 'lab'>('course');
+
+  // 改期
   const [newDate, setNewDate] = useState(data.today);
+  const [targetWeek, setTargetWeek] = useState('1');
   const [newStart, setNewStart] = useState('1');
   const [newEnd, setNewEnd] = useState('2');
   const [newRoom, setNewRoom] = useState('');
 
-  // 调休：把 A 天的课表调到 B 天
+  // 调休：把原日期课表整体搬到目标上课日
   const [restFrom, setRestFrom] = useState(data.today);
   const [restTo, setRestTo] = useState(data.today);
 
@@ -75,21 +143,45 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
   const schedules = course?.schedules ?? [];
   const schedule = useMemo(() => schedules.find((item) => item.id === scheduleId), [schedules, scheduleId]);
 
+  // 每次打开都按入口给的目标重置：三个入口只传预填参数，弹窗内部不记忆上一次
   useEffect(() => {
     if (!open) return;
     if (target !== null) {
-      setMode('move');
+      const drop = target.drop;
+      setMode(target.mode ?? 'move');
       setCourseId(target.courseId);
       setScheduleId(target.scheduleId);
       setSourceDate(target.date);
-      setNewDate(target.date);
-      setNewStart(String(target.periodStart));
-      setNewEnd(String(target.periodEnd));
-      setCancelOnly(false);
+      setNewDate(drop?.date ?? target.date);
+      setNewStart(String(drop?.periodStart ?? target.periodStart));
+      setNewEnd(
+        String(drop === undefined ? target.periodEnd : drop.periodStart + (target.periodEnd - target.periodStart)),
+      );
+      setNewRoom('');
+      setTargetWeek(
+        String(semester === null ? 1 : weekOfDate(drop?.date ?? target.date, semester.start_date)),
+      );
+      // 落点在原日期同一周就按「这一次」，跨周默认「指定日期」
+      const sameWeek =
+        drop === undefined ||
+        semester === null ||
+        weekOfDate(drop.date, semester.start_date) === weekOfDate(target.date, semester.start_date);
+      setScope(sameWeek ? 'this' : 'date');
       return;
     }
-    if (courseId === '' && data.courses.length > 0) setCourseId(data.courses[0]?.id ?? '');
-  }, [open, target, courseId, data.courses]);
+    setMode('move');
+    setScope('this');
+    setSourceDate(data.today);
+    setNewDate(data.today);
+    setNewStart('1');
+    setNewEnd('2');
+    setNewRoom('');
+    setTargetWeek(String(semester === null ? 1 : weekOfDate(data.today, semester.start_date)));
+    setExtraDate(data.today);
+    if (data.courses.length > 0) setCourseId(data.courses[0]?.id ?? '');
+    // 只在打开或换目标时重置：刷新导致的 data 变化不应清掉用户正在填的内容
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, target]);
 
   useEffect(() => {
     if (schedules.length === 0) {
@@ -111,65 +203,216 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
   const extraPeriodStart = Number(extraStart);
   const extraPeriodEnd = Number(extraEnd);
 
+  function periodsValid(start: number, end: number): boolean {
+    return Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start;
+  }
+
+  /** 学期内日期校验，返回错误文案或 null。 */
+  function dateError(date: string, label: string): string | null {
+    if (semester === null) return '还没有学期';
+    if (!DATE_RE.test(date)) return `请先选择${label}`;
+    const first = weekStart(semester.start_date);
+    const last = addDays(first, semester.total_weeks * 7 - 1);
+    if (date < first || date > last) return `${label}要在学期内（${first} 至 ${last}）`;
+    return null;
+  }
+
   async function submitMove(): Promise<void> {
     if (semester === null || schedule === undefined) {
       toast.error('请先选课程与要调整的课次');
       return;
     }
-    if (!Number.isInteger(periodStart) || !Number.isInteger(periodEnd) || periodStart < 1 || periodEnd < periodStart) {
+    if (!periodsValid(periodStart, periodEnd)) {
       toast.error('节次需要是 1 起、且结束不小于开始');
+      return;
+    }
+    const sourceError = dateError(sourceDate, '原日期');
+    if (sourceError !== null) {
+      toast.error(sourceError);
+      return;
+    }
+    const targetError = dateError(newDate, '调整后日期');
+    if (targetError !== null) {
+      toast.error(targetError);
+      return;
+    }
+    const targetDay = dayOfWeek(newDate);
+    const semesterId = semester.id;
+    // 每周：直接改课表本身，不再记一次调课
+    if (scope === 'weekly') {
+      if (
+        targetDay === schedule.dayOfWeek &&
+        periodStart === schedule.periodStart &&
+        periodEnd === schedule.periodEnd
+      ) {
+        toast.error('目标位置和现在一样，没有需要调整的');
+        return;
+      }
+      setBusy(true);
+      try {
+        const done = await withToast(
+          () =>
+            updateSchedule(storage, schedule.id, {
+              day_of_week: targetDay,
+              period_start: periodStart,
+              period_end: periodEnd,
+            }).then(() => undefined),
+          `已改为每周 ${WEEKDAYS[targetDay - 1] ?? ''} ${periodLabel(periodStart, periodEnd)}`,
+          '改为每周失败',
+        );
+        if (!done) return;
+        const overlap = overlapAt(data.courses, {
+          dayOfWeek: targetDay,
+          period: periodStart,
+          span: periodEnd - periodStart,
+          week: null,
+          excludeCourseId: courseId,
+        });
+        if (overlap !== null) {
+          toast.info(`调整后与「${overlap.name}」${periodLabel(overlap.start, overlap.end)}重叠，已同时保留`);
+        }
+        logInfo('adjust', '已改为每周', { scheduleId: schedule.id, dayOfWeek: targetDay });
+        onChanged();
+        onOpenChange(false);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    // 这一次 / 指定周 / 指定日期：都只改原日期这一次课
+    let finalDate = newDate;
+    if (scope === 'week') {
+      const wanted = Number(targetWeek);
+      if (!Number.isInteger(wanted) || wanted < 1 || wanted > semester.total_weeks) {
+        toast.error(`目标周要在 1–${semester.total_weeks} 周之间`);
+        return;
+      }
+      finalDate = weekDateOf(semester, wanted, targetDay);
+      const first = weekStart(semester.start_date);
+      const last = addDays(first, semester.total_weeks * 7 - 1);
+      if (finalDate < first || finalDate > last) {
+        toast.error(`目标周超出学期范围（${first} 至 ${last}）`);
+        return;
+      }
+    }
+    const sameWeek = weekOfDate(finalDate, semester.start_date) === weekOfDate(sourceDate, semester.start_date);
+    if (scope === 'this' && !sameWeek) {
+      toast.error('「这一次」只改原日期所在周的这一次课；跨周请选「指定日期」');
+      return;
+    }
+    if (finalDate === sourceDate && periodStart === schedule.periodStart && periodEnd === schedule.periodEnd) {
+      toast.error('目标位置和现在一样，没有需要调整的');
       return;
     }
     setBusy(true);
     try {
-      const created = await createReschedule(storage, {
-        userId: USER_ID,
-        semesterId: semester.id,
-        refScheduleId: schedule.id,
-        onDate: sourceDate,
-        action: cancelOnly ? 'cancel' : 'move',
-        title: cancelOnly ? `停课：${course?.name ?? ''}` : `调课：${course?.name ?? ''}`,
-        newDate: cancelOnly ? null : newDate,
-        newPeriodStart: cancelOnly ? null : periodStart,
-        newPeriodEnd: cancelOnly ? null : periodEnd,
-        newRoom: cancelOnly || newRoom.trim().length === 0 ? null : newRoom.trim(),
+      const done = await withToast(
+        () =>
+          createReschedule(storage, {
+            userId: USER_ID,
+            semesterId,
+            refScheduleId: schedule.id,
+            onDate: sourceDate,
+            action: 'move',
+            title: `调课：${course?.name ?? ''}`,
+            newDate: finalDate,
+            newPeriodStart: periodStart,
+            newPeriodEnd: periodEnd,
+            newRoom: newRoom.trim().length === 0 ? null : newRoom.trim(),
+            asDayOfWeek: dayOfWeek(finalDate),
+          }).then(() => undefined),
+        `已把这一次课调到 ${finalDate} ${periodLabel(periodStart, periodEnd)}`,
+        '调课失败',
+      );
+      if (!done) return;
+      const overlap = overlapAt(data.courses, {
+        dayOfWeek: dayOfWeek(finalDate),
+        period: periodStart,
+        span: periodEnd - periodStart,
+        week: weekOfDate(finalDate, semester.start_date),
+        excludeCourseId: courseId,
       });
-      // 性质只改标签：调成实验或课程，不动底层排课
-      if (created['id'] !== undefined) {
-        await updateEvent(storage, String(created['id']), { nature: nature === 'course' ? 'course' : 'lab' });
+      if (overlap !== null) {
+        toast.info(`调整后与「${overlap.name}」${periodLabel(overlap.start, overlap.end)}重叠，已同时保留`);
       }
-      toast.success(cancelOnly ? '已记录停课' : `已记录调课（性质：${nature === 'course' ? '课程' : '实验'}）`);
-      logInfo('adjust', cancelOnly ? '已记录停课' : '已记录调课', {
+      logInfo('adjust', '已记录调课', {
         scheduleId: schedule.id,
         date: sourceDate,
-        newDate: cancelOnly ? null : newDate,
+        newDate: finalDate,
         periods: `${periodStart}-${periodEnd}`,
-        nature,
+        scope,
       });
       onChanged();
       onOpenChange(false);
-    } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      logError('adjust', '调课保存失败', { message, scheduleId: schedule.id });
-      toast.error(`保存失败：${message}`);
     } finally {
       setBusy(false);
     }
   }
 
-  async function submitRest(): Promise<void> {
-    if (semester === null) return;
+  async function submitCancel(): Promise<void> {
+    if (semester === null || schedule === undefined) {
+      toast.error('请先选课程与要停的课次');
+      return;
+    }
+    const sourceError = dateError(sourceDate, '原日期');
+    if (sourceError !== null) {
+      toast.error(sourceError);
+      return;
+    }
     setBusy(true);
     try {
-      await createEvent(storage, {
-        userId: USER_ID,
-        semesterId: semester.id,
-        type: 'makeup',
-        title: `${restFrom} 的课表调到 ${restTo}`,
-        onDate: restTo,
-        asDayOfWeek: dayOfWeek(restFrom),
-      });
-      toast.success('已记录调休');
+      const done = await withToast(
+        () =>
+          createReschedule(storage, {
+            userId: USER_ID,
+            semesterId: semester.id,
+            refScheduleId: schedule.id,
+            onDate: sourceDate,
+            action: 'cancel',
+            title: `停课：${course?.name ?? ''}`,
+          }).then(() => undefined),
+        '已记录停课',
+        '停课失败',
+      );
+      if (!done) return;
+      logInfo('adjust', '已记录停课', { scheduleId: schedule.id, date: sourceDate });
+      onChanged();
+      onOpenChange(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitSwap(): Promise<void> {
+    if (semester === null) return;
+    const fromError = dateError(restFrom, '原日期课表');
+    if (fromError !== null) {
+      toast.error(fromError);
+      return;
+    }
+    const toError = dateError(restTo, '目标上课日');
+    if (toError !== null) {
+      toast.error(toError);
+      return;
+    }
+    setBusy(true);
+    try {
+      const done = await withToast(
+        () =>
+          createEvent(storage, {
+            userId: USER_ID,
+            semesterId: semester.id,
+            type: 'makeup',
+            title: `${restFrom} 的课表调到 ${restTo}`,
+            onDate: restTo,
+            asDayOfWeek: dayOfWeek(restFrom),
+          }).then(() => undefined),
+        '已记录调休',
+        '调休失败',
+      );
+      if (!done) return;
+      logInfo('adjust', '已记录调休', { from: restFrom, to: restTo });
       onChanged();
       onOpenChange(false);
     } finally {
@@ -183,13 +426,13 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
       toast.error('请选择课程或填写课程名称');
       return;
     }
-    if (
-      !Number.isInteger(extraPeriodStart) ||
-      !Number.isInteger(extraPeriodEnd) ||
-      extraPeriodStart < 1 ||
-      extraPeriodEnd < extraPeriodStart
-    ) {
+    if (!periodsValid(extraPeriodStart, extraPeriodEnd)) {
       toast.error('节次需要是 1 起、且结束不小于开始');
+      return;
+    }
+    const extraError = dateError(extraDate, '加课日期');
+    if (extraError !== null) {
+      toast.error(extraError);
       return;
     }
     setBusy(true);
@@ -219,21 +462,42 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
     }
   }
 
+  const scopeItem = SCOPE_ITEMS.find((item) => item.id === scope) ?? SCOPE_ITEMS[0];
+  const newDateHint =
+    scope === 'weekly'
+      ? '用它所在的星期几作为每周上课日'
+      : scope === 'week'
+        ? '用它所在的星期几落在「目标周」'
+        : scope === 'this'
+          ? '与原日期同一周内'
+          : '可跨周、可换星期';
+  const moveFromLabel = schedule === undefined ? '' : periodLabel(schedule.periodStart, schedule.periodEnd);
+  const moveToLabel = `${newDate} ${periodLabel(periodStart, periodEnd)}`;
+  const description =
+    mode === 'move'
+      ? `把「${course?.name ?? '课程'}」${moveFromLabel}调整为 ${moveToLabel}`
+      : mode === 'cancel'
+        ? `停掉「${course?.name ?? '课程'}」${sourceDate} 的这一次课，其他周次不受影响`
+        : mode === 'swap'
+          ? '把原日期那天的课表整体搬到目标上课日'
+          : '只加这一次，可在课程管理里删除';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="课程调整" description="改动只影响指定日期，原课表不变">
-        <div className="flex gap-1">
-          {(
-            [
-              { id: 'move', label: '调课' },
-              { id: 'rest', label: '调休' },
-              { id: 'extra', label: '临时加课' },
-            ] as const
-          ).map((item) => (
+      <DialogContent
+        title="调课"
+        description={description}
+        data-role="adjust-dialog"
+        data-mode={mode}
+        data-scope={mode === 'move' ? scope : 'none'}
+      >
+        <div className="flex flex-wrap gap-1" role="group" aria-label="调课操作" data-role="adjust-modes">
+          {MODE_ITEMS.map((item) => (
             <Button
               key={item.id}
               size="sm"
               variant={mode === item.id ? 'primary' : 'secondary'}
+              aria-pressed={mode === item.id}
               onClick={() => setMode(item.id)}
             >
               {item.label}
@@ -241,11 +505,11 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
           ))}
         </div>
 
-        {mode === 'move' && (
+        {(mode === 'move' || mode === 'cancel') && (
           <div className="flex flex-col gap-3">
-            <Field label="哪门课">
+            <Field label="课程">
               <Select value={courseId} onValueChange={setCourseId}>
-                <SelectTrigger aria-label="哪门课">{course?.name ?? '选择课程'}</SelectTrigger>
+                <SelectTrigger aria-label="课程">{course?.name ?? '选择课程'}</SelectTrigger>
                 <SelectContent>
                   {data.courses.map((item) => (
                     <SelectItem key={item.id} value={item.id}>
@@ -258,115 +522,129 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
             {schedules.length === 0 ? (
               <span className="text-sm text-muted">这门课还没有排课，请在课程管理中添加排课</span>
             ) : (
-              <Field label="要调整的课次">
+              <Field label="课次">
                 <Select value={scheduleId} onValueChange={setScheduleId}>
-                  <SelectTrigger aria-label="要调整的课次">
+                  <SelectTrigger aria-label="课次">
                     {schedule === undefined
                       ? '选择课次'
-                      : `${WEEKDAYS[schedule.dayOfWeek - 1] ?? ''} 第 ${schedule.periodStart}-${schedule.periodEnd} 节`}
+                      : `${WEEKDAYS[schedule.dayOfWeek - 1] ?? ''} ${periodLabel(
+                          schedule.periodStart,
+                          schedule.periodEnd,
+                        )}`}
                   </SelectTrigger>
                   <SelectContent>
                     {schedules.map((item) => (
                       <SelectItem key={item.id} value={item.id}>
-                        {`${WEEKDAYS[item.dayOfWeek - 1] ?? ''} 第 ${item.periodStart}-${item.periodEnd} 节`}
+                        {`${WEEKDAYS[item.dayOfWeek - 1] ?? ''} ${periodLabel(item.periodStart, item.periodEnd)}`}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
             )}
-            <Field label="原来哪一天" hint="这一天的那节课次被调整">
+            <Field label="原日期" hint="这一天的那节课次被调整">
               <Input
                 type="date"
                 value={sourceDate}
-                aria-label="原来哪一天"
+                aria-label="原日期"
                 onChange={(event) => setSourceDate(event.target.value)}
               />
             </Field>
-            <div className="flex gap-1">
-              <Button size="sm" variant={!cancelOnly ? 'primary' : 'secondary'} onClick={() => setCancelOnly(false)}>
-                改期
-              </Button>
-              <Button size="sm" variant={cancelOnly ? 'primary' : 'secondary'} onClick={() => setCancelOnly(true)}>
-                停课
-              </Button>
-            </div>
-            <Field label="性质" hint="只改标签：调成课程或实验，不动课表本身">
-              <div className="flex gap-1">
-                <Button
-                  size="sm"
-                  variant={nature === 'course' ? 'primary' : 'secondary'}
-                  aria-label="性质：课程"
-                  onClick={() => setNature('course')}
-                >
-                  课程
-                </Button>
-                <Button
-                  size="sm"
-                  variant={nature === 'lab' ? 'primary' : 'secondary'}
-                  aria-label="性质：实验"
-                  onClick={() => setNature('lab')}
-                >
-                  实验
-                </Button>
-              </div>
-            </Field>
-            {!cancelOnly && (
-              <>
-                <Field label="改到哪一天">
-                  <Input
-                    type="date"
-                    value={newDate}
-                    aria-label="改到哪一天"
-                    onChange={(event) => setNewDate(event.target.value)}
-                  />
-                </Field>
-                <div className="flex flex-wrap gap-3">
-                  <Field label="起始节">
-                    <Input
-                      type="number"
-                      min={1}
-                      max={40}
-                      className="w-20"
-                      value={newStart}
-                      onChange={(event) => setNewStart(event.target.value)}
-                    />
-                  </Field>
-                  <Field label="结束节">
-                    <Input
-                      type="number"
-                      min={1}
-                      max={40}
-                      className="w-20"
-                      value={newEnd}
-                      onChange={(event) => setNewEnd(event.target.value)}
-                    />
-                  </Field>
-                  <Field label="教室（可选）">
-                    <Input
-                      value={newRoom}
-                      aria-label="教室（可选）"
-                      onChange={(event) => setNewRoom(event.target.value)}
-                    />
-                  </Field>
-                </div>
-              </>
-            )}
           </div>
         )}
 
-        {mode === 'rest' && (
+        {mode === 'move' && (
           <div className="flex flex-col gap-3">
-            <Field label="把哪一天的课表">
+            <div className="flex flex-col gap-1" role="group" aria-label="生效范围" data-role="adjust-scopes">
+              <div className="flex flex-wrap gap-1">
+                {SCOPE_ITEMS.map((item) => (
+                  <Button
+                    key={item.id}
+                    size="sm"
+                    variant={scope === item.id ? 'primary' : 'secondary'}
+                    aria-pressed={scope === item.id}
+                    onClick={() => setScope(item.id)}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+              <span className="text-xs text-muted">{scopeItem.hint}</span>
+            </div>
+            {scope === 'week' && (
+              <Field label="目标周" hint={`第几周 · 1–${data.semester?.total_weeks ?? 1}`}>
+                <Input
+                  type="number"
+                  min={1}
+                  max={data.semester?.total_weeks ?? 1}
+                  aria-label="目标周"
+                  className="w-24"
+                  value={targetWeek}
+                  onChange={(event) => setTargetWeek(event.target.value)}
+                />
+              </Field>
+            )}
+            <Field label="调整后日期" hint={newDateHint}>
+              <Input
+                type="date"
+                value={newDate}
+                aria-label="调整后日期"
+                onChange={(event) => setNewDate(event.target.value)}
+              />
+            </Field>
+            <div className="flex flex-wrap gap-3">
+              <Field label="起始节">
+                <Input
+                  type="number"
+                  min={1}
+                  max={40}
+                  className="w-20"
+                  aria-label="起始节"
+                  value={newStart}
+                  onChange={(event) => setNewStart(event.target.value)}
+                />
+              </Field>
+              <Field label="结束节">
+                <Input
+                  type="number"
+                  min={1}
+                  max={40}
+                  className="w-20"
+                  aria-label="结束节"
+                  value={newEnd}
+                  onChange={(event) => setNewEnd(event.target.value)}
+                />
+              </Field>
+              {scope !== 'weekly' && (
+                <Field label="教室（可选）">
+                  <Input
+                    value={newRoom}
+                    aria-label="教室（可选）"
+                    onChange={(event) => setNewRoom(event.target.value)}
+                  />
+                </Field>
+              )}
+            </div>
+          </div>
+        )}
+
+        {mode === 'swap' && (
+          <div className="flex flex-col gap-3">
+            <Field label="原日期课表">
               <Input
                 type="date"
                 value={restFrom}
-                aria-label="把哪一天的课表"
+                aria-label="原日期课表"
                 onChange={(event) => setRestFrom(event.target.value)}
               />
             </Field>
-            <Field label="调到哪一天上">
-              <Input type="date" value={restTo} aria-label="调到哪一天上" onChange={(event) => setRestTo(event.target.value)} />
+            <Field label="目标上课日">
+              <Input
+                type="date"
+                value={restTo}
+                aria-label="目标上课日"
+                onChange={(event) => setRestTo(event.target.value)}
+              />
             </Field>
             <span className="text-xs text-muted">
               例：把周四的课表调到周六 → 周六按周四课表上课（{WEEKDAYS[dayOfWeek(restFrom) - 1] ?? ''} 的课）
@@ -398,7 +676,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                 onChange={(event) => setExtraName(event.target.value)}
               />
             </Field>
-            <Field label="哪一天">
+            <Field label="加课日期">
               <Input
                 type="date"
                 value={extraDate}
@@ -413,6 +691,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                   min={1}
                   max={40}
                   className="w-20"
+                  aria-label="起始节"
                   value={extraStart}
                   onChange={(event) => setExtraStart(event.target.value)}
                 />
@@ -423,6 +702,7 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
                   min={1}
                   max={40}
                   className="w-20"
+                  aria-label="结束节"
                   value={extraEnd}
                   onChange={(event) => setExtraEnd(event.target.value)}
                 />
@@ -438,12 +718,18 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
           </Button>
           <Button
             variant="primary"
-            disabled={busy || semester === null || (mode === 'move' && schedule === undefined)}
+            disabled={busy || semester === null || ((mode === 'move' || mode === 'cancel') && schedule === undefined)}
             onClick={() => {
-              void (mode === 'move' ? submitMove() : mode === 'rest' ? submitRest() : submitExtra());
+              void (mode === 'move'
+                ? submitMove()
+                : mode === 'cancel'
+                  ? submitCancel()
+                  : mode === 'swap'
+                    ? submitSwap()
+                    : submitExtra());
             }}
           >
-            保存
+            {mode === 'cancel' ? '确认停课' : '应用调整'}
           </Button>
         </DialogFooter>
       </DialogContent>

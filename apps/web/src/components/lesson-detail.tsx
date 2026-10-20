@@ -18,7 +18,7 @@ export interface LessonDetailProps {
   onClose: () => void;
   /** 打开课程编辑（课程信息与排课时段都在同一个表单里） */
   onEditCourse?: (courseId: string) => void;
-  /** 打开「课程调整」弹窗（调课／调休／临时加课），目标就是当前这一课次 */
+  /** 打开「调课」弹窗（改期／停课／调休／临时加课），目标就是当前这一课次 */
   onAdjust?: (cell: LessonCell) => void;
 }
 

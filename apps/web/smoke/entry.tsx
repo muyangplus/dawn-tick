@@ -852,30 +852,38 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
   check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
 
-  // C1：长按拖动 + 吸附后选作用范围
+  // C1：长按拖动 + 吸附后选生效范围（四选一，主按钮「应用调整」）
   const heldWithoutMove = await dragLesson(view.container, '高数');
   await flush(6);
   check(
-    '原地长按松手不弹调整弹窗',
-    heldWithoutMove && !(document.body.textContent ?? '').includes('调整课程时间'),
+    '原地长按松手不弹调课弹窗',
+    heldWithoutMove && document.querySelector('[data-role="adjust-dialog"]') === null,
     '',
   );
+  // 落点日期就是目标列（data-day=4 那一列）的日期：从 DOM 读，避免按种子推算
+  const dropColumnDate = view.container.querySelector('[data-day="4"]')?.getAttribute('data-date') ?? '';
   const heldAndMoved = await dragLesson(view.container, '高数', { day: 4 });
   await flush(6);
   const moveDialogText = document.body.textContent ?? '';
+  const moveDialog = document.querySelector('[data-role="adjust-dialog"]');
+  const moveDateInput = document.querySelector<HTMLInputElement>('input[aria-label="调整后日期"]');
   check(
-    '长按拖到别列后弹出调整课程时间',
+    '长按拖到别列后打开同一个调课弹窗并预填落点',
     heldAndMoved &&
-      moveDialogText.includes('调整课程时间') &&
-      moveDialogText.includes('本周生效') &&
-      moveDialogText.includes('每周生效') &&
-      moveDialogText.includes('指定周的同一天') &&
+      moveDialog !== null &&
+      moveDialogText.includes('调课') &&
+      moveDialogText.includes('这一次') &&
+      moveDialogText.includes('每周') &&
+      moveDialogText.includes('指定周') &&
       moveDialogText.includes('指定日期') &&
-      moveDialogText.includes('第 1–2 节'),
-    moveDialogText.slice(-60),
+      moveDialogText.includes('第 1–2 节') &&
+      moveDateInput instanceof window.HTMLInputElement &&
+      dropColumnDate !== '' &&
+      moveDateInput.value === dropColumnDate,
+    `${moveDialogText.slice(-60)} / 落点=${dropColumnDate} / 弹窗=${moveDateInput instanceof window.HTMLInputElement ? moveDateInput.value : '(无日期)'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
-  check('取消调整弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
+  check('取消调课弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
 
   // C1b：单击课程卡打开详情。拖动收尾只抑制紧随的那一次 click，且 pointerdown 会复位抑制标记。
   await dragLesson(view.container, '高数');
@@ -1219,21 +1227,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
   const overlapMoveText = document.body.textContent ?? '';
   check(
-    '拖到已占用节次仍可打开调整弹窗',
-    overlapMoveText.includes('调整课程时间') && overlapMoveText.includes('第 3–4 节'),
+    '拖到已占用节次仍可打开调课弹窗',
+    document.querySelector('[data-role="adjust-dialog"]') !== null && overlapMoveText.includes('第 3–4 节'),
     overlapMoveText.slice(-60),
   );
-  if (clickByText(document.body, '本周生效')) await flush(16);
+  if (clickByText(document.body, '应用调整')) await flush(16);
   check(
     '重叠调课保存成功并提示',
     (document.body.textContent ?? '').includes('调整后与「重叠测试课」第 1–3 节重叠，已同时保留'),
     (document.body.textContent ?? '').slice(-70),
   );
-  // 本周生效的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
+  // 「这一次」的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
   const movedOutCard = view.container.querySelector('[data-tone="movedOut"]');
   const movedInCard = view.container.querySelector('[data-role="moved-in-label"]')?.closest('[data-tone]') ?? null;
   check(
-    '本周调课后课表标出原位置与落点',
+    '这一次调课后课表标出原位置与落点',
     movedOutCard !== null &&
       (movedOutCard.querySelector('[data-role="moved-out-label"]')?.textContent ?? '').trim() === '已调课' &&
       (movedOutCard.textContent ?? '').includes('高数') &&
@@ -1255,7 +1263,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (document.documentElement.dataset.motion ?? '') !== '',
     `class=${viewRoot?.className ?? '(无)'} motion=${document.documentElement.dataset.motion ?? '(无)'}`,
   );
-  // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/课程调整收进「＋」，其余收进「⋯」
+  // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/调课收进「＋」，其余收进「⋯」
   check(
     '日程页默认只剩顶部一行与时间线',
     view.container.querySelector('summary[aria-label="添加"]') !== null &&
@@ -1310,14 +1318,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (document.body.textContent ?? '').slice(-60),
   );
   if (clickByLabel(document.body, '调课')) await flush(14);
-  const adjustFromDate = document.querySelector('input[aria-label="原来哪一天"]');
+  const adjustFromDate = document.querySelector<HTMLInputElement>('input[aria-label="原日期"]');
   check(
-    '详情页调课入口打开调整弹窗并预填排课',
-    (document.body.textContent ?? '').includes('临时加课') &&
-      triggerText('哪门课') === picked.course &&
+    '详情页调课入口打开同一个调课弹窗并预填课次',
+    document.querySelector('[data-role="adjust-dialog"]') !== null &&
+      (document.body.textContent ?? '').includes('临时加课') &&
+      triggerText('课程') === picked.course &&
       adjustFromDate instanceof window.HTMLInputElement &&
       adjustFromDate.value === picked.date,
-    `${triggerText('哪门课')} / ${adjustFromDate instanceof window.HTMLInputElement ? adjustFromDate.value : '(无)'}`,
+    `${triggerText('课程')} / ${adjustFromDate instanceof window.HTMLInputElement ? adjustFromDate.value : '(无)'}`,
   );
   if (clickByText(document.body, '取消')) await flush(8);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1647,23 +1656,44 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       scheduleRefresh === undefined,
     `统计=${scheduleStats?.textContent?.trim() ?? '(无)'} 刷新=${scheduleRefresh === undefined ? '无' : '有'}`,
   );
-  if (clickMenu(view.container, '添加', '课程调整')) await flush(12);
+  const openAdjustTrimmed = clickMenu(view.container, '添加', '调课');
+  if (openAdjustTrimmed) await flush(12);
   const adjustText = document.body.textContent ?? '';
+  const adjustDialogOpened = document.querySelector('[data-role="adjust-dialog"]') !== null;
+  const adjustHasButton = (label: string): boolean =>
+    [...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll('button') ?? [])].some(
+      (item) => (item.textContent ?? '').trim() === label,
+    );
   check(
-    '课程调整含三种模式',
-    adjustText.includes('调课') && adjustText.includes('调休') && adjustText.includes('临时加课'),
+    '调课弹窗含四个主操作',
+    openAdjustTrimmed &&
+      adjustDialogOpened &&
+      ['改期', '停课', '调休', '临时加课'].every((label) => adjustText.includes(label)),
     '',
   );
-  check('调课可直接选课与排课', document.querySelector('[aria-label="哪门课"]') !== null, '');
+  check('改期可直接选课与课次', document.querySelector('[aria-label="课程"]') !== null, '');
+  check(
+    '改期有四个生效范围',
+    ['这一次', '每周', '指定周', '指定日期'].every((label) => adjustText.includes(label)),
+    '',
+  );
+  check('改期主按钮为应用调整', adjustHasButton('应用调整'), '');
   if (clickByText(document.body, '调休')) await flush(8);
   check(
     '调休为指定两天',
-    document.querySelector('[aria-label="把哪一天的课表"]') !== null &&
-      document.querySelector('[aria-label="调到哪一天上"]') !== null,
+    document.querySelector('[aria-label="原日期课表"]') !== null &&
+      document.querySelector('[aria-label="目标上课日"]') !== null,
     '',
+  );
+  if (clickByText(document.body, '停课')) await flush(8);
+  check(
+    '停课主按钮改为确认停课',
+    adjustHasButton('确认停课') && !adjustHasButton('应用调整'),
+    (document.body.textContent ?? '').slice(-40),
   );
   if (clickByText(document.body, '临时加课')) await flush(8);
   check('临时加课可自定义名称', document.querySelector('[aria-label="或自定义课程名称"]') !== null, '');
+  check('临时加课主按钮为应用调整', adjustHasButton('应用调整'), '');
   if (clickByText(document.body, '取消')) await flush(6);
 
   const switchedToSettings = clickByText(view.container, '设置');
