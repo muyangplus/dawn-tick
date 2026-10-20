@@ -27,7 +27,7 @@ import { BusyOverlay } from './components/ui/busy-overlay.tsx';
 import { PendingRestartBar } from './components/pending-restart-bar.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
-import { Sheet } from './components/ui/sheet.tsx';
+import { Sheet, type FormContainer } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
 import { Database, Loader2, TriangleAlert } from 'lucide-react';
 import {
@@ -338,6 +338,8 @@ export function App() {
   const [checkTick, setCheckTick] = useState(0);
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
+  /** 高频短表单的容器：与底部导航同口径，非桌面（手机/平板）用底部 Sheet，桌面仍是居中 Dialog */
+  const formContainer: FormContainer = isDesktop ? 'dialog' : 'sheet';
   /** ≥1440 才把课程详情并排成第三栏；1024–1439 用右侧覆盖层，避免把课表列宽压到不可读 */
   const wideEnoughForSidePanel = useMediaQuery('(min-width: 1440px)');
   /** 课表页的日模式：←/→ 翻一天，顶部换日期翻页 */
@@ -1362,6 +1364,7 @@ export function App() {
         data={data}
         target={adjust}
         onChanged={refresh}
+        container={formContainer}
       />
 
       <SearchDialog
@@ -1387,6 +1390,7 @@ export function App() {
         onCreated={refresh}
         course={editingCourse}
         presetDraft={quickCreate}
+        container={formContainer}
       />
 
       <TodoForm
@@ -1404,6 +1408,7 @@ export function App() {
         slots={data.slots}
         editing={editingEvent}
         onCreated={refresh}
+        container={formContainer}
       />
 
       {/* 渠道提示：开发版可能频繁更新、公测版可能不稳定；每条只弹一次，新增提示对老用户也会弹 */}

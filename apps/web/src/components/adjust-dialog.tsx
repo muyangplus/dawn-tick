@@ -17,7 +17,8 @@ import { weekDateOf } from '../data.ts';
 import { fail } from '../lib/fail.ts';
 import { logError, logInfo } from '../log.ts';
 import { Button } from './ui/button.tsx';
-import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
+import { DialogFooter } from './ui/dialog.tsx';
+import { FormSurface, type FormContainer } from './ui/sheet.tsx';
 import { Field, Input } from './ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { toast } from './ui/toaster.tsx';
@@ -68,6 +69,8 @@ export interface AdjustDialogProps {
   /** 从某节课点进来时的预设目标 */
   target: AdjustTarget | null;
   onChanged: () => void;
+  /** 容器形态由挂载处按断点决定：移动端底部 Sheet，桌面端居中 Dialog */
+  container?: FormContainer;
 }
 
 /** 目标位置已有的课：课程允许重叠，只用来提醒；week 为 null 表示不限周次（每周生效）。 */
@@ -116,7 +119,15 @@ async function withToast(
  * 全仓唯一的调课弹窗：改期 / 停课 / 调休 / 临时加课四选一。
  * 课程详情、日程卡与拖拽三个入口都打开它，只传预填参数（`target`）。
  */
-export function AdjustDialog({ open, onOpenChange, storage, data, target, onChanged }: AdjustDialogProps) {
+export function AdjustDialog({
+  open,
+  onOpenChange,
+  storage,
+  data,
+  target,
+  onChanged,
+  container = 'dialog',
+}: AdjustDialogProps) {
   const [mode, setMode] = useState<AdjustMode>('move');
   const [scope, setScope] = useState<AdjustScope>('this');
   const [busy, setBusy] = useState(false);
@@ -489,253 +500,256 @@ export function AdjustDialog({ open, onOpenChange, storage, data, target, onChan
           : '只加这一次，可在课程管理里删除';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        title="调课"
-        description={description}
-        data-role="adjust-dialog"
-        data-mode={mode}
-        data-scope={mode === 'move' ? scope : 'none'}
-      >
-        <div className="flex flex-wrap gap-1" role="group" aria-label="调课操作" data-role="adjust-modes">
-          {MODE_ITEMS.map((item) => (
-            <Button
-              key={item.id}
-              size="sm"
-              variant={mode === item.id ? 'primary' : 'secondary'}
-              aria-pressed={mode === item.id}
-              onClick={() => setMode(item.id)}
-            >
-              {item.label}
-            </Button>
-          ))}
-        </div>
+    <FormSurface
+      open={open}
+      onOpenChange={onOpenChange}
+      container={container}
+      title="调课"
+      description={description}
+      contentAttrs={{
+        'data-role': 'adjust-dialog',
+        'data-mode': mode,
+        'data-scope': mode === 'move' ? scope : 'none',
+      }}
+    >
+      <div className="flex flex-wrap gap-1" role="group" aria-label="调课操作" data-role="adjust-modes">
+        {MODE_ITEMS.map((item) => (
+          <Button
+            key={item.id}
+            size="sm"
+            variant={mode === item.id ? 'primary' : 'secondary'}
+            aria-pressed={mode === item.id}
+            onClick={() => setMode(item.id)}
+          >
+            {item.label}
+          </Button>
+        ))}
+      </div>
 
-        {(mode === 'move' || mode === 'cancel') && (
-          <div className="flex flex-col gap-3">
-            <Field label="课程">
-              <Select value={courseId} onValueChange={setCourseId}>
-                <SelectTrigger aria-label="课程">{course?.name ?? '选择课程'}</SelectTrigger>
-                <SelectContent>
-                  {data.courses.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            {schedules.length === 0 ? (
-              <span className="text-sm text-muted">这门课还没有排课，请在课程管理中添加排课</span>
-            ) : (
-              <Field label="课次">
-                <Select value={scheduleId} onValueChange={setScheduleId}>
-                  <SelectTrigger aria-label="课次">
-                    {schedule === undefined
-                      ? '选择课次'
-                      : `${WEEKDAYS[schedule.dayOfWeek - 1] ?? ''} ${periodLabel(
-                          schedule.periodStart,
-                          schedule.periodEnd,
-                        )}`}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {schedules.map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        {`${WEEKDAYS[item.dayOfWeek - 1] ?? ''} ${periodLabel(item.periodStart, item.periodEnd)}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            )}
-            <Field label="原日期" hint="这一天的那节课次被调整">
-              <Input
-                type="date"
-                value={sourceDate}
-                aria-label="原日期"
-                onChange={(event) => setSourceDate(event.target.value)}
-              />
-            </Field>
-          </div>
-        )}
-
-        {mode === 'move' && (
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1" role="group" aria-label="生效范围" data-role="adjust-scopes">
-              <div className="flex flex-wrap gap-1">
-                {SCOPE_ITEMS.map((item) => (
-                  <Button
-                    key={item.id}
-                    size="sm"
-                    variant={scope === item.id ? 'primary' : 'secondary'}
-                    aria-pressed={scope === item.id}
-                    onClick={() => setScope(item.id)}
-                  >
-                    {item.label}
-                  </Button>
+      {(mode === 'move' || mode === 'cancel') && (
+        <div className="flex flex-col gap-3">
+          <Field label="课程">
+            <Select value={courseId} onValueChange={setCourseId}>
+              <SelectTrigger aria-label="课程">{course?.name ?? '选择课程'}</SelectTrigger>
+              <SelectContent>
+                {data.courses.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                  </SelectItem>
                 ))}
-              </div>
-              <span className="text-xs text-muted">{scopeItem.hint}</span>
-            </div>
-            {scope === 'week' && (
-              <Field label="目标周" hint={`第几周 · 1–${data.semester?.total_weeks ?? 1}`}>
-                <Input
-                  type="number"
-                  min={1}
-                  max={data.semester?.total_weeks ?? 1}
-                  aria-label="目标周"
-                  className="w-24"
-                  value={targetWeek}
-                  onChange={(event) => setTargetWeek(event.target.value)}
-                />
-              </Field>
-            )}
-            <Field label="调整后日期" hint={newDateHint}>
-              <Input
-                type="date"
-                value={newDate}
-                aria-label="调整后日期"
-                onChange={(event) => setNewDate(event.target.value)}
-              />
-            </Field>
-            <div className="flex flex-wrap gap-3">
-              <Field label="起始节">
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  className="w-20"
-                  aria-label="起始节"
-                  value={newStart}
-                  onChange={(event) => setNewStart(event.target.value)}
-                />
-              </Field>
-              <Field label="结束节">
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  className="w-20"
-                  aria-label="结束节"
-                  value={newEnd}
-                  onChange={(event) => setNewEnd(event.target.value)}
-                />
-              </Field>
-              {scope !== 'weekly' && (
-                <Field label="教室（可选）">
-                  <Input
-                    value={newRoom}
-                    aria-label="教室（可选）"
-                    onChange={(event) => setNewRoom(event.target.value)}
-                  />
-                </Field>
-              )}
-            </div>
-          </div>
-        )}
-
-        {mode === 'swap' && (
-          <div className="flex flex-col gap-3">
-            <Field label="原日期课表">
-              <Input
-                type="date"
-                value={restFrom}
-                aria-label="原日期课表"
-                onChange={(event) => setRestFrom(event.target.value)}
-              />
-            </Field>
-            <Field label="目标上课日" hint="原日课表整体搬过来" help="调休后，目标日按原日课表上课">
-              <Input
-                type="date"
-                value={restTo}
-                aria-label="目标上课日"
-                onChange={(event) => setRestTo(event.target.value)}
-              />
-            </Field>
-          </div>
-        )}
-
-        {mode === 'extra' && (
-          <div className="flex flex-col gap-3">
-            <Field label="已有课程">
-              <Select value={extraCourse} onValueChange={setExtraCourse}>
-                <SelectTrigger aria-label="已有课程">
-                  {data.courses.find((item) => item.id === extraCourse)?.name ?? '选择课程'}
+              </SelectContent>
+            </Select>
+          </Field>
+          {schedules.length === 0 ? (
+            <span className="text-sm text-muted">这门课还没有排课，请在课程管理中添加排课</span>
+          ) : (
+            <Field label="课次">
+              <Select value={scheduleId} onValueChange={setScheduleId}>
+                <SelectTrigger aria-label="课次">
+                  {schedule === undefined
+                    ? '选择课次'
+                    : `${WEEKDAYS[schedule.dayOfWeek - 1] ?? ''} ${periodLabel(
+                        schedule.periodStart,
+                        schedule.periodEnd,
+                      )}`}
                 </SelectTrigger>
                 <SelectContent>
-                  {data.courses.map((item) => (
+                  {schedules.map((item) => (
                     <SelectItem key={item.id} value={item.id}>
-                      {item.name}
+                      {`${WEEKDAYS[item.dayOfWeek - 1] ?? ''} ${periodLabel(item.periodStart, item.periodEnd)}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="或自定义课程名称" hint="填了就按这个名字新建一门课">
-              <Input
-                value={extraName}
-                aria-label="或自定义课程名称"
-                placeholder="如 形势与政策（补课）"
-                onChange={(event) => setExtraName(event.target.value)}
-              />
-            </Field>
-            <Field label="加课日期">
-              <Input
-                type="date"
-                value={extraDate}
-                aria-label="加课日期"
-                onChange={(event) => setExtraDate(event.target.value)}
-              />
-            </Field>
-            <div className="flex flex-wrap gap-3">
-              <Field label="起始节">
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  className="w-20"
-                  aria-label="起始节"
-                  value={extraStart}
-                  onChange={(event) => setExtraStart(event.target.value)}
-                />
-              </Field>
-              <Field label="结束节">
-                <Input
-                  type="number"
-                  min={1}
-                  max={40}
-                  className="w-20"
-                  aria-label="结束节"
-                  value={extraEnd}
-                  onChange={(event) => setExtraEnd(event.target.value)}
-                />
-              </Field>
-            </div>
-            <span className="text-xs text-muted">只加这一次，可在课程管理里删除</span>
-          </div>
-        )}
+          )}
+          <Field label="原日期" hint="这一天的那节课次被调整">
+            <Input
+              type="date"
+              value={sourceDate}
+              aria-label="原日期"
+              onChange={(event) => setSourceDate(event.target.value)}
+            />
+          </Field>
+        </div>
+      )}
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy || semester === null || ((mode === 'move' || mode === 'cancel') && schedule === undefined)}
-            onClick={() => {
-              void (mode === 'move'
-                ? submitMove()
-                : mode === 'cancel'
-                  ? submitCancel()
-                  : mode === 'swap'
-                    ? submitSwap()
-                    : submitExtra());
-            }}
-          >
-            {mode === 'cancel' ? '确认停课' : '应用调整'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {mode === 'move' && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1" role="group" aria-label="生效范围" data-role="adjust-scopes">
+            <div className="flex flex-wrap gap-1">
+              {SCOPE_ITEMS.map((item) => (
+                <Button
+                  key={item.id}
+                  size="sm"
+                  variant={scope === item.id ? 'primary' : 'secondary'}
+                  aria-pressed={scope === item.id}
+                  onClick={() => setScope(item.id)}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </div>
+            <span className="text-xs text-muted">{scopeItem.hint}</span>
+          </div>
+          {scope === 'week' && (
+            <Field label="目标周" hint={`第几周 · 1–${data.semester?.total_weeks ?? 1}`}>
+              <Input
+                type="number"
+                min={1}
+                max={data.semester?.total_weeks ?? 1}
+                aria-label="目标周"
+                className="w-24"
+                value={targetWeek}
+                onChange={(event) => setTargetWeek(event.target.value)}
+              />
+            </Field>
+          )}
+          <Field label="调整后日期" hint={newDateHint}>
+            <Input
+              type="date"
+              value={newDate}
+              aria-label="调整后日期"
+              onChange={(event) => setNewDate(event.target.value)}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-3">
+            <Field label="起始节">
+              <Input
+                type="number"
+                min={1}
+                max={40}
+                className="w-20"
+                aria-label="起始节"
+                value={newStart}
+                onChange={(event) => setNewStart(event.target.value)}
+              />
+            </Field>
+            <Field label="结束节">
+              <Input
+                type="number"
+                min={1}
+                max={40}
+                className="w-20"
+                aria-label="结束节"
+                value={newEnd}
+                onChange={(event) => setNewEnd(event.target.value)}
+              />
+            </Field>
+            {scope !== 'weekly' && (
+              <Field label="教室（可选）">
+                <Input
+                  value={newRoom}
+                  aria-label="教室（可选）"
+                  onChange={(event) => setNewRoom(event.target.value)}
+                />
+              </Field>
+            )}
+          </div>
+        </div>
+      )}
+
+      {mode === 'swap' && (
+        <div className="flex flex-col gap-3">
+          <Field label="原日期课表">
+            <Input
+              type="date"
+              value={restFrom}
+              aria-label="原日期课表"
+              onChange={(event) => setRestFrom(event.target.value)}
+            />
+          </Field>
+          <Field label="目标上课日" hint="原日课表整体搬过来" help="调休后，目标日按原日课表上课">
+            <Input
+              type="date"
+              value={restTo}
+              aria-label="目标上课日"
+              onChange={(event) => setRestTo(event.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+
+      {mode === 'extra' && (
+        <div className="flex flex-col gap-3">
+          <Field label="已有课程">
+            <Select value={extraCourse} onValueChange={setExtraCourse}>
+              <SelectTrigger aria-label="已有课程">
+                {data.courses.find((item) => item.id === extraCourse)?.name ?? '选择课程'}
+              </SelectTrigger>
+              <SelectContent>
+                {data.courses.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label="或自定义课程名称" hint="填了就按这个名字新建一门课">
+            <Input
+              value={extraName}
+              aria-label="或自定义课程名称"
+              placeholder="如 形势与政策（补课）"
+              onChange={(event) => setExtraName(event.target.value)}
+            />
+          </Field>
+          <Field label="加课日期">
+            <Input
+              type="date"
+              value={extraDate}
+              aria-label="加课日期"
+              onChange={(event) => setExtraDate(event.target.value)}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-3">
+            <Field label="起始节">
+              <Input
+                type="number"
+                min={1}
+                max={40}
+                className="w-20"
+                aria-label="起始节"
+                value={extraStart}
+                onChange={(event) => setExtraStart(event.target.value)}
+              />
+            </Field>
+            <Field label="结束节">
+              <Input
+                type="number"
+                min={1}
+                max={40}
+                className="w-20"
+                aria-label="结束节"
+                value={extraEnd}
+                onChange={(event) => setExtraEnd(event.target.value)}
+              />
+            </Field>
+          </div>
+          <span className="text-xs text-muted">只加这一次，可在课程管理里删除</span>
+        </div>
+      )}
+
+      <DialogFooter>
+        <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          取消
+        </Button>
+        <Button
+          variant="primary"
+          disabled={busy || semester === null || ((mode === 'move' || mode === 'cancel') && schedule === undefined)}
+          onClick={() => {
+            void (mode === 'move'
+              ? submitMove()
+              : mode === 'cancel'
+                ? submitCancel()
+                : mode === 'swap'
+                  ? submitSwap()
+                  : submitExtra());
+          }}
+        >
+          {mode === 'cancel' ? '确认停课' : '应用调整'}
+        </Button>
+      </DialogFooter>
+    </FormSurface>
   );
 }
