@@ -31,6 +31,8 @@ jobs:
         run: node tools/release/version.mjs --check
       - run: pnpm typecheck
       - run: pnpm test
+      - name: 界面冒烟
+        run: pnpm ui:smoke
 
   schema:
     name: 数据模型跨引擎校验
@@ -53,3 +55,24 @@ jobs:
           workspaces: apps/desktop/src-tauri
       - run: cargo check --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  android:
+    name: Android 编译校验
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/web build
+      - run: pnpm -C apps/mobile exec cap sync android
+      - name: 编译 debug APK（不发版，只验证安卓工程可编译）
+        working-directory: apps/mobile/android
+        run: sh ./gradlew assembleDebug --no-daemon
