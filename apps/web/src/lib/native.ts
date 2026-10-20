@@ -92,6 +92,9 @@ export async function invokeNative<T = void>(
 /**
  * 加载 Capacitor 原生插件（`registerPlugin` 模板的唯一实现）。
  *
+ * 业务模块不直接调用本函数，统一经 `lib/plugins.ts` 的 `loadPlugin()`：
+ * 插件名与接口定义都在那里，Android 侧对照表见 `apps/mobile/docs/plugins.contract.md`。
+ *
  * - 非 Android 壳：返回 `null`；
  * - Android 壳但插件加载失败：抛出原始错误，由调用方决定记日志还是回退。
  */

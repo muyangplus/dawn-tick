@@ -32,6 +32,8 @@ private const val PIN_TIMEOUT_MS = 10_000L
 /**
  * 把小组件放到桌面：调用系统的 requestPinAppWidget，弹出「添加到主屏幕」确认。
  * 结果要能分辨：启动器不支持、组件被停用、已经加过、用户取消或没弹窗、添加成功。
+ *
+ * 契约（插件名、方法名、返回字段）见 apps/web/src/lib/plugins.ts 与 apps/mobile/docs/plugins.contract.md。
  */
 @CapacitorPlugin(name = "DawnTickWidget")
 class WidgetPinPlugin : Plugin() {

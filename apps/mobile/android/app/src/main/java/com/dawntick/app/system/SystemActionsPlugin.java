@@ -21,6 +21,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 /**
  * 系统级动作：用系统浏览器打开外部链接、跳到电池优化白名单申请页、读通知状态。
  * 外部链接不走 window.open：WebView 那条路在 Android 11+ 会先卡在包可见性判断上，表现为「打开失败」。
+ *
+ * 契约（插件名、方法名、返回字段）见 apps/web/src/lib/plugins.ts 与 apps/mobile/docs/plugins.contract.md。
  */
 @CapacitorPlugin(name = "SystemActions")
 public class SystemActionsPlugin extends Plugin {

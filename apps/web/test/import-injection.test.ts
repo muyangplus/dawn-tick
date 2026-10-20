@@ -3,7 +3,20 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
-import { BOOKMARKLET_VERSION, extractTimetableFromHtml, parsePageDiagnostics } from '@dawn-tick/core';
+import {
+  BOOKMARKLET_VERSION,
+  PAGE_DIAGNOSTICS_FIELDS,
+  extractTimetableFromHtml,
+  parsePageDiagnostics,
+} from '@dawn-tick/core';
+import {
+  DIAGNOSTICS_INNER_PAGE,
+  DIAGNOSTICS_OUTER_PAGE,
+  DIAGNOSTICS_URL,
+  EXPECTED_COURSE_NAMES,
+  EXPECTED_DIAGNOSTICS,
+  diagnosticCountsOf,
+} from '../../../packages/core/test/fixtures/import-diagnostics.ts';
 
 const injectionSource = readFileSync(
   fileURLToPath(new URL('../../desktop/src-tauri/src/import-injection.js', import.meta.url)),
@@ -20,13 +33,22 @@ const PAGE = `<!doctype html><html><head><title>个人课表查询</title></head
 </tbody></table>
 </body></html>`;
 
-async function runInjection(options: { fail?: boolean } = {}) {
-  const dom = new JSDOM(PAGE, {
-    url: 'https://jw.example.edu.cn/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html',
+async function runInjection(
+  options: { block?: boolean; outer?: string; inner?: string; url?: string } = {},
+) {
+  const dom = new JSDOM(options.outer ?? PAGE, {
+    url: options.url ?? 'https://jw.example.edu.cn/jwglxt/kbcx/xskbcx_cxXskbcxIndex.html',
     runScripts: 'outside-only',
     pretendToBeVisual: true,
   });
   const { window } = dom;
+  if (options.inner !== undefined) {
+    const frame = window.document.querySelector('iframe');
+    if (frame?.contentDocument != null) {
+      frame.contentDocument.write(options.inner);
+      frame.contentDocument.close();
+    }
+  }
   let target: string | null = null;
 
   window.eval(injectionSource);
@@ -89,6 +111,32 @@ test('跳转不可用时退回手动复制', async () => {
   assert.ok(panel !== null && panel !== undefined, '应显示可复制的面板');
   assert.ok(fallback?.includes('<<<DAWNTICK>>>'), '面板里应给出可复制的内容');
   assert.match(button.textContent ?? '', /请手动复制/);
+});
+
+test('注入脚本与书签共用同一组诊断样例', async () => {
+  const { payload } = await runInjection({
+    outer: DIAGNOSTICS_OUTER_PAGE,
+    inner: DIAGNOSTICS_INNER_PAGE,
+    url: DIAGNOSTICS_URL,
+  });
+  const diagnostics = parsePageDiagnostics(payload ?? '');
+  assert.ok(diagnostics !== null, '应带回诊断信息');
+  // 字段清单来自 core 的 PAGE_DIAGNOSTICS_FIELDS：注入脚本少一个字段，这里的循环就会失败
+  for (const field of PAGE_DIAGNOSTICS_FIELDS) {
+    assert.ok(field in diagnostics, `注入脚本缺少诊断字段 ${field}`);
+  }
+  assert.equal(diagnostics?.v, BOOKMARKLET_VERSION, '诊断版本应与 BOOKMARKLET_VERSION 一致');
+  assert.deepEqual(diagnosticCountsOf(diagnostics ?? {}), EXPECTED_DIAGNOSTICS);
+  assert.equal(diagnostics?.loading, false, '样例页面不在加载中');
+  assert.equal(diagnostics?.url, DIAGNOSTICS_URL);
+  assert.equal(diagnostics?.title, '个人课表查询');
+
+  const result = extractTimetableFromHtml(payload ?? '', { totalWeeks: 20 });
+  assert.equal(result.shape, 'grid');
+  assert.deepEqual(
+    result.schedules.map((item) => item.courseName).sort(),
+    [...EXPECTED_COURSE_NAMES].sort(),
+  );
 });
 
 test('注入脚本不发起任何网络请求', async () => {

@@ -9,7 +9,11 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 
-/** 打开内嵌教务窗口，把页面内容交回 Web 层。 */
+/**
+ * 打开内嵌教务窗口，把页面内容交回 Web 层。
+ *
+ * 契约（插件名、方法名、返回字段）见 apps/web/src/lib/plugins.ts 与 apps/mobile/docs/plugins.contract.md。
+ */
 @CapacitorPlugin(name = "SchoolWindow")
 class SchoolWindowPlugin : Plugin() {
     @PluginMethod

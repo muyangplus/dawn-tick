@@ -457,21 +457,56 @@ export function looksLikeTimetablePage(html: string): boolean {
 /** 多帧页面之间的分隔标记，书签小工具用它拼接同源 iframe 内容。 */
 export const PAGE_FRAME_SEPARATOR = '<<<FRAME>>>';
 
-/** 书签带回的页面诊断信息。 */
+/**
+ * 页面诊断字段清单（顺序即契约顺序）。
+ *
+ * 同一份协议有两个运行环境实现，字段名与计数口径必须逐字一致：
+ * - 书签小工具 `PAGE_BOOKMARKLET`（本文件，跑在用户浏览器里）；
+ * - 桌面注入脚本 `apps/desktop/src-tauri/src/import-injection.js`（由 Rust `include_str!` 注入教务窗口）。
+ *
+ * 两个脚本都读不到本模块，所以字段名只能各写一份；改字段时三处一起改
+ * （本常量、书签字符串、注入脚本），`pnpm test` 里的共用样例会逐项断言。
+ * 计数口径：`frames` = 访问的文档数（主文档 + 同源 iframe）；
+ * `tables` = 所有文档的 `<table>` 总数；`kbTables` = id/class 命中
+ * `kbtable|^kb|timetable|skb|kbgrid` 的表格数；`gridCells` = id 形如 `1-1` / `1_1` 的元素数。
+ */
+export const PAGE_DIAGNOSTICS_FIELDS = [
+  'v',
+  'url',
+  'title',
+  'frames',
+  'tables',
+  'kbTables',
+  'gridCells',
+  'ready',
+  'loading',
+] as const;
+
+/** 诊断字段名；`PageDiagnostics` 的键必须覆盖本清单。 */
+export type PageDiagnosticsField = (typeof PAGE_DIAGNOSTICS_FIELDS)[number];
+
+/**
+ * 书签与桌面注入脚本带回的页面诊断信息。
+ *
+ * 字段清单见 `PAGE_DIAGNOSTICS_FIELDS`；桌面侧同构实现在
+ * `apps/desktop/src-tauri/src/import-injection.js` 的 `collect()`。
+ */
 export interface PageDiagnostics {
-  /** 书签版本；旧版书签不带该字段 */
+  /** 协议版本；旧版书签不带该字段 */
   v?: number;
   url?: string;
   title?: string;
   frames?: number;
   tables?: number;
+  /** id/class 疑似课表的表格数 */
   kbTables?: number;
+  /** 「日-节」网格单元格数 */
   gridCells?: number;
   ready?: string;
   loading?: boolean;
 }
 
-/** 当前书签版本；与旧版书签区分。 */
+/** 当前协议版本；书签与桌面注入脚本共用，旧版实现按缺字段降级。 */
 export const BOOKMARKLET_VERSION = 2;
 
 /**
