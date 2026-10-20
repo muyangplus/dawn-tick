@@ -296,8 +296,8 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             </div>
             <textarea
               data-role="onboarding-import-text"
-              aria-label="配置文本"
-              placeholder="或在此粘贴 JSON / Base64 配置文本"
+              aria-label="备份文本"
+              placeholder="或在此粘贴 JSON / Base64 备份文本"
               className="h-20 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
               value={importText}
               onChange={(event) => setImportText(event.target.value)}

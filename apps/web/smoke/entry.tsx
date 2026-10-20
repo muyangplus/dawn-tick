@@ -2644,10 +2644,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   check(
-    '数据页有自动备份开关、保留份数与快照列表',
+    '数据页有自动快照开关、保留份数与快照列表',
     view.container.querySelector('[data-role="backup-settings"]') !== null &&
-      view.container.querySelector('[role="switch"][aria-label="自动备份"]') !== null &&
-      view.container.querySelector('[role="switch"][aria-label="启动时备份"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="自动快照"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="启动时快照"]') !== null &&
       view.container.querySelector('[data-role="backup-keep"]') !== null &&
       view.container.querySelector('[data-role="backup-kind"]')?.textContent?.includes('JSON 快照') === true &&
       view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
@@ -2673,7 +2673,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
-  if (clickByText(view.container, '导出配置')) await flush(10);
+  if (clickByText(view.container, '导出备份')) await flush(10);
   check(
     '导出可选模块',
     document.body.textContent?.includes('学期与节次') === true &&
@@ -2681,11 +2681,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('input[aria-label="导出 提醒"]') !== null,
     '',
   );
-  // 整包 zip：可选把预设快照与日志一起打包，导出格式仍是三选一
+  // 整包 zip：可选把预设与日志一起打包，导出格式仍是三选一
   if (clickByLabel(document.body, '导出为整包 zip')) await flush(6);
   check(
     '整包 zip 可选打包预设与日志',
-    document.querySelector('input[aria-label="整包包含预设快照"]') !== null &&
+    document.querySelector('input[aria-label="整包包含预设"]') !== null &&
       document.querySelector('input[aria-label="整包包含日志文件"]') !== null,
     '',
   );
@@ -2710,10 +2710,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
-  // 导入配置：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
-  if (clickByLabel(view.container, '导入配置')) await flush(10);
+  // 导入备份：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
+  if (clickByLabel(view.container, '导入备份')) await flush(10);
   check(
-    '导入配置合并文件与粘贴两种方式',
+    '导入备份合并文件与粘贴两种方式',
     document.querySelector('[data-role="import-text"]') !== null &&
       document.body.textContent?.includes('选择备份文件') === true,
     '',
@@ -2724,7 +2724,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const pasteParsed = clickByText(document.body, '从文本导入');
   await flush(14);
   check(
-    '粘贴 Base64 文本可导入配置',
+    '粘贴 Base64 文本可导入备份',
     pasteParsed &&
       document.body.textContent?.includes('按修改时间合并') === true &&
       document.querySelector('input[aria-label="导入 课程与排课"]') !== null,

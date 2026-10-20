@@ -84,10 +84,8 @@ import { rememberCollapsed } from '../lib/collapse-store.ts';
 /** 关于卡片列出的运行时依赖与许可证：由 tools/legal/collect-licenses.mjs 生成。 */
 import { RUNTIME_CREDITS } from '../legal/credits.generated.ts';
 
-/** 预设来源的可读文案：raw 直连还是 GitHub contents 兜底。 */
-function sourceLabel(source: 'raw' | 'api'): string {
-  return source === 'api' ? 'GitHub contents 接口' : 'raw.githubusercontent.com';
-}
+/** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
+const PRESET_SOURCE_LABEL = '预设仓库（GitHub）';
 
 /** 日志级别说明（与维护卡片文案一致）。 */
 const LOG_LEVEL_HINT: Record<LogLevel, string> = {
@@ -220,7 +218,7 @@ export function DevicesView({
     try {
       const entry = await createSnapshot(storage);
       if (entry === null) {
-        setSnapshotMessage('备份失败，详见日志');
+        setSnapshotMessage('快照失败，详见日志');
         return;
       }
       const removed = await pruneSnapshots(storage, settings.backupKeep);
@@ -287,7 +285,7 @@ export function DevicesView({
       setSnapshotMessage(
         result === null
           ? '已恢复快照'
-          : `已恢复快照：写入 ${result.imported} 条，清空 ${result.removed} 条${safe === null ? '' : '（恢复前已备份当前数据）'}`,
+          : `已恢复快照：写入 ${result.imported} 条，清空 ${result.removed} 条${safe === null ? '' : '（恢复前已创建快照）'}`,
       );
       onChanged();
     } finally {
@@ -327,7 +325,7 @@ export function DevicesView({
         status.lastModified === null
           ? status.exists
             ? '远端已有备份'
-            : '远端还没有备份'
+            : '远端暂无备份'
           : `远端备份时间 ${formatDateTime(status.lastModified, settings.timeZone)}`;
       setDavStatus(`连接正常，${remote}`);
     } finally {
@@ -369,13 +367,13 @@ export function DevicesView({
       if (mode === 'settings') {
         const count = outcome?.settings?.imported ?? 0;
         setDavStatus(
-          `已应用设置与预设（写入 ${count} 条${outcome?.presets === true ? '，含预设' : ''}）${safe === null ? '' : '，下载前已备份本机数据'}`,
+          `已应用设置与预设（写入 ${count} 条${outcome?.presets === true ? '，含预设' : ''}）${safe === null ? '' : '，下载前已创建快照'}`,
         );
         await onSettingsReplaced();
         return;
       }
       setDavStatus(
-        `已恢复整库（写入 ${outcome?.full?.imported ?? 0} 条，清空 ${outcome?.full?.removed ?? 0} 条）${safe === null ? '' : '，下载前已备份本机数据'}；重启后完全生效`,
+        `已恢复整库（写入 ${outcome?.full?.imported ?? 0} 条，清空 ${outcome?.full?.removed ?? 0} 条）${safe === null ? '' : '，下载前已创建快照'}；重启后完全生效`,
       );
       setRestartNeeded(true);
       onChanged();
@@ -454,7 +452,7 @@ export function DevicesView({
       }
       if (!status.available || status.version === null) {
         setPresetResult(
-          `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${sourceLabel(status.source)}`}`,
+          `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${PRESET_SOURCE_LABEL}`}`,
         );
         logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version, source: status.source });
         return;
@@ -605,7 +603,7 @@ export function DevicesView({
       setImportModules(new Set(presentModules(payload)));
       setImportMode('skip');
       setImportOpen(false);
-      setBackupMessage('已解析粘贴的配置文本');
+      setBackupMessage('已解析粘贴的备份文本');
     } catch (cause: unknown) {
       setBackupMessage(cause instanceof Error ? cause.message : String(cause));
     }
@@ -749,29 +747,28 @@ export function DevicesView({
         <span className="text-xs text-muted">
           跨设备迁移用导出导入
         </span>
-        <span className="text-xs text-muted">预设来源：dawn-tick-presets</span>
         <div className="flex flex-col gap-1" data-role="backup-settings">
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>自动备份</span>
+            <span>自动快照</span>
             <Switch
-              aria-label="自动备份"
+              aria-label="自动快照"
               checked={settings.autoBackup}
               onCheckedChange={(checked) => void onPatch({ autoBackup: checked })}
             />
           </label>
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>启动时备份一次</span>
+            <span>启动时快照一次</span>
             <Switch
-              aria-label="启动时备份"
+              aria-label="启动时快照"
               checked={settings.backupOnStart}
               disabled={!settings.autoBackup}
               onCheckedChange={(checked) => void onPatch({ backupOnStart: checked })}
             />
           </label>
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-            <span>每天备份一次</span>
+            <span>每天快照一次</span>
             <Switch
-              aria-label="每天备份"
+              aria-label="每天快照"
               checked={settings.backupDaily}
               disabled={!settings.autoBackup}
               onCheckedChange={(checked) => void onPatch({ backupDaily: checked })}
@@ -796,14 +793,14 @@ export function DevicesView({
             <Button
               size="sm"
               variant="secondary"
-              aria-label="立即备份"
+              aria-label="立即创建快照"
               disabled={snapshotBusy}
-              onClick={() => void runBusy('正在备份…', () => backupNow())}
+              onClick={() => void runBusy('正在创建快照…', () => backupNow())}
             >
-              立即备份
+              立即创建快照
             </Button>
             <span className="text-xs text-muted" data-role="backup-kind">
-              {snapshotKind() === 'file' ? '整库文件快照（数据目录 backups）' : '库内 JSON 快照'}
+              {snapshotKind() === 'file' ? '整库文件快照（保存在数据目录）' : '库内 JSON 快照'}
             </span>
           </div>
           {snapshotMessage !== null && (
@@ -949,17 +946,17 @@ export function DevicesView({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={() => setExportOpen(true)}>
-            导出配置
+            导出备份
           </Button>
           <Button
             size="sm"
             variant="secondary"
             disabled={busy}
-            aria-label="导入配置"
+            aria-label="导入备份"
             onClick={() => setImportOpen(true)}
           >
             <Upload className="size-4" aria-hidden />
-            导入配置
+            导入备份
           </Button>
           {diagnosticsVisible && (
             <Button size="sm" variant="secondary" onClick={() => void runBusy('正在导出日志…', () => exportLogs())}>
@@ -1012,19 +1009,19 @@ export function DevicesView({
         {CHANNEL !== 'dev' ? (
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
             <span className="flex min-w-0 flex-col">
-              <span>接收测试版更新</span>
+              <span>接收公测版更新</span>
               <span className="truncate text-xs text-muted">
-                {CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后才会收到 beta 版'}
+                {CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到公测版'}
               </span>
             </span>
             <Switch
               checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-              aria-label="接收测试版更新"
+              aria-label="接收公测版更新"
               onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
             />
           </label>
         ) : (
-          <span className="text-xs text-muted">开发渠道：只接收 dev 构建，不参与测试版开关</span>
+          <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
         )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
@@ -1097,9 +1094,9 @@ export function DevicesView({
             dataRole="preset-repo-link"
             className="text-primary-strong underline"
             href="https://github.com/muyangplus/dawn-tick-presets"
-            ariaLabel="打开预设仓库 dawn-tick-presets（GitHub）"
+            ariaLabel="打开预设仓库（GitHub）"
           >
-            https://github.com/muyangplus/dawn-tick-presets
+            GitHub
           </ExternalLink>
           <span data-role="preset-version">
             预设版本：
@@ -1335,7 +1332,7 @@ export function DevicesView({
           }
         }}
       >
-        <DialogContent title="导出配置" description="勾选要导出的模块，并选择导出格式">
+        <DialogContent title="导出备份" description="勾选要导出的模块，并选择导出格式">
           <div className="flex flex-col gap-1">
             {BACKUP_MODULES.map((module) => (
               <label key={module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
@@ -1397,11 +1394,11 @@ export function DevicesView({
                 <input
                   type="checkbox"
                   className="size-4"
-                  aria-label="整包包含预设快照"
+                  aria-label="整包包含预设"
                   checked={bundlePresets}
                   onChange={(event) => setBundlePresets(event.target.checked)}
                 />
-                一并打包预设快照
+                一并打包预设
               </label>
               <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
                 <input
@@ -1461,7 +1458,7 @@ export function DevicesView({
           if (!open) setImportOpen(false);
         }}
       >
-        <DialogContent title="导入配置" description="选择备份文件，或直接粘贴 JSON / Base64 文本">
+        <DialogContent title="导入备份" description="选择备份文件，或直接粘贴 JSON / Base64 文本">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -1476,8 +1473,8 @@ export function DevicesView({
           </div>
           <textarea
             data-role="import-text"
-            aria-label="配置文本"
-            placeholder="或在此粘贴 JSON / Base64 配置文本"
+            aria-label="备份文本"
+            placeholder="或在此粘贴 JSON / Base64 备份文本"
             className="h-32 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
             value={importText}
             onChange={(event) => setImportText(event.target.value)}
@@ -1499,7 +1496,7 @@ export function DevicesView({
           if (!open) setPendingImport(null);
         }}
       >
-        <DialogContent title="导入配置" description="选模块与冲突处理">
+        <DialogContent title="导入备份" description="选模块与冲突处理">
           <div className="flex flex-col gap-1">
             {summarizeBackup(pendingImport ?? { format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} })
               .filter((item) => item.rows > 0)

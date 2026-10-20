@@ -75,13 +75,13 @@ const PERMISSION_LABEL: Record<ReminderView['permission'], string> = {
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
 const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = {
-  added: '已添加到桌面',
-  'already-added': '已在桌面上',
-  cancelled: '没收到系统确认，请长按桌面添加',
-  unsupported: '启动器不支持，请长按桌面添加',
+  added: '已添加到主屏',
+  'already-added': '已在主屏上',
+  cancelled: '没收到系统确认，请长按主屏添加',
+  unsupported: '启动器不支持，请长按主屏添加',
   disabled: '小组件被停用，请在系统设置启用',
-  rejected: '系统没接受请求，请长按桌面添加',
-  error: '添加失败，请长按桌面添加',
+  rejected: '系统没接受请求，请长按主屏添加',
+  error: '添加失败，请长按主屏添加',
 };
 
 /** 通知状态：区分「没问过」「拒绝过」「永久拒绝」「被静音」，并给出可点的下一步。 */
@@ -696,9 +696,9 @@ export function SettingsView({
         </label>
         {hasMobileWidgets() ? (
           <div className="flex flex-col gap-2" data-role="mobile-widget-guide">
-            <span className="text-sm text-ink">桌面小组件</span>
+            <span className="text-sm text-ink">主屏小组件</span>
             <span className="text-xs text-muted">
-              桌面长按 → 小组件 → 晓刻
+              主屏长按 → 小组件 → 晓刻
             </span>
             {MOBILE_WIDGETS.map((widget) => {
               const state = pinStates?.find((item) => item.id === widget.id) ?? null;
@@ -731,12 +731,12 @@ export function SettingsView({
                       <Button
                         size="sm"
                         variant="secondary"
-                        aria-label={`添加小组件到桌面：${widget.label}`}
+                        aria-label={`添加小组件到主屏：${widget.label}`}
                         loading={pinPending === widget.id}
                         disabled={pinPending !== null && pinPending !== widget.id}
                         onClick={() => void addWidget(widget.id)}
                       >
-                        添加到桌面
+                        添加到主屏
                       </Button>
                     </span>
                   </div>
