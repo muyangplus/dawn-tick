@@ -74,6 +74,7 @@ import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { ExternalLink } from '../components/ui/external-link.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
+import { HelpHint } from '../components/ui/help-hint.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { CardLayoutDialog } from './cards/layout-panel.tsx';
@@ -852,7 +853,11 @@ export function DevicesView({
         </div>
         <div className="flex flex-col gap-1" data-role="webdav-settings">
           <span className="text-sm font-medium text-ink">WebDAV 云同步</span>
-          <Field label="WebDAV 地址" hint="填完整目录 URL，例如 https://dav.example.com/remote.php/dav/files/me/DawnTick">
+          <Field
+            label="WebDAV 地址"
+            hint="WebDAV 目录 URL"
+            help="填完整目录地址，例如 https://dav.example.com/remote.php/dav/files/me/DawnTick"
+          >
             <Input
               data-role="webdav-url"
               value={settings.webdavUrl}
@@ -1084,9 +1089,6 @@ export function DevicesView({
               </SelectContent>
             </Select>
           </Field>
-          <span className="text-xs text-muted">
-            error 仅严重错误 · warn 错误与警告 · info 一般操作信息（默认） · debug 详细信息 · trace 全部日志，最详细
-          </span>
         </div>
         <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
           <span>预设仓库</span>
@@ -1165,11 +1167,17 @@ export function DevicesView({
               README
             </ExternalLink>
           </span>
-          <span className="text-xs text-muted">
-            快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天 · Esc 关闭弹窗与占位块
-          </span>
-          <span className="text-xs text-muted">
-            学校适配与作息在独立仓库 dawn-tick-presets 维护，缺适配时可提交学校信息。
+          <span className="flex min-h-tap flex-wrap items-center gap-1 text-xs text-muted">
+            <span>缺少学校适配？</span>
+            <ExternalLink
+              dataRole="preset-issue-link"
+              className="text-primary-strong underline"
+              href="https://github.com/muyangplus/dawn-tick-presets/issues"
+              ariaLabel="提交学校信息（预设仓库 Issues）"
+            >
+              提交学校信息
+            </ExternalLink>
+            <HelpHint label="学校适配">学校适配与作息在独立的预设仓库维护</HelpHint>
           </span>
         </div>
 

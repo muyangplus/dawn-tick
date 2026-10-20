@@ -588,11 +588,8 @@ export function SettingsView({
           </div>
         </Field>
         <span className="text-xs text-muted">
-          接下来 7 天待提醒 {reminders.upcoming.length} 条
+          接下来 7 天待提醒 {COUNT('reminder', reminders.upcoming.length)}
           {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
-        </span>
-        <span className="text-xs text-muted">
-          单课可在课程详情里单独设置
         </span>
       </>
     ),
@@ -807,15 +804,16 @@ export function SettingsView({
         )}
         <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
-            <span>空日程提示明日预告</span>
-            <span className="truncate text-xs text-muted">无课时显示明日课程</span>
+            <span>明日课程预告</span>
+            <span className="truncate text-xs text-muted">当天没课或课上完时显示</span>
           </span>
           <Switch
             checked={settings.tomorrowPreview}
-            aria-label="空日程提示明日预告"
+            aria-label="明日课程预告"
             onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
           />
-        </label>        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
+        </label>
+        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
           <span className="flex min-w-0 flex-col">
             <span>开学倒计时</span>
             <span className="truncate text-xs text-muted">学期开始前显示距离开学还有几天</span>

@@ -24,6 +24,7 @@ import {
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
+import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
@@ -802,6 +803,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 't', bubbles: true }));
   await flush(30);
   check('快捷键 T 回到以今天开头的窗口', windowStartOf() === todayText, windowStartOf());
+  // 快捷键说明只在侧栏保留一处，且方向键是「平移一屏」不是「切周」
+  // 冒烟跑在移动端断点（不渲染侧栏），这里单独挂一次侧栏核对文案
+  const sidebar = mount(<AppSidebar current="timetable" onSelect={() => {}} appName="晓刻 DawnTick" subtitle="第 1 周" />);
+  await flush(4);
+  const sidebarText = sidebar.container.querySelector('[data-role="app-sidebar"]')?.textContent ?? '';
+  check(
+    '快捷键说明只在侧栏一处且方向键说法正确',
+    sidebarText.includes('快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天'),
+    sidebarText.slice(-40),
+  );
+  sidebar.root.unmount();
+  sidebar.container.remove();
   check(
     '放假日课程灰显',
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
@@ -2615,7 +2628,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '关于卡片：帮助与反馈置顶并给出仓库入口',
     helpBlock !== null &&
       (helpBlock.textContent ?? '').includes('帮助与反馈') &&
-      (helpBlock.textContent ?? '').includes('快捷键') &&
+      (helpBlock.textContent ?? '').includes('缺少学校适配？提交学校信息') &&
       view.container.querySelector('[data-role="issues-link"]') !== null &&
       (view.container.querySelector('[data-role="readme-link"]')?.getAttribute('href') ?? '').includes('#readme') &&
       (appBlock === null ||

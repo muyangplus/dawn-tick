@@ -38,11 +38,17 @@ export function MiniShell({
         {/* 按钮区拦下双击，避免双击关闭/打开按钮时又冒泡到整窗的「打开主窗口」 */}
         <div className="mini-actions" onDoubleClick={(event) => event.stopPropagation()}>
           {onOpen !== undefined && (
-            <button type="button" className="mini-open" data-role="mini-open" onClick={onOpen} title="打开主窗口">
+            <button
+              type="button"
+              className="mini-open"
+              data-role="mini-open"
+              onClick={onOpen}
+              aria-label="打开主窗口"
+            >
               打开
             </button>
           )}
-          <button type="button" className="mini-close" onClick={onHide} title="隐藏">
+          <button type="button" className="mini-close" onClick={onHide} aria-label="隐藏悬浮窗">
             ×
           </button>
         </div>
