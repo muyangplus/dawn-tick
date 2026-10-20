@@ -5,8 +5,8 @@ import { formatDayCountdown } from '../../lib/format.ts';
 
 export const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→其他。 */
-export type TimelineNature = '课程' | '调整' | '其他' | '作业' | '考试' | '实验';
+/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→日程。 */
+export type TimelineNature = '课程' | '调整' | '日程' | '作业' | '考试' | '实验';
 
 export interface TimelineItem {
   key: string;
@@ -18,7 +18,7 @@ export interface TimelineItem {
   rank: number;
   /** 渲染用的粗分类；考试与实验单独一种，便于用 data-kind 定位 */
   kind: 'lesson' | 'adjust' | 'todo' | 'exam' | 'lab';
-  /** 类型标签文案（课程 / 调整 / 其他 / 考试） */
+  /** 类型标签文案（课程 / 调整 / 日程 / 考试） */
   nature: TimelineNature;
   title: string;
   /** 次要说明（关联课程、倒计时、备注）；课程条目为空，不再显示节次 */
@@ -201,7 +201,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: data.todoSort === 'type' ? todoIndex : minuteOf(endEpoch, data.timeZone),
       rank: 2,
       kind: isExam ? 'exam' : 'todo',
-      nature: isExam ? '考试' : isHomework ? '作业' : '其他',
+      nature: isExam ? '考试' : isHomework ? '作业' : '日程',
       title: todo.title,
       detail: parts.join(' · '),
       location: todo.location,

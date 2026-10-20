@@ -333,14 +333,13 @@ export function TodoForm({
     }
   }
 
-  /** 复制当前这一条：新建一条同名「副本」，其余字段照抄。 */
-  /** 删除当前条目：详情页 footer 的 danger 入口，确认后硬删并关闭。 */
+  /** 删除当前待办：详情页 footer 的 danger 入口，确认后硬删并关闭。 */
   async function remove(): Promise<void> {
     if (editing === null) return;
     const target = editing;
     const name = target.title;
     const ok = await confirmAction({
-      title: '删除条目',
+      title: '删除待办',
       description: DELETE(name, ['关联提醒']),
       confirmLabel: '确认删除',
     });

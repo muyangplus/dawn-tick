@@ -408,7 +408,7 @@ const NATURE_CLASS: Record<TimelineNature, string> = {
   考试: 'border-danger/40 bg-danger/10 text-danger-strong',
   作业: 'border-primary/40 bg-primary/5 text-primary-strong',
   实验: 'border-accent/40 bg-accent/5 text-accent-strong',
-  其他: 'border-line bg-surface-muted text-muted',
+  日程: 'border-line bg-surface-muted text-muted',
 };
 
 interface TimelineRowProps {

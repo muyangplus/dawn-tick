@@ -11,6 +11,8 @@ function alive(row: Row): boolean {
 export interface SemesterCounts {
   courses: number;
   schedules: number;
+  /** 时间表行（节次）：删除句里按「节次 c 个」计 */
+  slots: number;
   events: number;
   reminders: number;
 }
@@ -51,16 +53,22 @@ export async function countForSemester(storage: Storage, semesterId: string): Pr
   const events = (await storage.collection<Row>('events').getAll()).filter(
     (row) => alive(row) && row['semester_id'] === semesterId,
   );
+  const eventIds = new Set(events.map((row) => String(row['id'])));
+  const slots = (await storage.collection<Row>('time_slots').getAll()).filter(
+    (row) => alive(row) && row['semester_id'] === semesterId,
+  );
   const reminders = (await reminderRows(storage)).filter((row) => {
     const target = String(row['target_id'] ?? '');
     return (
       (row['target_type'] === 'course' && courseIds.has(target)) ||
-      (row['target_type'] === 'schedule' && scheduleIds.has(target))
+      (row['target_type'] === 'schedule' && scheduleIds.has(target)) ||
+      (row['target_type'] === 'event' && eventIds.has(target))
     );
   });
   return {
     courses: courses.length,
     schedules: schedules.length,
+    slots: slots.length,
     events: events.length,
     reminders: reminders.length,
   };

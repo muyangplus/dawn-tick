@@ -233,7 +233,7 @@ async function seed(): Promise<SmokeSeed> {
     title: '无时间待办',
     onDate: addDays(mondayText, -1),
   });
-  // 窗口内的那一天：③ 段要看「其他」性质的待办
+  // 窗口内的那一天：③ 段要看「日程」性质的待办
   await createEvent(storage, {
     userId: USER_ID,
     semesterId: String(semester['id']),
@@ -1389,7 +1389,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const pastCourseRow = rowIn('timeline-completed', '往期课');
   const noTimeRow = rowIn('timeline-main', '无时间待办');
   const courseNature = natureOf(pastCourseRow);
-  const otherNature = natureOf(noTimeRow);
+  const todoNature = natureOf(noTimeRow);
   check(
     '日程时间线：过期的课自动归入已完成',
     pastCourseRow !== undefined &&
@@ -1478,9 +1478,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const adjustNature = natureOf(view.container.querySelector('[data-kind="adjust"]'));
   const examNature = natureOf(rowIn('timeline-main', '期末模拟考'));
   check(
-    '日程时间线：显示条目性质标签（课程/调整/其他/考试）',
-    courseNature === '课程' && adjustNature === '调整' && otherNature === '其他' && examNature === '考试',
-    `课程=${courseNature} 调整=${adjustNature} 其他=${otherNature} 考试=${examNature}`,
+    '日程时间线：显示条目性质标签（课程/调整/日程/考试）',
+    courseNature === '课程' && adjustNature === '调整' && todoNature === '日程' && examNature === '考试',
+    `课程=${courseNature} 调整=${adjustNature} 日程=${todoNature} 考试=${examNature}`,
   );
 
   // ④ 停课：日程里默认已完成（进已完成分组、不计入未完成），课表里灰显并标注「停课」

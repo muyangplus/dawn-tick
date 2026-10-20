@@ -55,7 +55,7 @@ import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
-import { DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE } from '../copy/zh.ts';
 import { countForSemester, type SemesterCounts } from '../delete-counts.ts';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
@@ -337,7 +337,7 @@ export function SettingsView({
       const report = await deleteSemesterDeep(storage, removing.id);
       logInfo('semester', '删除学期', { id: removing.id, ...report });
       toast.success(
-        `已删除「${removing.name}」，连带清理课程 ${report.courses} · 排课 ${report.schedules} · 节次 ${report.slots} · 日程 ${report.events} · 提醒 ${report.reminders}`,
+        `已删除「${removing.name}」：课程 ${COUNT('course', report.courses)}、排课 ${COUNT('schedule', report.schedules)}、节次 ${COUNT('period', report.slots)}、日程 ${COUNT('event', report.events)}、提醒 ${COUNT('reminder', report.reminders)}`,
       );
       setRemoving(null);
       onChanged();
@@ -563,11 +563,11 @@ export function SettingsView({
                 key={minutes}
                 size="sm"
                 variant={settings.classReminderMinutes === minutes ? 'primary' : 'secondary'}
-                aria-label={`提前 ${minutes} 分钟`}
+                aria-label={`提前 ${COUNT('minute', minutes)}`}
                 disabled={!settings.classReminderEnabled}
                 onClick={() => void onPatch({ classReminderMinutes: minutes })}
               >
-                {minutes} 分钟
+                {COUNT('minute', minutes)}
               </Button>
             ))}
             <Input
@@ -931,7 +931,7 @@ export function SettingsView({
             id={card.def.id}
             title={card.def.title}
             {...(section === undefined ? {} : { icon: section.icon })}
-            {...(card.def.id === 'semesters' ? { badge: `${semesters.length} 个` } : {})}
+            {...(card.def.id === 'semesters' ? { badge: COUNT('semester', semesters.length) } : {})}
           >
             {body}
           </CollapsibleCard>
@@ -1010,10 +1010,11 @@ export function SettingsView({
             removing === null
               ? ''
               : DELETE(removing.name, [
-                  `${removeCounts?.courses ?? 0} 门课程`,
-                  `${removeCounts?.schedules ?? 0} 条排课`,
-                  `${removeCounts?.events ?? 0} 条日程`,
-                  `${removeCounts?.reminders ?? 0} 条提醒`,
+                  `课程 ${COUNT('course', removeCounts?.courses ?? 0)}`,
+                  `排课 ${COUNT('schedule', removeCounts?.schedules ?? 0)}`,
+                  `节次 ${COUNT('period', removeCounts?.slots ?? 0)}`,
+                  `日程 ${COUNT('event', removeCounts?.events ?? 0)}`,
+                  `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
                 ])
           }
         >
