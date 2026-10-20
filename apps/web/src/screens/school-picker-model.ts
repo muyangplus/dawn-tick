@@ -1,22 +1,18 @@
-// 纯逻辑（不含 JSX）：搜索筛选、按省份分组、`adapterInfo` 徽标、作息定位、`requestSchoolUrl`。
+// 纯逻辑（不含 JSX）：渲染截断、按省份分组、入口匹配、`adapterInfo` 徽标、作息定位、`requestSchoolUrl`。
+// 目录检索只有一条路径：组件直接调 core 的 `searchSchools`（名字/拼音/标签/省份）；
+// 本文件不再包一层检索，`SchoolEntry` 只负责「入口匹配与 URL 构造」。
 // 已适配 = 系统 id 有效 且 `systems` 含该系统 且 `parserPath` 非空；`schools`.`system` 恒空。
 import {
   BUILTIN_PRESET_SNAPSHOT,
   DEFAULT_TIMETABLE_ID,
+  entryUrlFor,
   findTimetable,
-  matchSchools,
   presetToTimeSlots,
   replaceTimeSlots,
   type SchoolEntry,
   type Storage,
 } from '@dawn-tick/core';
-import {
-  SCHOOL_TAGS,
-  listProvinces,
-  searchSchools,
-  type School,
-  type SearchSchoolsOptions,
-} from '@dawn-tick/core';
+import { SCHOOL_TAGS, listProvinces, type School } from '@dawn-tick/core';
 import {
   presetIndexFromSnapshot,
   resolvePresetSource,
@@ -55,15 +51,6 @@ export const PRIMARY_TAG_COUNT = 3;
 /** 结果区一次最多渲染多少行：2659 所全渲染没必要，其余靠关键词与筛选收敛。 */
 export const SCHOOL_RENDER_LIMIT = 120;
 
-/** 一次筛选：标签单选（null = 全部），省份单选（null = 全部地区）。 */
-export interface SchoolFilters {
-  tag: string | null;
-  province: string | null;
-}
-
-/** 空筛选（全部）。 */
-export const NO_SCHOOL_FILTERS: SchoolFilters = { tag: null, province: null };
-
 /** 目录里出现过的全部标签（只读视图，便于界面直接遍历）。 */
 export function allSchoolTags(): readonly string[] {
   return SCHOOL_TAGS;
@@ -82,16 +69,6 @@ export function primarySchoolTags(tags: readonly string[] = SCHOOL_TAGS): string
 export function extraSchoolTags(tags: readonly string[] = SCHOOL_TAGS): string[] {
   const primary = new Set(primarySchoolTags(tags));
   return [...tags].filter((tag) => !primary.has(tag)).sort();
-}
-
-/** 按关键词与筛选取学校，排序完全交给 core 的 `searchSchools`；`Partial` 缺的字段与空串都算「全部」。 */
-export function filterSchools(query: string, filters: Partial<SchoolFilters> = NO_SCHOOL_FILTERS): School[] {
-  const tag = textOf(filters.tag);
-  const province = textOf(filters.province);
-  const options: SearchSchoolsOptions = {};
-  if (tag !== null) options.tags = [tag];
-  if (province !== null) options.province = province;
-  return searchSchools(query, options);
 }
 
 /** 只取前 `limit` 所（默认 `SCHOOL_RENDER_LIMIT`），用于渲染。 */
@@ -376,22 +353,28 @@ export async function applySchoolTimetable(
   };
 }
 
-// —— 内置教务条目（我自己保存的学校）——
+// —— 内置/已保存教务条目 ↔ 目录学校的入口匹配 ——
 
-/** 把「已保存的教务条目」合成一条可检索的学校行：`system` 直接来自条目，适配判定走系统维度。 */
-export function schoolFromEntry(entry: SchoolEntry): School {
-  return { id: entry.id, name: entry.name, tags: [], system: entry.system };
+/** 一条入口匹配：命中的教务条目 + 已构造好的登录地址。 */
+export interface EntryMatch {
+  entry: SchoolEntry;
+  /** 登录地址：条目只有域名时按系统模板补入口路径，已带路径时原样使用 */
+  url: string;
 }
 
-/** 「已保存的教务条目」里按关键词命中的部分；去掉目录结果中的同名学校，目录行优先。 */
+/**
+ * 给一所目录学校找对应的教务条目，并构造可直接打开的登录地址。
+ *
+ * 只做**入口匹配与 URL 构造**：校名/拼音/标签/省份的检索统一走 `searchSchools`，
+ * 这里只回答「这所学校的内置/已保存入口是哪一个、地址是什么」。
+ * 匹配顺序先 id、后校名（`mergeSchools` 已保证同 id 时用户条目优先）。
+ */
 export function matchingEntrySchools(
   entries: readonly SchoolEntry[],
-  query: string,
-  directorySchools: readonly School[],
-): School[] {
-  if (entries.length === 0) return [];
-  const taken = new Set(directorySchools.map((school) => school.name));
-  return matchSchools(entries, query)
-    .filter((entry) => !taken.has(entry.name))
-    .map((entry) => schoolFromEntry(entry));
+  school: School,
+): EntryMatch | undefined {
+  const entry =
+    entries.find((item) => item.id === school.id) ?? entries.find((item) => item.name === school.name);
+  if (entry === undefined) return undefined;
+  return { entry, url: entryUrlFor(entry.system, entry.url) };
 }

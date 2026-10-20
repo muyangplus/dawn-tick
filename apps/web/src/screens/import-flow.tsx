@@ -7,7 +7,6 @@ import {
   applyImport,
   buildEntryUrl,
   countPastedFrames,
-  entryUrlFor,
   extractTimetableFromHtml,
   icsToSchedules,
   inspectPage,
@@ -34,7 +33,13 @@ import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo, describeError } from '../log.ts';
 import { fail } from '../lib/fail.ts';
 import { SchoolPicker } from '../components/school-picker.tsx';
-import { adapterInfo, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
+import {
+  adapterInfo,
+  loadPresetContext,
+  matchingEntrySchools,
+  type PresetContext,
+  type School,
+} from './school-picker-model.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 import {
   canOpenImportWindow,
@@ -168,7 +173,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     }
   }
 
-  /** 内置学校与本地保存的学校合并：SchoolPicker 用来补「我已保存的学校」那一组 */
+  /** 内置学校与本地保存的学校合并：选中学校时用来匹配教务入口 */
   const allSchools = mergeSchools(BUILTIN_SCHOOLS, customSchools);
 
   /** 上次在这台设备选过的学校：挂在选择器顶部 */
@@ -184,17 +189,15 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
     };
   }, [storage]);
 
-  /** 选中学校：有条目且有地址按 `entryUrlFor` 生成入口，否则用预设索引教务系统做初值待手填。 */
+  /** 选中学校：有入口条目就按条目的系统与地址填入，否则用预设索引教务系统做初值待手填。 */
   function pickSchool(school: School): void {
     setSchoolName(school.name);
     setPickedSchoolId(school.id);
     setSchoolId(school.id);
     // 导入流程与作息页共用「上次选的学校」：下次打开选择器置顶
     void writeRecentSchool(storage, school);
-    const entry = allSchools.find(
-      (item) => item.name === school.name || (item.aliases ?? []).includes(school.name),
-    );
-    if (entry === undefined) {
+    const match = matchingEntrySchools(allSchools, school);
+    if (match === undefined) {
       const info = presetContext === null ? null : adapterInfo(presetContext, school);
       const matched = SYSTEM_ENTRIES.find((item) => item.id === info?.systemId);
       if (matched !== undefined) setSchoolSystem(matched.id);
@@ -205,14 +208,14 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
       return;
     }
 
-    setSchoolId(entry.id);
-    setSchoolSystem(entry.system);
-    if (entry.url.trim() !== '') {
-      setImportUrl(entryUrlFor(entry.system, entry.url));
-      setWindowNote(`已填入 ${entry.name} 的教务入口（${systemEntry(entry.system).label}）`);
+    setSchoolId(match.entry.id);
+    setSchoolSystem(match.entry.system);
+    if (match.entry.url.trim() !== '') {
+      setImportUrl(match.url);
+      setWindowNote(`已填入 ${match.entry.name} 的教务入口（${systemEntry(match.entry.system).label}）`);
     } else {
       setImportUrl('');
-      setWindowNote(`${entry.name} 没有内置入口：先按入口补齐`);
+      setWindowNote(`${match.entry.name} 没有内置入口：先按入口补齐`);
     }
   }
 
@@ -517,7 +520,6 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
             {/* 学校检索统一收敛到 SchoolPicker（原基于名单的 Combobox 已移除） */}
             <SchoolPicker
               context={presetContext}
-              entries={allSchools}
               selectedId={pickedSchoolId}
               pinned={recentSchool}
               onPick={pickSchool}
