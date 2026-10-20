@@ -14,6 +14,10 @@ export interface SearchHit {
   periodStart?: number | undefined;
   periodEnd?: number | undefined;
   startAt?: number | undefined;
+  /** 日程命中的日期（YYYY-MM-DD）：搜索后直接定位到这一天 */
+  date?: string | undefined;
+  /** 排课命中的周次位图：调用方按学期总周数换算命中周 */
+  weeksMask?: number | undefined;
 }
 
 /** 前缀命中给 3 分，中间命中给 2 分，未命中 0 分。 */
@@ -84,6 +88,7 @@ export async function searchAll(
       dayOfWeek: schedule.day_of_week,
       periodStart: schedule.period_start,
       periodEnd: schedule.period_end,
+      ...(schedule.weeks_mask === null ? {} : { weeksMask: schedule.weeks_mask }),
     });
   }
 
@@ -98,6 +103,7 @@ export async function searchAll(
       subtitle: [event.on_date, event.location].filter((item) => item !== null && item !== undefined).join(' · '),
       score,
       startAt: event.start_at ?? undefined,
+      ...(event.on_date === null ? {} : { date: event.on_date }),
     });
   }
 

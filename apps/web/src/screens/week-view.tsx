@@ -777,8 +777,8 @@ export function WeekView({
               title="这段时间没有课程"
               description={
                 compact
-                  ? '点右下角「快速添加」，或在设置里导入课表'
-                  : '从右上角「添加课程」，或在设置里导入课表'
+                  ? '点右下角「＋」添加，或在设置里导入课表'
+                  : '从右上角「＋」添加，或在设置里导入课表'
               }
               action={
                 <Button size="sm" variant="secondary" aria-label="导入课表" onClick={onImport}>
