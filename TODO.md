@@ -1216,8 +1216,8 @@
 - 优先级：P2；ICE（I3/C8/E8=192）
 - 依赖：A-05（统一动作底座）、A-13（CI 纳入冒烟）
 - 验收指标：`pnpm test` 执行 web 用例 171→174；重复触发返回 `undefined`；慢操作出现 `.dt-busy-mask` 且按钮带 `aria-busy`。
-- 来源：主审+盲审；分歧与裁决：盲审技术独立发现未接线；体验盲审判已验收，主审判待验收，按硬规则保留为任务。
-- 状态：待办
+- 来源：主审+盲审；分歧与裁决：盲审技术独立发现未接线；体验盲审判已验收，主审判待验收，按硬规则保留为任务。；本轮落地：`package.json` 已纳入 `test/busy.test.ts`（A-13），`lib/action.ts` 的 `useAction` 内部复用 `useBusyAction` 并被 12 个组件使用，`course-form`/`todo-form` 直接用 `useBusyAction`，冒烟新增「保存时按钮带 aria-busy 并盖慢操作蒙版」（`smoke/entry.tsx`）。验收口径按现状更新：web 测试 231 项（旧文档写 174）。
+- 状态：待验收
 
 ## 6. 文案与术语表
 
