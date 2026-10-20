@@ -149,7 +149,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
           </Button>
         )}
         <span className="text-xs text-muted" data-role="school-timetable-status">
-          {slots.length === 0 ? '当前没有课次' : `当前 ${slots.length} 节课次`}
+          {slots.length === 0 ? '当前没有节次' : `当前 ${slots.length} 个节次`}
           {applied === null
             ? ''
             : ` · 上次套用：${applied.school} → ${applied.timetable}（${applied.periods} 节，${

@@ -13,3 +13,11 @@ export function DELETE(object: string, parts: readonly string[] = []): string {
 export function OVERWRITE(object: string, detail: string): string {
   return `将用${object}覆盖本机数据${detail}，不可撤销`;
 }
+
+/**
+ * 节次范围：单节「第 3 节」，连堂「第 3–4 节」。
+ * 连接符固定为 en dash（U+2013），节次范围只在这里生成，调用点不要再手写「-」。
+ */
+export function periodRange(start: number, end: number): string {
+  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
+}

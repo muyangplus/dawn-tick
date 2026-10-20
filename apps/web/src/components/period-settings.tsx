@@ -289,8 +289,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         ],
       });
       await replaceTimeSlots(storage, semesterId, periods);
-      logInfo('timetable', '生成课次', { periods: periods.length, duration, breakMinutes });
-      toast.success(`已生成 ${periods.length} 节课次`);
+      logInfo('timetable', '生成节次', { periods: periods.length, duration, breakMinutes });
+      toast.success(`已生成 ${periods.length} 个节次`);
       await reload();
       onChanged();
     } catch (cause: unknown) {
@@ -348,7 +348,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     try {
       // 追加的一节接在最后一节之后：间隔用界面上的课间
       const created = await appendTimeSlot(storage, semesterId, duration, breakMinutes);
-      logInfo('timetable', '追加课次', {
+      logInfo('timetable', '追加节次', {
         periodNo: created['period_no'],
         startTime: created['start_time'],
         breakMinutes,
@@ -368,7 +368,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     try {
       await updateTimeSlot(storage, slot.id, changes);
-      logInfo('timetable', '修改课次时间', { periodNo: slot.period_no, ...changes });
+      logInfo('timetable', '修改节次时间', { periodNo: slot.period_no, ...changes });
       await reload();
       onChanged();
       return true;
@@ -408,7 +408,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     try {
       const rows = await listTimeSlots(storage, semesterId);
       if (rows.length === 0) {
-        setMessage('没有可重排的课次，请先生成课次');
+        setMessage('没有可重排的节次，请先生成节次');
         return;
       }
       const anchor = current.periodNo;
@@ -465,7 +465,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         );
         return;
       }
-      logInfo('timetable', '删除课次', { periodNo });
+      logInfo('timetable', '删除节次', { periodNo });
       await reload();
       onChanged();
     } finally {
@@ -578,7 +578,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" size="sm" disabled={busy} onClick={() => void generate()}>
           <Wand2 className="size-4" aria-hidden />
-          自动生成课次
+          自动生成节次
         </Button>
         <Button variant="secondary" size="sm" disabled={busy} onClick={() => void append()}>
           <Plus className="size-4" aria-hidden />
@@ -626,12 +626,12 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             </Button>
           </li>
         ))}
-        {slots.length === 0 && <li className="text-xs text-muted">还没有课次，请先生成课次</li>}
+        {slots.length === 0 && <li className="text-xs text-muted">还没有节次，请先生成节次</li>}
       </ul>
       <span className="flex items-center gap-1 text-xs text-muted">
         每节起止时间可单独修改
-        <HelpHint label="改课次时间">
-          改完会问一次作用范围：只改这一节，或按每节时长与课间从这一节起顺延后面的课次。
+        <HelpHint label="改节次时间">
+          改完会问一次作用范围：只改这一节，或按每节时长与课间从这一节起顺延后面的节次。
         </HelpHint>
       </span>
 
@@ -644,7 +644,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         >
           <DialogContent
             title="调整范围"
-            description="这次改动要应用到哪些课次？"
+            description="这次改动要应用到哪些节次？"
             data-role="scope-dialog"
           >
             <div className="flex flex-col gap-1 text-xs text-muted">
