@@ -68,6 +68,7 @@ import { markNotifyAsked } from './notify.ts';
 import { attachLogStorage, clearLogs, describeError, loadLogs, logDebug, logError, logInfo, logWarn, logsText } from './log.ts';
 import { registerPendingRestart } from './pending-restart.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
+import { invokeNative } from './lib/native.ts';
 import { SEEN_NOTICES_META_KEY, TIME_ZONE_ALIGNED_META_KEY } from './lib/meta-keys.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
@@ -566,8 +567,7 @@ export function App() {
     applyDevFeatures(settings.devFeatures);
     void (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        await invoke('set_dev_console', { enabled: settings.devFeatures });
+        await invokeNative('set_dev_console', { enabled: settings.devFeatures });
       } catch {
         // 非桌面端没有控制台
       }

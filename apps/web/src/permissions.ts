@@ -1,4 +1,4 @@
-import { detectPlatform } from './platform-detect.ts';
+import { isAndroidApp, isDesktopApp, supportsBackgroundReminders } from './lib/capabilities.ts';
 import { currentNotifyPermission, ensureNotifyPermission, readNotifyAsked, type NotifyPermission } from './notify.ts';
 import { readNativeNotifyStatus } from './system-actions.ts';
 import { logInfo, logWarn } from './log.ts';
@@ -71,16 +71,15 @@ async function readTauriNotifyStatus(asked: boolean): Promise<NotifyStatus> {
 /** 通知状态：Android 走原生精确查询，桌面走通知插件，浏览器按 Notification.permission。 */
 export async function readNotifyStatus(storage: Storage | null): Promise<NotifyStatus> {
   const asked = storage === null ? false : await readNotifyAsked(storage);
-  const platform = detectPlatform();
 
-  if (platform === 'capacitor') {
+  if (isAndroidApp()) {
     const native = await readNativeNotifyStatus(asked);
     if (native !== null) {
       return { ...native, source: 'android', asked };
     }
     return { ...statusBase(asked), source: 'android', runtime: 'unsupported' };
   }
-  if (platform === 'tauri') return readTauriNotifyStatus(asked);
+  if (isDesktopApp()) return readTauriNotifyStatus(asked);
 
   const permission = currentNotifyPermission();
   const runtime: NotifyRuntimeState =
@@ -102,7 +101,7 @@ export async function readNotifyStatus(storage: Storage | null): Promise<NotifyS
 
 /** 精确闹钟状态：Android 12+ 才有独立开关，其余平台按支持处理。 */
 export async function exactAlarmState(): Promise<ExactAlarmState> {
-  if (detectPlatform() !== 'capacitor') return 'unsupported';
+  if (!supportsBackgroundReminders()) return 'unsupported';
   try {
     const local = await import('@capacitor/local-notifications');
     const status = await local.LocalNotifications.checkExactNotificationSetting();
@@ -117,7 +116,7 @@ export async function exactAlarmState(): Promise<ExactAlarmState> {
 
 /** 跳系统页申请精确闹钟权限（Android 12+）；返回是否已发起跳转。 */
 export async function requestExactAlarm(): Promise<boolean> {
-  if (detectPlatform() !== 'capacitor') return false;
+  if (!supportsBackgroundReminders()) return false;
   try {
     const local = await import('@capacitor/local-notifications');
     await local.LocalNotifications.changeExactNotificationSetting();
@@ -133,9 +132,12 @@ export async function requestExactAlarm(): Promise<boolean> {
 
 /** 启动时索取通知权限（Android 13+）；精确闹钟未开且开启课前提醒时跳系统页，否则提醒被降为大致时间。 */
 export async function ensureStartupPermissions(options: { remindersEnabled: boolean }): Promise<PermissionReport> {
-  const platform = detectPlatform();
-  if (platform !== 'capacitor') {
-    return { platform, notifications: 'skipped', exactAlarm: 'unsupported' };
+  if (!isAndroidApp()) {
+    return {
+      platform: isDesktopApp() ? 'tauri' : 'web',
+      notifications: 'skipped',
+      exactAlarm: 'unsupported',
+    };
   }
 
   const notifications = await ensureNotifyPermission();
@@ -149,5 +151,5 @@ export async function ensureStartupPermissions(options: { remindersEnabled: bool
   if (notifications === 'denied') {
     logWarn('permission', '通知权限未授予：课前提醒不会弹系统通知');
   }
-  return { platform, notifications, exactAlarm: alarm };
+  return { platform: 'capacitor', notifications, exactAlarm: alarm };
 }

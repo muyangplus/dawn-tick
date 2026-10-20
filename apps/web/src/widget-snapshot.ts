@@ -3,7 +3,8 @@ import type { AppData } from './data.ts';
 import { resolveTokens } from './design/tokens.ts';
 import { writeMetaJson } from './lib/meta.ts';
 import { WIDGET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
-import { detectPlatform } from './platform-detect.ts';
+import { isDesktopApp } from './lib/capabilities.ts';
+import { loadCapacitorPlugin } from './lib/native.ts';
 
 export const WIDGET_SNAPSHOT_KEY = WIDGET_SNAPSHOT_META_KEY;
 
@@ -134,11 +135,9 @@ export async function writeWidgetSnapshot(
   settings: AppSettings,
 ): Promise<void> {
   await writeMetaJson(storage, WIDGET_SNAPSHOT_KEY, buildWidgetSnapshot(data, settings), { scope: 'widget' });
-  if (detectPlatform() !== 'capacitor') return;
   try {
-    const { registerPlugin } = await import('@capacitor/core');
-    const plugin = registerPlugin<{ refresh(): Promise<void> }>('WidgetRefresh');
-    await plugin.refresh();
+    const plugin = await loadCapacitorPlugin<{ refresh(): Promise<void> }>('WidgetRefresh');
+    if (plugin !== null) await plugin.refresh();
   } catch {
     // 插件未注册时跳过，快照仍会在系统周期刷新时生效
   }
@@ -149,7 +148,7 @@ export const WIDGET_DATA_CHANGED_EVENT = 'widget-data-changed';
 
 /** 通知悬浮窗重新读课表：主窗口每次数据加载完成后调用，悬浮窗不必等自己的轮询间隔。 */
 export async function notifyWidgetWindows(): Promise<void> {
-  if (detectPlatform() !== 'tauri') return;
+  if (!isDesktopApp()) return;
   try {
     const { emit } = await import('@tauri-apps/api/event');
     await emit(WIDGET_DATA_CHANGED_EVENT);

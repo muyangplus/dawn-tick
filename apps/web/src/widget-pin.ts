@@ -1,5 +1,9 @@
-import { detectPlatform } from './platform-detect.ts';
+import { hasMobileWidgets } from './lib/capabilities.ts';
+import { loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
 import { logInfo, logWarn } from './log.ts';
+
+/** 是否有主屏小组件（仅 Android）：实现收在 lib/capabilities.ts，这里保留原导出路径。 */
+export { hasMobileWidgets };
 
 /** 手机端小组件：id 与 Android 端注册的 receiver 一一对应。 */
 export interface MobileWidget {
@@ -22,11 +26,6 @@ export const WIDGET_PIN_STEPS: readonly string[] = [
   '在列表里找到「晓刻 DawnTick」',
   '选尺寸后拖到桌面上',
 ];
-
-/** 只有 Android 应用内才有主屏小组件；Windows 用悬浮窗、Web 没有。 */
-export function hasMobileWidgets(): boolean {
-  return detectPlatform() === 'capacitor';
-}
 
 /** 一键添加的结果：把「系统不支持 / 被停用 / 已添加 / 取消或没弹窗 / 成功」分开。 */
 export type PinWidgetStatus =
@@ -63,12 +62,10 @@ interface WidgetPlugin {
 }
 
 async function loadWidgetPlugin(): Promise<WidgetPlugin | null> {
-  if (!hasMobileWidgets()) return null;
   try {
-    const { registerPlugin } = await import('@capacitor/core');
-    return registerPlugin<WidgetPlugin>('DawnTickWidget');
+    return await loadCapacitorPlugin<WidgetPlugin>('DawnTickWidget');
   } catch (cause: unknown) {
-    logWarn('widget', '小组件插件不可用', { message: cause instanceof Error ? cause.message : String(cause) });
+    logWarn('widget', '小组件插件不可用', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -99,7 +96,7 @@ export async function pinWidget(id: MobileWidget['id']): Promise<PinWidgetResult
     logInfo('widget', '请求添加主屏小组件', { provider: id, status, reason: result?.reason ?? null });
     return { status, reason: result?.reason };
   } catch (cause: unknown) {
-    const reason = cause instanceof Error ? cause.message : String(cause);
+    const reason = nativeErrorMessage(cause);
     logWarn('widget', '请求添加主屏小组件失败', { provider: id, message: reason });
     return { status: 'error', reason };
   }
@@ -121,7 +118,7 @@ export async function readMobileWidgetStates(): Promise<MobileWidgetState[] | nu
     return states;
   } catch (cause: unknown) {
     logWarn('widget', '读取主屏小组件状态失败', {
-      message: cause instanceof Error ? cause.message : String(cause),
+      message: nativeErrorMessage(cause),
     });
     return null;
   }

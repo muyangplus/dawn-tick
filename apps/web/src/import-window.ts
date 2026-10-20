@@ -1,14 +1,12 @@
-import { detectPlatform } from './platform-detect.ts';
+import { canOpenImportWindow, isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
+import { invokeNative, loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
 import { logInfo, logWarn } from './log.ts';
 import type { SchoolEntry } from '@dawn-tick/core';
 
 const URL_KEY = 'dt.import.url';
 
 /** 内嵌教务窗口：桌面端为独立 Tauri 窗口，移动端为 Capacitor 插件 `SchoolWindow`；两端包裹格式一致。 */
-export function canOpenImportWindow(): boolean {
-  const platform = detectPlatform();
-  return platform === 'tauri' || platform === 'capacitor';
-}
+export { canOpenImportWindow };
 
 export function rememberedImportUrl(): string {
   try {
@@ -35,31 +33,31 @@ export interface ImportWindowResult {
 
 /** 打开内嵌教务窗口。 */
 export async function openImportWindow(url: string): Promise<ImportWindowResult> {
-  const platform = detectPlatform();
-  if (platform === 'tauri') {
+  if (isDesktopApp()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_import_window', { url });
+      await invokeNative('open_import_window', { url });
       rememberImportUrl(url);
-      logInfo('import-window', '打开教务窗口', { url, platform });
+      logInfo('import-window', '打开教务窗口', { url, platform: 'tauri' });
       return { ok: true };
     } catch (cause: unknown) {
-      const error = cause instanceof Error ? cause.message : String(cause);
+      const error = nativeErrorMessage(cause);
       logWarn('import-window', '打开教务窗口失败', { message: error });
       return { ok: false, error };
     }
   }
-  if (platform === 'capacitor') {
+  if (isAndroidApp()) {
     try {
-      const { registerPlugin } = await import('@capacitor/core');
-      const plugin = registerPlugin<{ open(options: { url: string }): Promise<{ payload?: string }> }>('SchoolWindow');
+      const plugin = await loadCapacitorPlugin<{ open(options: { url: string }): Promise<{ payload?: string }> }>(
+        'SchoolWindow',
+      );
+      if (plugin === null) return { ok: false, error: '当前平台不支持内嵌窗口' };
       const result = await plugin.open({ url });
       rememberImportUrl(url);
       const payload = typeof result?.payload === 'string' ? result.payload : '';
       logInfo('import-window', '移动端教务窗口结束', { url, bytes: payload.length });
       return { ok: true, payload };
     } catch (cause: unknown) {
-      const error = cause instanceof Error ? cause.message : String(cause);
+      const error = nativeErrorMessage(cause);
       logWarn('import-window', '移动端教务窗口失败', { message: error });
       return { ok: false, error };
     }
@@ -69,10 +67,9 @@ export async function openImportWindow(url: string): Promise<ImportWindowResult>
 
 /** 关闭内嵌教务窗口：只有桌面端有可关闭的独立窗口。 */
 export async function closeImportWindow(): Promise<void> {
-  if (detectPlatform() !== 'tauri') return;
+  if (!isDesktopApp()) return;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('close_import_window');
+    await invokeNative('close_import_window');
   } catch {
     // 窗口已关闭时忽略
   }
@@ -80,7 +77,7 @@ export async function closeImportWindow(): Promise<void> {
 
 /** 监听内嵌窗口回传的页面内容（桌面端事件），返回取消监听函数。 */
 export async function listenImportPayload(handler: (payload: string) => void): Promise<() => void> {
-  if (detectPlatform() !== 'tauri') return () => {};
+  if (!isDesktopApp()) return () => {};
   const { listen } = await import('@tauri-apps/api/event');
   return listen<string>('import-payload', (event) => handler(event.payload));
 }

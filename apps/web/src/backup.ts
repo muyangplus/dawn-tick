@@ -7,7 +7,8 @@ import {
   type ImportResult,
   type Storage,
 } from '@dawn-tick/core';
-import { detectPlatform } from './platform-detect.ts';
+import { usesNativeSnapshots } from './lib/capabilities.ts';
+import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { activeSqlDriver } from './db/active-driver.ts';
 import { dayStampLocal } from './lib/dates.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
@@ -32,16 +33,11 @@ const SNAPSHOT_PREFIX = SNAPSHOT_META_PREFIX;
 const FRESH_MS = 60_000;
 
 export function snapshotKind(): 'file' | 'json' {
-  return detectPlatform() === 'tauri' ? 'file' : 'json';
-}
-
-async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke } = await import('@tauri-apps/api/core');
-  return (await invoke<T>(command, args)) as T;
+  return usesNativeSnapshots() ? 'file' : 'json';
 }
 
 function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+  return nativeErrorMessage(cause);
 }
 
 /** 校验快照索引：结构不对时整份作废，回退一次全表扫描重建。 */
@@ -108,9 +104,10 @@ async function listJsonSnapshots(storage: Storage): Promise<SnapshotEntry[]> {
 
 async function listFileSnapshots(): Promise<SnapshotEntry[]> {
   try {
-    const rows = await invokeTauri<Array<{ name: string; bytes: number; createdAt: number }>>(
+    const rows = await invokeNative<Array<{ name: string; bytes: number; createdAt: number }>>(
       'list_backups',
     );
+    if (rows === undefined) return [];
     return rows.map((row) => ({
       id: row.name,
       createdAt: row.createdAt,
@@ -169,13 +166,14 @@ async function createJsonSnapshot(storage: Storage, now: number): Promise<Snapsh
 async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
   const driver = activeSqlDriver();
   if (driver === null) throw new Error('数据库尚未打开');
-  const target = await invokeTauri<{ name: string; path: string; sqlLiteral: string }>('backup_target');
+  const target = await invokeNative<{ name: string; path: string; sqlLiteral: string }>('backup_target');
+  if (target === undefined) throw new Error('当前平台不支持文件快照');
   try {
     await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
   } catch (cause: unknown) {
     // VACUUM INTO 失败会留下 0 字节文件，清掉；启动时的空快照清理兜底
     try {
-      await invokeTauri('delete_backup', { name: target.name });
+      await invokeNative('delete_backup', { name: target.name });
     } catch {
       // 清理失败只影响磁盘占用
     }
@@ -194,9 +192,9 @@ async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
 
 /** 启动自检结论：Windows 侧在打开数据库之前自检，读一次后清空。 */
 export async function takeRecoveryNotice(): Promise<string | null> {
-  if (detectPlatform() !== 'tauri') return null;
+  if (!usesNativeSnapshots()) return null;
   try {
-    const text = await invokeTauri<string | null>('recovery_notice');
+    const text = await invokeNative<string | null>('recovery_notice');
     return typeof text === 'string' && text.trim() !== '' ? text : null;
   } catch (cause: unknown) {
     logWarn('backup', '读取启动自检结论失败', { message: describe(cause) });
@@ -228,7 +226,7 @@ export async function deleteSnapshot(storage: Storage, entry: SnapshotEntry): Pr
       await storage.collection('app_meta').delete(entry.id);
       await unregisterSnapshot(storage, entry.id);
     } else {
-      await invokeTauri('delete_backup', { name: entry.id });
+      await invokeNative('delete_backup', { name: entry.id });
     }
     logInfo('backup', '已删除快照', { name: entry.id });
     return true;
@@ -245,7 +243,7 @@ export async function pruneSnapshots(storage: Storage, keep: number): Promise<nu
   if (extra.length === 0) return 0;
   if (snapshotKind() === 'file') {
     try {
-      return await invokeTauri<number>('prune_backups', { keep: Math.max(1, keep) });
+      return (await invokeNative<number>('prune_backups', { keep: Math.max(1, keep) })) ?? 0;
     } catch (cause: unknown) {
       logWarn('backup', '清理快照失败', { message: describe(cause) });
       return 0;
@@ -273,7 +271,7 @@ export async function restoreSnapshot(
 ): Promise<RestoreOutcome> {
   try {
     if (entry.kind === 'file') {
-      await invokeTauri('restore_backup', { name: entry.id });
+      await invokeNative('restore_backup', { name: entry.id });
       return { ok: true, error: null, needsRestart: true, result: null };
     }
     const raw = await storage.readMeta(entry.id);

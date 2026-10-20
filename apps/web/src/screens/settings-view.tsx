@@ -24,10 +24,10 @@ import {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { logInfo } from '../log.ts';
-import { canUseWidget, hideWidget, showWidget } from '../widget-window.ts';
+import { canUseWidget, hasMobileWidgets, isAndroidApp, isAutoStartSupported } from '../lib/capabilities.ts';
+import { hideWidget, showWidget } from '../widget-window.ts';
 import {
   MOBILE_WIDGETS,
-  hasMobileWidgets,
   pinWidget,
   readMobileWidgetStates,
   type MobileWidgetState,
@@ -45,10 +45,9 @@ import {
   type ExactAlarmState,
   type NotifyStatus,
 } from '../permissions.ts';
-import { detectPlatform } from '../platform-detect.ts';
+import { readTrayStatus } from '../storage-config.ts';
 import { PeriodSettings } from '../components/period-settings.tsx';
 import { StartupSettings } from '../components/startup-settings.tsx';
-import { isAutoStartSupported } from '../autostart.ts';
 import { CourseManager } from './course-manager.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { SchoolTimetableCard } from './school-timetable-card.tsx';
@@ -179,15 +178,19 @@ export function SettingsView({
 
   useEffect(() => {
     if (!canUseWidget()) return;
+    let cancelled = false;
     void (async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const status = await invoke<{ created: boolean; detail: string }>('tray_status');
-        setTrayStatus(`${status.created ? '已创建' : '创建失败'}（${status.detail}）`);
-      } catch (cause: unknown) {
-        setTrayStatus(`不可用（${cause instanceof Error ? cause.message : String(cause)}）`);
-      }
+      const result = await readTrayStatus();
+      if (cancelled) return;
+      setTrayStatus(
+        result.status === null
+          ? `不可用（${result.error ?? '未知原因'}）`
+          : `${result.status.created ? '已创建' : '创建失败'}（${result.status.detail}）`,
+      );
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [busy, setBusy] = useState(false);
@@ -217,7 +220,7 @@ export function SettingsView({
   const [batteryFree, setBatteryFree] = useState<boolean | null>(null);
   /** 通知状态：应用级开关、运行时权限、渠道静音分开报 */
   const [notifyStatus, setNotifyStatus] = useState<NotifyStatus | null>(null);
-  const androidApp = detectPlatform() === 'capacitor';
+  const androidApp = isAndroidApp();
   useEffect(() => {
     let cancelled = false;
     const refreshNotify = (): void => {

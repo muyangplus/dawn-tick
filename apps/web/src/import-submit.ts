@@ -1,4 +1,6 @@
 import { logError, logInfo } from './log.ts';
+import { isDesktopApp } from './lib/capabilities.ts';
+import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 
 const root = document.getElementById('root');
 
@@ -53,15 +55,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (!isDesktopApp()) {
+    show('交回失败', '当前平台不支持内嵌导入');
+    return;
+  }
+
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('submit_page_import', { payload });
+    await invokeNative('submit_page_import', { payload });
     logInfo('import-window', '交回页面内容', { bytes: payload.length });
     show('已交给晓刻', `共 ${payload.length} 字节；关闭本窗口或返回教务页面`);
     window.setTimeout(() => window.history.back(), 2000);
   } catch (cause: unknown) {
-    logError('import-window', '交回失败', { message: String(cause) });
-    show('交回失败', String(cause));
+    const message = nativeErrorMessage(cause);
+    logError('import-window', '交回失败', { message });
+    show('交回失败', message);
   }
 }
 

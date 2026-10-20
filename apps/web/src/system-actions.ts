@@ -1,17 +1,16 @@
 import { toBase64Bytes } from '@dawn-tick/core';
-import { detectPlatform } from './platform-detect.ts';
+import { isDesktopApp } from './lib/capabilities.ts';
+import { invokeNative, loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
 import { logInfo, logWarn } from './log.ts';
 function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+  return nativeErrorMessage(cause);
 }
 
 /** 用系统默认浏览器打开链接：桌面端走原生命令，Android 走原生 ACTION_VIEW（WebView 的 window.open 会卡包可见性），Web 开新窗口。 */
 export async function openExternalUrl(url: string): Promise<boolean> {
-  const platform = detectPlatform();
-  if (platform === 'tauri') {
+  if (isDesktopApp()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_external_url', { url });
+      await invokeNative('open_external_url', { url });
       logInfo('link', '用默认浏览器打开', { url });
       return true;
     } catch (cause: unknown) {
@@ -19,7 +18,8 @@ export async function openExternalUrl(url: string): Promise<boolean> {
       return false;
     }
   }
-  if (platform === 'capacitor') {
+  const plugin = await loadSystemActions();
+  if (plugin !== null) {
     try {
       if (await openWithSystem(url)) {
         logInfo('link', '交给系统浏览器打开', { url });
@@ -103,10 +103,8 @@ export async function openNotifySettings(channelId?: string | null): Promise<boo
 }
 
 async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
-  if (detectPlatform() !== 'capacitor') return null;
   try {
-    const { registerPlugin } = await import('@capacitor/core');
-    return registerPlugin<SystemActionsPlugin>('SystemActions');
+    return await loadCapacitorPlugin<SystemActionsPlugin>('SystemActions');
   } catch (cause: unknown) {
     logWarn('link', '系统动作插件不可用', { message: describe(cause) });
     return null;
@@ -180,10 +178,10 @@ export async function copyText(text: string): Promise<boolean> {
 
 /** 在资源管理器中打开日志目录；返回目录路径，平台不支持时为 null。 */
 export async function openLogDirectory(): Promise<string | null> {
-  if (detectPlatform() !== 'tauri') return null;
+  if (!isDesktopApp()) return null;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const dir = await invoke<string>('open_log_dir');
+    const dir = await invokeNative<string>('open_log_dir');
+    if (dir === undefined) return null;
     logInfo('log', '打开日志目录', { dir });
     return dir;
   } catch (cause: unknown) {
@@ -208,7 +206,7 @@ export async function saveTextFile(
   options: { filterName?: string; extension?: string } = {},
 ): Promise<SaveTextResult> {
   const extension = options.extension ?? 'txt';
-  if (detectPlatform() === 'tauri') {
+  if (isDesktopApp()) {
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
       const chosen = await save({
@@ -219,8 +217,8 @@ export async function saveTextFile(
         logInfo('export', '用户取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      const { invoke } = await import('@tauri-apps/api/core');
-      const path = await invoke<string>('write_text_file', { path: chosen, content });
+      const path = await invokeNative<string>('write_text_file', { path: chosen, content });
+      if (path === undefined) throw new Error('当前平台不支持写入文件');
       logInfo('export', '已写入文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
@@ -262,7 +260,7 @@ export async function saveBinaryFile(
   options: { filterName?: string; extension?: string } = {},
 ): Promise<SaveTextResult> {
   const extension = options.extension ?? 'bin';
-  if (detectPlatform() === 'tauri') {
+  if (isDesktopApp()) {
     try {
       const { save } = await import('@tauri-apps/plugin-dialog');
       const chosen = await save({
@@ -273,11 +271,11 @@ export async function saveBinaryFile(
         logInfo('export', '用户取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      const { invoke } = await import('@tauri-apps/api/core');
-      const path = await invoke<string>('write_binary_file', {
+      const path = await invokeNative<string>('write_binary_file', {
         path: chosen,
         base64: toBase64Bytes(content),
       });
+      if (path === undefined) throw new Error('当前平台不支持写入文件');
       logInfo('export', '已写入二进制文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {

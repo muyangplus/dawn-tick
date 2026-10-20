@@ -38,7 +38,9 @@ import {
   type PresetSource,
 } from '../preset-update.ts';
 import { clearLogs, logInfo, logsText, logWarn } from '../log.ts';
-import { canUseWidget } from '../widget-window.ts';
+import { canUseWidget, hasMobileWidgets, isWebApp } from '../lib/capabilities.ts';
+import { readElevationStatus, requestElevation } from '../autostart.ts';
+import { detectPlatform } from '../platform-detect.ts';
 import { copyText, openLogDirectory, saveTextFile } from '../system-actions.ts';
 import {
   canConfigureStorage,
@@ -65,7 +67,6 @@ import {
   type ApplyMode,
   type DavSettings,
 } from '../webdav.ts';
-import { detectPlatform } from '../platform-detect.ts';
 import { runBusy } from '../lib/busy.ts';
 import { DELETE, fail } from '../copy/zh.ts';
 import { Button } from '../components/ui/button.tsx';
@@ -410,26 +411,20 @@ export function DevicesView({
 
   useEffect(() => {
     if (!canUseWidget()) return;
+    let cancelled = false;
     void (async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const status = await invoke<{ elevated: boolean }>('elevation_status');
-        setElevated(status.elevated);
-      } catch {
-        setElevated(null);
-      }
+      const value = await readElevationStatus();
+      if (!cancelled) setElevated(value);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  async function requestElevation(): Promise<void> {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('relaunch_elevated');
-      logInfo('desktop', '请求以管理员身份重新启动');
-    } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      toast.error(fail('提权', message, '请手动以管理员身份运行'));
-      logWarn('desktop', '提权失败', { message });
+  async function requestAdmin(): Promise<void> {
+    const result = await requestElevation();
+    if (!result.ok) {
+      toast.error(fail('提权', result.error ?? '', '请手动以管理员身份运行'));
     }
   }
 
@@ -688,7 +683,7 @@ export function DevicesView({
     data: (
       <>
         <span className="text-xs text-muted">本地存储：{storageKind}</span>
-        {platform !== 'tauri' && platform !== 'capacitor' && (
+        {isWebApp() && (
           <span className="text-xs text-muted">
             浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
           </span>
@@ -759,10 +754,10 @@ export function DevicesView({
               )}
             </div>
           </>
-        ) : platform === 'capacitor' ? (
+        ) : hasMobileWidgets() ? (
           <span className="text-xs text-muted">存储位置：应用私有目录（不可改）</span>
         ) : null}
-        {platform !== 'web' && (
+        {!isWebApp() && (
           <div className="flex flex-col gap-1" data-role="wal-setting">
             <SwitchField
               label="启用 WAL 日志模式"
@@ -1132,7 +1127,7 @@ export function DevicesView({
               variant="secondary"
               aria-label="以管理员身份重新启动"
               disabled={elevated !== false}
-              onClick={() => void requestElevation()}
+              onClick={() => void requestAdmin()}
             >
               以管理员身份重新启动
             </Button>
