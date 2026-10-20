@@ -67,6 +67,8 @@ import { ensureStartupPermissions } from './permissions.ts';
 import { markNotifyAsked } from './notify.ts';
 import { attachLogStorage, clearLogs, describeError, loadLogs, logDebug, logError, logInfo, logWarn, logsText } from './log.ts';
 import { registerPendingRestart } from './pending-restart.ts';
+import { readMetaJson, writeMetaJson } from './lib/meta.ts';
+import { SEEN_NOTICES_META_KEY, TIME_ZONE_ALIGNED_META_KEY } from './lib/meta-keys.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
 import { clampDayDate, clampWindowStart, dayRangeOf, defaultDayDate, stepDay, stepWindow } from './lib/day-nav.ts';
@@ -255,32 +257,26 @@ export function StorageFallbackBanner({ onRetry, onOpenLogs }: StorageFallbackBa
     </div>
   );
 }
-/** 首次启动系统时区对齐的标记：只做一次，之后跟随用户选择。 */
-const TIME_ZONE_ALIGNED_KEY = 'time_zone_aligned';
-/** 渠道提示的已读标记：存 id 数组，新增提示对老用户同样会弹一次。 */
-const SEEN_NOTICES_KEY = 'seen_notices';
 const NOTICE_DEV = 'dev-frequent-updates';
 const NOTICE_BETA = 'beta-unstable';
 const RELEASES_URL = 'https://github.com/muyangplus/dawn-tick/releases';
 /** 每天备份的检查间隔：够短能补上当天的份，又不至于频繁查目录 */
 const DAILY_BACKUP_CHECK_MS = 10 * 60 * 1000;
 
+function parseSeenNotices(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
 async function readSeenNotices(storage: Storage): Promise<string[]> {
-  try {
-    const raw = await storage.readMeta(SEEN_NOTICES_KEY);
-    if (raw === null || raw === undefined || raw === '') return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
-  } catch {
-    return [];
-  }
+  return readMetaJson(storage, SEEN_NOTICES_META_KEY, { parse: parseSeenNotices, fallback: [], scope: 'notice' });
 }
 
 async function markNoticeSeen(storage: Storage, id: string): Promise<void> {
   try {
     const seen = await readSeenNotices(storage);
     if (seen.includes(id)) return;
-    await storage.writeMeta(SEEN_NOTICES_KEY, JSON.stringify([...seen, id]));
+    await writeMetaJson(storage, SEEN_NOTICES_META_KEY, [...seen, id], { scope: null });
   } catch (cause: unknown) {
     // 提示已读只是本地记录：临时回退（只读）或写失败都不该打断用户
     logWarn('notice', '记录提示已读失败', { message: describeError(cause) });
@@ -450,7 +446,7 @@ export function App() {
           }
         }
         // 首次启动按系统时区对齐一次；之后完全以用户选择为准（默认上海）
-        const aligned = await opened.readMeta(TIME_ZONE_ALIGNED_KEY);
+        const aligned = await opened.readMeta(TIME_ZONE_ALIGNED_META_KEY);
         let loaded = await readSettings(opened);
         if (!readOnly && (aligned === undefined || aligned === null || aligned === '')) {
           const systemZone =
@@ -461,7 +457,7 @@ export function App() {
             loaded = await writeSettings(opened, { timeZone: systemZone });
             logInfo('settings', '首次启动按系统时区对齐', { from: DEFAULT_SETTINGS.timeZone, to: systemZone });
           }
-          await opened.writeMeta(TIME_ZONE_ALIGNED_KEY, '1');
+          await opened.writeMeta(TIME_ZONE_ALIGNED_META_KEY, '1');
         }
         // 日志级别默认随渠道定：dev 最详细，其余 info（只写一次，之后跟随用户选择）
         const storedLogLevel = await opened.readMeta('log_level');
