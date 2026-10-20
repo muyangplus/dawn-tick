@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { matchScore, searchAll } from '../src/search.ts';
-import { USER_ID, courseRow, createStorage, seedStorage, semesterRow } from './helpers.ts';
+import { weeksToMask } from '../src/weeks.ts';
+import { USER_ID, courseRow, createStorage, seedStorage, semesterRow, weekRange } from './helpers.ts';
 
 test('匹配评分：前缀优先', () => {
   assert.equal(matchScore('高等数学', '高'), 3);
@@ -41,6 +42,11 @@ test('搜索命中课程、排课与日程', async () => {
 
   const byExam = await searchAll(storage, 'sem-1', '期末');
   assert.ok(byExam.some((hit) => hit.kind === 'event' && hit.title === '高等数学期末'));
+  // 命中要能直接定位：日程带日期、排课带周次位图
+  const examHit = byExam.find((hit) => hit.kind === 'event' && hit.title === '高等数学期末');
+  assert.equal(examHit?.date, '2027-01-05');
+  const scheduleHit = byRoom.find((hit) => hit.kind === 'schedule');
+  assert.equal(scheduleHit?.weeksMask, weeksToMask(weekRange(1, 16)));
 
   assert.deepEqual(await searchAll(storage, 'sem-1', ''), []);
   assert.deepEqual(await searchAll(storage, 'sem-1', '不存在的关键词'), []);

@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import {
   CalendarClock,
   ChevronDown,
@@ -22,6 +22,8 @@ import {
   type EventRow,
 } from '@dawn-tick/core';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
+import { ADD_ACTIONS, useAddActions } from '../../components/add-menu.tsx';
+import { ScheduleFocusContext } from '../../components/schedule-focus.ts';
 import { logInfo } from '../../log.ts';
 import { Card } from '../../components/ui/card.tsx';
 import { Button } from '../../components/ui/button.tsx';
@@ -53,7 +55,13 @@ export const actionsCard = defineCard({
 });
 
 function ScheduleActions(ctx: ScheduleCardContext) {
-  const { data, storage, viewDate, onViewDateChange, onAddTodo, onAddExam, onOpenAdjust, onChanged } = ctx;
+  const { data, storage, viewDate, onViewDateChange, onOpenAdjust, onChanged } = ctx;
+  // 「添加」菜单与桌面工具栏、移动 FAB 同源：只派发动作，表单仍由 App 打开
+  const addActions = useAddActions();
+  const addItems =
+    addActions === null
+      ? [{ label: '加待办', onSelect: ctx.onAddTodo }]
+      : ADD_ACTIONS.map((item) => ({ label: item.label, onSelect: () => addActions[item.id]() }));
   const [rangeOpen, setRangeOpen] = useState(false);
   const [rangeFrom, setRangeFrom] = useState(viewDate);
   const [rangeTo, setRangeTo] = useState(viewDate);
@@ -189,19 +197,14 @@ function ScheduleActions(ctx: ScheduleCardContext) {
         今天第 {data.week} 周 · 共 {data.todayLessons.length} 节课 · {data.todos.length} 条待办
       </span>
 
-      <ActionMenu
-        label="添加"
-        icon={Plus}
-        items={[
-          { label: '加待办', onSelect: onAddTodo },
-          { label: '调课', onSelect: () => onOpenAdjust(null) },
-        ]}
-      />
+      <ActionMenu label="添加" icon={Plus} items={addItems} />
 
       <ActionMenu
         label="更多操作"
         icon={MoreHorizontal}
         items={[
+          // 调课不属于新增动作：留在「⋯」里，四个新增动作统一在「＋」
+          { label: '调课', onSelect: () => onOpenAdjust(null) },
           holidayName === undefined
             ? { label: '设为假日', onSelect: () => void setHoliday() }
             : { label: '设为非假日', onSelect: () => void clearHoliday() },
@@ -276,6 +279,14 @@ function ScheduleTimeline({
   const { main, completed } = splitTimeline(timeline);
   const groups = groupTimeline(main);
   const openLessonDetail = useContext(LessonDetailOpener);
+  /** 搜索命中的那一行：切到该日期后滚进视野并高亮 */
+  const focusEventId = useContext(ScheduleFocusContext);
+  const focusedRow = useRef<HTMLLIElement | null>(null);
+  const focused = (item: TimelineItem): boolean => focusEventId !== null && item.event?.id === focusEventId;
+  useEffect(() => {
+    if (focusEventId === null) return;
+    focusedRow.current?.scrollIntoView({ block: 'center' });
+  }, [focusEventId, viewDate]);
   const tomorrow = addDays(viewDate, 1);
   const tomorrowItems = buildTimeline(data, tomorrow, now).length;
   /** 已完成分组的展开状态：默认主列表为空才展开；手动点过标题后按日期以手动为准。 */
@@ -355,6 +366,8 @@ function ScheduleTimeline({
                   <TimelineRow
                     key={item.key}
                     item={item}
+                    focused={focused(item)}
+                    rowRef={focused(item) ? focusedRow : undefined}
                     onToggleDone={toggleDone}
                     onDeleteAdjust={deleteAdjust}
                     onDeleteEvent={deleteTimelineEvent}
@@ -375,6 +388,8 @@ function ScheduleTimeline({
                     <TimelineRow
                       key={item.key}
                       item={item}
+                      focused={focused(item)}
+                      rowRef={focused(item) ? focusedRow : undefined}
                       onToggleDone={toggleDone}
                       onDeleteAdjust={deleteAdjust}
                       onDeleteEvent={deleteTimelineEvent}
@@ -413,6 +428,10 @@ const NATURE_CLASS: Record<TimelineNature, string> = {
 
 interface TimelineRowProps {
   item: TimelineItem;
+  /** 搜索命中的那一行：加高亮环并滚进视野 */
+  focused: boolean;
+  /** 高亮行挂的 ref：滚动定位用 */
+  rowRef?: RefObject<HTMLLIElement | null> | undefined;
   /** 手动勾选：可选功能，只有带事件行且还没自动完成的待办/考试才有勾选框 */
   onToggleDone: (event: EventRow) => void;
   /** 删除一条调课/调休 */
@@ -426,7 +445,16 @@ interface TimelineRowProps {
 }
 
 /** 一条时间线：左侧竖排时间列（开始 / – / 结束）+ 颜色竖条 + 右侧标题与地点；自动完成的整行更灰。 */
-function TimelineRow({ item, onToggleDone, onDeleteAdjust, onDeleteEvent, onOpenLesson, onOpenEvent }: TimelineRowProps) {
+function TimelineRow({
+  item,
+  focused,
+  rowRef,
+  onToggleDone,
+  onDeleteAdjust,
+  onDeleteEvent,
+  onOpenLesson,
+  onOpenEvent,
+}: TimelineRowProps) {
   const lessonTarget = item.lessonTarget ?? null;
   // 长按删除：只对待办/作业/考试/实验；课次走课程详情，调课记录走行尾删除按钮
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -533,11 +561,14 @@ function TimelineRow({ item, onToggleDone, onDeleteAdjust, onDeleteEvent, onOpen
   };
   return (
     <li
+      ref={rowRef}
       className={cn(
         'flex min-h-tap items-stretch gap-3 rounded-lg border border-line bg-surface px-3 py-3',
         item.completed && 'border-line/60 bg-surface-muted/40 text-muted opacity-40',
+        focused && 'border-primary-strong ring-2 ring-primary-strong ring-offset-2 ring-offset-page',
       )}
       data-role="timeline-row"
+      data-focused={focused ? 'true' : undefined}
       data-kind={item.kind}
       data-nature={item.nature}
       data-completed={item.completed ? 'true' : undefined}

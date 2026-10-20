@@ -1305,6 +1305,40 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
+  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源，固定四项
+  const addMenuLabels = (): string[] =>
+    [...view.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]')].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+  const EXPECTED_ADD_ACTIONS = ['加课程', '加待办', '加考试', '导入课表'];
+  check(
+    'P1-01 日程「添加」菜单含四项新增动作',
+    addMenuLabels().join('/') === EXPECTED_ADD_ACTIONS.join('/'),
+    addMenuLabels().join(' / ') || '(无)',
+  );
+  // 移动端 FAB → 底部 Sheet，同样四项，且必须含「加考试」
+  const mobileFab = view.container.querySelector<HTMLElement>('button[aria-label="添加"]');
+  mobileFab?.click();
+  await flush(10);
+  const fabActions = [...document.querySelectorAll<HTMLElement>('[data-role="add-actions"] button')].map((item) =>
+    (item.textContent ?? '').trim(),
+  );
+  check(
+    'P1-01 移动 FAB 底部 Sheet 含四项且含「加考试」',
+    mobileFab !== null &&
+      fabActions.join('/') === EXPECTED_ADD_ACTIONS.join('/') &&
+      fabActions.includes('加考试'),
+    fabActions.join(' / ') || '(无)',
+  );
+  if (clickByText(document.body, '加考试')) await flush(14);
+  const fabExamKind = document.querySelector('[aria-label="待办类型：考试"]');
+  check(
+    'P1-01 移动 FAB 点「加考试」打开考试表单且类型选中',
+    fabExamKind?.getAttribute('aria-pressed') === 'true' &&
+      document.querySelector('[aria-label="开考时间"]') !== null,
+    `类型选中=${fabExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
   // ① 时间线课程显示开始–结束；② 行内「调课」按钮移除，改为点课程进详情再调课
   const seededHolidays = new Set<string>(builtinHolidays());
   seededHolidays.delete(addDays(holidayStartText, -1));
@@ -1690,7 +1724,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       scheduleRefresh === undefined,
     `统计=${scheduleStats?.textContent?.trim() ?? '(无)'} 刷新=${scheduleRefresh === undefined ? '无' : '有'}`,
   );
-  const openAdjustTrimmed = clickMenu(view.container, '添加', '调课');
+  const openAdjustTrimmed = clickMenu(view.container, '更多操作', '调课');
   if (openAdjustTrimmed) await flush(12);
   const adjustText = document.body.textContent ?? '';
   const adjustDialogOpened = document.querySelector('[data-role="adjust-dialog"]') !== null;
@@ -1941,6 +1975,63 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(8);
   check('搜索弹窗渲染', (document.body.textContent ?? '').includes('输入关键词开始搜索'), '');
   check('回到课表', switchedToTimeline, '');
+
+  // P1-03：搜索命中直达——非今日考试翻到该日期并高亮那一行，跨窗口课程翻到命中周并开详情
+  const searchInput = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>('input[aria-label="搜索关键词"]');
+  const pickSearchResult = async (keyword: string, match: (text: string) => boolean): Promise<boolean> => {
+    const box = searchInput();
+    if (box === null) return false;
+    setInputValue(box, keyword);
+    await flush(20);
+    const hit = [...document.querySelectorAll<HTMLElement>('[data-role="dialog-body"] button')].find((item) =>
+      match(item.textContent ?? ''),
+    );
+    if (hit === undefined) return false;
+    hit.click();
+    await flush(24);
+    return true;
+  };
+  const scheduleDateBox = (): HTMLInputElement | null =>
+    view.container.querySelector<HTMLInputElement>('input[aria-label="查看日期"]');
+  const focusedRowText = (): string =>
+    (view.container.querySelector('[data-role="timeline-row"][data-focused="true"]')?.textContent ?? '').trim();
+  const examHitDate = addDays(seededMonday, 7);
+  const pickedExam = await pickSearchResult('期末模拟考', (text) => text.includes('期末模拟考'));
+  check(
+    'P1-03 非今日考试命中后显示该日期并高亮该行',
+    pickedExam &&
+      scheduleDateBox()?.value === examHitDate &&
+      focusedRowText().includes('期末模拟考'),
+    `命中=${String(pickedExam)} 日期=${scheduleDateBox()?.value ?? '(无)'} 高亮行=${focusedRowText().slice(0, 40) || '(无)'}`,
+  );
+
+  // 搜索入口只在课表页顶部：先切回课表再打开（切页会重建工具栏，旧节点已脱离文档）
+  if (clickByText(view.container, '课表')) await flush(12);
+  view.container.querySelector<HTMLElement>('button[aria-label="搜索"]')?.click();
+  await flush(8);
+  const scheduleStore = validatedStorage(await openIndexedDbStorage());
+  const activeSemesterRow = await activeSemester(scheduleStore, USER_ID);
+  const weekOneStart = String(activeSemesterRow?.['start_date'] ?? '');
+  // 概率论只在第 1-2 周：命中时必须翻到那两周的窗口，再打开课程详情
+  const pickedCourse = await pickSearchResult(
+    '概率',
+    (text) => text.includes('概率') && text.includes('排课'),
+  );
+  check(
+    'P1-03 跨窗口课程命中后翻到该周并打开详情',
+    pickedCourse &&
+      windowStartOf() === weekOneStart &&
+      (document.body.textContent ?? '').includes('概率论') &&
+      document.querySelector('[aria-label="调课"]') !== null,
+    `命中=${String(pickedCourse)} 窗口=${windowStartOf()} 期望=${weekOneStart} 详情=${
+      document.querySelector('[aria-label="调课"]') === null ? '未开' : '已开'
+    }`,
+  );
+  // 收尾：关掉详情、回到今天，避免影响后面的设置与导航用例
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(10);
+  if (clickByLabel(view.container, '回到今天')) await flush(24);
 
   // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理卡片里能展开
   clickByText(view.container, '设置');
@@ -3179,6 +3270,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (countdownEntries.querySelector('button')?.textContent ?? '').trim() === '加考试',
     `徽标区=${countdownBadges === null ? '无' : '有'} 条目区=${countdownEntries?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
   );
+  // 倒计时空态按钮与打开的表单类型一致：点「加考试」后类型按钮必须是考试
+  [...(countdownEntries?.querySelectorAll('button') ?? [])][0]?.click();
+  await flush(14);
+  const countdownExamKind = document.querySelector('[aria-label="待办类型：考试"]');
+  check(
+    'P1-01 倒计时空态「加考试」打开考试表单',
+    countdownExamKind?.getAttribute('aria-pressed') === 'true' &&
+      document.querySelector('[aria-label="开考时间"]') !== null,
+    `类型选中=${countdownExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(10);
   const timelineEmpty = remounted.container.querySelector<HTMLElement>('[data-role="timeline-empty"]');
   check(
     '日程时间线空态给「添加待办」主行动',
@@ -3788,10 +3890,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
     clickByText(fallbackApp.container, '课表');
     await flush(12);
-    const fab = fallbackApp.container.querySelector<HTMLElement>('[aria-label="快速添加"]');
+    const fab = fallbackApp.container.querySelector<HTMLElement>('button[aria-label="添加"]');
     fab?.click();
-    await flush(6);
-    if (clickByText(document.body, '添加课程')) await flush(8);
+    await flush(10);
+    if (clickByText(document.body, '加课程')) await flush(8);
     check(
       'P1-07 回退期间写入口被拦截并提示只读',
       (document.body.textContent ?? '').includes('临时只读，修复存储后再改') &&
@@ -3861,6 +3963,72 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       `阈值=${LOADING_SLOW_MS}ms 初=${initialLoadingText.trim()} 后=${slowLoadingText.trim()}`,
     );
     loading.root.unmount();
+  }
+
+  // P1-01：桌面工具栏是统一「＋」主按钮 + 下拉，四项与移动端、日程页同源
+  {
+    const toolbarStore = validatedStorage(await openIndexedDbStorage());
+    if ((await activeSemester(toolbarStore, USER_ID)) === undefined) {
+      await createSemester(toolbarStore, {
+        userId: USER_ID,
+        name: '工具栏冒烟学期',
+        startDate: todayText,
+        totalWeeks: 20,
+        timeZone: 'Asia/Shanghai',
+      });
+      await writeSettings(toolbarStore, { viewDays: 7 });
+    }
+    // 冒烟默认是移动端断点：这一段临时把 matchMedia 报成桌面，验证完再还原
+    const originalMatchMedia = globalThis.matchMedia;
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: (query: string) => ({
+        matches: /min-width: (?:1024|1440)px/.test(query),
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+      configurable: true,
+      writable: true,
+    });
+    const desktopApp = mount(<App />);
+    await flush(24);
+    const desktopAddLabels = [
+      ...desktopApp.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]'),
+    ].map((item) => (item.textContent ?? '').trim());
+    check(
+      'P1-01 桌面工具栏「＋」菜单含四项新增动作',
+      desktopApp.container.querySelector('[data-role="app-sidebar"]') !== null &&
+        desktopAddLabels.join('/') === EXPECTED_ADD_ACTIONS.join('/'),
+      desktopAddLabels.join(' / ') || '(无工具栏菜单)',
+    );
+    if (clickMenu(desktopApp.container, '添加', '加考试')) await flush(14);
+    const desktopExamKind = document.querySelector('[aria-label="待办类型：考试"]');
+    check(
+      'P1-01 桌面「＋」点加考试打开考试表单且类型选中',
+      desktopExamKind?.getAttribute('aria-pressed') === 'true' &&
+        document.querySelector('[aria-label="开考时间"]') !== null,
+      `类型选中=${desktopExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+    );
+    if (clickByText(document.body, '取消')) await flush(10);
+    if (clickByText(desktopApp.container, '日程')) await flush(16);
+    const desktopScheduleLabels = [
+      ...desktopApp.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]'),
+    ].map((item) => (item.textContent ?? '').trim());
+    check(
+      'P1-01 日程「添加」菜单与桌面工具栏同源',
+      desktopScheduleLabels.join('/') === EXPECTED_ADD_ACTIONS.join('/'),
+      desktopScheduleLabels.join(' / ') || '(无)',
+    );
+    desktopApp.root.unmount();
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: originalMatchMedia,
+      configurable: true,
+      writable: true,
+    });
   }
 
   return results;

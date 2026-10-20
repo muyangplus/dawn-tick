@@ -5,6 +5,7 @@ import {
   dayOfWeek as nextDayOfWeek,
   readSettings,
   isValidTimeZone,
+  maskToWeeks,
   updateSemester,
   writeSettings,
   type AppSettings,
@@ -13,8 +14,10 @@ import {
   type SearchHit,
   type Storage,
 } from '@dawn-tick/core';
-import { AppToolbar } from './components/app-toolbar.tsx';
+import { AddActionsProvider, AddFab, type AddActionHandlers } from './components/add-menu.tsx';
+import { ScheduleFocusContext } from './components/schedule-focus.ts';
 import { AdjustDialog, type AdjustTarget } from './components/adjust-dialog.tsx';
+import { AppToolbar } from './components/app-toolbar.tsx';
 import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
 import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
@@ -26,12 +29,13 @@ import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
 import { Toaster, toast } from './components/ui/toaster.tsx';
-import { Database, Loader2, Plus, TriangleAlert } from 'lucide-react';
+import { Database, Loader2, TriangleAlert } from 'lucide-react';
 import {
   defaultWindowStart,
   loadAppData,
   loadCourseDetail,
   resolveWindowStart,
+  weekDateOf,
   type AppData,
   type CourseDetail,
   type LessonCell,
@@ -317,13 +321,16 @@ export function App() {
   const [adjust, setAdjust] = useState<AdjustTarget | null>(null);
   const [quickCreate, setQuickCreate] = useState<CourseFormPreset | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  /** 日程页查看的日期：由 App 持有，搜索命中某条日程时可以直接定位到那一天 */
+  const [scheduleDate, setScheduleDate] = useState<string | null>(null);
+  /** 搜索命中的日程条目 id：日程时间线滚动到该行并高亮 */
+  const [focusEventId, setFocusEventId] = useState<string | null>(null);
   const [courseFormOpen, setCourseFormOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<ManagedCourse | null>(null);
   const [todoFormOpen, setTodoFormOpen] = useState(false);
   /** 非空表示正在编辑这一条日程：单击时间线里的日程即可进入 */
   const [editingEvent, setEditingEvent] = useState<EventRow | null>(null);
   const [eventFormKind, setEventFormKind] = useState<'todo' | 'exam'>('todo');
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [persistent, setPersistent] = useState<boolean | null>(null);
   const [resolvedMode, setResolvedMode] = useState<'light' | 'dark'>('light');
   const [error, setError] = useState<BootFailure | null>(null);
@@ -333,6 +340,8 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   /** 启动权限只申请一次，设置变化不再重复弹系统弹窗 */
   const startupPermissionsDone = useRef(false);
+  /** 上一屏是不是日程页：用于离开日程时把查看日期收回今天 */
+  const leftSchedule = useRef(false);
   /** 发现新版本时的更新信息弹窗 */
   const [updateInfo, setUpdateInfo] = useState<UpdateStatus | null>(null);
   /** 递增触发一次额外的自动检查（切到测试版后） */
@@ -366,8 +375,8 @@ export function App() {
   });
 
   const reload = useCallback(
-    async (target: Storage | null, current: AppSettings, start?: string | null) => {
-      if (target === null) return;
+    async (target: Storage | null, current: AppSettings, start?: string | null): Promise<AppData | undefined> => {
+      if (target === null) return undefined;
       const explicit = start !== undefined && start !== null && start !== '';
       const next = await loadAppData(target, current, explicit ? { windowStart: start } : {});
       setData(next);
@@ -386,6 +395,7 @@ export function App() {
       });
       await writeWidgetSnapshot(target, next, current);
       await notifyWidgetWindows();
+      return next;
     },
     [],
   );
@@ -619,6 +629,12 @@ export function App() {
   useEffect(() => {
     // 切页时收起课程详情：桌面侧栏不跨页常驻
     setDetail(null);
+    // 离开日程页回到今天：再进日程默认看今天（搜索命中是从别的页直接带着日期进来，不受影响）
+    if (leftSchedule.current && view !== 'schedule') {
+      setScheduleDate(null);
+      setFocusEventId(null);
+    }
+    leftSchedule.current = view === 'schedule';
   }, [view]);
 
   useEffect(() => {
@@ -951,22 +967,90 @@ export function App() {
     refresh();
   }
 
-  function pickSearchHit(hit: SearchHit): void {
+  /** 四个新增动作的唯一实现：工具栏下拉、移动 FAB 与日程页「添加」菜单都调到同一份。 */
+  const addActions = useMemo<AddActionHandlers>(
+    () => ({
+      course: () => {
+        if (!guardWrite('新建课程')) return;
+        setEditingCourse(null);
+        setQuickCreate(null);
+        setCourseFormOpen(true);
+      },
+      todo: () => {
+        if (!guardWrite('添加待办')) return;
+        setEditingEvent(null);
+        setEventFormKind('todo');
+        setTodoFormOpen(true);
+      },
+      exam: () => {
+        if (!guardWrite('添加考试')) return;
+        setEditingEvent(null);
+        setEventFormKind('exam');
+        setTodoFormOpen(true);
+      },
+      import: () => {
+        setView('settings');
+        setSettingsImportSignal((value) => value + 1);
+      },
+    }),
+    [guardWrite],
+  );
+
+  /** 搜索命中：日程翻到命中日期并高亮那一行；排课按命中周翻窗后打开课程详情。 */
+  async function pickSearchHit(hit: SearchHit): Promise<void> {
+    if (storage === null || data === null) return;
     if (hit.kind === 'event') {
+      setFocusEventId(hit.id);
+      // 未排期的条目没有日期：保持当前日期，不做无意义的跳转
+      if (hit.date !== undefined) setScheduleDate(hit.date);
       setView('schedule');
       return;
     }
-    if (hit.dayOfWeek !== undefined && hit.periodStart !== undefined && hit.courseId !== undefined) {
-      const lessons = [...(data?.grid.values() ?? [])].flat();
-      const cell = lessons.find(
-        (lesson) => lesson.courseId === hit.courseId && lesson.periodStart === hit.periodStart,
-      );
-      if (cell !== undefined) {
-        void openLesson(cell);
-        return;
-      }
+    const semester = data.semester;
+    if (hit.kind !== 'schedule' || semester === null || hit.dayOfWeek === undefined) {
+      setView('timetable');
+      return;
     }
+    // 命中周：本周在排课范围内就停在本周，否则落到这条排课的第一个周次
+    const weeks = hit.weeksMask === undefined ? [] : maskToWeeks(hit.weeksMask, semester.total_weeks);
+    const week = weeks.includes(data.week) ? data.week : (weeks[0] ?? data.viewWeek);
+    const date = weekDateOf(semester, week, hit.dayOfWeek);
+    const start = weekDateOf(semester, week, 1);
+    setMode('week');
     setView('timetable');
+    if (start !== data.windowStart) {
+      const next = await reload(storage, settings, start);
+      if (next === undefined) return;
+      setFocusEventId(null);
+      await openHitLesson(next, hit.id, date);
+      return;
+    }
+    setFocusEventId(null);
+    await openHitLesson(data, hit.id, date);
+  }
+
+  /** 打开某条排课在指定日期的详情：优先用网格里的那一格，落不到网格时按当天课次还原课程卡。 */
+  async function openHitLesson(source: AppData, scheduleId: string, date: string): Promise<void> {
+    if (storage === null) return;
+    const cell = [...source.grid.values()]
+      .flat()
+      .find((item) => item.scheduleId === scheduleId && item.date === date);
+    if (cell !== undefined) {
+      await openLesson(cell);
+      return;
+    }
+    const occurrence = (source.lessonsByDate.get(date) ?? []).find((item) => item.scheduleId === scheduleId);
+    if (occurrence === undefined) return;
+    const target: AdjustTarget = {
+      scheduleId: occurrence.scheduleId,
+      courseId: occurrence.courseId,
+      courseName: occurrence.courseName,
+      date,
+      periodStart: occurrence.periodStart,
+      periodEnd: occurrence.periodEnd,
+    };
+    const loaded = await loadCourseDetail(storage, occurrence.courseId);
+    setDetail({ cell: lessonCellOf(source, target), detail: loaded, date });
   }
 
   if (error !== null) {
@@ -1060,33 +1144,32 @@ export function App() {
           />
         ))}
       {view === 'schedule' && (
-        <LessonDetailOpener.Provider value={(target) => void openLessonFromSchedule(target)}>
-          <ScheduleView
-            data={data}
-            storage={screenStorage}
-            onChanged={refresh}
-            onAddTodo={() => {
-              if (!guardWrite('添加待办')) return;
-              setEditingEvent(null);
-              setEventFormKind('todo');
-              setTodoFormOpen(true);
-            }}
-            onAddExam={() => {
-              if (!guardWrite('添加考试')) return;
-              setEditingEvent(null);
-              setEventFormKind('exam');
-              setTodoFormOpen(true);
-            }}
-            onOpenEvent={(event) => {
-              if (!guardWrite('编辑日程')) return;
-              setEditingEvent(event);
-              setTodoFormOpen(true);
-            }}
-            tomorrowPreview={settings.tomorrowPreview}
-            semesterCountdown={settings.semesterCountdown}
-            holidayCountdown={settings.holidayCountdown}
-          />
-        </LessonDetailOpener.Provider>
+        <AddActionsProvider actions={addActions}>
+          <LessonDetailOpener.Provider value={(target) => void openLessonFromSchedule(target)}>
+            <ScheduleFocusContext.Provider value={focusEventId}>
+              <ScheduleView
+                data={data}
+                storage={screenStorage}
+                onChanged={refresh}
+                viewDate={scheduleDate ?? data.today}
+                onViewDateChange={(date) => {
+                  setScheduleDate(date);
+                  setFocusEventId(null);
+                }}
+                onAddTodo={addActions.todo}
+                onAddExam={addActions.exam}
+                onOpenEvent={(event) => {
+                  if (!guardWrite('编辑日程')) return;
+                  setEditingEvent(event);
+                  setTodoFormOpen(true);
+                }}
+                tomorrowPreview={settings.tomorrowPreview}
+                semesterCountdown={settings.semesterCountdown}
+                holidayCountdown={settings.holidayCountdown}
+              />
+            </ScheduleFocusContext.Provider>
+          </LessonDetailOpener.Provider>
+        </AddActionsProvider>
       )}
       {view === 'settings' && (
         <SettingsView
@@ -1193,12 +1276,7 @@ export function App() {
               }}
               onToday={backToToday}
               onSearch={() => setSearchOpen(true)}
-              onAdd={() => {
-                if (!guardWrite('新建课程')) return;
-                setEditingCourse(null);
-                setQuickCreate(null);
-                setCourseFormOpen(true);
-              }}
+              addActions={addActions}
               compact={!isDesktop}
             />
           </div>
@@ -1229,16 +1307,7 @@ export function App() {
 
       {!isDesktop && <BottomNav current={view} onSelect={setView} />}
 
-      {!isDesktop && (
-        <button
-          type="button"
-          aria-label="快速添加"
-          onClick={() => setAddMenuOpen(true)}
-          className="fixed bottom-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--spacing-2))] right-4 z-30 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary shadow-lg"
-        >
-          <Plus className="size-6" aria-hidden />
-        </button>
-      )}
+      {!isDesktop && <AddFab actions={addActions} />}
 
       <Sheet
         open={detail !== null && !(isDesktop && wideEnoughForSidePanel)}
@@ -1264,39 +1333,12 @@ export function App() {
         onChanged={refresh}
       />
 
-      <Dialog open={addMenuOpen} onOpenChange={setAddMenuOpen}>
-        <DialogContent title="快速添加">
-          <div className="flex flex-col gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (!guardWrite('添加课程')) return;
-                setAddMenuOpen(false);
-                setCourseFormOpen(true);
-              }}
-            >
-              添加课程
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                if (!guardWrite('添加待办')) return;
-                setAddMenuOpen(false);
-                setTodoFormOpen(true);
-              }}
-            >
-              添加待办
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <SearchDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}
         storage={screenStorage}
         semesterId={data.semester.id}
-        onPick={pickSearchHit}
+        onPick={(hit) => void pickSearchHit(hit)}
       />
 
       <CourseForm

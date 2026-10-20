@@ -1,5 +1,6 @@
-import { CalendarRange, ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
+import { CalendarRange, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { dayOfWeek, type SemesterRow } from '@dawn-tick/core';
+import { AddMenuButton, type AddActionHandlers } from './add-menu.tsx';
 import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs.tsx';
@@ -34,7 +35,8 @@ export interface AppToolbarProps {
   /** 回到今天：周模式回默认起点，日模式回今天 */
   onToday: () => void;
   onSearch: () => void;
-  onAdd: () => void;
+  /** 统一「＋」菜单的四类动作：桌面端是主按钮 + 下拉 */
+  addActions: AddActionHandlers;
   compact: boolean;
 }
 
@@ -54,7 +56,7 @@ export function AppToolbar({
   day,
   onToday,
   onSearch,
-  onAdd,
+  addActions,
   compact,
 }: AppToolbarProps) {
   return (
@@ -115,12 +117,7 @@ export function AppToolbar({
         <Button variant="ghost" size="icon" aria-label="搜索" onClick={onSearch} title="/">
           <Search className="size-4" aria-hidden />
         </Button>
-        {!compact && (
-          <Button variant="primary" size="sm" onClick={onAdd}>
-            <Plus className="size-4" aria-hidden />
-            添加课程
-          </Button>
-        )}
+        {!compact && <AddMenuButton actions={addActions} />}
       </div>
     </header>
   );

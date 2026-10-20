@@ -13,6 +13,9 @@ export interface ScheduleViewProps {
   data: AppData;
   storage: Storage;
   onChanged: () => void;
+  /** 查看的日期：由 App 持有，搜索命中时可直接定位到那一天 */
+  viewDate: string;
+  onViewDateChange: (date: string) => void;
   onAddTodo: () => void;
   onAddExam: () => void;
   /** 单击时间线里的日程：进入详情编辑 */
@@ -30,6 +33,8 @@ export function ScheduleView({
   data,
   storage,
   onChanged,
+  viewDate,
+  onViewDateChange,
   onAddTodo,
   onAddExam,
   onOpenEvent,
@@ -37,7 +42,6 @@ export function ScheduleView({
   semesterCountdown,
   holidayCountdown,
 }: ScheduleViewProps) {
-  const [viewDate, setViewDate] = useState(data.today);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const [layout, setLayout] = useState<LayoutConfig>({});
@@ -60,7 +64,7 @@ export function ScheduleView({
     layout,
     onLayoutChange: setLayout,
     viewDate,
-    onViewDateChange: setViewDate,
+    onViewDateChange,
     onAddTodo,
     onAddExam,
     onOpenEvent,
