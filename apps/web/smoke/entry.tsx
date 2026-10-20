@@ -17,6 +17,7 @@ import {
   fromBase64Utf8,
   setPresetOverride,
   toBase64Utf8,
+  updateSemester,
   validatedStorage,
   writeSettings,
 } from '@dawn-tick/core';
@@ -1601,6 +1602,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       ),
     '',
   );
+  // 页脚的「刷新」按钮与统计已收进顶部日期行：没有手动刷新，统计常驻
+  const scheduleStats = view.container.querySelector('[data-role="schedule-stats"]');
+  const scheduleRefresh = [...view.container.querySelectorAll('button')].find(
+    (node) => (node.textContent ?? '').trim() === '刷新',
+  );
+  check(
+    '日程页统计并入顶部日期行且不再提供「刷新」',
+    scheduleStats !== null &&
+      (scheduleStats.textContent ?? '').includes('条待办') &&
+      scheduleRefresh === undefined,
+    `统计=${scheduleStats?.textContent?.trim() ?? '(无)'} 刷新=${scheduleRefresh === undefined ? '无' : '有'}`,
+  );
   if (clickMenu(view.container, '添加', '课程调整')) await flush(12);
   const adjustText = document.body.textContent ?? '';
   check(
@@ -2244,6 +2257,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   clickTab(view.container, '日');
   await flush(12);
   const dayDateText = (): string => (view.container.querySelector('[data-role="day-date"]')?.textContent ?? '').trim();
+  // 今天（周日）没有课：空态要给出下一步（文案），而不是只报「没有课」
+  const dayEmpty = view.container.querySelector<HTMLElement>('[data-role="day-empty"]');
+  check(
+    '日视图空态文案给出下一步',
+    dayEmpty !== null &&
+      (dayEmpty.textContent ?? '').includes('今天没有课') &&
+      (dayEmpty.textContent ?? '').includes('切换周视图可看本周安排'),
+    dayEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
+  );
   check(
     '日模式换成日期翻页',
     view.container.querySelector('[data-role="day-nav"]') !== null &&
@@ -2903,13 +2925,85 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       !(remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
     (remounted.container.textContent ?? '').slice(0, 60),
   );
+  // 空态三态（真空课表 / 只有非本周 / 学期外）：每种空态只有 1 个主行动，文案可区分
+  const vacuumEmpty = remounted.container.querySelector<HTMLElement>('[data-role="week-empty"]');
   check(
-    '课表空态提供导入课表按钮',
-    remounted.container.querySelector('button[aria-label="导入课表"]') !== null &&
-      (remounted.container.textContent ?? '').includes('或在设置里导入课表') &&
+    '真空课表空态：给唯一主行动「导入课表」',
+    vacuumEmpty?.getAttribute('data-empty-state') === 'vacuum' &&
+      (vacuumEmpty.textContent ?? '').includes('这段时间没有课程') &&
+      vacuumEmpty.querySelectorAll('button').length === 1 &&
+      vacuumEmpty.querySelector('button[aria-label="导入课表"]') !== null &&
       !(remounted.container.textContent ?? '').includes('导入页'),
-    '',
+    `空态=${vacuumEmpty?.getAttribute('data-empty-state') ?? '(无)'} 按钮=${vacuumEmpty?.querySelectorAll('button').length ?? 0}`,
   );
+
+  // 日程页的空态也要给下一步：倒计时卡固定分区，空条目区给「加考试」；时间线空态给「添加待办」
+  if (clickByText(remounted.container, '日程')) await flush(20);
+  const countdownEntries = remounted.container.querySelector<HTMLElement>('[data-role="countdown-entries"]');
+  const countdownBadges = remounted.container.querySelector<HTMLElement>('[data-role="countdown-badges"]');
+  check(
+    '倒计时卡徽标区与条目区固定分区，空条目区给「加考试」',
+    countdownBadges !== null &&
+      countdownEntries !== null &&
+      (countdownEntries.textContent ?? '').includes('暂无倒计时条目') &&
+      countdownEntries.querySelectorAll('button').length === 1 &&
+      (countdownEntries.querySelector('button')?.textContent ?? '').trim() === '加考试',
+    `徽标区=${countdownBadges === null ? '无' : '有'} 条目区=${countdownEntries?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
+  );
+  const timelineEmpty = remounted.container.querySelector<HTMLElement>('[data-role="timeline-empty"]');
+  check(
+    '日程时间线空态给「添加待办」主行动',
+    timelineEmpty !== null &&
+      (timelineEmpty.textContent ?? '').includes('切换日期可看其他日期') &&
+      timelineEmpty.querySelectorAll('button').length === 1 &&
+      (timelineEmpty.querySelector('button')?.textContent ?? '').trim() === '添加待办',
+    timelineEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
+  );
+  if (clickByText(remounted.container, '课表')) await flush(20);
+
+  // 把学期挪到过去：窗口整段落在学期外，空态换成「学期外」并给「回到学期内」
+  const emptyStore = validatedStorage(await openIndexedDbStorage());
+  const emptySemester = await activeSemester(emptyStore, USER_ID);
+  if (emptySemester !== undefined) {
+    await updateSemester(emptyStore, String(emptySemester['id']), { start_date: '2025-01-01' });
+  }
+  if (clickByLabel(remounted.container, '下一屏')) await flush(30);
+  const outsideEmpty = remounted.container.querySelector<HTMLElement>('[data-role="week-empty"]');
+  check(
+    '学期外空态：文案与主行动独立于真空课表',
+    outsideEmpty?.getAttribute('data-empty-state') === 'outside-semester' &&
+      (outsideEmpty.textContent ?? '').includes('学期外没有课程') &&
+      outsideEmpty.querySelectorAll('button').length === 1 &&
+      (outsideEmpty.querySelector('button')?.textContent ?? '').trim() === '回到学期内',
+    `空态=${outsideEmpty?.getAttribute('data-empty-state') ?? '(无)'}`,
+  );
+
+  // 恢复学期起始日，再造「只有非本周」：只排第 1 周，翻到后续周次后虚线课卡可见时不得再报「没有课程」
+  if (emptySemester !== undefined) {
+    await updateSemester(emptyStore, String(emptySemester['id']), {
+      start_date: String(emptySemester['start_date']),
+    });
+    const ghostCourse = await createCourse(emptyStore, {
+      semesterId: String(emptySemester['id']),
+      name: '只在第一周',
+    });
+    await createSchedule(emptyStore, {
+      courseId: String(ghostCourse['id']),
+      dayOfWeek: 1,
+      periodStart: 5,
+      periodEnd: 6,
+      weeks: [1],
+    });
+  }
+  if (clickByLabel(remounted.container, '下一屏')) await flush(30);
+  check(
+    '只有非本周课时不再出现「没有课程」空态',
+    (remounted.container.textContent ?? '').includes('只在第一周') &&
+      remounted.container.querySelector('[data-role="week-empty"]') === null &&
+      remounted.container.querySelector('[data-tone="ghost"]') !== null,
+    `空态=${remounted.container.querySelector('[data-role="week-empty"]') === null ? '无' : '有'}`,
+  );
+
   // 删掉这个默认学期，后面的「选校建学期」用例仍从引导页开始
   if (clickByText(remounted.container, '设置')) await flush(16);
   clickByLabel(remounted.container, '删除学期');

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts test/reminder-flow.test.ts test/timeline.test.ts test/channel.test.ts test/log.test.ts test/journal.test.ts test/health.test.ts test/storage-config.test.ts test/data-management.test.ts test/backup.test.ts test/webdav.test.ts test/grid-metrics.test.ts test/row-height.test.ts test/day-nav.test.ts test/widget-pin.test.ts test/bookmarklet.test.ts test/import-injection.test.ts test/update.test.ts test/preset-update.test.ts test/preset-startup.test.ts test/school-picker.test.ts test/mini-tomorrow.test.ts test/busy.test.ts",
+    "test": "node --test test/idb-storage.test.ts test/app-data.test.ts test/widget-snapshot.test.ts test/reminder-flow.test.ts test/timeline.test.ts test/week-empty.test.ts test/channel.test.ts test/log.test.ts test/journal.test.ts test/health.test.ts test/storage-config.test.ts test/data-management.test.ts test/backup.test.ts test/webdav.test.ts test/grid-metrics.test.ts test/row-height.test.ts test/day-nav.test.ts test/widget-pin.test.ts test/bookmarklet.test.ts test/import-injection.test.ts test/update.test.ts test/preset-update.test.ts test/preset-startup.test.ts test/school-picker.test.ts test/mini-tomorrow.test.ts test/busy.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {

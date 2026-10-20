@@ -184,6 +184,11 @@ function ScheduleActions(ctx: ScheduleCardContext) {
         )}
       </span>
 
+      {/* 统计并入顶部日期行：不再放页脚，也不提供手动刷新（数据变化本来就会自动刷新） */}
+      <span className="text-xs text-muted" data-role="schedule-stats">
+        今天第 {data.week} 周 · 共 {data.todayLessons.length} 节课 · {data.todos.length} 条待办
+      </span>
+
       <ActionMenu
         label="添加"
         icon={Plus}
@@ -262,6 +267,7 @@ function ScheduleTimeline({
   onChanged,
   tomorrowPreview,
   onOpenEvent,
+  onAddTodo,
 }: ScheduleCardContext) {
   // 时刻每秒走一格：正在上的课、到点自动完成的条目不用等下一次数据加载
   const now = useNowTick(1000);
@@ -309,7 +315,18 @@ function ScheduleTimeline({
   return (
     <div className="flex flex-col gap-3">
       {timeline.length === 0 ? (
-        <EmptyState icon={ListChecks} title="这一天没有安排" description="可切换日期查看其他日期" />
+        <div data-role="timeline-empty">
+          <EmptyState
+            icon={ListChecks}
+            title="这一天没有安排"
+            description="切换日期可看其他日期"
+            action={
+              <Button size="sm" variant="secondary" aria-label="添加待办" onClick={onAddTodo}>
+                添加待办
+              </Button>
+            }
+          />
+        </div>
       ) : (
         <>
           {completed.length > 0 && (
@@ -638,26 +655,24 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
     );
   }
   return (
-      <div className="flex flex-col gap-2">
-        <span className="text-sm font-semibold text-ink">倒计时</span>
-        {badges.length > 0 && (
-          <div className="flex flex-wrap gap-2" data-role="countdown-badges">
-            {badges}
-          </div>
-        )}
+    <div className="flex flex-col gap-2">
+      <span className="text-sm font-semibold text-ink">倒计时</span>
+      {/* 徽标区与条目区固定分区：徽标有没有都不影响条目区，空条目区始终给主行动 */}
+      <div className="flex flex-wrap gap-2" data-role="countdown-badges">
+        {badges}
+      </div>
+      <div className="flex flex-col gap-2" data-role="countdown-entries">
         {rows.length === 0 ? (
-          badges.length === 0 && (
-            <EmptyState
-              icon={GraduationCap}
-              title="暂无倒计时条目"
-              description="打开「开启倒计时」显示剩余天数"
-              action={
-                <Button size="sm" variant="secondary" onClick={onAddExam}>
-                  加待办
-                </Button>
-              }
-            />
-          )
+          <EmptyState
+            icon={GraduationCap}
+            title="暂无倒计时条目"
+            description="打开「开启倒计时」显示剩余天数"
+            action={
+              <Button size="sm" variant="secondary" aria-label="加考试" onClick={onAddExam}>
+                加考试
+              </Button>
+            }
+          />
         ) : (
           <div className="grid gap-2">
             {rows.map((row) => (
@@ -714,7 +729,8 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
           </div>
         )}
       </div>
-    );
+    </div>
+  );
 }
 
 /** 倒计时条目的类型文案。 */

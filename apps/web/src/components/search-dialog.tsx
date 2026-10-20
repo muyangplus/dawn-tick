@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BookOpen, CalendarClock, Search } from 'lucide-react';
 import { searchAll, type SearchHit, type Storage } from '@dawn-tick/core';
+import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent } from './ui/dialog.tsx';
 import { Input } from './ui/input.tsx';
 import { EmptyState } from './ui/empty-state.tsx';
@@ -65,7 +66,19 @@ export function SearchDialog({ open, onOpenChange, storage, semesterId, onPick }
           }}
         />
         {hits.length === 0 ? (
-          <EmptyState icon={Search} title={keyword.trim().length === 0 ? '输入关键词开始搜索' : '没有匹配结果'} />
+          <div data-role="search-empty">
+            <EmptyState
+              icon={Search}
+              title={keyword.trim().length === 0 ? '输入关键词开始搜索' : '没有匹配结果，换个关键词试试'}
+              action={
+                keyword.trim().length === 0 ? undefined : (
+                  <Button size="sm" variant="secondary" aria-label="清空关键词" onClick={() => setKeyword('')}>
+                    清空关键词
+                  </Button>
+                )
+              }
+            />
+          </div>
         ) : (
           <ul className="flex max-h-80 flex-col gap-1 overflow-y-auto">
             {hits.map((hit) => {

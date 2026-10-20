@@ -121,7 +121,7 @@ export interface AppData {
   windowDates: string[];
   /** 查看窗口覆盖到多个周次时为 true，供日志与自检 */
   windowSpansWeeks: boolean;
-  /** 当前查看窗口内是否有课，含只在别周上的课程（inWeek = false） */
+  /** 当前查看窗口内是否有任何课次，含只在别周上的虚线课（inWeek = false）：判空态时还要叠加「显示非本周」开关 */
   hasLessons: boolean;
   /** 当前学期的课程（含各条排课），供调课与临时加课选择 */
   courses: ManagedCourse[];
@@ -557,7 +557,7 @@ export async function loadAppData(
     semesters: semesters.filter((row) => row.is_active === 0 || row.id === semester.id),
     slots,
     grid,
-    hasLessons: [...grid.values()].some((list) => list.some((cell) => cell.inWeek)),
+    hasLessons: [...grid.values()].some((list) => list.length > 0),
     courses: await listManagedCourses(storage, semester.id),
     holidayLabels,
     workdayDates: [...workdays].sort(),
