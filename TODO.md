@@ -1532,3 +1532,6 @@
 - 批次验证：`pnpm typecheck`、core 257、web 189、tools 36、界面冒烟 291 项全过。
 - 偏离：P1-04 的「性质（课程/实验）」无对应课程字段，按删除处理（原实现只影响调课事件标签）；P1-02 未把「悬浮窗/小组件」迁到设备页，留在「外观」卡；P1-08 快照空态文案仍在设备页待补；P2-04 移动端底部 Sheet 未做，另立 P2-17。
 - CI 增加 Android 编译校验 job 的原因：安卓工程此前只在发版时编译，编译错误要到打标签才暴露（`v0.3.0-beta.1` 首次构建即因缺校验而失败，重跑后通过）。
+- P1/P2 全部收口：P1-01…P1-13、P2-01…P2-17 均已完成，状态为待验收；A 系列（A-05…A-22，除 A-13/A-20/A-21）仍为待办，属技术演进下一阶段。
+- 发版：`v0.4.0` → `a3b2858`（release 渠道，正式 Release 已生成）：Windows 安装包与便携包、Android APK、Web 静态包、`version.json` 及各自 `.sha256`；正文含 CHANGELOG 0.4.0 段与 `Full Changelog`（基准 `v0.1.0`，滚动标签不作基准）。
+- 发版过程修掉两个阻塞：① 界面冒烟在 CI runner 默认 UTC 下时间文案漂移（首次把冒烟接进 CI 时暴露）→ 冒烟脚本与 CI 步骤固定 `TZ=Asia/Shanghai`；② 发布正文的 Full Changelog 拼装跑在 `PREV` 计算之前，正文缺比较链接且 `gh release create` 失败 → 发布逻辑抽到 `tools/release/publish.sh`，正文自行拼好 Full Changelog（不再传 `--notes-start-tag`），失败时把日志推到 `ci-debug` 分支便于无权限读 Actions 日志时排查。
