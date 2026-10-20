@@ -4,7 +4,7 @@
  * 高校名单来自教育部公开的全国普通高等学校名单（事实性数据，仅校名，用于检索）。
  * 新增学校：写进下面的「手工维护」段，字段为
  *   id（唯一）、name（校名）、system（jwglxt | qzdatasource | urp | other）、
- *   url（教务入口完整地址，或只写域名）、aliases（检索简称，可选）、source: 'builtin'
+ *   url（教务入口完整地址，或只写域名）、source: 'builtin'
  */
 import type { SchoolEntry } from './school-list.ts';
 
@@ -2650,7 +2650,6 @@ export const MANUAL_SCHOOLS: readonly SchoolEntry[] = [
     name: '苏州科技大学',
     system: 'jwglxt',
     url: 'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html',
-    aliases: ['苏科大', '苏州科技'],
     source: 'builtin',
   },
 ];

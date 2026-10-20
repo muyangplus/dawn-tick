@@ -1,4 +1,5 @@
 import { readSystemsConfig, type SchoolSystemId, type SystemConfig } from '../config/index.ts';
+import { nameHitScore } from '../schools/index.ts';
 import { DIRECTORY_NAMES, MANUAL_SCHOOLS } from './schools.ts';
 
 export { DIRECTORY_NAMES, MANUAL_SCHOOLS };
@@ -67,14 +68,19 @@ export const SYSTEM_ENTRIES: readonly SystemEntry[] = new Proxy([] as SystemEntr
   },
 });
 
+/**
+ * 一条教务入口数据：只回答「这所学校从哪个地址登录」，不参与目录检索与排序。
+ *
+ * 校名/简称/拼音/标签/省份的检索统一走 `schools/index.ts` 的 `searchSchools`；
+ * 这里的 `name` 只用于与目录学校做入口匹配（先 id、后校名），不是检索键。
+ * 也不再带 `aliases`：简称检索由目录数据自己的 `shortName` / `shortPinyin` 承担。
+ */
 export interface SchoolEntry {
   id: string;
   name: string;
   system: SchoolSystem;
   /** 教务系统域名或完整地址；留空表示待补充 */
   url: string;
-  /** 检索用简称 */
-  aliases?: readonly string[];
   source: 'builtin' | 'user';
 }
 
@@ -130,22 +136,27 @@ export function entryUrlFor(system: SchoolSystem, url: string): string {
   }
 }
 
-/** 按名称与简称检索，前缀命中优先。 */
+/**
+ * 按校名检索教务条目（候选/调试用）。
+ *
+ * 权重表与目录检索共用 `nameHitScore`：整串相等 100 > 前缀 92 > 包含 84；
+ * 同分按校名、id 稳定排序。口径与 `searchSchools` 的「精确 > 前缀 > 包含」一致，
+ * 避免同一个关键词在目录检索与入口检索两条路径上给出不同的首条。
+ */
 export function matchSchools(schools: readonly SchoolEntry[], keyword: string): SchoolEntry[] {
   const query = keyword.trim().toLowerCase();
   const scored: Array<{ school: SchoolEntry; score: number }> = [];
   for (const school of schools) {
-    const fields = [school.name, ...(school.aliases ?? [])].map((text) => text.toLowerCase());
-    let score = 0;
-    for (const field of fields) {
-      if (query.length === 0) score = Math.max(score, 1);
-      else if (field.startsWith(query)) score = Math.max(score, 3);
-      else if (field.includes(query)) score = Math.max(score, 2);
-    }
+    const score = query.length === 0 ? 1 : nameHitScore(school.name, '', query);
     if (score > 0) scored.push({ school, score });
   }
   return scored
-    .sort((left, right) => right.score - left.score || left.school.name.localeCompare(right.school.name))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        (left.school.name === right.school.name ? 0 : left.school.name < right.school.name ? -1 : 1) ||
+        (left.school.id === right.school.id ? 0 : left.school.id < right.school.id ? -1 : 1),
+    )
     .map((item) => item.school);
 }
 
@@ -205,9 +216,18 @@ export function suggestSchools(query: string, options: SuggestSchoolsOptions): S
 
   if (keyword.length > 0) {
     const lower = keyword.toLowerCase();
-    for (const name of directory) {
+    // 名单校名也走同一张权重表（精确 > 前缀 > 包含，同分按校名），
+    // 保证「候选」与「目录检索」对同一个关键词排出同一个首条。
+    const tail = directory
+      .map((name) => ({ name, score: nameHitScore(name, '', lower) }))
+      .filter((item) => item.score > 0)
+      .sort(
+        (left, right) =>
+          right.score - left.score || (left.name === right.name ? 0 : left.name < right.name ? -1 : 1),
+      );
+    for (const { name } of tail) {
       if (out.length >= limit) break;
-      if (covered.has(name) || !name.toLowerCase().includes(lower)) continue;
+      if (covered.has(name)) continue;
       out.push({
         key: `dir:${name}`,
         name,

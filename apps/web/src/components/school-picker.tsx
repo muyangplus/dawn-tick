@@ -1,15 +1,13 @@
 /** 学校选择器：搜索 + 标签/地区筛选 + 按省份分组；导入流程与作息设置共用，只对外给 `onPick(school)`。 */
 import { useEffect, useId, useMemo, useState } from 'react';
-import type { SchoolEntry } from '@dawn-tick/core';
+import { searchSchools, type SearchSchoolsOptions } from '@dawn-tick/core';
 import { cn } from '../lib/cn.ts';
 import {
   adapterBadgeText,
   adapterInfo,
   extraSchoolTags,
-  filterSchools,
   groupSchoolsByProvince,
   limitSchools,
-  matchingEntrySchools,
   primarySchoolTags,
   provinceOptions,
   requestSchoolUrl,
@@ -25,8 +23,6 @@ import { Input } from './ui/input.tsx';
 /** 地区下拉里「全部地区」的哨兵值：Radix Select 不接受空字符串。 */
 const ALL_PROVINCES = '__all__';
 
-/** 我自己保存的教务条目所在一组的组名。 */
-const SAVED_SCHOOLS_GROUP = '我已保存的学校';
 /** 上次选过的学校置顶成这一组。 */
 const RECENT_SCHOOL_GROUP = '最近使用';
 
@@ -39,8 +35,6 @@ export interface SchoolPickerProps {
   selectedId?: string | null;
   /** 上次选的学校：不就关键词搜索时置顶成「最近使用」一组 */
   pinned?: School | null;
-  /** 内置 + 用户保存的教务条目：命中的会补一组「我已保存的学校」 */
-  entries?: readonly SchoolEntry[];
   /** 搜索框的 `aria-label`（导入流程沿用「搜索学校」，便于既有断言与无障碍一致性） */
   searchLabel?: string;
   placeholder?: string;
@@ -54,7 +48,6 @@ export function SchoolPicker({
   onPick,
   selectedId = null,
   pinned = null,
-  entries,
   searchLabel = '搜索学校',
   placeholder = '校名 / 简称 / 拼音',
   listClassName = 'max-h-72',
@@ -67,8 +60,13 @@ export function SchoolPicker({
   const [active, setActive] = useState(0);
   const listId = useId();
 
-  const filters = useMemo(() => ({ tag, province }), [tag, province]);
-  const results = useMemo(() => filterSchools(query, filters), [query, filters]);
+  /** 检索只走 core：标签单选、省份单选各带一个筛选条件；排序由 `searchSchools` 负责。 */
+  const results = useMemo(() => {
+    const options: SearchSchoolsOptions = {};
+    if (tag !== null) options.tags = [tag];
+    if (province !== null) options.province = province;
+    return searchSchools(query, options);
+  }, [query, tag, province]);
 
   /** 展平后的行顺序就是键盘 ↑↓ 的顺序；`start` 让分组直接切片，避免每行 indexOf。 */
   const { flat, groups, hidden } = useMemo(() => {
@@ -83,7 +81,6 @@ export function SchoolPicker({
       list.push(...schools);
     };
     push(RECENT_SCHOOL_GROUP, pinnedRow === null ? [] : [pinnedRow]);
-    push(SAVED_SCHOOLS_GROUP, matchingEntrySchools(entries ?? [], query, results));
     for (const group of groupSchoolsByProvince(shown)) {
       // 置顶那一行已经在「最近使用」里出现过，省份分组不再重复
       const schools =
@@ -91,7 +88,7 @@ export function SchoolPicker({
       push(group.province, schools);
     }
     return { flat: list, groups: built, hidden: results.length - shown.length };
-  }, [entries, pinned, province, query, results, tag]);
+  }, [pinned, province, query, results, tag]);
 
   // 换了关键词或筛选条件就回到第一行，免得高亮停在一个已经不在列表里的下标上
   useEffect(() => {

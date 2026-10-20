@@ -13,6 +13,7 @@ import {
   systemEntry,
   type SchoolEntry,
 } from '../src/import/school-list.ts';
+import { searchSchools } from '../src/schools/index.ts';
 
 test('教务系统入口模板齐全', () => {
   assert.equal(SYSTEM_ENTRIES.length, 4);
@@ -59,14 +60,14 @@ test('已有具体路径的入口按原样使用', () => {
   assert.equal(entryUrlFor(target?.system ?? 'other', String(target?.url)), 'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html');
 });
 
-test('可按名称与简称检索', () => {
-  const schools = matchSchools(BUILTIN_SCHOOLS, '苏科大');
+test('可按校名检索教务条目', () => {
+  const schools = matchSchools(BUILTIN_SCHOOLS, '苏州科技');
   assert.equal(schools.length, 1);
   assert.equal(schools[0]?.name, '苏州科技大学');
   const byName = matchSchools(BUILTIN_SCHOOLS, '苏州科技大学');
   assert.equal(byName[0]?.name, '苏州科技大学');
   assert.equal(byName[0]?.system, 'jwglxt');
-  assert.ok(matchSchools(BUILTIN_SCHOOLS, '苏科').some((school) => school.name === '苏州科技大学'));
+  assert.ok(matchSchools(BUILTIN_SCHOOLS, '苏州').some((school) => school.name === '苏州科技大学'));
   assert.equal(matchSchools(BUILTIN_SCHOOLS, '不存在的学校').length, 0);
   assert.equal(matchSchools(BUILTIN_SCHOOLS, '').length, BUILTIN_SCHOOLS.length);
   // 名单里的校名走候选检索，不带入口信息
@@ -75,6 +76,19 @@ test('可按名称与简称检索', () => {
     directory: ['安徽电气工程职业技术学院'],
   });
   assert.ok(directoryHit.some((item) => item.name === '安徽电气工程职业技术学院'));
+});
+
+test('三处检索入口对同一关键词给出同一个首条结果', () => {
+  // 目录检索、入口检索、候选检索（条目 + 名单）共用 `nameHitScore` 一张权重表：
+  // 精确 > 前缀 > 包含，同分按校名，所以同一个关键词的首条必须一致。
+  for (const keyword of ['苏州科技', '苏州科技大学']) {
+    const directory = searchSchools(keyword)[0]?.name;
+    const entry = matchSchools(BUILTIN_SCHOOLS, keyword)[0]?.name;
+    const suggestion = suggestSchools(keyword, { schools: BUILTIN_SCHOOLS, limit: 5 })[0]?.name;
+    assert.equal(directory, '苏州科技大学', `目录检索首条不对：${keyword} → ${directory ?? '(空)'}`);
+    assert.equal(entry, directory, `入口检索与目录检索不一致：${keyword} → ${entry ?? '(空)'}`);
+    assert.equal(suggestion, directory, `候选检索与目录检索不一致：${keyword} → ${suggestion ?? '(空)'}`);
+  }
 });
 
 test('内置条目可用且系统模板覆盖四种', () => {
