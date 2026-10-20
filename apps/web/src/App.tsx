@@ -466,8 +466,9 @@ export function App() {
   useEffect(() => {
     if (storage === null || startupPermissionsDone.current) return;
     startupPermissionsDone.current = true;
-    void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then(async () => {
-      // 记下「申请过」：之后才能区分「还没问过」与「被永久拒绝」
+    void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then(async (report) => {
+      // 只有真的发起过系统申请才记「问过」：否则桌面端会把「未申请」误判成「已拒绝」
+      if (report.notifications === 'skipped') return;
       await markNotifyAsked(storage);
     });
     // 存储就绪后只跑一次：权限弹窗不该随设置变化重复弹

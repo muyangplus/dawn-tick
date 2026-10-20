@@ -13,7 +13,13 @@ export interface PermissionReport {
 }
 
 /** 运行时通知权限：没问过、被拒绝（还能再弹）、被永久拒绝（只能去系统设置）。 */
-export type NotifyRuntimeState = 'granted' | 'denied' | 'prompt' | 'permanently-denied' | 'unsupported';
+export type NotifyRuntimeState =
+  | 'granted'
+  | 'denied'
+  | 'prompt'
+  | 'permanently-denied'
+  | 'unsupported'
+  | 'unreadable';
 
 export interface NotifyStatus {
   /** 状态来源：Android 原生六态；桌面插件与浏览器只能报运行时三态 */
@@ -57,8 +63,8 @@ async function readTauriNotifyStatus(asked: boolean): Promise<NotifyStatus> {
     logWarn('permission', '桌面通知状态不可读', {
       message: cause instanceof Error ? cause.message : String(cause),
     });
-    // 取不到就明确报「不支持查询」，不假装成未申请
-    return { ...statusBase(asked), source: 'tauri', runtime: 'unsupported' };
+    // 取不到就明确报「状态不可读」，不假装成未申请或六态中的某一态
+    return { ...statusBase(asked), source: 'tauri', runtime: 'unreadable' };
   }
 }
 

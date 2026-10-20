@@ -33,6 +33,7 @@ test('通知权限六态一一对应', () => {
     '当前环境不支持通知',
     '通知已关闭',
     '通知渠道已静音',
+    '通知状态不可读',
     '读取中…',
   ].toSorted());
 });
@@ -49,6 +50,7 @@ test('桌面端只按通知插件能报的三态显示', () => {
   // 桌面读不到应用级开关/渠道，不能假装成「通知已关闭」
   assert.equal(notifyStateOf({ ...tauri, appEnabled: false, channelMuted: true }).label, '已允许');
   assert.equal(notifyStateOf({ ...tauri, runtime: 'unsupported' }).label, '当前环境不支持通知');
+  assert.equal(notifyStateOf({ ...tauri, runtime: 'unreadable' }).label, '通知状态不可读');
 });
 
 test('权限异常给出下一步且只在异常时提示', () => {

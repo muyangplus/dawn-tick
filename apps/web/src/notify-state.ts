@@ -8,6 +8,7 @@ import type { NotifyStatus } from './permissions.ts';
 export type NotifyState =
   | 'loading'
   | 'unsupported'
+  | 'unreadable'
   | 'not-applied'
   | 'granted'
   | 'denied'
@@ -25,6 +26,7 @@ export interface NotifyStateView {
 export const NOTIFY_STATE_LABEL: Record<NotifyState, string> = {
   loading: '读取中…',
   unsupported: '当前环境不支持通知',
+  unreadable: '通知状态不可读',
   'not-applied': '未申请',
   granted: '已允许',
   denied: '已拒绝',
@@ -40,6 +42,7 @@ function view(state: NotifyState, action: NotifyStateView['action'] = null): Not
 export function notifyStateOf(status: NotifyStatus | null): NotifyStateView {
   if (status === null) return view('loading');
   if (status.runtime === 'unsupported') return view('unsupported');
+  if (status.runtime === 'unreadable') return view('unreadable');
   // 应用级开关与渠道静音只有 Android 原生能报：其它平台不假装存在这两个状态
   if (status.source === 'android') {
     if (!status.appEnabled) return view('app-disabled', 'settings');

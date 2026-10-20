@@ -1896,6 +1896,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       !(settingsActions.textContent ?? '').includes('检查更新'),
     (settingsActions?.textContent ?? '(无)').trim(),
   );
+  const pendingOnSettings = view.container.querySelector<HTMLElement>('[data-role="pending-restart"]');
+  check(
+    '设置页顶部同样显示待重启条',
+    pendingOnSettings !== null && (pendingOnSettings.textContent ?? '').includes('项改动待重启'),
+    pendingOnSettings?.textContent?.trim() ?? '(无)',
+  );
   if (settingsActions !== null && clickByText(settingsActions, '导入课表')) await flush(12);
   check('快捷动作直接打开导入向导', document.querySelector('[aria-label="导入步骤"]') !== null, '');
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
