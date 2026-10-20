@@ -1,7 +1,8 @@
-import { MapPin, Timer } from 'lucide-react';
+import { CalendarDays, MapPin, Timer } from 'lucide-react';
 import { formatTime, weekOfDate } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { Countdown } from '../components/countdown.tsx';
+import { Button } from '../components/ui/button.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { cn } from '../lib/cn.ts';
 import { formatRemaining } from '../lib/format.ts';
@@ -13,9 +14,11 @@ export interface TodayViewProps {
   date: string;
   /** 查看的是不是今天：只有今天才显示「正在上课」「下一节课」 */
   isToday: boolean;
+  /** 空态主按钮：切回周视图看本周安排（由上层提供；没有入口时不渲染按钮） */
+  onOpenWeek?: () => void;
 }
 
-export function TodayView({ data, date, isToday }: TodayViewProps) {
+export function TodayView({ data, date, isToday, onOpenWeek }: TodayViewProps) {
   const now = useNowTick(1000);
   const lessons = data.lessonsByDate.get(date) ?? [];
   const current = isToday ? data.currentLesson : undefined;
@@ -70,10 +73,20 @@ export function TodayView({ data, date, isToday }: TodayViewProps) {
       )}
 
       {lessons.length === 0 ? (
-        <EmptyState
-          title={isToday ? '今天没有课' : '这一天没有课'}
-          description="可切换到周视图查看本周安排"
-        />
+        <div data-role="day-empty">
+          <EmptyState
+            icon={CalendarDays}
+            title={isToday ? '今天没有课' : '这一天没有课'}
+            description="切换周视图可看本周安排"
+            action={
+              onOpenWeek === undefined ? undefined : (
+                <Button size="sm" variant="secondary" aria-label="查看周视图" onClick={onOpenWeek}>
+                  查看周视图
+                </Button>
+              )
+            }
+          />
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
           {lessons.map((lesson) => {

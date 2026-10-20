@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
-import { MapPin } from 'lucide-react';
 import type { EventRow, Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx';
-import { Button } from '../components/ui/button.tsx';
 import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } from './cards/registry.ts';
 import { readLayout } from './cards/layout-store.ts';
 import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
@@ -96,16 +94,6 @@ export function ScheduleView({
           ))}
         </aside>
       )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <MapPin className="size-3 text-muted" aria-hidden />
-        <span className="text-xs text-muted">
-          今天第 {data.week} 周 · 共 {data.todayLessons.length} 节课 · {data.todos.length} 条待办
-        </span>
-        <Button variant="ghost" size="sm" onClick={() => onChanged()}>
-          刷新
-        </Button>
-      </div>
 
       <AdjustDialog
         open={adjustOpen}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Plus } from 'lucide-react';
+import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { addDays, dayOfWeek as nextDayOfWeek, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
@@ -10,6 +10,7 @@ import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
+import { weekEmptyKind } from '../lib/week-empty.ts';
 import { ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, nextRowHeight, rowHeightFor, type CardMeasurement } from '../lib/row-height.ts';
 import { logDebug, logWarn } from '../log.ts';
 
@@ -28,15 +29,6 @@ const SUPPRESS_SLOT_CLICK_MS = 500;
 function formatMonthDay(date: string): string {
   const [, month, day] = date.split('-');
   return `${Number(month)}/${Number(day)}`;
-}
-
-/** 日期区间文案：同月省略重复的月份，例如 8/19–23。 */
-function formatDateRange(from: string, to: string): string {
-  if (from === to) return formatMonthDay(from);
-  const [fromYear, fromMonth] = from.split('-');
-  const [toYear, toMonth] = to.split('-');
-  if (fromYear === toYear && fromMonth === toMonth) return `${formatMonthDay(from)}–${Number(to.split('-')[2])}`;
-  return `${formatMonthDay(from)}–${formatMonthDay(to)}`;
 }
 
 /** 节次范围文案：单节显示「第 3 节」，连堂显示「第 3–4 节」。 */
@@ -263,6 +255,23 @@ export function WeekView({
     () => lessons.filter((lesson) => lesson.inWeek || showOtherWeeks),
     [lessons, showOtherWeeks],
   );
+  /** 窗口完全落在学期外：每一列都在第 1 周之前或总周数之后 */
+  const outsideSemester = useMemo(() => {
+    const semester = data.semester;
+    if (semester === null) return false;
+    return data.windowDates.every((date) => {
+      const week = weekOfDate(date, semester.start_date);
+      return week < 1 || week > semester.total_weeks;
+    });
+  }, [data.semester, data.windowDates]);
+  /** 窗口里存在非本周课（虚线课）：据此把「真空课表」与「这段只有别周的课」区分开 */
+  const onlyOtherWeeks = lessons.some((lesson) => !lesson.inWeek);
+  /** 空态三态：有可见课程（含按设置显示的虚线课）时不显示空态 */
+  const emptyKind = weekEmptyKind({
+    visibleLessons: shownLessons.length,
+    outsideSemester,
+    hasOtherWeekLessons: onlyOtherWeeks,
+  });
   const periodCount = slots.length;
   /** 头部/尾部补白随自定义时间条目伸缩：节次轴、时间线与拖动换算都跟着平移 */
   const metrics = useMemo(() => gridMetrics(slots, shownLessons, rowHeight), [slots, shownLessons, rowHeight]);
@@ -721,25 +730,64 @@ export function WeekView({
         else onNextWindow();
       }}
     >
-      {!data.hasLessons && (
-        <EmptyState
-          title={
-            data.windowDates.length <= 1
-              ? `${formatMonthDay(data.windowStart)} 没有课程`
-              : `${formatDateRange(data.windowStart, data.windowDates[data.windowDates.length - 1] as string)} 没有课程`
-          }
-          description={
-            compact
-              ? '点右下角「快速添加」，或在设置里导入课表'
-              : '从右上角「添加课程」，或在设置里导入课表'
-          }
-          action={
-            <Button size="sm" variant="secondary" aria-label="导入课表" onClick={onImport}>
-              导入课表
-            </Button>
-          }
-        />
-      )}
+      {/* 空态判据＝窗口内没有任何可见课程：非本周虚线课算可见，只有非本周 / 学期外 / 真空课表分开说 */}
+      {emptyKind !== 'none' &&
+        (emptyKind === 'outside-semester' ? (
+          <div data-role="week-empty" data-empty-state="outside-semester">
+            <EmptyState
+              icon={CalendarX}
+              title="学期外没有课程"
+              description="当前窗口不在学期内，回到学期内可看安排"
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={
+                    data.windowStart < (data.semester?.start_date ?? data.windowStart) ? onNextWindow : onPrevWindow
+                  }
+                >
+                  回到学期内
+                </Button>
+              }
+            />
+          </div>
+        ) : emptyKind === 'other-weeks' ? (
+          <div data-role="week-empty" data-empty-state="other-weeks">
+            <EmptyState
+              icon={CalendarClock}
+              title="这段时间只有非本周课程"
+              description="打开「显示非本周课程」可看到虚线课卡，也可以直接添加一门课"
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    openQuickCreate({ date: data.windowDates[0] ?? data.windowStart, start: 1, end: 1 })
+                  }
+                >
+                  添加课程
+                </Button>
+              }
+            />
+          </div>
+        ) : (
+          <div data-role="week-empty" data-empty-state="vacuum">
+            <EmptyState
+              icon={BookOpen}
+              title="这段时间没有课程"
+              description={
+                compact
+                  ? '点右下角「快速添加」，或在设置里导入课表'
+                  : '从右上角「添加课程」，或在设置里导入课表'
+              }
+              action={
+                <Button size="sm" variant="secondary" aria-label="导入课表" onClick={onImport}>
+                  导入课表
+                </Button>
+              }
+            />
+          </div>
+        ))}
 
       {/* 不横向滚动：列宽按容器等分，窄屏压缩节次轴与卡片间距；节次轴始终显示起止时间 */}
       <div className="rounded-lg border border-line bg-surface [--dt-axis:2.75rem] tablet:[--dt-axis:3.5rem]">
