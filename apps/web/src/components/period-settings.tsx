@@ -4,10 +4,17 @@ import {
   appendTimeSlot,
   DEFAULT_TIMETABLE_ID,
   deleteTimeSlot,
+  durationBetween,
   effectiveTimetables,
   findTimetable,
   generatePeriods,
+  isClockText,
   listTimeSlots,
+  PERIOD_BREAK_MAX,
+  PERIOD_BREAK_MIN,
+  PERIOD_DURATION_MAX,
+  PERIOD_DURATION_MIN,
+  presetSpacing,
   reflowPeriods,
   replaceTimeSlots,
   sectionOf,
@@ -30,14 +37,12 @@ import { errorMessage } from '../lib/errors.ts';
 import { logInfo } from '../log.ts';
 
 const SECTION_LABEL = { am: '上午', pm: '下午', night: '晚上' } as const;
-const CLOCK_PATTERN = /^(\d{1,2}):(\d{2})$/;
-/** 每节时长的可输入范围（与 core 一致） */
-const MIN_DURATION = 10;
-const MAX_DURATION = 240;
+/** 每节时长与课间的可输入范围：与 core 的生成/顺延算法同一口径 */
+const MIN_DURATION = PERIOD_DURATION_MIN;
+const MAX_DURATION = PERIOD_DURATION_MAX;
 const DEFAULT_DURATION = 45;
-/** 课间的可输入范围（与 core 一致） */
-const MIN_BREAK = 0;
-const MAX_BREAK = 120;
+const MIN_BREAK = PERIOD_BREAK_MIN;
+const MAX_BREAK = PERIOD_BREAK_MAX;
 const DEFAULT_BREAK = 10;
 /** 「本次启动期间不再询问」的勾选框文案 */
 const SCOPE_OPT_OUT_LABEL = '本次启动期间不再询问';
@@ -78,74 +83,6 @@ interface AppliedPreset {
   name: string;
   source: string | null;
   count: number;
-}
-
-/** 把 HH:MM 解析成当天的分钟数；不是完整时刻时返回 null。 */
-function clockMinutes(value: string): number | null {
-  const match = CLOCK_PATTERN.exec(value.trim());
-  if (match === null) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return null;
-  return hours * 60 + minutes;
-}
-
-/** 输入框里的 HH:MM 是否已经是完整时刻（过滤掉输入过程中的半成品）。 */
-function isClockText(value: string): boolean {
-  return clockMinutes(value) !== null;
-}
-
-/** 由起止时间推算单节时长；无法推算或不为正时返回 null。 */
-function durationBetween(startTime: string, endTime: string): number | null {
-  const start = clockMinutes(startTime);
-  const end = clockMinutes(endTime);
-  if (start === null || end === null) return null;
-  const minutes = end - start;
-  return minutes > 0 ? minutes : null;
-}
-
-/** 出现次数最多的值；并列时取较小的那个，结果可复现。 */
-function mostFrequent(counts: ReadonlyMap<number, number>): number | null {
-  let best: number | null = null;
-  let bestCount = 0;
-  for (const [value, count] of counts) {
-    if (count > bestCount || (count === bestCount && best !== null && value < best)) {
-      best = value;
-      bestCount = count;
-    }
-  }
-  return best;
-}
-
-/** 从预设课次推算每节时长与课间，都取出现次数最多的值；推不出可用值时返回 null。 */
-function presetSpacing(periods: readonly { start: string; end: string }[]): {
-  durationMinutes: number | null;
-  breakMinutes: number | null;
-} {
-  const durations = new Map<number, number>();
-  const breaks = new Map<number, number>();
-  let previousEnd: number | null = null;
-  for (const period of periods) {
-    const start = clockMinutes(period.start);
-    const end = clockMinutes(period.end);
-    if (start === null || end === null) continue;
-    if (end > start) durations.set(end - start, (durations.get(end - start) ?? 0) + 1);
-    if (previousEnd !== null && start > previousEnd) {
-      const gap = start - previousEnd;
-      breaks.set(gap, (breaks.get(gap) ?? 0) + 1);
-    }
-    previousEnd = end;
-  }
-  const durationMinutes = mostFrequent(durations);
-  const breakMinutes = mostFrequent(breaks);
-  return {
-    durationMinutes:
-      durationMinutes !== null && durationMinutes >= MIN_DURATION && durationMinutes <= MAX_DURATION
-        ? durationMinutes
-        : null,
-    breakMinutes:
-      breakMinutes !== null && breakMinutes >= MIN_BREAK && breakMinutes <= MAX_BREAK ? breakMinutes : null,
-  };
 }
 
 function within(value: number, min: number, max: number): boolean {

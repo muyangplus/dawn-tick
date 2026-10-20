@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { EventRow, Storage } from '@dawn-tick/core';
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
+import type { ScheduleActions } from './use-schedule-actions.ts';
 
 /** 卡片所在页面 */
 export type CardScope = 'schedule' | 'settings' | 'devices';
@@ -38,6 +39,8 @@ export interface ScheduleCardContext {
   onOpenAdjust: (target: AdjustTarget | null) => void;
   /** 新增调课、调整、节假日后刷新数据 */
   onChanged: () => void;
+  /** 卡片写库动作：卡片只发 intent，写库与提示都在 `useScheduleActions` 里 */
+  actions: ScheduleActions;
   /** 显示开学倒计时 */
   semesterCountdown: boolean;
   /** 显示下一个假期倒计时 */

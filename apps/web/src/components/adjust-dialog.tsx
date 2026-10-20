@@ -1,25 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  addDays,
-  createCourse,
-  createEvent,
-  createReschedule,
-  createSchedule,
-  dayOfWeek,
-  rangesOverlap,
-  updateSchedule,
-  weekOfDate,
-  weekStart,
-  WEEKDAY_LABELS,
-  weeksIntersect,
-  type ManagedCourse,
-  type Storage,
-} from '@dawn-tick/core';
+import { weekOfDate, WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
-import { weekDateOf } from '../data.ts';
 import { useAction } from '../lib/action.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 import { logInfo } from '../log.ts';
+import {
+  applyCancel,
+  applyExtra,
+  applyMove,
+  applySwap,
+  overlapAt,
+  planCancel,
+  planExtra,
+  planMove,
+  planSwap,
+  type AdjustMode,
+  type AdjustScope,
+  type AdjustTarget,
+} from '../screens/timetable/move-controller.ts';
 import { Button } from './ui/button.tsx';
 import { DialogFooter } from './ui/dialog.tsx';
 import { EmptyState } from './ui/empty-state.tsx';
@@ -28,14 +26,9 @@ import { Field, Input } from './ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { toast } from './ui/toaster.tsx';
 
+export type { AdjustMode, AdjustScope, AdjustTarget } from '../screens/timetable/move-controller.ts';
+
 const USER_ID = 'u1';
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** 调课弹窗的四个主操作。 */
-export type AdjustMode = 'move' | 'cancel' | 'swap' | 'extra';
-
-/** 改期的四种生效范围。 */
-type AdjustScope = 'this' | 'weekly' | 'week' | 'date';
 
 const MODE_ITEMS = [
   { id: 'move', label: '改期' },
@@ -51,20 +44,6 @@ const SCOPE_ITEMS = [
   { id: 'date', label: '指定日期', hint: '把这节课调到某一天，可跨周、可换星期' },
 ] as const;
 
-export interface AdjustTarget {
-  scheduleId: string;
-  courseId: string;
-  courseName: string;
-  /** 原日期，YYYY-MM-DD */
-  date: string;
-  periodStart: number;
-  periodEnd: number;
-  /** 拖动入口的落点：目标日期与目标起始节，打开时预填进「改期」 */
-  drop?: { date: string; periodStart: number } | undefined;
-  /** 入口预选的主操作，缺省为「改期」 */
-  mode?: AdjustMode | undefined;
-}
-
 export interface AdjustDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -77,32 +56,10 @@ export interface AdjustDialogProps {
   container?: FormContainer;
 }
 
-/** 目标位置已有的课：课程允许重叠，只用来提醒；week 为 null 表示不限周次（每周生效）。 */
-function overlapAt(
-  courses: readonly ManagedCourse[],
-  target: {
-    dayOfWeek: number;
-    periodStart: number;
-    periodEnd: number;
-    week: number | null;
-    excludeCourseId: string;
-  },
-): { name: string; start: number; end: number } | null {
-  for (const course of courses) {
-    if (course.id === target.excludeCourseId) continue;
-    for (const schedule of course.schedules) {
-      if (schedule.dayOfWeek !== target.dayOfWeek) continue;
-      if (!rangesOverlap(schedule.periodStart, schedule.periodEnd, target.periodStart, target.periodEnd)) continue;
-      if (target.week !== null && !weeksIntersect(schedule.weeks, [target.week])) continue;
-      return { name: course.name, start: schedule.periodStart, end: schedule.periodEnd };
-    }
-  }
-  return null;
-}
-
 /**
  * 全仓唯一的调课弹窗：改期 / 停课 / 调休 / 临时加课四选一。
- * 课程详情、日程卡与拖拽三个入口都打开它，只传预填参数（`target`）。
+ * 课程详情、日程卡与拖拽三个入口都打开它，只传预填参数（`target`）；
+ * 校验与写库在 `screens/timetable/move-controller.ts`，这里只留表单状态与呈现。
  */
 export function AdjustDialog({
   open,
@@ -160,9 +117,7 @@ export function AdjustDialog({
         String(drop === undefined ? target.periodEnd : drop.periodStart + (target.periodEnd - target.periodStart)),
       );
       setNewRoom('');
-      setTargetWeek(
-        String(semester === null ? 1 : weekOfDate(drop?.date ?? target.date, semester.start_date)),
-      );
+      setTargetWeek(String(semester === null ? 1 : weekOfDate(drop?.date ?? target.date, semester.start_date)));
       // 落点在原日期同一周就按「这一次」，跨周默认「指定日期」
       const sameWeek =
         drop === undefined ||
@@ -205,143 +160,85 @@ export function AdjustDialog({
   const extraPeriodStart = Number(extraStart);
   const extraPeriodEnd = Number(extraEnd);
 
-  function periodsValid(start: number, end: number): boolean {
-    return Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start;
-  }
+  /** 计划通过校验后学期一定存在；这里只把类型收窄成字符串。 */
+  const semesterId = (): string => (semester === null ? '' : semester.id);
 
-  /** 学期内日期校验，返回错误文案或 null。 */
-  function dateError(date: string, label: string): string | null {
-    if (semester === null) return '还没有学期';
-    if (!DATE_RE.test(date)) return `请先选择${label}`;
-    const first = weekStart(semester.start_date);
-    const last = addDays(first, semester.total_weeks * 7 - 1);
-    if (date < first || date > last) return `${label}要在学期内（${first} 至 ${last}）`;
-    return null;
+  /** 冲突提示：课程允许重叠，只提醒，不拦截。 */
+  function warnOverlap(position: {
+    dayOfWeek: number;
+    periodStart: number;
+    periodEnd: number;
+    week: number | null;
+  }): void {
+    const overlap = overlapAt(data.courses, { ...position, excludeCourseId: courseId });
+    if (overlap !== null) {
+      toast.info(`调整后与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
+    }
   }
 
   async function submitMove(): Promise<void> {
-    if (semester === null || schedule === undefined) {
-      toast.error('请先选课程与要调整的课次');
+    const planned = planMove({
+      semester,
+      schedule,
+      scope,
+      sourceDate,
+      newDate,
+      targetWeek,
+      periodStart,
+      periodEnd,
+    });
+    if (!planned.ok) {
+      toast.error(planned.message);
       return;
     }
-    if (!periodsValid(periodStart, periodEnd)) {
-      toast.error('节次需要是 1 起、且结束不小于开始');
-      return;
-    }
-    const sourceError = dateError(sourceDate, '原日期');
-    if (sourceError !== null) {
-      toast.error(sourceError);
-      return;
-    }
-    const targetError = dateError(newDate, '调整后日期');
-    if (targetError !== null) {
-      toast.error(targetError);
-      return;
-    }
-    const targetDay = dayOfWeek(newDate);
-    const semesterId = semester.id;
-    // 每周：直接改课表本身，不再记一次调课
-    if (scope === 'weekly') {
-      if (
-        targetDay === schedule.dayOfWeek &&
-        periodStart === schedule.periodStart &&
-        periodEnd === schedule.periodEnd
-      ) {
-        toast.error('目标位置和现在一样，没有需要调整的');
-        return;
-      }
+    const plan = planned.plan;
+    if (plan.scope === 'weekly') {
       const result = await run({
         scope: 'adjust',
         label: '正在改为每周…',
-        ok: `已改为每周 ${WEEKDAY_LABELS[targetDay - 1] ?? ''} ${formatPeriodRange(periodStart, periodEnd)}`,
+        ok: `已改为每周 ${WEEKDAY_LABELS[plan.dayOfWeek - 1] ?? ''} ${formatPeriodRange(plan.periodStart, plan.periodEnd)}`,
         fail: { what: '改为每周失败', next: '请重试；仍失败请重新打开调课弹窗。' },
-        task: async () => {
-          await updateSchedule(storage, schedule.id, {
-            day_of_week: targetDay,
-            period_start: periodStart,
-            period_end: periodEnd,
-          });
-        },
+        task: () =>
+          applyMove(storage, plan, {
+            userId: USER_ID,
+            semesterId: semesterId(),
+            courseName: course?.name ?? '',
+            sourceDate,
+          }),
       });
       if (!result.ok) return;
-      const overlap = overlapAt(data.courses, {
-        dayOfWeek: targetDay,
-        periodStart,
-        periodEnd,
-        week: null,
-        excludeCourseId: courseId,
-      });
-      if (overlap !== null) {
-        toast.info(`调整后与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
-      }
-      logInfo('adjust', '已改为每周', { scheduleId: schedule.id, dayOfWeek: targetDay });
+      warnOverlap({ dayOfWeek: plan.dayOfWeek, periodStart: plan.periodStart, periodEnd: plan.periodEnd, week: null });
+      logInfo('adjust', '已改为每周', { scheduleId: plan.scheduleId, dayOfWeek: plan.dayOfWeek });
       onChanged();
       onOpenChange(false);
-      return;
-    }
-
-    // 这一次 / 指定周 / 指定日期：都只改原日期这一次课
-    let finalDate = newDate;
-    if (scope === 'week') {
-      const wanted = Number(targetWeek);
-      if (!Number.isInteger(wanted) || wanted < 1 || wanted > semester.total_weeks) {
-        toast.error(`目标周要在 1–${semester.total_weeks} 周之间`);
-        return;
-      }
-      finalDate = weekDateOf(semester, wanted, targetDay);
-      const first = weekStart(semester.start_date);
-      const last = addDays(first, semester.total_weeks * 7 - 1);
-      if (finalDate < first || finalDate > last) {
-        toast.error(`目标周超出学期范围（${first} 至 ${last}）`);
-        return;
-      }
-    }
-    const sameWeek = weekOfDate(finalDate, semester.start_date) === weekOfDate(sourceDate, semester.start_date);
-    if (scope === 'this' && !sameWeek) {
-      toast.error('「这一次」只改本周；跨周改用「指定日期」');
-      return;
-    }
-    if (finalDate === sourceDate && periodStart === schedule.periodStart && periodEnd === schedule.periodEnd) {
-      toast.error('目标位置和现在一样，没有需要调整的');
       return;
     }
     const result = await run({
       scope: 'adjust',
       label: '正在调课…',
-      ok: `已把这一次课调到 ${finalDate} ${formatPeriodRange(periodStart, periodEnd)}`,
+      ok: `已把这一次课调到 ${plan.finalDate} ${formatPeriodRange(plan.periodStart, plan.periodEnd)}`,
       fail: { what: '调课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
-      task: async () => {
-        await createReschedule(storage, {
+      task: () =>
+        applyMove(storage, plan, {
           userId: USER_ID,
-          semesterId,
-          refScheduleId: schedule.id,
-          onDate: sourceDate,
-          action: 'move',
-          title: `调课：${course?.name ?? ''}`,
-          newDate: finalDate,
-          newPeriodStart: periodStart,
-          newPeriodEnd: periodEnd,
-          newRoom: newRoom.trim().length === 0 ? null : newRoom.trim(),
-          asDayOfWeek: dayOfWeek(finalDate),
-        });
-      },
+          semesterId: semesterId(),
+          courseName: course?.name ?? '',
+          sourceDate,
+          room: newRoom.trim().length === 0 ? null : newRoom.trim(),
+        }),
     });
     if (!result.ok) return;
-    const overlap = overlapAt(data.courses, {
-      dayOfWeek: dayOfWeek(finalDate),
-      periodStart,
-      periodEnd,
-      week: weekOfDate(finalDate, semester.start_date),
-      excludeCourseId: courseId,
+    warnOverlap({
+      dayOfWeek: plan.dayOfWeek,
+      periodStart: plan.periodStart,
+      periodEnd: plan.periodEnd,
+      week: plan.week,
     });
-    if (overlap !== null) {
-      toast.info(`调整后与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
-    }
     logInfo('adjust', '已记录调课', {
-      scheduleId: schedule.id,
+      scheduleId: plan.scheduleId,
       date: sourceDate,
-      newDate: finalDate,
-      periods: `${periodStart}-${periodEnd}`,
+      newDate: plan.finalDate,
+      periods: `${plan.periodStart}-${plan.periodEnd}`,
       scope,
     });
     onChanged();
@@ -349,110 +246,75 @@ export function AdjustDialog({
   }
 
   async function submitCancel(): Promise<void> {
-    if (semester === null || schedule === undefined) {
-      toast.error('请先选课程与要停的课次');
+    const planned = planCancel({ semester, schedule, sourceDate });
+    if (!planned.ok) {
+      toast.error(planned.message);
       return;
     }
-    const sourceError = dateError(sourceDate, '原日期');
-    if (sourceError !== null) {
-      toast.error(sourceError);
-      return;
-    }
+    const plan = planned.plan;
     const result = await run({
       scope: 'adjust',
       label: '正在停课…',
       ok: '已记录停课',
       fail: { what: '停课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
-      task: async () => {
-        await createReschedule(storage, {
+      task: () =>
+        applyCancel(storage, plan, {
           userId: USER_ID,
-          semesterId: semester.id,
-          refScheduleId: schedule.id,
-          onDate: sourceDate,
-          action: 'cancel',
-          title: `停课：${course?.name ?? ''}`,
-        });
-      },
+          semesterId: semesterId(),
+          courseName: course?.name ?? '',
+          sourceDate,
+        }),
     });
     if (!result.ok) return;
-    logInfo('adjust', '已记录停课', { scheduleId: schedule.id, date: sourceDate });
+    logInfo('adjust', '已记录停课', { scheduleId: plan.scheduleId, date: sourceDate });
     onChanged();
     onOpenChange(false);
   }
 
   async function submitSwap(): Promise<void> {
-    if (semester === null) return;
-    const fromError = dateError(restFrom, '原日期课表');
-    if (fromError !== null) {
-      toast.error(fromError);
+    const planned = planSwap({ semester, restFrom, restTo });
+    if (!planned.ok) {
+      toast.error(planned.message);
       return;
     }
-    const toError = dateError(restTo, '目标上课日');
-    if (toError !== null) {
-      toast.error(toError);
-      return;
-    }
+    const swapPlan = planned.plan;
     const result = await run({
       scope: 'adjust',
       label: '正在调休…',
       ok: '已记录调休',
       fail: { what: '调休失败', next: '请重试；仍失败请重新打开调课弹窗。' },
-      task: async () => {
-        await createEvent(storage, {
+      task: () =>
+        applySwap(storage, swapPlan, {
           userId: USER_ID,
-          semesterId: semester.id,
-          type: 'makeup',
-          title: `${restFrom} 的课表调到 ${restTo}`,
-          onDate: restTo,
-          asDayOfWeek: dayOfWeek(restFrom),
-        });
-      },
+          semesterId: semesterId(),
+        }),
     });
     if (!result.ok) return;
-    logInfo('adjust', '已记录调休', { from: restFrom, to: restTo });
+    logInfo('adjust', '已记录调休', { from: swapPlan.from, to: swapPlan.to });
     onChanged();
     onOpenChange(false);
   }
 
   async function submitExtra(): Promise<void> {
-    if (semester === null) return;
-    if (extraCourse === '' && extraName.trim().length === 0) {
-      toast.error('请选择课程或填写课程名称');
+    const planned = planExtra({
+      semester,
+      courseId: extraCourse,
+      courseName: extraName,
+      date: extraDate,
+      periodStart: extraPeriodStart,
+      periodEnd: extraPeriodEnd,
+    });
+    if (!planned.ok) {
+      toast.error(planned.message);
       return;
     }
-    if (!periodsValid(extraPeriodStart, extraPeriodEnd)) {
-      toast.error('节次需要是 1 起、且结束不小于开始');
-      return;
-    }
-    const extraError = dateError(extraDate, '加课日期');
-    if (extraError !== null) {
-      toast.error(extraError);
-      return;
-    }
-    const extraWeek = weekOfDate(extraDate, semester.start_date);
+    const extraPlan = planned.plan;
     const result = await run({
       scope: 'adjust',
       label: '正在临时加课…',
-      ok: `已加课：第 ${extraWeek} 周 ${WEEKDAY_LABELS[dayOfWeek(extraDate) - 1] ?? ''}`,
+      ok: `已加课：第 ${extraPlan.week} 周 ${WEEKDAY_LABELS[extraPlan.dayOfWeek - 1] ?? ''}`,
       fail: { what: '临时加课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
-      task: async () => {
-        let targetCourseId = extraCourse;
-        if (extraName.trim().length > 0) {
-          const created = await createCourse(storage, {
-            semesterId: semester.id,
-            name: extraName.trim(),
-            shortName: extraName.trim().slice(0, 4),
-          });
-          targetCourseId = String(created['id']);
-        }
-        await createSchedule(storage, {
-          courseId: targetCourseId,
-          dayOfWeek: dayOfWeek(extraDate),
-          periodStart: extraPeriodStart,
-          periodEnd: extraPeriodEnd,
-          weeks: [extraWeek],
-        });
-      },
+      task: () => applyExtra(storage, extraPlan, { semesterId: semesterId() }),
     });
     if (!result.ok) return;
     onChanged();

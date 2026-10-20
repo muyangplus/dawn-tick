@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addMinutes,
+  durationBetween,
   formatClock,
   generatePeriods,
+  isClockText,
   nextPeriod,
   parseClock,
   periodAtClock,
   periodsForClockRange,
+  presetSpacing,
   rangesOverlap,
   reflowPeriods,
   regenerateSections,
@@ -357,4 +360,64 @@ test('钟点范围换算节次范围：无重叠时贴到开始时间最近的�
   assert.deepEqual(periodsForClockRange(slots, '08:46', '08:54'), { periodStart: 2, periodEnd: 2 });
   assert.equal(periodsForClockRange([], '08:00', '09:00'), null);
   assert.equal(periodsForClockRange(slots, '', '09:00'), null);
+});
+
+test('时刻输入判定：完整时刻才算数', () => {
+  assert.equal(isClockText('08:00'), true);
+  assert.equal(isClockText('8:05'), true);
+  assert.equal(isClockText(' 08:00 '), true);
+  assert.equal(isClockText('08:0'), false);
+  assert.equal(isClockText('8点'), false);
+  assert.equal(isClockText('24:00'), false);
+  assert.equal(isClockText(''), false);
+});
+
+test('由起止时间推算单节时长', () => {
+  assert.equal(durationBetween('08:00', '08:45'), 45);
+  assert.equal(durationBetween('09:55', '10:40'), 45);
+  assert.equal(durationBetween('08:00', '08:00'), null, '时长为 0 不算有效');
+  assert.equal(durationBetween('09:00', '08:00'), null, '倒序不算有效');
+  assert.equal(durationBetween('08:0', '09:00'), null);
+  assert.equal(durationBetween('8点', '09:00'), null);
+});
+
+test('从作息预设推算节距：取最常见的时长与课间', () => {
+  // 苏科大作息：每节 45 分钟，课间 10 分钟
+  const spacing = presetSpacing([
+    { start: '08:00', end: '08:45' },
+    { start: '08:55', end: '09:40' },
+    { start: '09:50', end: '10:35' },
+    { start: '10:55', end: '11:40' },
+  ]);
+  assert.deepEqual(spacing, { durationMinutes: 45, breakMinutes: 10 });
+});
+
+test('从作息预设推算节距：并列取较小值，越界返回 null', () => {
+  // 时长 40/45 各两次、课间 10/20 各一次 → 都取较小的那个
+  const mixed = presetSpacing([
+    { start: '08:00', end: '08:40' },
+    { start: '08:50', end: '09:30' },
+    { start: '09:50', end: '10:35' },
+    { start: '10:45', end: '11:30' },
+  ]);
+  assert.deepEqual(mixed, { durationMinutes: 40, breakMinutes: 10 });
+
+  // 只有一节：没有课间可算，时长照常有
+  assert.deepEqual(presetSpacing([{ start: '08:00', end: '08:45' }]), {
+    durationMinutes: 45,
+    breakMinutes: null,
+  });
+
+  // 时长越界（超出 10–240）时判为不可用
+  assert.deepEqual(presetSpacing([{ start: '08:00', end: '09:00' }, { start: '09:10', end: '15:10' }]), {
+    durationMinutes: 60,
+    breakMinutes: 10,
+  });
+  assert.equal(presetSpacing([{ start: '08:00', end: '08:05' }]).durationMinutes, null);
+  // 解析不了的时刻直接跳过
+  assert.deepEqual(presetSpacing([{ start: '8点', end: '09:00' }, { start: '09:00', end: '09:45' }]), {
+    durationMinutes: 45,
+    breakMinutes: null,
+  });
+  assert.deepEqual(presetSpacing([]), { durationMinutes: null, breakMinutes: null });
 });

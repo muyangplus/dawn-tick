@@ -139,6 +139,9 @@ export interface CourseDetail {
 }
 
 const LOOKAHEAD_DAYS = 14;
+/** 课次日期范围：至少覆盖整个学期，学期外保留今天前后各一段 */
+const OCCURRENCE_PAST_DAYS = 45;
+const OCCURRENCE_FUTURE_DAYS = 60;
 const USER_ID = 'u1';
 
 export function weekDateOf(semester: SemesterRow, week: number, dayOfWeek: number): string {
@@ -161,54 +164,36 @@ function weeksOf(mask: number | null, totalWeeks: number, fallback: number): num
   return maskToWeeks(mask, totalWeeks);
 }
 
-export async function loadAppData(
-  storage: Storage,
-  settings: AppSettings,
-  options: { viewWeek?: number; windowStart?: string | null } = {},
-): Promise<AppData> {
-  const timeZone = resolveTimeZone(settings.timeZone, settings.autoTimeZone);
-  const today = formatDate(Date.now(), timeZone);
-  const semesters = await listSemesters(storage, USER_ID);
-  const semester = (await activeSemester(storage, USER_ID)) ?? null;
+/** 学期上下文：查看窗口覆盖哪几天、每天属于第几周。纯计算，不读 storage。 */
+export interface SemesterContext {
+  /** 今天所在周次（早于第 1 周时为 1） */
+  currentWeek: number;
+  /** 窗口第一天所在周次，夹在 1–总周数之间 */
+  viewWeek: number;
+  /** 窗口第一天的日期 */
+  windowStart: string;
+  /** 窗口里的每一天 */
+  windowDates: string[];
+  /** 窗口里每天所属的周次，与 `windowDates` 一一对应；早于第 1 周为 0，晚于总周数为溢出值 */
+  weekOfDay: number[];
+  /** 查看窗口的周一起点：用于「本周」标签与调课预填 */
+  weekStartDate: string;
+  windowSpansWeeks: boolean;
+}
 
-  if (semester === null) {
-    return {
-      timeZone,
-      today,
-      todayOfWeek: dayOfWeek(today),
-      week: 0,
-      viewWeek: 0,
-      weekStartDate: today,
-      windowStart: today,
-      windowDates: [today],
-      windowSpansWeeks: false,
-      semester: null,
-      semesters: [],
-      slots: [],
-      grid: new Map(),
-      hasLessons: false,
-      courses: [],
-      holidayLabels: new Map(),
-      workdayDates: [],
-      lessonsByDate: new Map(),
-      todayLessons: [],
-      todoSort: 'start',
-      tomorrowLessons: [],
-      currentLesson: undefined,
-      nextLesson: undefined,
-      exams: [],
-      todos: [],
-      labs: [],
-      countdowns: [],
-      reschedules: [],
-    };
-  }
-
-  const slots = await listTimeSlots(storage, semester.id);
-  const slotByPeriod = new Map(slots.map((slot) => [slot.period_no, slot]));
+/**
+ * 算查看窗口：显式起点优先，其次指定周次的周一，都没有按设置取今天或本周周一；
+ * 最后夹进学期（Q6：今天落在学期外时窗口停在边界）。
+ */
+export function loadSemesterContext(input: {
+  semester: SemesterRow;
+  today: string;
+  settings: AppSettings;
+  options?: { viewWeek?: number; windowStart?: string | null };
+}): SemesterContext {
+  const { semester, today, settings } = input;
+  const options = input.options ?? {};
   const currentWeek = Math.max(1, weekOfDate(today, semester.start_date));
-  // 窗口起点：显式给了就用它；只给了周次就用那一周的周一；都没有按设置取今天或本周周一
-  // 最后夹进学期：今天落在学期外时窗口停在边界，不再出现「学期外」窗口（Q6）
   const windowStart = clampWindowStart(
     resolveWindowStart(
       options.windowStart ??
@@ -224,24 +209,34 @@ export async function loadAppData(
     if (settings.hideWeekends && isWeekend(date)) continue;
     windowDates.push(date);
   }
-  /** 窗口里每一天所属的周次：早于第 1 周为 0，晚于总周次则超出学期 */
   const weekOfDay = windowDates.map((date) => weekOfDate(date, semester.start_date));
   const viewWeek = Math.min(Math.max(1, weekOfDay[0] ?? currentWeek), semester.total_weeks);
-  const windowSpansWeeks = new Set(weekOfDay).size > 1;
+  return {
+    currentWeek,
+    viewWeek,
+    windowStart,
+    windowDates,
+    weekOfDay,
+    weekStartDate: weekDateOf(semester, viewWeek, 1),
+    windowSpansWeeks: new Set(weekOfDay).size > 1,
+  };
+}
 
-  const [courses, schedules, events] = await Promise.all([
-    storage.collection<CourseRow>('courses').getAll(),
-    storage.collection<CourseScheduleRow>('course_schedules').getAll(),
-    storage.collection<EventRow>('events').getAll(),
-  ]);
-  const activeCourses = courses.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
-  const courseById = new Map(activeCourses.map((row) => [row.id, row]));
-  const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
-  // 放假：内置节假日表 + 手工「设为假日」，再扣掉手工「设为非假日」
+/** 放假与调休：内置节假日表 + 手工「设为假日 / 非假日」，纯计算。 */
+export interface HolidayContext {
+  /** 放假日 → 名称 */
+  holidayLabels: Map<string, string>;
+  /** 放假日集合（判定灰色课次用） */
+  holidayDates: Set<string>;
+  /** 调休上班日，升序 */
+  workdays: string[];
+}
+
+export function loadHolidays(events: readonly EventRow[]): HolidayContext {
   const holidayLabels = new Map<string, string>();
   for (const date of builtinHolidays()) holidayLabels.set(date, builtinHolidayName(date) ?? '放假');
   const workdays = new Set(builtinWorkdays().filter((date) => builtinWorkdayName(date) !== null));
-  for (const row of semesterEvents) {
+  for (const row of events) {
     const date = row.on_date;
     if (typeof date !== 'string') continue;
     if (row.type === 'holiday') holidayLabels.set(date, row.title);
@@ -250,18 +245,53 @@ export async function loadAppData(
       workdays.add(date);
     }
   }
-  const holidayDates = new Set(holidayLabels.keys());
+  return { holidayLabels, holidayDates: new Set(holidayLabels.keys()), workdays: [...workdays].sort() };
+}
+
+/** 一条调课的落点 */
+interface MoveIn {
+  scheduleId: string;
+  newDate: string;
+  dayOfWeek: number;
+  periodStart: number;
+  periodEnd: number;
+  room: string | null;
+}
+
+/** 网格输入：都是已读出的行，函数本身不读 storage。 */
+export interface GridInput {
+  semester: SemesterRow;
+  slots: readonly TimeSlotRow[];
+  courses: readonly CourseRow[];
+  schedules: readonly CourseScheduleRow[];
+  events: readonly EventRow[];
+  windowDates: readonly string[];
+  weekOfDay: readonly number[];
+  holidays: HolidayContext;
+  timeZone: string;
+}
+
+export interface GridResult {
+  /** 按「日期:节次」建键的课表格 */
+  grid: Map<string, LessonCell[]>;
+  /** 实验条目（type = 'lab'）：进课表网格与时间线 */
+  labs: EventRow[];
+}
+
+/**
+ * 铺课表网格：主课次按列日期所属周次判定，调课落点画到目标格，
+ * 实验按周次位图铺，窗口外的周次按设置虚线显示。
+ */
+export function buildGrid(input: GridInput): GridResult {
+  const { semester, slots, schedules, events, windowDates, weekOfDay, holidays } = input;
+  const slotByPeriod = new Map(slots.map((slot) => [slot.period_no, slot]));
+  const activeCourses = input.courses.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
+  const courseById = new Map(activeCourses.map((row) => [row.id, row]));
+  const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
+  const holidayDates = holidays.holidayDates;
   // 停课与调课都按「排课 + 那天」记录：停课的格子灰显，调课的格子标出原位置与落点
   const cancelledKeys = new Set<string>();
   const movedOutKeys = new Set<string>();
-  interface MoveIn {
-    scheduleId: string;
-    newDate: string;
-    dayOfWeek: number;
-    periodStart: number;
-    periodEnd: number;
-    room: string | null;
-  }
   const movedIn: MoveIn[] = [];
   for (const row of semesterEvents) {
     if (row.type !== 'reschedule' || row.ref_schedule_id === null) continue;
@@ -283,7 +313,7 @@ export async function loadAppData(
     });
   }
   const grid = new Map<string, LessonCell[]>();
-  const cellOf = (input: {
+  const cellOf = (cell: {
     scheduleId: string;
     courseId: string;
     fallbackName: string;
@@ -298,29 +328,29 @@ export async function loadAppData(
     customStart?: string | null;
     customEnd?: string | null;
   }): LessonCell => {
-    const course = courseById.get(input.courseId);
-    const date = input.date;
+    const course = courseById.get(cell.courseId);
+    const date = cell.date;
     return {
-      scheduleId: input.scheduleId,
-      courseId: input.courseId,
-      name: course?.short_name ?? input.fallbackName,
+      scheduleId: cell.scheduleId,
+      courseId: cell.courseId,
+      name: course?.short_name ?? cell.fallbackName,
       teacher: course?.teacher ?? null,
-      room: input.room ?? course?.location ?? null,
-      color: input.color,
-      dayOfWeek: input.day,
+      room: cell.room ?? course?.location ?? null,
+      color: cell.color,
+      dayOfWeek: cell.day,
       date,
-      periodStart: input.periodStart,
-      periodEnd: input.periodEnd,
-      startTime: slotByPeriod.get(input.periodStart)?.start_time ?? '',
-      endTime: slotByPeriod.get(input.periodEnd)?.end_time ?? '',
-      inWeek: input.inWeek,
+      periodStart: cell.periodStart,
+      periodEnd: cell.periodEnd,
+      startTime: slotByPeriod.get(cell.periodStart)?.start_time ?? '',
+      endTime: slotByPeriod.get(cell.periodEnd)?.end_time ?? '',
+      inWeek: cell.inWeek,
       holiday: holidayDates.has(date),
-      cancelled: input.inWeek && cancelledKeys.has(`${input.scheduleId}|${date}`),
-      movedOut: input.inWeek && movedOutKeys.has(`${input.scheduleId}|${date}`),
-      movedIn: input.movedIn === true,
+      cancelled: cell.inWeek && cancelledKeys.has(`${cell.scheduleId}|${date}`),
+      movedOut: cell.inWeek && movedOutKeys.has(`${cell.scheduleId}|${date}`),
+      movedIn: cell.movedIn === true,
       lab: false,
-      customStart: input.customStart ?? null,
-      customEnd: input.customEnd ?? null,
+      customStart: cell.customStart ?? null,
+      customEnd: cell.customEnd ?? null,
     };
   };
 
@@ -407,11 +437,12 @@ export async function loadAppData(
     const entryDate = entry.on_date;
     if (entryDate === null) continue;
     // 节次：实验直接存了节次；日程/作业/考试按开始时间落到重叠的节次上
-    const clockStart = entry.start_time ?? (entry.start_at === null ? null : formatTime(entry.start_at, timeZone));
+    const clockStart =
+      entry.start_time ?? (entry.start_at === null ? null : formatTime(entry.start_at, input.timeZone));
     const clockEnd =
       entry.end_time ??
       (entry.end_at !== null && entry.end_at !== undefined
-        ? formatTime(entry.end_at, timeZone)
+        ? formatTime(entry.end_at, input.timeZone)
         : clockStart === null
           ? null
           : plusMinutesText(clockStart, 45));
@@ -420,10 +451,7 @@ export async function loadAppData(
     const periodEnd = Math.max(periodStart, entry.period_end ?? periodAtClock(slots, clockEnd) ?? periodStart);
     const weekday = entry.as_day_of_week ?? dayOfWeek(entryDate);
     // 条目所在周次；有位图时按位图在各周的同一天再铺一次
-    const entryWeeks =
-      entry.weeks_mask === null || entry.weeks_mask === undefined
-        ? weeksOf(entry.weeks_mask, semester.total_weeks, weekOfDate(entryDate, semester.start_date))
-        : maskToWeeks(entry.weeks_mask, semester.total_weeks);
+    const entryWeeks = weeksOf(entry.weeks_mask, semester.total_weeks, weekOfDate(entryDate, semester.start_date));
     for (let index = 0; index < windowDates.length; index += 1) {
       const date = windowDates[index] as string;
       if (dayOfWeek(date) !== weekday) continue;
@@ -490,27 +518,94 @@ export async function loadAppData(
     }
   }
 
-  const range = dayRangeOf(semester);
-  // 课次按日期查（日视图、日程页翻日期）：范围至少覆盖整个学期，学期外保留今天前后各一段
-  const occurrenceFrom = addDays(today, -45) < range.first ? addDays(today, -45) : range.first;
-  const occurrenceTo = addDays(today, 60) > range.last ? addDays(today, 60) : range.last;
-  const input = await loadExpandInput(storage, semester.id, occurrenceFrom, occurrenceTo);
-  const occurrences = input === undefined ? [] : expand(input);
+  return { grid, labs };
+}
+
+/** 时间线数据：按日期归档的课次与「正在上 / 下一节」。纯计算，不读 storage。 */
+export interface TimelineData {
+  lessonsByDate: Map<string, Occurrence[]>;
+  todayLessons: Occurrence[];
+  tomorrowLessons: Occurrence[];
+  currentLesson: Occurrence | undefined;
+  nextLesson: Occurrence | undefined;
+}
+
+export function buildTimelineData(input: {
+  occurrences: readonly Occurrence[];
+  today: string;
+  now: number;
+}): TimelineData {
   const lessonsByDate = new Map<string, Occurrence[]>();
-  for (const item of occurrences) {
+  for (const item of input.occurrences) {
     if (item.cancelled) continue;
     const list = lessonsByDate.get(item.date) ?? [];
     list.push(item);
     lessonsByDate.set(item.date, list);
   }
-  const todayLessons = lessonsByDate.get(today) ?? [];
-  const tomorrowLessons = lessonsByDate.get(addDays(today, 1)) ?? [];
-  const now = Date.now();
-  const currentLesson = currentOccurrence(occurrences, now);
-  const exams = semesterEvents
+  return {
+    lessonsByDate,
+    todayLessons: lessonsByDate.get(input.today) ?? [],
+    tomorrowLessons: lessonsByDate.get(addDays(input.today, 1)) ?? [],
+    currentLesson: currentOccurrence(input.occurrences, input.now),
+    nextLesson: nextOccurrence(input.occurrences, input.now),
+  };
+}
+
+/** 没有任何学期时的空数据：各屏照常渲染，只是没有课表。 */
+function emptyAppData(input: { timeZone: string; today: string }): AppData {
+  const { timeZone, today } = input;
+  return {
+    timeZone,
+    today,
+    todayOfWeek: dayOfWeek(today),
+    week: 0,
+    viewWeek: 0,
+    weekStartDate: today,
+    windowStart: today,
+    windowDates: [today],
+    windowSpansWeeks: false,
+    semester: null,
+    semesters: [],
+    slots: [],
+    grid: new Map(),
+    hasLessons: false,
+    courses: [],
+    holidayLabels: new Map(),
+    workdayDates: [],
+    lessonsByDate: new Map(),
+    todayLessons: [],
+    todoSort: 'start',
+    tomorrowLessons: [],
+    currentLesson: undefined,
+    nextLesson: undefined,
+    exams: [],
+    todos: [],
+    labs: [],
+    countdowns: [],
+    reschedules: [],
+  };
+}
+
+/** 课次日期范围：至少覆盖整个学期，学期外保留今天前后各一段。 */
+function occurrenceRange(semester: SemesterRow, today: string): { from: string; to: string } {
+  const range = dayRangeOf(semester);
+  return {
+    from: addDays(today, -OCCURRENCE_PAST_DAYS) < range.first ? addDays(today, -OCCURRENCE_PAST_DAYS) : range.first,
+    to: addDays(today, OCCURRENCE_FUTURE_DAYS) > range.last ? addDays(today, OCCURRENCE_FUTURE_DAYS) : range.last,
+  };
+}
+
+/** 课程页与倒计时用的条目分组：考试、待办、倒计时、调课记录。 */
+function pickEvents(events: readonly EventRow[]): {
+  exams: EventRow[];
+  todos: EventRow[];
+  countdowns: EventRow[];
+  reschedules: EventRow[];
+} {
+  const exams = events
     .filter((row) => row.type === 'exam' && row.start_at !== null)
     .sort((left, right) => (left.start_at ?? 0) - (right.start_at ?? 0));
-  const todos = semesterEvents
+  const todos = events
     .filter(
       (row) =>
         row.type === 'temp' ||
@@ -520,42 +615,81 @@ export async function loadAppData(
     )
     .sort((left, right) => scheduleKey(left) - scheduleKey(right));
   /** 倒计时卡片：逐条开关为 1 的条目，按时间排序 */
-  const countdowns = semesterEvents
-    .filter((row) => row.countdown === 1)
-    .sort((left, right) => countdownKey(left) - countdownKey(right));
-  const reschedules = semesterEvents.filter(
+  const countdowns = events.filter((row) => row.countdown === 1).sort((left, right) => countdownKey(left) - countdownKey(right));
+  const reschedules = events.filter(
     (row) => row.type === 'reschedule' || row.type === 'makeup' || row.type === 'holiday',
   );
+  return { exams, todos, countdowns, reschedules };
+}
+
+export async function loadAppData(
+  storage: Storage,
+  settings: AppSettings,
+  options: { viewWeek?: number; windowStart?: string | null } = {},
+): Promise<AppData> {
+  const timeZone = resolveTimeZone(settings.timeZone, settings.autoTimeZone);
+  const today = formatDate(Date.now(), timeZone);
+  const semesters = await listSemesters(storage, USER_ID);
+  const semester = (await activeSemester(storage, USER_ID)) ?? null;
+  if (semester === null) return emptyAppData({ timeZone, today });
+
+  const slots = await listTimeSlots(storage, semester.id);
+  const context = loadSemesterContext({ semester, today, settings, options });
+  const [courses, schedules, events] = await Promise.all([
+    storage.collection<CourseRow>('courses').getAll(),
+    storage.collection<CourseScheduleRow>('course_schedules').getAll(),
+    storage.collection<EventRow>('events').getAll(),
+  ]);
+  const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
+  const holidays = loadHolidays(semesterEvents);
+  const { grid, labs } = buildGrid({
+    semester,
+    slots,
+    courses,
+    schedules,
+    events,
+    windowDates: context.windowDates,
+    weekOfDay: context.weekOfDay,
+    holidays,
+    timeZone,
+  });
+
+  const now = Date.now();
+  const range = occurrenceRange(semester, today);
+  const expandInput = await loadExpandInput(storage, semester.id, range.from, range.to);
+  const occurrences = expandInput === undefined ? [] : expand(expandInput);
+  const timeline = buildTimelineData({ occurrences, today, now });
+  const picked = pickEvents(semesterEvents);
 
   return {
     timeZone,
     today,
     todayOfWeek: dayOfWeek(today),
-    week: currentWeek,
-    viewWeek,
-    weekStartDate: weekDateOf(semester, viewWeek, 1),
-    windowStart,
-    windowDates,
-    windowSpansWeeks,
+    week: context.currentWeek,
+    viewWeek: context.viewWeek,
+    weekStartDate: context.weekStartDate,
+    windowStart: context.windowStart,
+    windowDates: context.windowDates,
+    windowSpansWeeks: context.windowSpansWeeks,
     semester,
     semesters: semesters.filter((row) => row.is_active === 0 || row.id === semester.id),
     slots,
     grid,
     hasLessons: [...grid.values()].some((list) => list.length > 0),
     courses: await listManagedCourses(storage, semester.id),
-    holidayLabels,
-    workdayDates: [...workdays].sort(),
-    lessonsByDate,
-    todayLessons,
+    holidayLabels: holidays.holidayLabels,
+    workdayDates: holidays.workdays,
+    lessonsByDate: timeline.lessonsByDate,
+    todayLessons: timeline.todayLessons,
     todoSort: settings.todoSort,
-    tomorrowLessons,
-    currentLesson,
-    nextLesson: nextOccurrence(occurrences, now),
-    exams,
-    todos,
+    tomorrowLessons: timeline.tomorrowLessons,
+    currentLesson: timeline.currentLesson,
+    nextLesson: timeline.nextLesson,
+    exams: picked.exams,
+    todos: picked.todos,
     labs,
-    countdowns,
-    reschedules,
+    countdowns: picked.countdowns,
+    reschedules: picked.reschedules,
   };
 }
 
