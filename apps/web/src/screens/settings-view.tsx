@@ -54,11 +54,23 @@ import { ImportFlow } from './import-flow.tsx';
 import { SchoolTimetableCard } from './school-timetable-card.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { EmptyState } from '../components/ui/empty-state.tsx';
+import {
+  DangerDialog,
+  Dialog,
+  DialogContent,
+  FormDialog,
+} from '../components/ui/dialog.tsx';
 import { COUNT, DELETE, fail } from '../copy/zh.ts';
 import { countForSemester, type SemesterCounts } from '../delete-counts.ts';
 import { Field, Input } from '../components/ui/input.tsx';
-import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SwitchField,
+} from '../components/ui/controls.tsx';
 import { StatusLine } from '../components/ui/status-line.tsx';
 import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
 import { toast } from '../components/ui/toaster.tsx';
@@ -381,7 +393,9 @@ export function SettingsView({
   const bodies: Record<string, ReactNode> = {
     semesters: (
       <>
-        {semesters.length > 0 && (
+        {semesters.length === 0 ? (
+          <EmptyState size="sm" tone="muted" title="还没有学期，先在上面新建一个" />
+        ) : (
           <ul className="flex flex-col gap-1">
             {semesters.map((semester) => (
               <li key={semester.id} className="flex min-h-tap items-center justify-between gap-2">
@@ -540,17 +554,13 @@ export function SettingsView({
             </StatusLine>
           </>
         )}
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>课前提醒</span>
-            <span className="truncate text-xs text-muted">所有课程默认提醒，可在课程详情里单独设置</span>
-          </span>
-          <Switch
-            checked={settings.classReminderEnabled}
-            aria-label="课前提醒"
-            onCheckedChange={(checked) => void onPatch({ classReminderEnabled: checked })}
-          />
-        </label>
+        <SwitchField
+          label="课前提醒"
+          description="所有课程默认提醒，可在课程详情里单独设置"
+          checked={settings.classReminderEnabled}
+          onCheckedChange={(checked) => void onPatch({ classReminderEnabled: checked })}
+          ariaLabel="课前提醒"
+        />
         <Field label="默认提前">
           <div className="flex flex-wrap items-center gap-2">
             {[5, 10, 15, 20, 30].map((minutes) => (
@@ -639,28 +649,20 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>今天为第一天</span>
-            <span className="truncate text-xs text-muted">关掉从本周周一开头</span>
-          </span>
-          <Switch
-            checked={settings.weekStartsToday}
-            aria-label="今天为第一天"
-            onCheckedChange={(checked) => void onPatch({ weekStartsToday: checked })}
-          />
-        </label>
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>始终不显示周末</span>
-            <span className="truncate text-xs text-muted">跳过周六日，列数按天数</span>
-          </span>
-          <Switch
-            checked={settings.hideWeekends}
-            aria-label="始终不显示周末"
-            onCheckedChange={(checked) => void onPatch({ hideWeekends: checked })}
-          />
-        </label>
+        <SwitchField
+          label="今天为第一天"
+          description="关掉从本周周一开头"
+          checked={settings.weekStartsToday}
+          onCheckedChange={(checked) => void onPatch({ weekStartsToday: checked })}
+          ariaLabel="今天为第一天"
+        />
+        <SwitchField
+          label="始终不显示周末"
+          description="跳过周六日，列数按天数"
+          checked={settings.hideWeekends}
+          onCheckedChange={(checked) => void onPatch({ hideWeekends: checked })}
+          ariaLabel="始终不显示周末"
+        />
         <Field label="界面动效" hint="页面与弹窗过渡" help="跟随系统时遵守系统的「减少动态效果」">
           <Select value={settings.motion} onValueChange={(value) => void onPatch({ motion: value as MotionMode })}>
             <SelectTrigger aria-label="界面动效">
@@ -675,17 +677,13 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>周视图显示非本周课程</span>
-            <span className="truncate text-xs text-muted">这一周不上的课用虚线框标出</span>
-          </span>
-          <Switch
-            checked={settings.showOtherWeeks}
-            aria-label="周视图显示非本周课程"
-            onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
-          />
-        </label>
+        <SwitchField
+          label="周视图显示非本周课程"
+          description="这一周不上的课用虚线框标出"
+          checked={settings.showOtherWeeks}
+          onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
+          ariaLabel="周视图显示非本周课程"
+        />
         {hasMobileWidgets() ? (
           <div className="flex flex-col gap-2" data-role="mobile-widget-guide">
             <span className="text-sm text-ink">主屏小组件</span>
@@ -797,39 +795,27 @@ export function SettingsView({
         {canUseWidget() && (
           <StatusLine dataRole="tray-status">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</StatusLine>
         )}
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>明日课程预告</span>
-            <span className="truncate text-xs text-muted">当天没课或课上完时显示</span>
-          </span>
-          <Switch
-            checked={settings.tomorrowPreview}
-            aria-label="明日课程预告"
-            onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
-          />
-        </label>
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>开学倒计时</span>
-            <span className="truncate text-xs text-muted">学期开始前显示距离开学还有几天</span>
-          </span>
-          <Switch
-            checked={settings.semesterCountdown}
-            aria-label="开学倒计时"
-            onCheckedChange={(checked) => void onPatch({ semesterCountdown: checked })}
-          />
-        </label>
-        <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-          <span className="flex min-w-0 flex-col">
-            <span>假期倒计时</span>
-            <span className="truncate text-xs text-muted">显示距离下一个法定假日还有几天</span>
-          </span>
-          <Switch
-            checked={settings.holidayCountdown}
-            aria-label="假期倒计时"
-            onCheckedChange={(checked) => void onPatch({ holidayCountdown: checked })}
-          />
-        </label>
+        <SwitchField
+          label="明日课程预告"
+          description="当天没课或课上完时显示"
+          checked={settings.tomorrowPreview}
+          onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
+          ariaLabel="明日课程预告"
+        />
+        <SwitchField
+          label="开学倒计时"
+          description="学期开始前显示距离开学还有几天"
+          checked={settings.semesterCountdown}
+          onCheckedChange={(checked) => void onPatch({ semesterCountdown: checked })}
+          ariaLabel="开学倒计时"
+        />
+        <SwitchField
+          label="假期倒计时"
+          description="显示距离下一个法定假日还有几天"
+          checked={settings.holidayCountdown}
+          onCheckedChange={(checked) => void onPatch({ holidayCountdown: checked })}
+          ariaLabel="假期倒计时"
+        />
         <Field label="小组件背景">
           <Select
             value={settings.widgetBackground}
@@ -847,7 +833,11 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="时区" hint="默认上海；首次启动会按系统时区对齐一次">
+        <Field
+          label="时区"
+          hint="默认上海；首次启动会按系统时区对齐一次"
+          error={zoneInvalid ? '时区名无效' : undefined}
+        >
           <Select value={settings.timeZone} onValueChange={(value) => void onPatch({ timeZone: value })}>
             <SelectTrigger aria-label="时区">
               <span>{settings.timeZone}</span>
@@ -864,7 +854,6 @@ export function SettingsView({
             </SelectContent>
           </Select>
         </Field>
-        {zoneInvalid && <span className="text-xs text-danger-strong">时区名无效</span>}
         <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
           <input
             type="checkbox"
@@ -998,73 +987,57 @@ export function SettingsView({
         storage={storage}
       />
 
-      <Dialog
+      <FormDialog
         open={editing !== null}
         onOpenChange={(open) => {
           if (!open) setEditing(null);
         }}
+        title="编辑学期"
+        description="修改会立即影响周次与课表计算"
+        submitLabel="保存"
+        submitting={busy}
+        onSubmit={() => void saveEdit()}
       >
-        <DialogContent title="编辑学期" description="修改会立即影响周次与课表计算">
-          <Field label="学期名称">
-            <Input value={editName} onChange={(event) => setEditName(event.target.value)} />
-          </Field>
-          <Field label="开学日期" hint="该周记为第 1 周">
-            <Input type="date" value={editStart} onChange={(event) => setEditStart(event.target.value)} />
-          </Field>
-          <Field label="总周数">
-            <Input
-              type="number"
-              min={1}
-              max={30}
-              value={editWeeks}
-              onChange={(event) => setEditWeeks(Number(event.target.value))}
-            />
-          </Field>
-          <Field label="时区">
-            <Input value={editZone} onChange={(event) => setEditZone(event.target.value)} />
-          </Field>
-          {!isValidTimeZone(editZone) && <span className="text-xs text-danger-strong">时区名无效</span>}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setEditing(null)}>
-              取消
-            </Button>
-            <Button variant="primary" disabled={busy} onClick={() => void saveEdit()}>
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        <Field label="学期名称">
+          <Input value={editName} onChange={(event) => setEditName(event.target.value)} />
+        </Field>
+        <Field label="开学日期" hint="该周记为第 1 周">
+          <Input type="date" value={editStart} onChange={(event) => setEditStart(event.target.value)} />
+        </Field>
+        <Field label="总周数">
+          <Input
+            type="number"
+            min={1}
+            max={30}
+            value={editWeeks}
+            onChange={(event) => setEditWeeks(Number(event.target.value))}
+          />
+        </Field>
+        <Field label="时区" error={!isValidTimeZone(editZone) ? '时区名无效' : undefined}>
+          <Input value={editZone} onChange={(event) => setEditZone(event.target.value)} />
+        </Field>
+      </FormDialog>
 
-      <Dialog
+      <DangerDialog
         open={removing !== null}
         onOpenChange={(open) => {
           if (!open) setRemoving(null);
         }}
-      >
-        <DialogContent
-          title="删除学期"
-          description={
-            removing === null
-              ? ''
-              : DELETE(removing.name, [
-                  `课程 ${COUNT('course', removeCounts?.courses ?? 0)}`,
-                  `排课 ${COUNT('schedule', removeCounts?.schedules ?? 0)}`,
-                  `节次 ${COUNT('period', removeCounts?.slots ?? 0)}`,
-                  `日程 ${COUNT('event', removeCounts?.events ?? 0)}`,
-                  `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
-                ])
-          }
-        >
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoving(null)}>
-              取消
-            </Button>
-            <Button variant="danger" disabled={busy} onClick={() => void confirmRemove()}>
-              确认删除
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title="删除学期"
+        description={
+          removing === null
+            ? ''
+            : DELETE(removing.name, [
+                `课程 ${COUNT('course', removeCounts?.courses ?? 0)}`,
+                `排课 ${COUNT('schedule', removeCounts?.schedules ?? 0)}`,
+                `节次 ${COUNT('period', removeCounts?.slots ?? 0)}`,
+                `日程 ${COUNT('event', removeCounts?.events ?? 0)}`,
+                `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
+              ])
+        }
+        submitting={busy}
+        onConfirm={() => void confirmRemove()}
+      />
     </div>
   );
 }

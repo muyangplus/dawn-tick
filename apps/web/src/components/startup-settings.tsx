@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Power } from 'lucide-react';
 import type { AppSettings } from '@dawn-tick/core';
 import { CollapsibleCard } from './ui/collapsible-card.tsx';
-import { Switch } from './ui/controls.tsx';
+import { SwitchField } from './ui/controls.tsx';
 import { Button } from './ui/button.tsx';
 import { elevateAutoStart, readAutoStart, saveStartupPrefs, writeAutoStart } from '../autostart.ts';
 
@@ -90,19 +90,13 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
 
   return (
     <CollapsibleCard id="startup" title="启动" icon={Power}>
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex flex-col">
-          <span>开机自动启动</span>
-          <span className="text-xs text-muted">
-            当前状态：{registered === null ? '未注册' : registered ? '已注册' : '未注册'}
-          </span>
-        </span>
-        <Switch
-          checked={settings.autoStart}
-          disabled={busy}
-          onCheckedChange={(value) => void toggleAutoStart(value)}
-        />
-      </label>
+      <SwitchField
+        label="开机自动启动"
+        description={`当前状态：${registered === null ? '未注册' : registered ? '已注册' : '未注册'}`}
+        checked={settings.autoStart}
+        disabled={busy}
+        onCheckedChange={(value) => void toggleAutoStart(value)}
+      />
 
       {canElevate && (
         <Button variant="secondary" size="sm" disabled={busy} onClick={() => void elevate()}>
@@ -110,16 +104,12 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
         </Button>
       )}
 
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex flex-col">
-          <span>启动时隐藏窗口</span>
-          <span className="text-xs text-muted">仅开机自启生效；手动启动显示主窗口</span>
-        </span>
-        <Switch
-          checked={settings.startHidden}
-          onCheckedChange={(value) => void onPatch({ startHidden: value })}
-        />
-      </label>
+      <SwitchField
+        label="启动时隐藏窗口"
+        description="仅开机自启生效；手动启动显示主窗口"
+        checked={settings.startHidden}
+        onCheckedChange={(value) => void onPatch({ startHidden: value })}
+      />
 
       {message !== null && <span className="text-xs text-muted">{message}</span>}
     </CollapsibleCard>

@@ -12,7 +12,8 @@ import {
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { SectionCard } from '../components/ui/collapsible-card.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { DangerDialog, Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { EmptyState } from '../components/ui/empty-state.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { COUNT, DELETE } from '../copy/zh.ts';
 import { countForCourse, type CourseCounts } from '../delete-counts.ts';
@@ -162,7 +163,7 @@ export function CourseManager({
   return (
     <SectionCard title="课程管理" icon={BookOpen} badge={`${courses.length} 门`}>
       {courses.length === 0 ? (
-        <span className="text-xs text-muted">当前学期没有课程，可在下方导入课表</span>
+        <EmptyState size="sm" tone="muted" title="当前学期没有课程，可在下方导入课表" />
       ) : (
         <ul className="flex flex-col gap-2">
           {courses.map((course) => (
@@ -296,33 +297,23 @@ export function CourseManager({
         </DialogContent>
       </Dialog>
 
-      <Dialog
+      <DangerDialog
         open={removing !== null}
         onOpenChange={(open) => {
           if (!open) setRemoving(null);
         }}
-      >
-        <DialogContent
-          title="删除课程"
-          description={
-            removing === null
-              ? ''
-              : DELETE(removing.name, [
-                  `排课 ${COUNT('schedule', removeCounts?.schedules ?? removing.schedules.length)}`,
-                  `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
-                ])
-          }
-        >
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoving(null)}>
-              取消
-            </Button>
-            <Button variant="danger" disabled={busy} onClick={() => void confirmRemove()}>
-              确认删除
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        title="删除课程"
+        description={
+          removing === null
+            ? ''
+            : DELETE(removing.name, [
+                `排课 ${COUNT('schedule', removeCounts?.schedules ?? removing.schedules.length)}`,
+                `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
+              ])
+        }
+        submitting={busy}
+        onConfirm={() => void confirmRemove()}
+      />
     </SectionCard>
   );
 }

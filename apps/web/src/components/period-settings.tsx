@@ -20,7 +20,9 @@ import { Button } from './ui/button.tsx';
 import { HelpHint } from './ui/help-hint.tsx';
 import { SectionCard } from './ui/collapsible-card.tsx';
 import { Combobox } from './ui/combobox.tsx';
-import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
+import { FormDialog } from './ui/dialog.tsx';
+import { EmptyState } from './ui/empty-state.tsx';
+import { InlineError } from './ui/inline-error.tsx';
 import { Field, Input } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
 import { logInfo } from '../log.ts';
@@ -157,6 +159,17 @@ function paramError(durationMinutes: number, breakMinutes: number): string | nul
     return `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟，当前 ${breakMinutes} 分钟`;
   }
   return null;
+}
+
+/** 输入框下方的字段级错误：只标越界的那一项，避免两条重复文案。 */
+function durationFieldError(value: number): string | undefined {
+  return within(value, MIN_DURATION, MAX_DURATION)
+    ? undefined
+    : `每节时长 ${MIN_DURATION}–${MAX_DURATION} 分钟`;
+}
+
+function breakFieldError(value: number): string | undefined {
+  return within(value, MIN_BREAK, MAX_BREAK) ? undefined : `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟`;
 }
 
 export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSettingsProps) {
@@ -478,7 +491,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   return (
     <SectionCard title="作息" icon={CalendarRange}>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="每节时长（分钟）">
+        <Field label="每节时长（分钟）" error={durationFieldError(duration)}>
           <Input
             type="number"
             min={MIN_DURATION}
@@ -488,7 +501,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             onChange={(event) => setDuration(Number(event.target.value))}
           />
         </Field>
-        <Field label="课间（分钟）">
+        <Field label="课间（分钟）" error={breakFieldError(breakMinutes)}>
           <Input
             type="number"
             min={MIN_BREAK}
@@ -585,49 +598,52 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           追加一节
         </Button>
       </div>
-      {message !== null && <span className="text-xs text-danger-strong">{message}</span>}
+      {message !== null && <InlineError>{message}</InlineError>}
 
-      <ul className="flex flex-col gap-1">
-        {slots.map((slot) => (
-          <li key={slot.id} className="flex min-h-tap items-center gap-2 text-sm">
-            <span className="tabular w-16 shrink-0 text-ink">第 {slot.period_no} 节</span>
-            <Input
-              type="time"
-              className="w-28"
-              aria-label={`第 ${slot.period_no} 节开始时间`}
-              value={slot.start_time}
-              onChange={(event) => {
-                if (!isClockText(event.target.value)) return;
-                editTime(slot, { startTime: event.target.value });
-              }}
-              {...scopeTriggers}
-            />
-            <span className="text-muted">–</span>
-            <Input
-              type="time"
-              className="w-28"
-              aria-label={`第 ${slot.period_no} 节结束时间`}
-              value={slot.end_time}
-              onChange={(event) => {
-                if (!isClockText(event.target.value)) return;
-                editTime(slot, { endTime: event.target.value });
-              }}
-              {...scopeTriggers}
-            />
-            <span className="ml-auto text-xs text-muted">{SECTION_LABEL[slot.section ?? 'am']}</span>
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label={`删除第 ${slot.period_no} 节`}
-              disabled={busy}
-              onClick={() => void remove(slot.period_no)}
-            >
-              <Trash2 className="size-4 text-danger-strong" aria-hidden />
-            </Button>
-          </li>
-        ))}
-        {slots.length === 0 && <li className="text-xs text-muted">还没有节次，请先生成节次</li>}
-      </ul>
+      {slots.length === 0 ? (
+        <EmptyState size="sm" tone="muted" title="还没有节次，请先生成节次" />
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {slots.map((slot) => (
+            <li key={slot.id} className="flex min-h-tap items-center gap-2 text-sm">
+              <span className="tabular w-16 shrink-0 text-ink">第 {slot.period_no} 节</span>
+              <Input
+                type="time"
+                className="w-28"
+                aria-label={`第 ${slot.period_no} 节开始时间`}
+                value={slot.start_time}
+                onChange={(event) => {
+                  if (!isClockText(event.target.value)) return;
+                  editTime(slot, { startTime: event.target.value });
+                }}
+                {...scopeTriggers}
+              />
+              <span className="text-muted">–</span>
+              <Input
+                type="time"
+                className="w-28"
+                aria-label={`第 ${slot.period_no} 节结束时间`}
+                value={slot.end_time}
+                onChange={(event) => {
+                  if (!isClockText(event.target.value)) return;
+                  editTime(slot, { endTime: event.target.value });
+                }}
+                {...scopeTriggers}
+              />
+              <span className="ml-auto text-xs text-muted">{SECTION_LABEL[slot.section ?? 'am']}</span>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`删除第 ${slot.period_no} 节`}
+                disabled={busy}
+                onClick={() => void remove(slot.period_no)}
+              >
+                <Trash2 className="size-4 text-danger-strong" aria-hidden />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
       <span className="flex items-center gap-1 text-xs text-muted">
         每节起止时间可单独修改
         <HelpHint label="改节次时间">
@@ -635,54 +651,44 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         </HelpHint>
       </span>
 
-      {draft !== null && (
-        <Dialog
-          open
-          onOpenChange={(open) => {
-            if (!open) closeScope();
-          }}
-        >
-          <DialogContent
-            title="调整范围"
-            description="这次改动要应用到哪些节次？"
-            data-role="scope-dialog"
-          >
-            <div className="flex flex-col gap-1 text-xs text-muted">
-              <span>
-                {`第 ${draft.periodNo} 节已改；顺延按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`}
-              </span>
-              {draftError !== null && <span className="text-danger-strong">{draftError}</span>}
-            </div>
-            <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                className="size-4"
-                aria-label={SCOPE_OPT_OUT_LABEL}
-                checked={optOutScope}
-                onChange={() => optOutScopeAsk()}
-              />
-              {SCOPE_OPT_OUT_LABEL}
-            </label>
-            <DialogFooter>
-              <Button variant="ghost" size="sm" aria-label="只改这一节" onClick={() => closeScope()}>
-                只改这一节
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                aria-label="从这一节起顺延重排"
-                disabled={busy || draftError !== null}
-                onClick={() => void reflowFromAnchor()}
-              >
-                从这一节起顺延重排
-              </Button>
-              <Button variant="ghost" size="sm" aria-label="取消" onClick={() => closeScope()}>
-                取消
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      <FormDialog
+        open={draft !== null}
+        onOpenChange={(open) => {
+          if (!open) closeScope();
+        }}
+        title="调整范围"
+        description="这次改动要应用到哪些节次？"
+        contentAttrs={{ 'data-role': 'scope-dialog' }}
+        submitLabel="从这一节起顺延重排"
+        cancelLabel="取消"
+        submitting={busy}
+        submitDisabled={draftError !== null}
+        onSubmit={() => void reflowFromAnchor()}
+        extra={
+          <Button type="button" variant="ghost" size="sm" aria-label="只改这一节" onClick={() => closeScope()}>
+            只改这一节
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-1 text-xs text-muted">
+          <span>
+            {draft === null
+              ? ''
+              : `第 ${draft.periodNo} 节已改；顺延按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`}
+          </span>
+          {draftError !== null && <InlineError>{draftError}</InlineError>}
+        </div>
+        <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
+          <input
+            type="checkbox"
+            className="size-4"
+            aria-label={SCOPE_OPT_OUT_LABEL}
+            checked={optOutScope}
+            onChange={() => optOutScopeAsk()}
+          />
+          {SCOPE_OPT_OUT_LABEL}
+        </label>
+      </FormDialog>
     </SectionCard>
   );
 }

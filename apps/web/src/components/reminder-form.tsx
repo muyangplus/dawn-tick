@@ -3,7 +3,7 @@ import { BellRing, Trash2 } from 'lucide-react';
 import { deleteReminder, listRemindersFor, setReminder, type Storage } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
-import { Switch } from './ui/controls.tsx';
+import { SwitchField } from './ui/controls.tsx';
 import { Input, Label } from './ui/input.tsx';
 import { toast } from './ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
@@ -99,25 +99,17 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
       <span id="reminder-section-title" className="text-sm font-medium text-ink">
         课前提醒
       </span>
-      <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
-        <span className="flex min-w-0 flex-col">
-          <span className="flex items-center gap-2">
-            <BellRing className="size-4" aria-hidden />
-            使用全局配置
-          </span>
-          <span className="text-xs text-muted">
-            {useGlobal ? '跟随全局设置' : '本课程单独设置'}
-          </span>
-        </span>
-        <Switch
-          aria-label="使用全局配置"
-          checked={useGlobal}
-          onCheckedChange={(checked) => {
-            setUseGlobal(checked);
-            if (checked && reminderId !== null) void remove();
-          }}
-        />
-      </label>
+      <SwitchField
+        label="使用全局配置"
+        icon={BellRing}
+        description={useGlobal ? '跟随全局设置' : '本课程单独设置'}
+        checked={useGlobal}
+        onCheckedChange={(checked) => {
+          setUseGlobal(checked);
+          if (checked && reminderId !== null) void remove();
+        }}
+        ariaLabel="使用全局配置"
+      />
       {!useGlobal && (
         <>
           <div className="flex flex-wrap items-center gap-2">
