@@ -1278,7 +1278,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByLabel(document.body, '调课')) await flush(14);
   const adjustFromDate = document.querySelector('input[aria-label="原来哪一天"]');
   check(
-    '详情页调课入口打开调整弹窗并预填课次',
+    '详情页调课入口打开调整弹窗并预填排课',
     (document.body.textContent ?? '').includes('临时加课') &&
       triggerText('哪门课') === picked.course &&
       adjustFromDate instanceof window.HTMLInputElement &&
@@ -1433,7 +1433,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(view.container, '课表')) await flush(16);
   const cancelledCard = view.container.querySelector('[data-tone="cancelled"]');
   check(
-    '停课的课次在课表里灰显并标注',
+    '停课的这节课在课表里灰显并标注',
     cancelledCard !== null &&
       (cancelledCard.querySelector('[data-role="cancelled-label"]')?.textContent ?? '').trim() === '停课' &&
       cancelledCard.className.includes('opacity-45') &&
@@ -1608,7 +1608,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     adjustText.includes('调课') && adjustText.includes('调休') && adjustText.includes('临时加课'),
     '',
   );
-  check('调课可直接选课与课次', document.querySelector('[aria-label="哪门课"]') !== null, '');
+  check('调课可直接选课与排课', document.querySelector('[aria-label="哪门课"]') !== null, '');
   if (clickByText(document.body, '调休')) await flush(8);
   check(
     '调休为指定两天',
@@ -2281,7 +2281,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   clickByText(view.container, '设置');
   await flush(16);
   check(
-    '课次时间可逐节编辑',
+    '节次时间可逐节编辑',
     view.container.querySelector('input[aria-label="第 1 节开始时间"]') !== null &&
       view.container.querySelector('input[aria-label="第 1 节结束时间"]') !== null,
     '',
@@ -2321,7 +2321,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `占位=${presetInput?.placeholder ?? '(无)'} / 内置 ${BUILTIN_TIMETABLES.length} 套`,
   );
 
-  // 套用苏科大作息：时间表照抄预设课次，时长/课间同步成预设里最常见的 45 / 10
+  // 套用苏科大作息：时间表照抄预设节次，时长/课间同步成预设里最常见的 45 / 10
   const periodClock = (period: number, field: '开始' | '结束'): string =>
     view.container.querySelector<HTMLInputElement>(`input[aria-label="第 ${period} 节${field}时间"]`)?.value ?? '';
   // 先把两个输入改成别的值，才能证明套用预设时确实把它们同步了回来
@@ -2576,10 +2576,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
 
   const beforePeriods = startInputs(view.container).length;
-  if (clickByText(view.container, '自动生成课次')) await flush(26);
+  if (clickByText(view.container, '自动生成节次')) await flush(26);
   const generated = startInputs(view.container);
   check(
-    '自动生成课次按固定时长重算',
+    '自动生成节次按固定时长重算',
     generated.length >= 10 && generated[2]?.value === '09:50',
     `生成后 ${generated.length} 节，第三节课 ${generated[2]?.value ?? '?'} 起`,
   );
@@ -2614,7 +2614,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   check(
     '失焦后弹出调整范围对话框',
-    scopeDialogCount() === 1 && scopeText().includes('这次改动要应用到哪些课次'),
+    scopeDialogCount() === 1 && scopeText().includes('这次改动要应用到哪些节次'),
     `对话框 ${scopeDialogCount()} 个：${scopeText().slice(0, 30)}`,
   );
   check(
@@ -2834,7 +2834,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '该校暂无专属作息时套用通用作息并提示',
     genericPicked?.getAttribute('data-adapted') === 'false' &&
       schoolTimetableMessage().includes('该校暂无专属作息，已套用通用作息') &&
-      schoolTimetableStatus().includes('当前 12 节课次'),
+      schoolTimetableStatus().includes('当前 12 个节次'),
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
 
@@ -2843,7 +2843,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '已适配学校套用该校专属作息',
     exclusivePicked?.getAttribute('data-adapted') === 'true' &&
       schoolTimetableMessage().includes('已套用 苏州科技大学 的作息（14 节）') &&
-      schoolTimetableStatus().includes('当前 14 节课次'),
+      schoolTimetableStatus().includes('当前 14 个节次'),
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
 
@@ -2958,7 +2958,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByLabel(remounted.container, '取消导入')) await flush(8);
 
   // 外部链接确认弹窗在引导页也要能弹出（曾经没挂，点了没反应）
-  // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——
+  // —— 首次引导：先选学校，创建学期时即按该校作息排好节次 ——
   const onboardScroll = remounted.container.querySelector<HTMLElement>('[data-role="onboarding-scroll"]');
   const onboardAdvanced = remounted.container.querySelector<HTMLDetailsElement>('[data-role="onboarding-advanced"]');
   check(

@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../com
 import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
 import { cn } from '../lib/cn.ts';
+import { periodRange } from '../copy/zh.ts';
 
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -76,11 +77,6 @@ export interface CourseFormPreset {
   periodEnd: number;
   /** 预选周次，一般只有当前查看的那一周 */
   weeks?: readonly number[] | undefined;
-}
-
-/** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
-function formatPeriods(start: number, end: number): string {
-  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
 interface ScheduleShape {
@@ -266,7 +262,7 @@ export function CourseForm({
       // 重叠只提醒不阻止：课程此时已经保存成功
       const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
       if (overlap !== null) {
-        toast.info(`与「${overlap.name}」${formatPeriods(overlap.start, overlap.end)}重叠，已同时保留`);
+        toast.info(`与「${overlap.name}」${periodRange(overlap.start, overlap.end)}重叠，已同时保留`);
       }
       onCreated();
       onOpenChange(false);

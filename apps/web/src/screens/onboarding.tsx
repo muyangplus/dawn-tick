@@ -152,7 +152,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
         await writeRecentSchool(storage, picked);
         try {
           const result = await applySchoolTimetable(storage, String(semester['id']), picked);
-          toast.success(`已按 ${picked.name} 排好课次（${result.periods} 节）`);
+          toast.success(`已按 ${picked.name} 排好节次（${result.periods} 节）`);
         } catch (cause: unknown) {
           // 套用作息失败不影响学期创建，用户可在作息设置里重来
           setError(`学期已创建，但套用作息失败：${cause instanceof Error ? cause.message : String(cause)}`);
