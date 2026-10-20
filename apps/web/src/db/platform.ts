@@ -22,6 +22,7 @@ import { applyStoredJournalMode } from './journal.ts';
 import { isCorruptDatabase, isMissingSqlxMigrations } from './health.ts';
 import { setActiveSqlDriver } from './active-driver.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
+import { isFallbackStorage, markStorageFallback } from './fallback.ts';
 
 export { detectPlatform };
 export type { Platform };
@@ -89,9 +90,20 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
   return storage;
 }
 
+type StorageOpener = () => Promise<Storage>;
+
+/** 冒烟/单测专用：在浏览器环境里模拟「原生库失败」与「临时回退」，生产代码不会调用。 */
+let openerOverride: StorageOpener | null = null;
+
+export function setStorageOpenerForTests(opener: StorageOpener | null): void {
+  openerOverride = opener;
+}
+
 /** 各端使用各自最合适的底层存储：Windows/Android 用 SQLite，Web 用 IndexedDB。 */
 export async function openStorage(): Promise<Storage> {
   const storage = await openStorageInner();
+  // 临时回退是按 Q5 只读的：不做回填这类写入，等原生库恢复后再说
+  if (isFallbackStorage(storage)) return storage;
   // 历史手工排课只写了 weeks_mask：开库时补一次 weeks_raw，之后再开库直接跳过
   try {
     const backfilled = await backfillWeeksRaw(storage);
@@ -104,29 +116,44 @@ export async function openStorage(): Promise<Storage> {
   return storage;
 }
 
+function describe(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 async function openStorageInner(): Promise<Storage> {
+  if (openerOverride !== null) return openerOverride();
   const platform = detectPlatform();
+  let fallbackReason: string | null = null;
   if (platform !== 'web') {
     try {
       return validatedStorage(await openSqliteStorage(platform));
     } catch (error) {
       // 损坏不回退到 IndexedDB：回退会掩盖损坏，看起来像数据没了
       if (isCorruptDatabase(error)) throw error;
+      fallbackReason = describe(error);
       if (platform === 'tauri' && isMissingSqlxMigrations(error)) {
         // 迁移记账在插件 load 内先跑：旧库会从 001 重跑、撞上已有 users 而失败
         const info = await readStorageInfo();
         logWarn('storage', '数据库缺少迁移记录（_sqlx_migrations），原生 SQLite 无法打开，已回退到 IndexedDB', {
           platform,
           ...recoveryHint(info),
-          message: error instanceof Error ? error.message : String(error),
+          message: fallbackReason,
+          fallback: true,
+          readOnly: true,
         });
       } else {
         logWarn('storage', '原生 SQLite 不可用，回退到 IndexedDB', {
           platform,
-          message: error instanceof Error ? error.message : String(error),
+          message: fallbackReason,
+          fallback: true,
+          readOnly: true,
         });
       }
     }
   }
-  return validatedStorage(await openIndexedDbStorage());
+  // 返回对象带 fallback 标记：主壳据此常驻警告条，界面层据此切只读
+  const fallbackStorage = validatedStorage(await openIndexedDbStorage());
+  return fallbackReason === null
+    ? fallbackStorage
+    : markStorageFallback(fallbackStorage, fallbackReason);
 }

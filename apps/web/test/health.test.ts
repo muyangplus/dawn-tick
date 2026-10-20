@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { corruptMessage, isCorruptDatabase, isMissingSqlxMigrations } from '../src/db/health.ts';
+import { fail, failureText } from '../src/lib/fail.ts';
 
 test('损坏判定认 SQLite 的损坏报错', () => {
   assert.equal(
@@ -58,4 +59,16 @@ test('插件迁移撞上已有 users 时判为旧库缺迁移记录', () => {
   assert.equal(isMissingSqlxMigrations(new Error('database is locked')), false);
   assert.equal(isMissingSqlxMigrations(''), false);
   assert.equal(isMissingSqlxMigrations(undefined), false);
+});
+
+test('fail() 统一「发生了什么 + 原因 + 下一步」句式', () => {
+  const failure = fail('载入失败', '存储初始化没有完成', '请重启应用。');
+  assert.equal(failure.title, '载入失败');
+  assert.equal(failure.body, '存储初始化没有完成。请重启应用。');
+  assert.equal(failure.text, '载入失败：存储初始化没有完成。请重启应用。');
+  assert.equal(failureText('恢复失败', '没有可用备份', '请打开备份目录。'), '恢复失败：没有可用备份。请打开备份目录。');
+
+  // 句末标点不重复；缺原因时仍保留下一步
+  assert.equal(fail('载入失败', '', '请重试；').text, '载入失败：请重试。');
+  assert.equal(fail('', '库里没有数据', '请先创建学期').text, '操作没有完成：库里没有数据。请先创建学期。');
 });

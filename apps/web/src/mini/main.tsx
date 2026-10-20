@@ -15,7 +15,8 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
-import { logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
+import { describeError, logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
+import { fail } from '../lib/fail.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { openMainWindow } from '../widget-window.ts';
 import { MiniShell } from './shell.tsx';
@@ -54,10 +55,6 @@ function countdown(target: number, now: number): string {
 /** 距本节结束：已经到点给 00:00。 */
 function remaining(endAt: number, now: number): string {
   return span(Math.max(0, Math.floor((endAt - now) / 1000)));
-}
-
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function variantOf(settings: AppSettings | null): WidgetVariant {
@@ -113,9 +110,9 @@ function Mini() {
         });
       }
     } catch (cause: unknown) {
-      const message = describe(cause);
-      setError(message);
-      logWarn('mini', '悬浮窗数据加载失败', { message });
+      // 原始异常只进日志；悬浮窗只显示用户语言
+      logWarn('mini', '悬浮窗数据加载失败', { message: describeError(cause) });
+      setError(fail('课表读取失败', '数据暂时读不出来', '请稍后重试；仍失败请重启应用。').text);
     }
   }, []);
 
@@ -132,9 +129,10 @@ function Mini() {
         applyTheme(loaded.themePreset, loaded.theme);
         await reload();
       } catch (cause: unknown) {
-        const message = describe(cause);
-        if (!cancelled) setError(message);
-        logWarn('mini', '悬浮窗初始化失败', { message });
+        logWarn('mini', '悬浮窗初始化失败', { message: describeError(cause) });
+        if (!cancelled) {
+          setError(fail('悬浮窗读取失败', '无法打开本机数据', '请关闭后重新打开悬浮窗；仍失败请重启应用。').text);
+        }
       }
     })();
     return () => {
@@ -153,7 +151,7 @@ function Mini() {
         if (disposed) off();
         else stop = off;
       } catch (cause: unknown) {
-        logWarn('mini', '订阅数据变更失败', { message: describe(cause) });
+        logWarn('mini', '订阅数据变更失败', { message: describeError(cause) });
       }
     })();
     return () => {
@@ -220,8 +218,8 @@ function Mini() {
   if (error !== null) {
     return (
       <MiniShell variant={variant} onHide={hide} onOpen={openMain} background={background}>
-        <div className="mini-empty" data-role="mini-error">
-          课表读取失败：{error}
+        <div className="mini-empty" data-role="mini-error" role="alert">
+          {error}
         </div>
       </MiniShell>
     );

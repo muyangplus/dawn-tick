@@ -32,6 +32,14 @@ export function canConfigureStorage(): boolean {
   return detectPlatform() === 'tauri';
 }
 
+/** 存储状态行上的回退标记：设备页把它拼在真实存储类型后面。 */
+export const STORAGE_FALLBACK_LABEL = '临时回退';
+
+/** 设置/设备页的存储类型文案：回退时一定要让用户看出「现在不是原生库」。 */
+export function storageStatusLabel(label: string, fallback: boolean): string {
+  return fallback ? `${label} · ${STORAGE_FALLBACK_LABEL}` : label;
+}
+
 async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
   return (await invoke<T>(command, args)) as T;

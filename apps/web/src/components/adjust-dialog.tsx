@@ -14,6 +14,7 @@ import {
 } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { weekDateOf } from '../data.ts';
+import { fail } from '../lib/fail.ts';
 import { logError, logInfo } from '../log.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
@@ -93,15 +94,20 @@ function periodLabel(start: number, end: number): string {
   return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
 
-async function withToast(action: () => Promise<void>, ok: string, fail: string): Promise<boolean> {
+async function withToast(
+  action: () => Promise<void>,
+  ok: string,
+  what: string,
+  next = '请重试；仍失败请重新打开调课弹窗。',
+): Promise<boolean> {
   try {
     await action();
     toast.success(ok);
     return true;
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    logError('adjust', fail, { message });
-    toast.error(`${fail}：${message}`);
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    logError('adjust', what, { message: reason });
+    toast.error(fail(what, reason, next).text);
     return false;
   }
 }

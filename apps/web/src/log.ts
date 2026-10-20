@@ -46,6 +46,11 @@ export function logLevel(): LogLevel {
   return currentLevel;
 }
 
+/** 异常转一行内部原因：界面只显示用户语言，原始信息只进日志。 */
+export function describeError(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 export function logFileEnabled(): boolean {
   return fileEnabled;
 }
