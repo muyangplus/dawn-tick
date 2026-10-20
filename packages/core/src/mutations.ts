@@ -428,6 +428,17 @@ export async function deleteSemesterDeep(
   };
 }
 
+/**
+ * 课程名的唯一权威校验：界面禁用保存只是第一道提示，这里兜底拒绝空名，
+ * 避免脚本调用或竞态绕开 UI 写出空白课卡。
+ */
+function requireCourseName(value: unknown): string {
+  if (typeof value !== 'string') throw new RangeError('课程名必须是字符串');
+  const trimmed = value.trim();
+  if (trimmed.length === 0) throw new RangeError('课程名不能为空');
+  return trimmed;
+}
+
 export interface CreateCourseInput {
   semesterId: string;
   name: string;
@@ -448,7 +459,7 @@ export async function createCourse(
   return insert(ctx, 'courses', {
     id: ctx.id(),
     semester_id: input.semesterId,
-    name: input.name,
+    name: requireCourseName(input.name),
     short_name: input.shortName ?? null,
     teacher: input.teacher ?? null,
     location: input.location ?? null,
@@ -474,7 +485,9 @@ export async function updateCourse(
   changes: Row,
   options: WriteOptions = {},
 ): Promise<Row> {
-  return patch(context(storage, options), 'courses', id, changes);
+  // 只改其他字段时不动名称；一旦带了 name（含真实列名），同样按非空校验
+  const next = changes['name'] === undefined ? changes : { ...changes, name: requireCourseName(changes['name']) };
+  return patch(context(storage, options), 'courses', id, next);
 }
 
 export async function deleteCourse(storage: Storage, id: string, options: WriteOptions = {}): Promise<void> {
