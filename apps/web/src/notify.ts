@@ -1,10 +1,11 @@
 import { detectPlatform } from './platform-detect.ts';
+import { NOTIFY_ASKED_META_KEY } from './lib/meta-keys.ts';
 import type { Storage } from '@dawn-tick/core';
 
 export type NotifyPermission = 'granted' | 'denied' | 'default' | 'unsupported';
 
 /** 是否已向系统申请过通知权限：用来区分「没问过」与「问过但被拒绝」。 */
-const ASKED_KEY = 'notify_permission_asked';
+const ASKED_KEY = NOTIFY_ASKED_META_KEY;
 
 export async function markNotifyAsked(storage: Storage): Promise<void> {
   try {

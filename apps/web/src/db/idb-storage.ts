@@ -1,5 +1,13 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import { STORE_KEYS, STORE_NAMES, type Collection, type Storage, type StoreName } from '@dawn-tick/core';
+import {
+  STORE_KEYS,
+  STORE_NAMES,
+  createMetaAccessors,
+  type Collection,
+  type MetaRow,
+  type Storage,
+  type StoreName,
+} from '@dawn-tick/core';
 
 const DB_NAME = 'dawn-tick';
 const DB_VERSION = 1;
@@ -88,13 +96,7 @@ export async function openIndexedDbStorage(name = DB_NAME): Promise<Storage> {
   return {
     kind: 'indexeddb',
     collection,
-    async readMeta(key: string): Promise<string | undefined> {
-      const row = await collection<{ key: string; value: string }>('app_meta').get(key);
-      return row?.value;
-    },
-    async writeMeta(key: string, value: string): Promise<void> {
-      await collection<{ key: string; value: string }>('app_meta').put({ key, value });
-    },
+    ...createMetaAccessors(collection<MetaRow>('app_meta')),
     async close(): Promise<void> {
       db.close();
     },

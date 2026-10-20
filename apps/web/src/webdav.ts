@@ -9,6 +9,8 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { detectPlatform } from './platform-detect.ts';
+import { readMetaNumber } from './lib/meta.ts';
+import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
 import {
   applyPackageEntries,
@@ -21,10 +23,10 @@ import {
 /** Windows 走 Tauri 官方 http 插件，Android 由 Capacitor 接管 fetch，Web 用浏览器 fetch。 */
 
 const FIXED_NAME = 'DawnTick-backup.zip';
-/** 上次上传时间：判断远端是不是更新的依据 */
-const LAST_UPLOAD_KEY = 'webdav_last_upload';
+/** 上次上传时间：判断远端是不是更新的依据（裸数字串，不改成 JSON 以免旧版本读不懂） */
+const LAST_UPLOAD_KEY = WEBDAV_LAST_UPLOAD_META_KEY;
 /** 上次自动同步日期，用于「每天一次」 */
-const LAST_SYNC_KEY = 'webdav_last_sync';
+const LAST_SYNC_KEY = WEBDAV_LAST_SYNC_META_KEY;
 
 export interface DavSettings {
   webdavUrl: string;
@@ -328,7 +330,7 @@ export async function maybeAutoSync(
   if (status.error !== null) {
     return { action: 'error', name: FIXED_NAME, detail: status.error };
   }
-  const lastUpload = Number((await storage.readMeta(LAST_UPLOAD_KEY)) ?? 0);
+  const lastUpload = await readMetaNumber(storage, LAST_UPLOAD_KEY, 0, { scope: 'webdav' });
   if (status.exists && status.lastModified !== null && status.lastModified > lastUpload + 1000) {
     await storage.writeMeta(LAST_SYNC_KEY, today);
     return { action: 'remote-newer', name: FIXED_NAME, detail: '远端备份比本机上传的新' };

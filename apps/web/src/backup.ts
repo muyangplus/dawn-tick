@@ -10,6 +10,8 @@ import {
 import { detectPlatform } from './platform-detect.ts';
 import { activeSqlDriver } from './db/active-driver.ts';
 import { dayStampLocal } from './lib/dates.ts';
+import { readMetaJson, writeMetaJson } from './lib/meta.ts';
+import { SNAPSHOT_INDEX_META_KEY, SNAPSHOT_META_PREFIX } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
 
 /** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
@@ -22,7 +24,10 @@ export interface SnapshotEntry {
   kind: 'file' | 'json';
 }
 
-const SNAPSHOT_PREFIX = 'backup:';
+/** 索引里的一行：没有 `kind`，因为索引只服务 JSON 快照。 */
+type SnapshotIndexEntry = Omit<SnapshotEntry, 'kind'>;
+
+const SNAPSHOT_PREFIX = SNAPSHOT_META_PREFIX;
 /** 同一分钟内不重复做启动快照 */
 const FRESH_MS = 60_000;
 
@@ -39,17 +44,66 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-async function listJsonSnapshots(storage: Storage): Promise<SnapshotEntry[]> {
+/** 校验快照索引：结构不对时整份作废，回退一次全表扫描重建。 */
+function parseSnapshotIndex(value: unknown): SnapshotIndexEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries: SnapshotIndexEntry[] = [];
+  for (const item of value) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) return null;
+    const record = item as Record<string, unknown>;
+    const id = record['id'];
+    const createdAt = record['createdAt'];
+    const bytes = record['bytes'];
+    if (typeof id !== 'string' || !id.startsWith(SNAPSHOT_PREFIX)) return null;
+    if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) return null;
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return null;
+    entries.push({ id, createdAt, bytes });
+  }
+  return entries;
+}
+
+function newestFirst(left: SnapshotIndexEntry, right: SnapshotIndexEntry): number {
+  return right.createdAt - left.createdAt;
+}
+
+/** 全表扫描：只在没有索引（旧库）或索引损坏时走一次，扫完立刻写索引。 */
+async function scanJsonSnapshots(storage: Storage): Promise<SnapshotIndexEntry[]> {
   const rows = await storage.collection<{ key: string; value: string }>('app_meta').getAll();
   return rows
     .filter((row) => row.key.startsWith(SNAPSHOT_PREFIX))
     .map((row) => ({
       id: row.key,
       createdAt: Number(row.key.slice(SNAPSHOT_PREFIX.length)) || 0,
-      bytes: row.value.length,
-      kind: 'json' as const,
+      bytes: typeof row.value === 'string' ? row.value.length : 0,
     }))
-    .sort((left, right) => right.createdAt - left.createdAt);
+    .sort(newestFirst);
+}
+
+async function readSnapshotIndex(storage: Storage): Promise<SnapshotIndexEntry[] | null> {
+  return readMetaJson<SnapshotIndexEntry[] | null>(storage, SNAPSHOT_INDEX_META_KEY, {
+    parse: parseSnapshotIndex,
+    fallback: null,
+    scope: 'backup',
+  });
+}
+
+/** 索引写不进去只影响下次列表的读取量，列表本身仍可用。 */
+async function persistSnapshotIndex(storage: Storage, entries: SnapshotIndexEntry[]): Promise<void> {
+  try {
+    await writeMetaJson(storage, SNAPSHOT_INDEX_META_KEY, entries, { scope: 'backup' });
+  } catch {
+    // writeMetaJson 已记日志；这里只保证快照功能不因索引失败而中断
+  }
+}
+
+async function listJsonSnapshots(storage: Storage): Promise<SnapshotEntry[]> {
+  let entries = await readSnapshotIndex(storage);
+  if (entries === null) {
+    // 无索引旧库：读一次全表，把列表索引补上，之后只读索引
+    entries = await scanJsonSnapshots(storage);
+    await persistSnapshotIndex(storage, entries);
+  }
+  return [...entries].sort(newestFirst).map((entry) => ({ ...entry, kind: 'json' as const }));
 }
 
 async function listFileSnapshots(): Promise<SnapshotEntry[]> {
@@ -74,11 +128,42 @@ export async function listSnapshots(storage: Storage): Promise<SnapshotEntry[]> 
   return snapshotKind() === 'json' ? listJsonSnapshots(storage) : listFileSnapshots();
 }
 
+/** 把新快照登记进索引；索引缺失时先扫一次全表（旧库升级路径）。 */
+async function registerSnapshot(storage: Storage, entry: SnapshotEntry): Promise<void> {
+  const current = (await readSnapshotIndex(storage)) ?? (await scanJsonSnapshots(storage));
+  const next = current.filter((item) => item.id !== entry.id);
+  next.push({ id: entry.id, createdAt: entry.createdAt, bytes: entry.bytes });
+  next.sort(newestFirst);
+  await writeMetaJson(storage, SNAPSHOT_INDEX_META_KEY, next, { scope: 'backup' });
+}
+
+/** 从索引移除；没有索引时不用管，下次列表扫描自然看不到已删正文。 */
+async function unregisterSnapshot(storage: Storage, id: string): Promise<void> {
+  const current = await readSnapshotIndex(storage);
+  if (current === null) return;
+  await persistSnapshotIndex(
+    storage,
+    current.filter((item) => item.id !== id),
+  );
+}
+
 async function createJsonSnapshot(storage: Storage, now: number): Promise<SnapshotEntry> {
   const payload = await exportBackup(storage, { now, modules: BACKUP_MODULES });
-  const value = JSON.stringify(payload);
-  await storage.writeMeta(`${SNAPSHOT_PREFIX}${now}`, value);
-  return { id: `${SNAPSHOT_PREFIX}${now}`, createdAt: now, bytes: value.length, kind: 'json' };
+  const id = `${SNAPSHOT_PREFIX}${now}`;
+  const text = await writeMetaJson(storage, id, payload, { scope: 'backup' });
+  const entry: SnapshotEntry = { id, createdAt: now, bytes: text.length, kind: 'json' };
+  try {
+    await registerSnapshot(storage, entry);
+  } catch (cause: unknown) {
+    // 索引没写成：回滚正文，避免留下一份列表里看不到、又永远不被清理的快照
+    try {
+      await storage.collection('app_meta').delete(id);
+    } catch {
+      // 回滚失败只会多一份孤儿正文
+    }
+    throw cause;
+  }
+  return entry;
 }
 
 async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
@@ -141,6 +226,7 @@ export async function deleteSnapshot(storage: Storage, entry: SnapshotEntry): Pr
   try {
     if (entry.kind === 'json') {
       await storage.collection('app_meta').delete(entry.id);
+      await unregisterSnapshot(storage, entry.id);
     } else {
       await invokeTauri('delete_backup', { name: entry.id });
     }

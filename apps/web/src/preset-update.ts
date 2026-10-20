@@ -13,6 +13,7 @@ import {
   type TimetablePreset,
 } from '@dawn-tick/core';
 import { compareVersions } from './update.ts';
+import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 
 /** 哈希口径与预设仓库 scripts/snapshot.mjs 一致，实现只有一份：core 的 packages/core/src/config/preset-hash.ts。 */
 /** 这里只是转出，不重复实现。 */
@@ -47,8 +48,8 @@ export const BUILTIN_PRESET_VERSION: string = CORE_BUILTIN_PRESET_VERSION;
 /** 本版应用能消费的快照数据格式版本；高于它的快照一律拒收。 */
 export const PRESET_SCHEMA_VERSION = 1;
 
-/** 快照在 `app_meta` 里的缓存键。 */
-export const PRESET_SNAPSHOT_META_KEY = 'presets_snapshot_v1';
+/** 快照在 `app_meta` 里的缓存键（清单见 `lib/meta-keys.ts`）；保留旧导出给整包与冒烟用。 */
+export { PRESET_SNAPSHOT_META_KEY };
 
 export interface PresetSnapshot {
   version: string;
@@ -563,8 +564,8 @@ export async function resolvePresetSource(storage: Storage): Promise<PresetSourc
 // —— 缓存正文：启动时套用的那一份数据 ——
 // 快照只记清单，正文单独存 presets_content_v1：版本须与快照一致且高于内置。
 
-/** 缓存正文在 `app_meta` 里的键。 */
-export const PRESET_CONTENT_META_KEY = 'presets_content_v1';
+/** 缓存正文在 `app_meta` 里的键；保留旧导出给整包与冒烟用。 */
+export { PRESET_CONTENT_META_KEY };
 
 /** 缓存正文的落盘结构；`version` 与快照版本一一对应。 */
 export interface CachedPresetContent {

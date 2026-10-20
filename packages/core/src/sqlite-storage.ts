@@ -1,6 +1,13 @@
 import { normalizeRow } from './columns.ts';
 import type { SqlDriver, SqlValue } from './db.ts';
-import { STORE_KEYS, type Collection, type Storage, type StoreName } from './storage.ts';
+import {
+  STORE_KEYS,
+  createMetaAccessors,
+  type Collection,
+  type MetaRow,
+  type Storage,
+  type StoreName,
+} from './storage.ts';
 
 type Row = Record<string, unknown>;
 
@@ -74,13 +81,7 @@ export function sqliteStorage(db: SqlDriver): Storage {
   return {
     kind: 'sqlite',
     collection,
-    async readMeta(key: string): Promise<string | undefined> {
-      const row = await collection<{ key: string; value: string }>('app_meta').get(key);
-      return row?.value;
-    },
-    async writeMeta(key: string, value: string): Promise<void> {
-      await collection<{ key: string; value: string }>('app_meta').put({ key, value });
-    },
+    ...createMetaAccessors(collection<MetaRow>('app_meta')),
     async close(): Promise<void> {
       await db.close();
     },
