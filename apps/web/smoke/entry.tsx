@@ -2349,7 +2349,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const panelText = view.container.textContent ?? '';
   check(
     '时间表与课程管理渲染',
-    panelText.includes('时间表') && panelText.includes('课程管理') && panelText.includes('高数'),
+    panelText.includes('作息') && panelText.includes('课程管理') && panelText.includes('高数'),
     '',
   );
   check('课程管理提供编辑与删除', hasLabel(view.container, '编辑课程') && hasLabel(view.container, '删除课程'), '');

@@ -14,7 +14,7 @@ import { Button } from '../components/ui/button.tsx';
 import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE } from '../copy/zh.ts';
 import { countForCourse, type CourseCounts } from '../delete-counts.ts';
 import { CourseForm } from './course-form.tsx';
 import { ImportFlow } from './import-flow.tsx';
@@ -308,8 +308,8 @@ export function CourseManager({
             removing === null
               ? ''
               : DELETE(removing.name, [
-                  `${removeCounts?.schedules ?? removing.schedules.length} 条排课`,
-                  `${removeCounts?.reminders ?? 0} 条提醒`,
+                  `排课 ${COUNT('schedule', removeCounts?.schedules ?? removing.schedules.length)}`,
+                  `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
                 ])
           }
         >

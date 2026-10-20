@@ -3,7 +3,7 @@ import { deleteCourse, deleteSchedule, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
-import { DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE } from '../copy/zh.ts';
 import { ReminderForm } from './reminder-form.tsx';
 import { toast } from './ui/toaster.tsx';
 
@@ -48,7 +48,10 @@ export function LessonDetail({
   async function removeCourse(id: string, name: string): Promise<void> {
     const ok = await confirmAction({
       title: '删除课程',
-      description: DELETE(name, [`${detail.schedules.length} 条排课`, `${detail.reminder === undefined ? 0 : 1} 条提醒`]),
+      description: DELETE(name, [
+        `排课 ${COUNT('schedule', detail.schedules.length)}`,
+        `提醒 ${COUNT('reminder', detail.reminder === undefined ? 0 : 1)}`,
+      ]),
       confirmLabel: '确认删除',
     });
     if (!ok) return;

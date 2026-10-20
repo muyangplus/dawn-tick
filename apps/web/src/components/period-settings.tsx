@@ -476,7 +476,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const draftError = draft === null ? null : paramError(duration, breakMinutes);
 
   return (
-    <SectionCard title="时间表" icon={CalendarRange}>
+    <SectionCard title="作息" icon={CalendarRange}>
       <div className="grid grid-cols-2 gap-2">
         <Field label="每节时长（分钟）">
           <Input

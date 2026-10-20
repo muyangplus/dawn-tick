@@ -130,7 +130,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
   return (
     <SectionCard title="按学校套用作息" icon={CalendarClock} badge={presetLine}>
       <span className="text-xs text-muted">
-        按该校作息重排时间表
+        按该校作息重排节次
       </span>
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -177,7 +177,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent
           title="按学校套用作息"
-          description="按学校作息重排时间表"
+          description="按学校作息重排节次"
         >
           <SchoolPicker
             context={context}
