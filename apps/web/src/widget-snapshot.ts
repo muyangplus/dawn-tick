@@ -4,7 +4,7 @@ import { resolveTokens } from './design/tokens.ts';
 import { writeMetaJson } from './lib/meta.ts';
 import { WIDGET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { isDesktopApp } from './lib/capabilities.ts';
-import { loadCapacitorPlugin } from './lib/native.ts';
+import { PLUGIN_NAMES, loadPlugin, type WidgetRefreshPlugin } from './lib/plugins.ts';
 
 export const WIDGET_SNAPSHOT_KEY = WIDGET_SNAPSHOT_META_KEY;
 
@@ -136,7 +136,7 @@ export async function writeWidgetSnapshot(
 ): Promise<void> {
   await writeMetaJson(storage, WIDGET_SNAPSHOT_KEY, buildWidgetSnapshot(data, settings), { scope: 'widget' });
   try {
-    const plugin = await loadCapacitorPlugin<{ refresh(): Promise<void> }>('WidgetRefresh');
+    const plugin = await loadPlugin<WidgetRefreshPlugin>(PLUGIN_NAMES.widgetRefresh);
     if (plugin !== null) await plugin.refresh();
   } catch {
     // 插件未注册时跳过，快照仍会在系统周期刷新时生效

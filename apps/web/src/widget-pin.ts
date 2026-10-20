@@ -1,5 +1,6 @@
 import { hasMobileWidgets } from './lib/capabilities.ts';
-import { loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
+import { nativeErrorMessage } from './lib/native.ts';
+import { PLUGIN_NAMES, loadPlugin, type WidgetPinPlugin } from './lib/plugins.ts';
 import { logInfo, logWarn } from './log.ts';
 
 /** 是否有主屏小组件（仅 Android）：实现收在 lib/capabilities.ts，这里保留原导出路径。 */
@@ -52,18 +53,9 @@ export interface MobileWidgetState {
   disabled: boolean;
 }
 
-/** 原生小组件插件：请求添加、读取每种尺寸的当前状态。 */
-interface WidgetPlugin {
-  requestPin(options: { provider: string }): Promise<{ status?: string; reason?: string }>;
-  readStates(): Promise<{
-    supported?: boolean;
-    widgets?: { provider?: string; added?: boolean; enabled?: boolean }[];
-  }>;
-}
-
-async function loadWidgetPlugin(): Promise<WidgetPlugin | null> {
+async function loadWidgetPlugin(): Promise<WidgetPinPlugin | null> {
   try {
-    return await loadCapacitorPlugin<WidgetPlugin>('DawnTickWidget');
+    return await loadPlugin<WidgetPinPlugin>(PLUGIN_NAMES.widgetPin);
   } catch (cause: unknown) {
     logWarn('widget', '小组件插件不可用', { message: nativeErrorMessage(cause) });
     return null;

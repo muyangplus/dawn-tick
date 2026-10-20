@@ -1,7 +1,12 @@
 import { toBase64Bytes } from '@dawn-tick/core';
 import { isDesktopApp } from './lib/capabilities.ts';
-import { invokeNative, loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
+import { invokeNative, nativeErrorMessage } from './lib/native.ts';
+import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from './lib/plugins.ts';
 import { logInfo, logWarn } from './log.ts';
+
+/** 插件接口定义已集中到 `lib/plugins.ts`，这里保留原导出路径供旧调用方使用。 */
+export type { SystemActionsPlugin } from './lib/plugins.ts';
+
 function describe(cause: unknown): string {
   return nativeErrorMessage(cause);
 }
@@ -38,23 +43,7 @@ export async function openExternalUrl(url: string): Promise<boolean> {
   return true;
 }
 
-/** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
-export interface SystemActionsPlugin {
-  openExternal(options: { url: string }): Promise<{ opened: boolean }>;
-  isIgnoringBatteryOptimizations(): Promise<{ ignoring: boolean }>;
-  requestIgnoreBatteryOptimizations(): Promise<{ ignoring?: boolean; requested?: boolean }>;
-  notificationStatus(options: { asked: boolean }): Promise<{
-    appEnabled?: boolean;
-    runtime?: string;
-    channelId?: string;
-    channelName?: string;
-    channelMuted?: boolean;
-  }>;
-  openNotificationSettings(options: { channelId?: string }): Promise<{ opened: boolean }>;
-}
-
-/** 原生读到的通知状态：应用级开关 + 运行时权限 + 渠道静音。 */
-export interface NotifyStatusDetail {
+/** 原生读到的通知状态：应用级开关 + 运行时权限 + 渠道静音。 */export interface NotifyStatusDetail {
   appEnabled: boolean;
   runtime: 'granted' | 'denied' | 'prompt' | 'permanently-denied';
   channelId: string | null;
@@ -104,7 +93,7 @@ export async function openNotifySettings(channelId?: string | null): Promise<boo
 
 async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
   try {
-    return await loadCapacitorPlugin<SystemActionsPlugin>('SystemActions');
+    return await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
   } catch (cause: unknown) {
     logWarn('link', '系统动作插件不可用', { message: describe(cause) });
     return null;

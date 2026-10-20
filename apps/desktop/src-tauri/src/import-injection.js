@@ -6,16 +6,63 @@
 
   var MAX_PAYLOAD = 1500000;
 
+  // 页面导入协议：字段名与计数口径与 `packages/core/src/import/page-tables.ts` 的
+  // `PAGE_DIAGNOSTICS_FIELDS` / `PageDiagnostics`、以及书签 `PAGE_BOOKMARKLET` 逐字一致。
+  // 本文件由 Rust `include_str!` 注入（`apps/desktop/src-tauri/src/lib.rs` 的 IMPORT_INJECTION），
+  // 读不到 TS 模块，所以字段名只能各写一份：改字段或计数规则时三处一起改，
+  // `apps/web/test/import-injection.test.ts` 用共用样例逐项断言两端输出相同。
+  var DIAGNOSTICS_VERSION = 2; // 必须等于 page-tables.ts 的 BOOKMARKLET_VERSION
+  var KB_TABLE_PATTERN = /kbtable|^kb|timetable|skb|kbgrid/i;
+  var GRID_CELL_PATTERN = /^\d{1,2}[-_]\d{1,2}$/;
+  var LOADING_PATTERN = /加载中|loading/i;
+
   var collect = function () {
     var parts = [];
     var seen = new Set();
+    // 字段顺序与 PAGE_DIAGNOSTICS_FIELDS 相同：v, url, title, frames, tables, kbTables, gridCells, ready, loading
+    var info = {
+      v: DIAGNOSTICS_VERSION,
+      url: location.href,
+      title: document.title,
+      frames: 0,
+      tables: 0,
+      kbTables: 0,
+      gridCells: 0,
+      ready: document.readyState,
+      loading: false,
+    };
     var walk = function (doc, depth) {
       if (!doc || depth > 2 || seen.has(doc)) {
         return;
       }
       seen.add(doc);
+      // frames 与书签一致：按访问到的文档数计，outerHTML 读取失败也算一段
+      info.frames += 1;
       try {
         parts.push(doc.documentElement.outerHTML);
+      } catch (error) {}
+      try {
+        var tables = doc.querySelectorAll('table');
+        info.tables += tables.length;
+        for (var i = 0; i < tables.length; i += 1) {
+          var table = tables[i];
+          if (KB_TABLE_PATTERN.test((table.id || '') + (table.className || ''))) {
+            info.kbTables += 1;
+          }
+        }
+      } catch (error) {}
+      try {
+        var nodes = doc.querySelectorAll('[id]');
+        for (var j = 0; j < nodes.length; j += 1) {
+          if (GRID_CELL_PATTERN.test(nodes[j].id)) {
+            info.gridCells += 1;
+          }
+        }
+      } catch (error) {}
+      try {
+        if (doc.body && LOADING_PATTERN.test(doc.body.textContent || '')) {
+          info.loading = true;
+        }
       } catch (error) {}
       var frames = [];
       try {
@@ -28,7 +75,6 @@
       });
     };
     walk(document, 0);
-    var info = { v: 2, url: location.href, title: document.title, frames: parts.length };
     return '<<<DAWNTICK>>>' + JSON.stringify(info) + '<<<FRAME>>>' + parts.join('<<<FRAME>>>') + '<<<END>>>';
   };
 

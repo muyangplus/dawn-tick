@@ -1,5 +1,6 @@
 import { canOpenImportWindow, isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
-import { invokeNative, loadCapacitorPlugin, nativeErrorMessage } from './lib/native.ts';
+import { invokeNative, nativeErrorMessage } from './lib/native.ts';
+import { PLUGIN_NAMES, loadPlugin, type SchoolWindowPlugin } from './lib/plugins.ts';
 import { logInfo, logWarn } from './log.ts';
 import type { SchoolEntry } from '@dawn-tick/core';
 
@@ -47,9 +48,7 @@ export async function openImportWindow(url: string): Promise<ImportWindowResult>
   }
   if (isAndroidApp()) {
     try {
-      const plugin = await loadCapacitorPlugin<{ open(options: { url: string }): Promise<{ payload?: string }> }>(
-        'SchoolWindow',
-      );
+      const plugin = await loadPlugin<SchoolWindowPlugin>(PLUGIN_NAMES.schoolWindow);
       if (plugin === null) return { ok: false, error: '当前平台不支持内嵌窗口' };
       const result = await plugin.open({ url });
       rememberImportUrl(url);

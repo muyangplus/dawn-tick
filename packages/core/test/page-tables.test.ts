@@ -1,15 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
+  BOOKMARKLET_VERSION,
   PAGE_BOOKMARKLET,
+  PAGE_DIAGNOSTICS_FIELDS,
   PAGE_FRAME_SEPARATOR,
   countPastedFrames,
   detectSystem,
   extractTimetableFromHtml,
   inspectPage,
   looksLikeTimetablePage,
+  parsePageDiagnostics,
   stripPageMarkers,
 } from '../src/import/page-tables.ts';
+import { EXPECTED_DIAGNOSTICS, diagnosticCountsOf } from './fixtures/import-diagnostics.ts';
+
+/** 桌面注入脚本与书签是同一协议的两种实现：字段清单在这里静态核对。 */
+const INJECTION_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../apps/desktop/src-tauri/src/import-injection.js', import.meta.url)),
+  'utf8',
+);
 
 const GRID_PAGE = `<!doctype html><html><body>
 <table id="kbtable">
@@ -97,6 +109,44 @@ test('书签小工具标记可剥离', () => {
   assert.match(PAGE_BOOKMARKLET, /<<<DAWNTICK>>>/);
   assert.match(PAGE_BOOKMARKLET, /iframe/, '书签需收集 iframe 内容');
   assert.equal(stripPageMarkers(GRID_PAGE), GRID_PAGE, '无标记时原样返回');
+});
+
+test('诊断字段清单与两端实现一致', () => {
+  // 共用样例只断言计数字段，元信息字段由两端各自补全
+  assert.deepEqual(Object.keys(EXPECTED_DIAGNOSTICS), ['frames', 'tables', 'kbTables', 'gridCells']);
+  for (const field of PAGE_DIAGNOSTICS_FIELDS) {
+    assert.match(PAGE_BOOKMARKLET, new RegExp(`\\b${field}\\s*:`), `书签缺少诊断字段 ${field}`);
+    assert.match(INJECTION_SOURCE, new RegExp(`\\b${field}\\s*:`), `注入脚本缺少诊断字段 ${field}`);
+  }
+  // 版本号两端同源：书签直接内联常量，注入脚本读不到 TS，只能写死并在测试里核对
+  assert.match(PAGE_BOOKMARKLET, new RegExp(`\\bv:${BOOKMARKLET_VERSION}\\b`));
+  assert.match(INJECTION_SOURCE, new RegExp(`DIAGNOSTICS_VERSION\\s*=\\s*${BOOKMARKLET_VERSION}\\b`));
+
+  // 计数字段必须能完整往返（注入脚本与书签共用同一个解析器）
+  const payload = `<<<DAWNTICK>>>${JSON.stringify({
+    v: BOOKMARKLET_VERSION,
+    url: 'https://jw.example.edu.cn/',
+    title: '个人课表查询',
+    ...EXPECTED_DIAGNOSTICS,
+    ready: 'complete',
+    loading: false,
+  })}<<<END>>>`;
+  const diagnostics = parsePageDiagnostics(payload);
+  assert.deepEqual(diagnosticCountsOf(diagnostics ?? {}), EXPECTED_DIAGNOSTICS);
+});
+
+test('桌面注入脚本的诊断字段进入未识别提示', () => {
+  // 导入页（import-flow）把 warnings 直接展示给用户：桌面端带回的表格数应出现在提示里
+  const payload = `<<<DAWNTICK>>>${JSON.stringify({
+    v: BOOKMARKLET_VERSION,
+    ...EXPECTED_DIAGNOSTICS,
+  })}<<<END>>>${OTHER_PAGE}`;
+  const result = extractTimetableFromHtml(payload);
+  assert.equal(result.schedules.length, 0);
+  assert.match(result.warnings.join('；'), /表格 0 个/);
+  assert.match(result.warnings.join('；'), /页面片段 2 段/);
+  assert.match(result.warnings.join('；'), /疑似课表 1 个/);
+  assert.match(result.warnings.join('；'), /整点 2 个/);
 });
 
 test('课表在 iframe 里也能识别', () => {
