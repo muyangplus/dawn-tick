@@ -21,12 +21,14 @@ import {
   validatedStorage,
   writeSettings,
 } from '@dawn-tick/core';
-import { App } from '../src/App.tsx';
+import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
+import { markStorageFallback } from '../src/db/fallback.ts';
+import { setStorageOpenerForTests } from '../src/db/platform.ts';
 import {
   PRESET_CONTENT_META_KEY,
   PRESET_SNAPSHOT_META_KEY,
@@ -3566,6 +3568,129 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       '',
     );
     todoApp.root.unmount();
+  }
+
+  // P1-07：原生库失败 → 回退可见、设备页标「临时回退」、写入口只读拦截
+  {
+    // 回退也要有数据可看：前面的用例可能删过学期，这里补一个最小学期
+    const fallbackSeed = validatedStorage(await openIndexedDbStorage());
+    const existingSemesters = await fallbackSeed
+      .collection<Record<string, unknown>>('semesters')
+      .getAll();
+    if (existingSemesters.length === 0) {
+      await createSemester(fallbackSeed, {
+        userId: USER_ID,
+        name: '回退冒烟学期',
+        startDate: todayText,
+        totalWeeks: 20,
+        timeZone: 'Asia/Shanghai',
+      });
+      await writeSettings(fallbackSeed, { viewDays: 7 });
+    }
+    setStorageOpenerForTests(async () =>
+      markStorageFallback(
+        validatedStorage(await openIndexedDbStorage()),
+        'smoke 模拟原生库打不开',
+      ),
+    );
+    const fallbackApp = mount(<App />);
+    await flush(20);
+    const banner = fallbackApp.container.querySelector('[data-role="storage-fallback-banner"]');
+    const bannerButtons = [...(banner?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      'P1-07 回退时首屏出现常驻警告条（含重试/打开日志）',
+      banner !== null &&
+        (banner.textContent ?? '').includes('原生数据库不可用，已临时使用浏览器存储（本机数据未删除）') &&
+        bannerButtons.includes('重试') &&
+        bannerButtons.includes('打开日志'),
+      banner?.textContent?.trim().slice(0, 80) ?? '(无警告条)',
+    );
+
+    clickByText(fallbackApp.container, '设备与同步');
+    await flush(14);
+    check(
+      'P1-07 设备页存储类型标「临时回退」',
+      (fallbackApp.container.textContent ?? '').includes('本地存储：浏览器 IndexedDB · 临时回退'),
+      (fallbackApp.container.textContent ?? '').slice(-60),
+    );
+
+    clickByText(fallbackApp.container, '课表');
+    await flush(12);
+    const fab = fallbackApp.container.querySelector<HTMLElement>('[aria-label="快速添加"]');
+    fab?.click();
+    await flush(6);
+    if (clickByText(document.body, '添加课程')) await flush(8);
+    check(
+      'P1-07 回退期间写入口被拦截并提示只读',
+      (document.body.textContent ?? '').includes('临时只读，修复存储后再改') &&
+        document.querySelector('[aria-label="起始节"]') === null,
+      (document.body.textContent ?? '').slice(-60),
+    );
+    fallbackApp.root.unmount();
+    setStorageOpenerForTests(null);
+  }
+
+  // P1-09：初始化失败页按损坏/其它给不同按钮组
+  {
+    setStorageOpenerForTests(async () => {
+      throw new Error('database disk image is malformed');
+    });
+    const corruptApp = mount(<App />);
+    await flush(20);
+    const corruptScreen = corruptApp.container.querySelector('[data-role="error-screen"]');
+    const corruptButtons = [...(corruptScreen?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      'P1-09 损坏错误页渲染恢复按钮组',
+      corruptScreen !== null &&
+        (corruptScreen.textContent ?? '').includes('载入失败') &&
+        corruptButtons.includes('从备份文件恢复') &&
+        corruptButtons.includes('打开备份目录'),
+      corruptScreen?.textContent?.trim().slice(0, 80) ?? '(无错误页)',
+    );
+    corruptApp.root.unmount();
+
+    setStorageOpenerForTests(async () => {
+      throw new Error('native storage unavailable');
+    });
+    const failedApp = mount(<App />);
+    await flush(20);
+    const errorScreen = failedApp.container.querySelector('[data-role="error-screen"]');
+    const errorButtons = [...(errorScreen?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      'P1-09 初始化失败页渲染「重试」与「打开日志」',
+      errorScreen !== null &&
+        (errorScreen.textContent ?? '').includes('载入失败') &&
+        errorButtons.includes('重试') &&
+        errorButtons.includes('打开日志'),
+      errorScreen?.textContent?.trim().slice(0, 80) ?? '(无错误页)',
+    );
+    failedApp.root.unmount();
+    setStorageOpenerForTests(null);
+  }
+
+  // P1-09：加载页 3 秒后追加进度文案
+  {
+    const loading = mount(<LoadingScreen slowAfterMs={120} />);
+    await flush(3);
+    const initialLoadingText = loading.container.textContent ?? '';
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    await flush(2);
+    const slowLoadingText = loading.container.textContent ?? '';
+    check(
+      'P1-09 加载 3 秒后追加「仍在载入…」',
+      LOADING_SLOW_MS === 3000 &&
+        initialLoadingText.includes('正在载入…') &&
+        !initialLoadingText.includes('仍在载入…') &&
+        slowLoadingText.includes('仍在载入…'),
+      `阈值=${LOADING_SLOW_MS}ms 初=${initialLoadingText.trim()} 后=${slowLoadingText.trim()}`,
+    );
+    loading.root.unmount();
   }
 
   return results;

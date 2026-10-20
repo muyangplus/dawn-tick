@@ -31,7 +31,8 @@ import { Card } from '../components/ui/card.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { logError, logInfo } from '../log.ts';
+import { logError, logInfo, describeError } from '../log.ts';
+import { fail } from '../lib/fail.ts';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import { adapterInfo, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
@@ -395,9 +396,14 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
         parsed.warnings,
       );
     } catch (cause: unknown) {
+      // 解析器的内部报错只进日志；界面给用户能理解的原因与下一步
+      logError('import', '读取课表文件失败', {
+        name: file.name,
+        message: describeError(cause),
+      });
       setFailure({
         source: 'file',
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: '文件里的课表没能识别',
       });
     } finally {
       setBusy(false);
@@ -663,7 +669,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
               className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 p-3"
             >
               <span className="text-xs text-danger-strong">
-                识别失败：{failure.reason}。请换一种导入方式，或手动添加课程。
+                {fail('识别失败', failure.reason, '请换一种导入方式，或手动添加课程。').text}
               </span>
               <Button size="sm" variant="secondary" onClick={openManualMapping}>
                 改用手动指定表格
@@ -757,7 +763,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
                   </div>
                   {failure?.source === 'mapping' && (
                     <p role="alert" className="text-xs text-danger-strong">
-                      识别失败：{failure.reason}。请调整表头行、星期列或节次列后重试。
+                      {fail('识别失败', failure.reason, '请调整表头行、星期列或节次列后重试。').text}
                     </p>
                   )}
                 </>
@@ -799,7 +805,7 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: I
           </div>
           {failure?.source === 'file' && (
             <p role="alert" className="text-xs text-danger-strong">
-              识别失败：{failure.reason}。请检查文件格式，或改用其他导入方式。
+              {fail('识别失败', failure.reason, '请检查文件格式，或改用其他导入方式。').text}
             </p>
           )}
         </Card>

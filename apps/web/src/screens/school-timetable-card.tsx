@@ -7,7 +7,8 @@ import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { SchoolPicker } from '../components/school-picker.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { logInfo } from '../log.ts';
+import { describeError, logInfo, logWarn } from '../log.ts';
+import { fail } from '../lib/fail.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 import {
   applySchoolTimetable,
@@ -108,7 +109,12 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
       await reloadSlots();
       onChanged();
     } catch (cause: unknown) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
+      // 落库失败的具体原因只进日志；界面按统一句式给原因与下一步
+      logWarn('timetable', '按学校套用作息失败', {
+        school: school.name,
+        message: describeError(cause),
+      });
+      setMessage(fail('套用失败', '作息没能写入本机', '请重试；仍失败请重启应用。').text);
     } finally {
       setBusy(false);
     }
