@@ -1406,7 +1406,7 @@ export function App() {
         onCreated={refresh}
       />
 
-      {/* 渠道提示：开发版可能频繁更新、测试版可能不稳定；每条只弹一次，新增提示对老用户也会弹 */}
+      {/* 渠道提示：开发版可能频繁更新、公测版可能不稳定；每条只弹一次，新增提示对老用户也会弹 */}
       <Dialog
         open={notice !== null}
         onOpenChange={(open) => {
@@ -1422,10 +1422,10 @@ export function App() {
         }}
       >
         <DialogContent
-          title={notice === NOTICE_BETA ? '测试版提示' : '开发版提示'}
+          title={notice === NOTICE_BETA ? '公测版提示' : '开发版提示'}
           description={
             notice === NOTICE_BETA
-              ? '测试版可能不稳定，反馈请附日志'
+              ? '公测版可能不稳定，反馈请附日志'
               : '开发版滚动更新'
           }
         >

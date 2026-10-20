@@ -60,7 +60,7 @@ function ScheduleActions(ctx: ScheduleCardContext) {
   const addActions = useAddActions();
   const addItems =
     addActions === null
-      ? [{ label: '加待办', onSelect: ctx.onAddTodo }]
+      ? [{ label: '添加待办', onSelect: ctx.onAddTodo }]
       : ADD_ACTIONS.map((item) => ({ label: item.label, onSelect: () => addActions[item.id]() }));
   const [rangeOpen, setRangeOpen] = useState(false);
   const [rangeFrom, setRangeFrom] = useState(viewDate);
@@ -314,7 +314,7 @@ function ScheduleTimeline({
   /** 长按时间线行删除待办/作业/考试/实验：与详情页同一确认口径。 */
   async function deleteTimelineEvent(event: EventRow): Promise<void> {
     const ok = await confirmAction({
-      title: '删除条目',
+      title: '删除待办',
       description: DELETE(event.title, ['关联提醒']),
       confirmLabel: '确认删除',
     });
@@ -329,7 +329,7 @@ function ScheduleTimeline({
         <div data-role="timeline-empty">
           <EmptyState
             icon={ListChecks}
-            title="这一天没有安排"
+            title="这一天没有待办"
             description="切换日期可看其他日期"
             action={
               <Button size="sm" variant="secondary" aria-label="添加待办" onClick={onAddTodo}>
@@ -359,7 +359,7 @@ function ScheduleTimeline({
                   className={cn('size-4 shrink-0 text-muted transition-transform', completedOpen && 'rotate-180')}
                   aria-hidden
                 />
-                <span className="text-sm font-semibold text-muted">已完成 {completed.length}</span>
+                <span className="text-sm font-semibold text-muted">已完成 {completed.length} 项</span>
               </button>
               <ul className="flex flex-col gap-2 px-1 pb-1" data-role="timeline-completed-list" hidden={!completedOpen}>
                 {completed.map((item) => (
@@ -400,7 +400,7 @@ function ScheduleTimeline({
                 </ul>
               </div>
             ))}
-            {main.length === 0 && <span className="text-xs text-muted">这一天的安排都已完成</span>}
+            {main.length === 0 && <span className="text-xs text-muted">这一天的待办都已完成</span>}
           </div>
         </>
       )}

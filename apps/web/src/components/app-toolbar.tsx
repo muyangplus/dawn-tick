@@ -117,7 +117,7 @@ export function AppToolbar({
       </Tabs>
 
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="icon" aria-label="搜索" onClick={onSearch} title="/">
+        <Button variant="ghost" size="icon" aria-label="搜索" aria-keyshortcuts="/" onClick={onSearch}>
           <Search className="size-4" aria-hidden />
         </Button>
         {!compact && <AddMenuButton actions={addActions} />}
