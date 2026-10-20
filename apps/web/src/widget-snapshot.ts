@@ -1,8 +1,19 @@
 import type { AppSettings, Storage } from '@dawn-tick/core';
 import type { AppData } from './data.ts';
+import { resolveTokens } from './design/tokens.ts';
 import { detectPlatform } from './platform-detect.ts';
 
 export const WIDGET_SNAPSHOT_KEY = 'widget_snapshot';
+
+/** 小组件配色：取设计令牌的语义色，Kotlin 侧缺失时回退内置常量。 */
+export interface WidgetColors {
+  /** 正文色，对应 `ColorTokens.text`。 */
+  ink: string;
+  /** 次要文字色，对应 `ColorTokens.muted`。 */
+  muted: string;
+  /** 强调色（倒计时/天数），取 AA 达标的 `ColorTokens.dangerStrong`。 */
+  danger: string;
+}
 
 export interface WidgetLesson {
   title: string;
@@ -33,12 +44,38 @@ export interface WidgetSnapshot {
   week: number;
   timeZone: string;
   background: AppSettings['widgetBackground'];
+  /** 主题语义色；旧版快照可能没有该字段，Android 侧回退内置常量。 */
+  colors?: WidgetColors | null;
   /** 正在上的那一节课：有它时前端显示剩余时间，没有时看 next */
   current: WidgetLesson | null;
   next: WidgetLesson | null;
   today: WidgetLesson[];
   grid: WidgetGridLesson[];
   exams: WidgetExam[];
+}
+
+function prefersDark(): boolean {
+  return (
+    typeof globalThis.matchMedia === 'function' &&
+    globalThis.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+}
+
+/**
+ * 小组件取色模式：深色底固定用暗色令牌、浅色底固定用亮色令牌；
+ * 透明底跟随应用主题（`system` 时看系统偏好）。底色与令牌背景色接近，保证文字对比度。
+ */
+function widgetColorMode(settings: AppSettings): 'light' | 'dark' {
+  if (settings.widgetBackground === 'dark') return 'dark';
+  if (settings.widgetBackground === 'light') return 'light';
+  if (settings.theme === 'system') return prefersDark() ? 'dark' : 'light';
+  return settings.theme;
+}
+
+/** 快照配色：预设与模式都来自设置，保证小组件颜色随主题变化。 */
+export function buildWidgetColors(settings: AppSettings): WidgetColors {
+  const tokens = resolveTokens(settings.themePreset, widgetColorMode(settings));
+  return { ink: tokens.text, muted: tokens.muted, danger: tokens.dangerStrong };
 }
 
 /** Android 主屏小组件读取的快照，避免小组件侧重复实现课表逻辑。 */
@@ -76,6 +113,7 @@ export function buildWidgetSnapshot(
     week: data.week,
     timeZone: data.timeZone,
     background: settings.widgetBackground,
+    colors: buildWidgetColors(settings),
     current: data.currentLesson === undefined ? null : toLesson(data.currentLesson),
     next: data.nextLesson === undefined ? null : toLesson(data.nextLesson),
     today: data.todayLessons.map(toLesson),

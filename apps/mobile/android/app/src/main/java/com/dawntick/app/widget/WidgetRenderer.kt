@@ -5,6 +5,7 @@ import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.View
@@ -43,6 +44,10 @@ object WidgetRenderer {
     /** 与 appwidget-provider 的 minHeight 一致，系统未给出高度时按它算行数。 */
     private const val FALLBACK_WIDGET_HEIGHT_DP = 110
 
+    /**
+     * 内置回退色：快照没有携带 colors 时使用（取 design/tokens.ts 里 vivid 预设的正文/次要文字色）。
+     * 快照带 colors 时以快照为准，小组件配色随主题预设与明暗模式变化。
+     */
     private const val INK_LIGHT = 0xFF1F1B24.toInt()
     private const val MUTED_LIGHT = 0xFF6B6475.toInt()
     private const val INK_DARK = 0xFFF3EFF6.toInt()
@@ -53,6 +58,16 @@ object WidgetRenderer {
     private fun isNightMode(context: Context): Boolean =
         (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
+
+    /** 快照色是 `#RRGGBB` / `#AARRGGBB`；空串、旧快照或非法值时返回 null，由调用方回退常量。 */
+    private fun parseColor(value: String?): Int? {
+        if (value.isNullOrEmpty()) return null
+        return try {
+            Color.parseColor(value)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
 
     private fun backgroundResource(background: String): Int = when (background) {
         "dark" -> R.drawable.widget_bg_dark
@@ -71,9 +86,11 @@ object WidgetRenderer {
         val background = snapshot?.background ?: "light"
         views.setInt(R.id.widget_root, "setBackgroundResource", backgroundResource(background))
         val dark = background == "dark" || (background == "transparent" && isNightMode(context))
-        val ink = if (dark) INK_DARK else INK_LIGHT
-        val muted = if (dark) MUTED_DARK else MUTED_LIGHT
-        val accent = if (dark) DANGER_DARK_MODE else DANGER_LIGHT_MODE
+        val colors = snapshot?.colors
+        // 快照色优先（随主题走），缺失或非法时回退按背景/夜间模式选的常量
+        val ink = parseColor(colors?.ink) ?: (if (dark) INK_DARK else INK_LIGHT)
+        val muted = parseColor(colors?.muted) ?: (if (dark) MUTED_DARK else MUTED_LIGHT)
+        val accent = parseColor(colors?.danger) ?: (if (dark) DANGER_DARK_MODE else DANGER_LIGHT_MODE)
         for (id in primaryIds) views.setTextColor(id, ink)
         for (id in mutedIds) views.setTextColor(id, muted)
         for (id in accentIds) views.setTextColor(id, accent)
