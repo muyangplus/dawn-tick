@@ -1,5 +1,6 @@
 import type { Storage } from './storage.ts';
 import type { CourseRow, CourseScheduleRow, EventRow } from './types.ts';
+import { WEEKDAY_LABELS } from './time.ts';
 
 export type SearchKind = 'course' | 'schedule' | 'event';
 
@@ -35,8 +36,6 @@ function bestScore(values: readonly (string | null | undefined)[], keyword: stri
   for (const value of values) best = Math.max(best, matchScore(value, keyword));
   return best;
 }
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 export async function searchAll(
   storage: Storage,
@@ -82,7 +81,7 @@ export async function searchAll(
       kind: 'schedule',
       id: schedule.id,
       title: course.name,
-      subtitle: `${WEEKDAYS[schedule.day_of_week - 1]} 第 ${schedule.period_start}-${schedule.period_end} 节 · ${schedule.weeks_raw ?? ''}`.trim(),
+      subtitle: `${WEEKDAY_LABELS[schedule.day_of_week - 1] ?? ''} 第 ${schedule.period_start}-${schedule.period_end} 节 · ${schedule.weeks_raw ?? ''}`.trim(),
       score,
       courseId: course.id,
       dayOfWeek: schedule.day_of_week,

@@ -26,6 +26,7 @@ import {
   type PackageExtras,
 } from '../data-management.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion, featureVisible } from '../channel.ts';
+import { dayStampUtc } from '../lib/dates.ts';
 import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../update.ts';
 import {
   BUILTIN_PRESET_VERSION,
@@ -557,7 +558,7 @@ export function DevicesView({
 
   async function exportLogs(): Promise<void> {
     const entries = logsText();
-    const name = `DawnTick-log-${new Date().toISOString().slice(0, 10)}.txt`;
+    const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;
     const saved = await saveText(name, entries === '' ? '暂无日志' : entries, 'txt', '日志文件');
     if (saved) {
       toast.success(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`);
@@ -613,7 +614,7 @@ export function DevicesView({
   /** 导出 Base64 文本到文件：内容与文本框一致。 */
   async function saveBase64Backup(): Promise<void> {
     if (exportText === '') return;
-    const day = new Date().toISOString().slice(0, 10);
+    const day = dayStampUtc(Date.now());
     if (await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', 'Base64 文本')) {
       toast.success('已保存 Base64 文本');
       setExportOpen(false);

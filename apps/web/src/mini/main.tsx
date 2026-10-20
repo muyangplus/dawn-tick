@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   WIDGET_VARIANTS,
+  WEEKDAY_LABELS,
   addDays,
   dayOfWeek,
   formatDate,
@@ -17,6 +18,7 @@ import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
 import { describeError, logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
 import { fail } from '../lib/fail.ts';
+import { formatCountdown, formatRemaining } from '../lib/format.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { openMainWindow } from '../widget-window.ts';
 import { MiniShell } from './shell.tsx';
@@ -28,33 +30,10 @@ installLogHandlers();
 
 /** 兜底轮询间隔：主窗口的数据变更会主动通知，这里只防窗口漏掉通知。 */
 const REFRESH_MS = 15_000;
-/** 星期标签：1=周一，与 dayOfWeek 对齐。 */
-const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 async function hideWindow(): Promise<void> {
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().hide();
-}
-
-/** 时间差格式化：超过一小时带小时位。 */
-function span(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
-  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
-}
-
-/** 距下一节开始：已是开始时刻时给「即将开始」。 */
-function countdown(target: number, now: number): string {
-  const diff = target - now;
-  if (diff <= 0) return '即将开始';
-  return span(Math.floor(diff / 1000));
-}
-
-/** 距本节结束：已经到点给 00:00。 */
-function remaining(endAt: number, now: number): string {
-  return span(Math.max(0, Math.floor((endAt - now) / 1000)));
 }
 
 function variantOf(settings: AppSettings | null): WidgetVariant {
@@ -231,10 +210,10 @@ function Mini() {
         <div className="mini-minimal">
           <span className="mini-count-big" data-role="mini-count">
             {current !== undefined
-              ? remaining(current.endAt, now)
+              ? formatRemaining(current.endAt, now)
               : next === undefined
                 ? '--:--'
-                : countdown(next.startAt, now)}
+                : formatCountdown(next.startAt - now)}
           </span>
           <span className="mini-minimal-name">
             {current !== undefined
@@ -276,7 +255,7 @@ function Mini() {
                   <span className="mini-item-name">{lesson.courseName}</span>
                   {running && (
                     <span className="tabular mini-item-remain" data-role="mini-running-left">
-                      剩余 {remaining(lesson.endAt, now)}
+                      剩余 {formatRemaining(lesson.endAt, now)}
                     </span>
                   )}
                   {lesson.room !== null && <span className="mini-item-room">{lesson.room}</span>}
@@ -306,10 +285,10 @@ function Mini() {
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
               {current !== undefined
-                ? remaining(current.endAt, now)
+                ? formatRemaining(current.endAt, now)
                 : next === undefined
                   ? '--:--'
-                  : countdown(next.startAt, now)}
+                  : formatCountdown(next.startAt - now)}
             </span>
             <span className="mini-meta">
               {current !== undefined
@@ -350,7 +329,7 @@ function Mini() {
           </div>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
-              {remaining(current.endAt, now)}
+              {formatRemaining(current.endAt, now)}
             </span>
             <span className="mini-meta">
               {formatTime(current.startAt, zone)}–{formatTime(current.endAt, zone)}
@@ -367,7 +346,7 @@ function Mini() {
           </div>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
-              {countdown(next.startAt, now)}
+              {formatCountdown(next.startAt - now)}
             </span>
             <span className="mini-meta">
               {nextDayLabel === '' ? '' : `${nextDayLabel} `}

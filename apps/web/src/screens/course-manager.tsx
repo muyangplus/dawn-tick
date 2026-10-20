@@ -5,6 +5,7 @@ import {
   createSchedule,
   deleteCourse,
   listManagedCourses,
+  WEEKDAY_LABELS,
   type ManagedCourse,
   type Storage,
   type ThemePreset,
@@ -19,8 +20,6 @@ import { countForCourse, type CourseCounts } from '../delete-counts.ts';
 import { CourseForm } from './course-form.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { logInfo } from '../log.ts';
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 export function weeksLabel(weeks: readonly number[]): string {
   if (weeks.length === 0) return '未标注周次';
@@ -51,7 +50,7 @@ function summarize(course: ManagedCourse): string {
           ? `${schedule.periodStart}`
           : `${schedule.periodStart}-${schedule.periodEnd}`;
       const room = schedule.room === null ? '' : ` ${schedule.room}`;
-      return `${WEEKDAYS[schedule.dayOfWeek - 1]} ${periods}节${room} ${weeksLabel(schedule.weeks)}`;
+      return `${WEEKDAY_LABELS[schedule.dayOfWeek - 1] ?? ''} ${periods}节${room} ${weeksLabel(schedule.weeks)}`;
     })
     .join(' ｜ ');
 }

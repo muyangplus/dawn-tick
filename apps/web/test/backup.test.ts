@@ -5,13 +5,13 @@ import {
   createSnapshot,
   deleteSnapshot,
   listSnapshots,
-  localDay,
   maybeAutoBackup,
   pruneSnapshots,
   restoreSnapshot,
   snapshotKind,
   snapshotsToday,
 } from '../src/backup.ts';
+import { dayStampLocal } from '../src/lib/dates.ts';
 
 function course(id: string, name: string): Record<string, unknown> {
   return {
@@ -142,7 +142,7 @@ test('自动备份按开关与当天份数决定', async () => {
 
 test('当天判定用本地日期', () => {
   const now = Date.UTC(2026, 9, 14, 4, 0, 0);
-  assert.equal(localDay(now), localDay(now + 1000));
+  assert.equal(dayStampLocal(now), dayStampLocal(now + 1000));
   const entries = [
     { id: 'a', createdAt: now, bytes: 1, kind: 'json' as const },
     { id: 'b', createdAt: now - 3 * 24 * 60 * 60 * 1000, bytes: 1, kind: 'json' as const },
