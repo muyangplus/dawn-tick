@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { Button } from '../../components/ui/button.tsx';
+import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
 import { cn } from '../../lib/cn.ts';
 import { moveCard, resolveAllCards, type CardScope, type CardState, type CardZone, type LayoutConfig } from './registry.ts';
 import { readLayout, writeLayout } from './layout-store.ts';
@@ -14,7 +15,33 @@ export interface CardLayoutPanelProps {
 const SCOPE_LABEL: Record<CardScope, string> = {
   schedule: '日程页',
   settings: '设置页',
+  devices: '设备与同步页',
 };
+
+/** 有卡片的页面：布局面板按这个顺序分组 */
+const SCOPES = ['schedule', 'settings', 'devices'] as const;
+
+/** 卡片布局对话框：设置页与设备与同步页共用同一份面板与关闭入口。 */
+export function CardLayoutDialog({
+  open,
+  onOpenChange,
+  layout,
+  onChange,
+  storage,
+}: CardLayoutPanelProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title="卡片布局" description="显示与排序卡片">
+        <CardLayoutPanel layout={layout} onChange={onChange} storage={storage} />
+        <DialogFooter>
+          <Button variant="ghost" aria-label="关闭卡片布局" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 /** 卡片布局面板：每张卡片一行，可显隐、上移下移、主列/侧列切换、恢复默认。 */
 export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelProps) {
@@ -52,7 +79,7 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
     setBusy(true);
     try {
       const next: LayoutConfig = { ...layout };
-      for (const scope of ['schedule', 'settings'] as const) {
+      for (const scope of SCOPES) {
         for (const card of resolveAllCards(scope, layout)) {
           next[card.def.id] = { ...next[card.def.id], visible: true };
         }
@@ -72,7 +99,7 @@ export function CardLayoutPanel({ layout, onChange, storage }: CardLayoutPanelPr
       <span className="text-xs text-muted">
         每张卡片可显示或隐藏、上移下移、在「主列 / 侧列」之间切换；「全部显示」把所有卡片恢复可见，恢复默认即返回出厂顺序。
       </span>
-      {(['schedule', 'settings'] as const).map((scope) => (
+      {SCOPES.map((scope) => (
         <ScopeGroup key={scope} scope={scope} layout={layout} busy={busy} onApply={(next) => void apply(next)} />
       ))}
       <div className="flex flex-wrap items-center gap-2">

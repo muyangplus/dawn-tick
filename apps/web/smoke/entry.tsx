@@ -688,6 +688,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const holidaySecondText = seeded.holidaySecond;
   const view = mount(<App />);
   await flush(20);
+  /** 切到「设备与同步」页：桌面侧栏与移动底栏共用同一个文字入口 */
+  const gotoDevices = async (): Promise<void> => {
+    clickByText(view.container, '设备与同步');
+    await flush(12);
+  };
+  const gotoSettings = async (): Promise<void> => {
+    clickByText(view.container, '设置');
+    await flush(12);
+  };
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
   check(
     'dev 构建首次提示开发版滚动更新',
@@ -1683,6 +1692,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
 
   // —— 预设版本与更新：内置兜底 + 运行时下载缓存 + 失败回退（全程用注入的假 fetch，不联网） ——
+  // 预设版本随「更新与维护」卡片迁到设备与同步页
+  await gotoDevices();
   await flush(8);
   const presetVersionLine = (): string =>
     (view.container.querySelector('[data-role="preset-version"]')?.textContent ?? '').trim();
@@ -1690,13 +1701,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (view.container.querySelector('[data-role="preset-result"]')?.textContent ?? '').trim();
   const presetButton = view.container.querySelector('button[aria-label="检查预设更新"]');
   check(
-    '设置页显示当前预设版本（内置）',
+    '设备页显示当前预设版本（内置）',
     presetVersionLine().includes('预设版本：') &&
       presetVersionLine().includes(BUILTIN_PRESET_VERSION) &&
       presetVersionLine().includes('（内置）'),
     presetVersionLine(),
   );
-  check('设置页提供检查预设更新按钮', presetButton instanceof window.HTMLElement, presetVersionLine());
+  check('设备页提供检查预设更新按钮', presetButton instanceof window.HTMLElement, presetVersionLine());
 
   const realFetch = globalThis.fetch;
   /** ② 里下载到的版本号；块外（③④ 校验缓存与启动套用）还要用。 */
@@ -1812,11 +1823,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(12);
   const settingsActions = view.container.querySelector<HTMLElement>('[data-role="settings-actions"]');
   check(
-    '设置页顶部提供四个快捷动作',
+    '设置页顶部只留导入课表（数据类动作迁到设备页）',
     settingsActions !== null &&
-      ['导入课表', '导出备份', '恢复快照', '检查更新'].every((label) =>
-        (settingsActions.textContent ?? '').includes(label),
-      ),
+      (settingsActions.textContent ?? '').includes('导入课表') &&
+      !(settingsActions.textContent ?? '').includes('导出备份') &&
+      !(settingsActions.textContent ?? '').includes('检查更新'),
     (settingsActions?.textContent ?? '(无)').trim(),
   );
   if (settingsActions !== null && clickByText(settingsActions, '导入课表')) await flush(12);
@@ -1835,13 +1846,33 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   check('已移除程序代登录入口', !importText.includes('正方教务') && !importText.includes('程序代登录'), '');
   check(
-    '新增「我的」页面且显示建设中',
-    [...view.container.querySelectorAll('button')].some((node) => (node.textContent ?? '').trim() === '我的'),
+    '导航项改为「设备与同步」，不再有「我的」占位',
+    [...view.container.querySelectorAll('button')].some(
+      (node) => (node.textContent ?? '').trim() === '设备与同步',
+    ) &&
+      ![...view.container.querySelectorAll('button')].some((node) => (node.textContent ?? '').trim() === '我的'),
     '',
   );
-  if (clickByText(view.container, '我的')) await flush(10);
-  check('「我的」页面为建设中占位', (view.container.textContent ?? '').includes('建设中'), '');
-  if (clickByText(view.container, '设置')) await flush(10);
+  await gotoDevices();
+  const devicesText = view.container.textContent ?? '';
+  check(
+    '设备与同步页承载存储、更新与关于卡片，一级页面无「建设中」',
+    devicesText.includes('存储与同步') &&
+      devicesText.includes('更新与维护') &&
+      devicesText.includes('关于') &&
+      !devicesText.includes('建设中'),
+    devicesText.slice(0, 60),
+  );
+  const devicesActions = view.container.querySelector<HTMLElement>('[data-role="devices-actions"]');
+  check(
+    '设备页顶部提供导出备份、恢复快照与检查更新',
+    devicesActions !== null &&
+      ['导出备份', '恢复快照', '检查更新'].every((label) =>
+        (devicesActions.textContent ?? '').includes(label),
+      ),
+    (devicesActions?.textContent ?? '(无)').trim(),
+  );
+  await gotoSettings();
 
   if (clickByTextStart(view.container, '网页课表')) await flush(10);
   check(
@@ -2102,6 +2133,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     !panelText.includes('导出日志') && !panelText.includes('填充示例数据'),
     '',
   );
+  // 更新渠道与开发者特性在「更新与维护」卡片里（设备与同步页）
+  await gotoDevices();
   check(
     '维护卡带自动检查更新开关',
     view.container.querySelector('[aria-label="自动检查版本更新"]') !== null &&
@@ -2136,6 +2169,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null,
     '',
   );
+  await gotoSettings();
   // 时区与待办排序都是选择列表
   const zoneTrigger = view.container.querySelector('[aria-label="时区"]');
   if (zoneTrigger instanceof window.HTMLElement) zoneTrigger.click();
@@ -2161,7 +2195,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
-  // 应用诊断日志：开关 + 级别（dev 默认最详细）
+  // 应用诊断日志：开关 + 级别（dev 默认最详细）；日志区块随「更新与维护」在设备页
+  await gotoDevices();
   const logBlock = view.container.querySelector('[data-role="log-settings"]');
   const logLevelTrigger = view.container.querySelector('[aria-label="日志级别"]');
   if (logLevelTrigger instanceof window.HTMLElement) logLevelTrigger.click();
@@ -2179,6 +2214,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+  await gotoSettings();
   check('课程管理提供复制课程', view.container.querySelector('[aria-label^="复制课程"]') !== null, '');
   // 周视图天数：1–7 天都可选
   const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();
@@ -2488,6 +2524,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `倒计时相关卡片 ${layoutTitles.filter((title) => title.includes('倒计时')).length} 张`,
   );
   if (clickByLabel(document.body, '关闭卡片布局')) await flush(8);
+  // 「更新与维护」「关于」「存储与同步」三张卡片都在设备与同步页
+  await gotoDevices();
   // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
   const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
   const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';
@@ -2636,6 +2674,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
+  await gotoSettings();
   const beforePeriods = startInputs(view.container).length;
   if (clickByText(view.container, '自动生成节次')) await flush(26);
   const generated = startInputs(view.container);
@@ -2762,8 +2801,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   }
 
   // —— 锚点顺延：把第 3 节开始时间改成 09:55 → 从这一节起按每节 45 分钟、课间 10 分钟顺延 ——
-  if (durationInput !== null) setInputValue(durationInput, '45');
-  if (breakInput !== null) setInputValue(breakInput, '10');
+  // 中途切过设备与同步页，设置页已重挂，这里按当前 DOM 重新取时长/课间输入框
+  const durationInputNow = view.container.querySelector<HTMLInputElement>('input[aria-label="每节时长（分钟）"]');
+  const breakInputNow = view.container.querySelector<HTMLInputElement>('input[aria-label="课间（分钟）"]');
+  if (durationInputNow !== null) setInputValue(durationInputNow, '45');
+  if (breakInputNow !== null) setInputValue(breakInputNow, '10');
   await flush(8);
   const anchorStart = clockInput(3, '开始');
   const anchorBefore = anchorStart?.value ?? '';

@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'dt.settings.collapsed';
-/** 首次使用时的默认收起项：设置页只有「关于」展开。 */
-const DEFAULT_COLLAPSED = ['appearance', 'data', 'maintenance', 'about'];
+/** 首次使用时的默认收起项：设置页只收起「外观」，设备与同步页三张卡片默认展开。 */
+const DEFAULT_COLLAPSED = ['appearance'];
 
 function read(): Set<string> {
   try {
