@@ -259,6 +259,12 @@ async function seed(): Promise<SmokeSeed> {
 
 // 冒烟固定把所有设置卡片视为展开，避免折叠记忆影响断言
 globalThis.localStorage?.setItem('dt.settings.collapsed', '[]');
+
+/** 切换 jsdom 的通知权限桩（实现在 tools/verify/smoke-ui.mjs 的 setupDom 里）。 */
+function setNotifyPermission(value: NotificationPermission): void {
+  (globalThis as { __notifyPermission?: NotificationPermission }).__notifyPermission = value;
+}
+
 function mount(element: ReactElement): { root: Root; container: HTMLElement } {
   const container = document.createElement('div');
   document.body.append(container);
@@ -1724,6 +1730,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('临时加课主按钮为应用调整', adjustHasButton('应用调整'), '');
   if (clickByText(document.body, '取消')) await flush(6);
 
+  setNotifyPermission('granted');
   const switchedToSettings = clickByText(view.container, '设置');
   await flush(10);
   const settingsText = view.container.textContent ?? '';
@@ -1748,6 +1755,41 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+
+  // —— P1-11 通知权限：删除 PERMISSION_LABEL 后全平台共用六态，非 Android 按能取到的三态显示 ——
+  const notifyLine = (): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>('[data-role="notify-permission"]');
+  check(
+    '通知权限用统一 live region 状态行（已允许）',
+    notifyLine()?.getAttribute('role') === 'status' &&
+      notifyLine()?.getAttribute('aria-live') === 'polite' &&
+      (notifyLine()?.textContent ?? '').includes('通知权限：已允许'),
+    notifyLine()?.textContent?.trim() ?? '(无)',
+  );
+  check('已允许时不显示权限横幅', view.container.querySelector('[data-role="notify-banner"]') === null, '');
+  setNotifyPermission('denied');
+  clickByText(view.container, '课表');
+  await flush(10);
+  clickByText(view.container, '设置');
+  await flush(12);
+  check(
+    '已拒绝：同一行改词并出现提醒横幅',
+    (notifyLine()?.textContent ?? '').includes('通知权限：已拒绝') &&
+      view.container.querySelector('[data-role="notify-banner"]') !== null &&
+      view.container.querySelector('[data-role="notify-card-badge"]') !== null,
+    notifyLine()?.textContent?.trim() ?? '(无)',
+  );
+  setNotifyPermission('default');
+  clickByText(view.container, '课表');
+  await flush(10);
+  clickByText(view.container, '设置');
+  await flush(12);
+  check(
+    '未申请：文案对齐六态且不误报横幅',
+    (notifyLine()?.textContent ?? '').includes('通知权限：未申请') &&
+      view.container.querySelector('[data-role="notify-banner"]') === null,
+    notifyLine()?.textContent?.trim() ?? '(无)',
+  );
 
   // —— 预设版本与更新：内置兜底 + 运行时下载缓存 + 失败回退（全程用注入的假 fetch，不联网） ——
   // 预设版本随「更新与维护」卡片迁到设备与同步页
@@ -1786,7 +1828,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(14);
     check(
       '检查预设更新离线时给出可读提示',
-      presetResultLine().includes('检查失败：无法连接预设源'),
+      presetResultLine().includes('检查预设更新失败：无法连接预设源'),
       presetResultLine(),
     );
 
@@ -1808,6 +1850,30 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         presetVersionLine().includes(`${nextVersion}（已更新）`),
       `${presetResultLine()} / ${presetVersionLine()}`,
     );
+
+    // —— P1-06 待重启：路径只登记，主壳（非设置页）一条常驻条统一呈现 ——
+    const pendingBar = (): HTMLElement | null =>
+      view.container.querySelector<HTMLElement>('[data-role="pending-restart"]');
+    check(
+      '需重启的改动在主壳显示常驻条（含数量与两个动作）',
+      pendingBar() !== null &&
+        (pendingBar()?.textContent ?? '').includes('1 项改动待重启') &&
+        (pendingBar()?.textContent ?? '').includes('立即重启') &&
+        (pendingBar()?.textContent ?? '').includes('稍后'),
+      pendingBar()?.textContent?.trim() ?? '(无)',
+    );
+    const pendingCountBefore = pendingBar()?.getAttribute('data-pending-restart-count') ?? '';
+    if (pendingBar() !== null) clickByText(pendingBar() as HTMLElement, '稍后');
+    await flush(6);
+    check(
+      '「稍后」收起后仍保留计数，状态不会消失',
+      pendingBar() !== null &&
+        pendingBar()?.getAttribute('data-pending-restart-count') === pendingCountBefore &&
+        (pendingBar()?.textContent ?? '').includes('1 项改动待重启'),
+      pendingBar()?.textContent?.trim() ?? '(无)',
+    );
+    if (pendingBar() !== null) clickByText(pendingBar() as HTMLElement, '展开');
+    await flush(4);
 
     // ③ 索引来自快照：预设仓库已取消 presets/index.json，索引就是快照的 index 字段，
     //    所以「拿到一份通过校验的快照」就该能直接取出学校/系统目录，且路径指向 school.json。
@@ -1887,6 +1953,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       !(settingsActions.textContent ?? '').includes('导出备份') &&
       !(settingsActions.textContent ?? '').includes('检查更新'),
     (settingsActions?.textContent ?? '(无)').trim(),
+  );
+  const pendingOnSettings = view.container.querySelector<HTMLElement>('[data-role="pending-restart"]');
+  check(
+    '设置页顶部同样显示待重启条',
+    pendingOnSettings !== null && (pendingOnSettings.textContent ?? '').includes('项改动待重启'),
+    pendingOnSettings?.textContent?.trim() ?? '(无)',
   );
   if (settingsActions !== null && clickByText(settingsActions, '导入课表')) await flush(12);
   check('快捷动作直接打开导入向导', document.querySelector('[aria-label="导入步骤"]') !== null, '');
@@ -2652,6 +2724,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[data-role="backup-kind"]')?.textContent?.includes('JSON 快照') === true &&
       view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
     (view.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').slice(0, 80),
+  );
+
+  // —— P1-05 反馈双轨：动作结果走 toast，持续状态走带时间的 live region 状态行 ——
+  if (clickByText(view.container, '立即备份')) await flush(18);
+  const snapshotStatus = view.container.querySelector<HTMLElement>('[data-role="snapshot-message"]');
+  check(
+    '备份结果进 live region 状态行并带操作时间',
+    snapshotStatus !== null &&
+      snapshotStatus.getAttribute('role') === 'status' &&
+      snapshotStatus.getAttribute('aria-live') === 'polite' &&
+      (snapshotStatus.textContent ?? '').includes('已备份') &&
+      (snapshotStatus.textContent ?? '').includes('·'),
+    snapshotStatus?.textContent?.trim() ?? '(无)',
+  );
+  check(
+    '备份成功的动作结果同时有 toast',
+    (document.body.textContent ?? '').includes('已生成快照'),
+    (document.body.textContent ?? '').slice(-120),
   );
 
   check(

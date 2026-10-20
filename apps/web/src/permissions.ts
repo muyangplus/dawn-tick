@@ -13,10 +13,18 @@ export interface PermissionReport {
 }
 
 /** 运行时通知权限：没问过、被拒绝（还能再弹）、被永久拒绝（只能去系统设置）。 */
-export type NotifyRuntimeState = 'granted' | 'denied' | 'prompt' | 'permanently-denied' | 'unsupported';
+export type NotifyRuntimeState =
+  | 'granted'
+  | 'denied'
+  | 'prompt'
+  | 'permanently-denied'
+  | 'unsupported'
+  | 'unreadable';
 
 export interface NotifyStatus {
-  /** 系统设置里应用级通知开关：关掉就是静音，任何通知都发不出 */
+  /** 状态来源：Android 原生六态；桌面插件与浏览器只能报运行时三态 */
+  source: 'android' | 'tauri' | 'web';
+  /** 系统设置里应用级通知开关：只有 Android 原生能报；其它平台只作近似值，界面按 source 忽略 */
   appEnabled: boolean;
   runtime: NotifyRuntimeState;
   /** 通知渠道被静音（Android 8+），与运行时权限是两回事 */
@@ -28,20 +36,52 @@ export interface NotifyStatus {
   asked: boolean;
 }
 
-/** 通知状态：安卓走原生查询；其它平台按浏览器权限近似。 */
+function statusBase(asked: boolean): Omit<NotifyStatus, 'source' | 'runtime'> {
+  return {
+    appEnabled: true,
+    channelMuted: false,
+    channelName: null,
+    channelId: null,
+    asked,
+  };
+}
+
+/**
+ * 桌面端（Windows / Tauri）只查插件能报的运行时状态：
+ * `isPermissionGranted` 是布尔值，没有渠道 / 应用级开关；没问过时按「未申请」。
+ */
+async function readTauriNotifyStatus(asked: boolean): Promise<NotifyStatus> {
+  try {
+    const plugin = await import('@tauri-apps/plugin-notification');
+    const granted = await plugin.isPermissionGranted();
+    return {
+      ...statusBase(asked),
+      source: 'tauri',
+      runtime: granted ? 'granted' : asked ? 'denied' : 'prompt',
+    };
+  } catch (cause: unknown) {
+    logWarn('permission', '桌面通知状态不可读', {
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+    // 取不到就明确报「状态不可读」，不假装成未申请或六态中的某一态
+    return { ...statusBase(asked), source: 'tauri', runtime: 'unreadable' };
+  }
+}
+
+/** 通知状态：Android 走原生精确查询，桌面走通知插件，浏览器按 Notification.permission。 */
 export async function readNotifyStatus(storage: Storage | null): Promise<NotifyStatus> {
   const asked = storage === null ? false : await readNotifyAsked(storage);
-  const native = await readNativeNotifyStatus(asked);
-  if (native !== null) {
-    return {
-      appEnabled: native.appEnabled,
-      runtime: native.runtime,
-      channelMuted: native.channelMuted,
-      channelName: native.channelName,
-      channelId: native.channelId,
-      asked,
-    };
+  const platform = detectPlatform();
+
+  if (platform === 'capacitor') {
+    const native = await readNativeNotifyStatus(asked);
+    if (native !== null) {
+      return { ...native, source: 'android', asked };
+    }
+    return { ...statusBase(asked), source: 'android', runtime: 'unsupported' };
   }
+  if (platform === 'tauri') return readTauriNotifyStatus(asked);
+
   const permission = currentNotifyPermission();
   const runtime: NotifyRuntimeState =
     permission === 'granted'
@@ -52,12 +92,11 @@ export async function readNotifyStatus(storage: Storage | null): Promise<NotifyS
           ? 'unsupported'
           : 'prompt';
   return {
-    appEnabled: permission === 'granted' || permission === 'default',
+    ...statusBase(asked),
+    source: 'web',
     runtime,
-    channelMuted: false,
-    channelName: null,
-    channelId: null,
-    asked,
+    // appEnabled 只有 Android 原生能报；这里保留浏览器权限的近似值，界面按 source 忽略它
+    appEnabled: permission === 'granted' || permission === 'default',
   };
 }
 

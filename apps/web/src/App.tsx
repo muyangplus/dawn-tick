@@ -21,6 +21,7 @@ import { SearchDialog } from './components/search-dialog.tsx';
 import { Button } from './components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './components/ui/dialog.tsx';
 import { BusyOverlay } from './components/ui/busy-overlay.tsx';
+import { PendingRestartBar } from './components/pending-restart-bar.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
 import { Sheet } from './components/ui/sheet.tsx';
@@ -58,9 +59,10 @@ import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
 import { WeekView } from './screens/week-view.tsx';
 import { applyTheme } from './theme.ts';
-import { ensureStartupPermissions, type PermissionReport } from './permissions.ts';
+import { ensureStartupPermissions } from './permissions.ts';
 import { markNotifyAsked } from './notify.ts';
 import { attachLogStorage, clearLogs, describeError, loadLogs, logDebug, logError, logInfo, logWarn, logsText } from './log.ts';
+import { registerPendingRestart } from './pending-restart.ts';
 import { applyCachedPreset } from './preset-update.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
 import { clampDayDate, dayRangeOf, defaultDayDate, stepDay } from './lib/day-nav.ts';
@@ -329,8 +331,6 @@ export function App() {
   const [bootTick, setBootTick] = useState(0);
   /** 待展示的渠道提示（开发版频繁更新 / 测试版不稳定），按 id 记录已提示过 */
   const [notice, setNotice] = useState<string | null>(null);
-  /** 启动权限检查结果：安卓侧展示在设置页「提醒设置」里 */
-  const [permissionReport, setPermissionReport] = useState<PermissionReport | null>(null);
   /** 启动权限只申请一次，设置变化不再重复弹系统弹窗 */
   const startupPermissionsDone = useRef(false);
   /** 发现新版本时的更新信息弹窗 */
@@ -583,9 +583,8 @@ export function App() {
     if (storage === null || startupPermissionsDone.current) return;
     startupPermissionsDone.current = true;
     void ensureStartupPermissions({ remindersEnabled: settings.classReminderEnabled }).then(async (report) => {
-      setPermissionReport(report);
-      // 记下「申请过」：之后才能区分「还没问过」与「被永久拒绝」；临时回退期间不写
-      if (!isFallbackStorage(storage)) await markNotifyAsked(storage);
+      // 只有真的发起过系统申请才记「问过」：否则桌面端会把「未申请」误判成「已拒绝」
+      if (report.notifications !== 'skipped' && !isFallbackStorage(storage)) await markNotifyAsked(storage);
     });
     // 存储就绪后只跑一次：权限弹窗不该随设置变化重复弹
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -683,7 +682,6 @@ export function App() {
   }, [reload, storage, windowStart]);
 
   const [remoteNewer, setRemoteNewer] = useState<{ name: string; detail: string | null } | null>(null);
-  const [remoteRestartNeeded, setRemoteRestartNeeded] = useState(false);
 
   /** 远端备份比本机新时的提示：下载前先给本机做快照，避免静默覆盖。 */
   async function applyRemote(mode: ApplyMode): Promise<void> {
@@ -704,8 +702,9 @@ export function App() {
       return;
     }
     await reloadSettings();
-    setRemoteRestartNeeded(true);
-    toast.success(`已恢复整库（写入 ${result.outcome?.full?.imported ?? 0} 条），重启后完全生效`);
+    // 整库恢复要重启才完全生效：只登记，统一由主壳的待重启条提示
+    registerPendingRestart('remote-restore');
+    toast.success(`已恢复整库（写入 ${result.outcome?.full?.imported ?? 0} 条）`);
   }
 
   /** 错误页「重试」：重新走一遍启动流程，不用接受用户手动重启。 */
@@ -1204,6 +1203,12 @@ export function App() {
             />
           </div>
         )}
+        {/* 待重启状态只在设置页显示在页内顶部，其余页面统一挂在主壳；两处不重复 */}
+        {view !== 'settings' && (
+          <div className="empty:hidden px-3 pt-3 desktop:px-4">
+            <PendingRestartBar compact />
+          </div>
+        )}
         <main
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] tablet:p-4 tablet:pb-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--dt-bottom-fab)+var(--spacing-2))] desktop:pb-4"
           data-role="app-main"
@@ -1428,19 +1433,6 @@ export function App() {
             </Button>
             <Button variant="danger" aria-label="下载并恢复整库" onClick={() => void applyRemote('all')}>
               恢复全部
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={remoteRestartNeeded} onOpenChange={() => setRemoteRestartNeeded(false)}>
-        <DialogContent title="已恢复整库" description="重启后完全生效">
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoteRestartNeeded(false)}>
-              稍后
-            </Button>
-            <Button variant="primary" aria-label="立即重启" onClick={() => void relaunchApplication()}>
-              立即重启
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -21,3 +21,13 @@ export function OVERWRITE(object: string, detail: string): string {
 export function periodRange(start: number, end: number): string {
   return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
 }
+
+/**
+ * 失败句式（P1-05）：`xx失败：原因。下一步`。
+ * 没有原因时省略冒号段，例如 `重启失败。请手动重新打开应用`；下一步为空时只留句号。
+ */
+export function fail(what: string, reason?: string | null, next?: string): string {
+  const detail = reason === undefined || reason === null || reason.trim() === '' ? '' : `：${reason.trim()}`;
+  const step = next === undefined || next.trim() === '' ? '' : next.trim();
+  return `${what}失败${detail}。${step}`;
+}
