@@ -19,8 +19,9 @@ REQUIRED_JOBS = {
     'ci.yml': {'node', 'schema', 'rust'},
     'publish.yml': {'plan', 'gate', 'windows', 'android', 'web', 'publish'},
 }
-# 发布说明的比较基准：滚动标签会移动，不能进已发版正文
-PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""', '--notes-start-tag "$PREV"']
+# 发布说明的比较基准：滚动标签会移动，不能进已发版正文；
+# Full Changelog 由脚本手动拼进正文，所以不再要求 --notes-start-tag（两者同时传会互相覆盖）
+PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""']
 # 用 CHANGELOG 段落作正文时要自己补 Full Changelog 比较链接（--notes-file 不会自动生成）
 PUBLISH_FULL_CHANGELOG_REQUIRED = ['**Full Changelog**: https://github.com/%s/compare/%s...%s', 'BODY_FILE']
 # 标签已存在时不传 --target：附注标签对象不是有效目标
@@ -75,7 +76,12 @@ def main() -> int:
             failures.append(f'{name} 缺少任务: {sorted(missing_jobs)}')
 
         if name == 'publish.yml':
-            failures.extend(check_publish_notes(text))
+            # 发布逻辑拆到 tools/release/publish.sh 后，约束在脚本里也要成立：两份文本合起来检查
+            script = Path('tools/release/publish.sh')
+            combined = text + (script.read_text(encoding='utf-8') if script.exists() else '')
+            if not script.exists():
+                failures.append('tools/release/publish.sh 不存在')
+            failures.extend(check_publish_notes(combined))
 
     if failures:
         for failure in failures:

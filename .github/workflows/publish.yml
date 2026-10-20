@@ -257,17 +257,11 @@ jobs:
       - name: 准备发布说明
         run: |
           set -euo pipefail
-          # 正文首行始终是渠道行，客户端从它读提交号；CHANGELOG 段落取不到时只留这一行
+          # 正文首行始终是渠道行，客户端从它读提交号；CHANGELOG 段落取不到时只留这一行。
+          # Full Changelog 与比较基准在 tools/release/publish.sh 里拼接（那里才拿得到 gh release list）。
           NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
           echo "NOTES=${NOTES}" >> "$GITHUB_ENV"
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
-          # 用 CHANGELOG 段落作正文时 GitHub 不会自动补 Full Changelog：按比较基准手动追加。
-          # 滚动标签（*-latest）已在上方排除，不会作为基准；无有效基准时只留正文。
-          BODY_FILE="$RUNNER_TEMP/release-body.md"
-          if [[ -s "$NOTES_FILE" ]]; then cp "$NOTES_FILE" "$BODY_FILE"; else : > "$BODY_FILE"; fi
-          if [[ -s "$NOTES_FILE" && -n "$PREV" ]]; then
-            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "$GITHUB_REPOSITORY" "$PREV" "$TAG" >> "$BODY_FILE"
-          fi
           if [[ "$CHANNEL" == "dev" ]]; then
             BODY=$(node tools/release/changelog.mjs --extract 2>/dev/null || true)
           else
@@ -341,47 +335,16 @@ jobs:
 
       - name: 发布或更新
         run: |
-          set -euo pipefail
-          REMOTE="https://github.com/${GITHUB_REPOSITORY}.git"
-          # 打 v* 标签触发时标签已存在：此时不传 --target；标签对象要用 ^^{} 解引用成提交
-          TAG_EXISTS=false
-          TARGET=$(git ls-remote "$REMOTE" "refs/heads/${BUILD_REF}" | cut -f1 || true)
-          if [[ -z "$TARGET" ]]; then
-            TARGET=$(git ls-remote "$REMOTE" "refs/tags/${BUILD_REF}^{}" | cut -f1 || true)
-            if [[ -n "$TARGET" ]]; then TAG_EXISTS=true; fi
-          fi
-          if [[ -z "$TARGET" ]]; then TARGET="$GITHUB_SHA"; fi
-
-          case "$CHANNEL" in
-            release)
-              PREV=$(gh release list --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == false) | .tagName][]' | grep -v "^${TAG}$" | head -n 1 || true)
-              ;;
-            beta)
-              PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E -- '-beta\.' | grep -v "^${TAG}$" | head -n 1 || true)
-              ;;
-            *)
-              PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v '^dev-latest$' | head -n 1 || true)
-              ;;
-          esac
-          PREV="${PREV//[[:space:]]/}"
-          case "$PREV" in
-            *-latest) PREV="" ;;
-          esac
-
-          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
-
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "标签 $TAG 已存在，覆盖产物"
-            gh release upload "$TAG" out/* --clobber
-            edit=(--title "$TITLE" --prerelease=$PRERELEASE)
-            # 覆盖发布时说明也要跟着更新，否则正文还停在上一次的提交号
-            if [[ -s "$BODY_FILE" ]]; then edit+=(--notes-file "$BODY_FILE"); else edit+=(--notes "$NOTES"); fi
-            gh release edit "$TAG" "${edit[@]}"
-          else
-            echo "创建标签 $TAG 并发布，比较基准 ${PREV:-无}"
-            args=(--title "$TITLE" --prerelease=$PRERELEASE)
-            if [[ "$TAG_EXISTS" != "true" ]]; then args+=(--target "$TARGET"); fi
-            if [[ -s "$NOTES_FILE" ]]; then args+=(--notes-file "$BODY_FILE"); else args+=(--generate-notes --notes "$NOTES"); fi
-            if [[ -n "$PREV" ]]; then args+=(--notes-start-tag "$PREV"); fi
-            gh release create "$TAG" out/* "${args[@]}"
+          set -o pipefail
+          LOG="$RUNNER_TEMP/publish.log"
+          # 失败时把日志推到 ci-debug 分支：Actions 日志需要仓库权限，公开仓库匿名读不到，用分支自证
+          if ! bash tools/release/publish.sh 2>&1 | tee "$LOG"; then
+            mkdir -p ci-debug
+            cp "$LOG" ci-debug/publish.log
+            git checkout -B ci-debug
+            git add -A ci-debug
+            git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
+              commit -m "ci: 发布失败日志（自动化提交，仅 ci-debug 分支）" || true
+            git push -f origin HEAD:refs/heads/ci-debug || true
+            exit 1
           fi
