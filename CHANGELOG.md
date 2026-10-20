@@ -5,12 +5,19 @@
 
 ## [未发布]
 
+## [0.4.1] - 2026-10-20
+
 ### 维护
 
 - 架构收口（无用户可见变化）：设置页与「设备与同步」页按卡片拆成独立组件；App 壳拆出启动编排、会话、课表动作、副作用与恢复等模块；`loadAppData` 拆成可单测的纯函数；调课业务、周视图拖动状态机、作息顺延参数推算各自成模块
 - 数据层：`app_meta` 读写收敛到一处助手并加键清单，快照列表改用轻量索引（不再整表读正文）
 - 平台层：原生调用统一走 `lib/native.ts`（命令名常量化、Rust 30 个命令一一对应），能力判断收口 `lib/capabilities.ts`，插件接口集中到 `lib/plugins.ts` 并附契约文档
 - 一致性：课程色与周次选择器单源、时间/日期/节次文案单源、页面导入诊断字段两端一致；删除 6 个未使用的 Radix 依赖，exceljs 独立成 chunk
+
+### 修复
+
+- Android 主屏小组件的文字与强调色改为跟随应用主题（之前固定用深色底常量）
+- Windows「以管理员权限注册开机启动」调用的是已删除的原生命令，表现为注册失败；改为现有提权命令
 
 ## [0.4.0] - 2026-10-20
 
@@ -148,7 +155,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.4.0...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.4.1...dev
+[0.4.1]: https://github.com/muyangplus/dawn-tick/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/muyangplus/dawn-tick/compare/v0.3.0-beta.1...v0.4.0
 [0.3.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.3.0-beta.1
 [0.2.0-beta.1]: https://github.com/muyangplus/dawn-tick/releases/tag/v0.2.0-beta.1
