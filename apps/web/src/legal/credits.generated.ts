@@ -9,6 +9,7 @@ export interface RuntimeCredit {
 export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Web', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
   { component: 'Web', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
+  { component: 'Web', name: '@capacitor/filesystem', version: '8.1.5', license: 'MIT' },
   { component: 'Web', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
   { component: 'Web', name: '@radix-ui/react-checkbox', version: '1.3.12', license: 'MIT' },
   { component: 'Web', name: '@radix-ui/react-collapsible', version: '1.1.21', license: 'MIT' },
@@ -38,6 +39,7 @@ export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Android', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
   { component: 'Android', name: '@capacitor/android', version: '8.5.3', license: 'MIT' },
   { component: 'Android', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
+  { component: 'Android', name: '@capacitor/filesystem', version: '8.1.5', license: 'MIT' },
   { component: 'Android', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
   { component: 'Windows', name: 'serde', version: '1.0.229', license: 'MIT OR Apache-2.0' },
   { component: 'Windows', name: 'serde_json', version: '1.0.151', license: 'MIT OR Apache-2.0' },
