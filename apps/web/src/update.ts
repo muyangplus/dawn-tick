@@ -73,7 +73,8 @@ export function releaseChannelOf(status: Pick<UpdateStatus, 'feed' | 'manifest'>
 }
 
 /** 指定渠道下用户应该查询哪个源。 */
-export function resolveFeed(channel: UpdateChannel, receiveBeta: boolean): UpdateChannel {  if (channel === 'dev') return 'dev';
+export function resolveFeed(channel: UpdateChannel, receiveBeta: boolean): UpdateChannel {
+  if (channel === 'dev') return 'dev';
   if (channel === 'beta') return receiveBeta ? 'beta' : 'release';
   return receiveBeta ? 'beta' : 'release';
 }
