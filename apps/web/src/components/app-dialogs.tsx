@@ -1,8 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { UpdateStatus } from '../update.ts';
 import { releaseChannelOf } from '../update.ts';
 import type { ApplyMode } from '../webdav.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../channel.ts';
+import { fail } from '../copy/zh.ts';
+import {
+  INITIAL_UPDATE_STATE,
+  formatDownloadProgress,
+  isUpdateBusy,
+  planUpdateDownload,
+  runUpdateDownload,
+  type UpdateDownloadState,
+} from '../lib/update-download.ts';
+import { createUpdateHost, updatePlatform } from '../lib/update-install.ts';
 import { copyText, openExternalUrl } from '../system-actions.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
@@ -105,13 +115,34 @@ async function openReleasePageOnce(url: string, timeoutMs = 8000): Promise<boole
 
 /**
  * 发现新版本：版本号、发布渠道、当前版本与发布说明（Markdown）。
- * 只提示不下载；「复制链接」与「打开发布页」互不依赖，打开失败也能复制。
+ * 「下载并安装」按渠道走：桌面下安装包交给 `run_installer`，Android 写 Cache 后交 `ApkInstaller`；
+ * Web 不下载，只提示刷新。进度、失败原因与重试全部消费 `update-download` 的状态机。
  */
 export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   const [opening, setOpening] = useState(false);
+  const [download, setDownload] = useState<UpdateDownloadState>(INITIAL_UPDATE_STATE);
+  /** 进行中的下载：关闭弹窗或换版本时中止，避免后台继续下载 */
+  const running = useRef<AbortController | null>(null);
   const notes = info?.manifest?.notes?.trim() ?? '';
   /** 渠道取发布本身的渠道：beta 预发布=测试版、正式版=正式版，不看接收开关 */
   const channel = info === null ? CHANNEL : releaseChannelOf(info);
+  const platform = updatePlatform();
+  const plan = planUpdateDownload(info?.manifest ?? null, platform);
+  const busy = isUpdateBusy(download.phase);
+
+  // 关闭弹窗或换成另一个版本：中止下载并回到初始态，不把上一次的失败/完成带进新弹窗
+  useEffect(() => {
+    running.current?.abort();
+    running.current = null;
+    setDownload(INITIAL_UPDATE_STATE);
+  }, [info?.latest]);
+
+  // 卸载时中止：更新下载不该在弹窗销毁后继续占用网络
+  useEffect(() => {
+    return () => {
+      running.current?.abort();
+    };
+  }, []);
 
   async function copyReleaseLink(): Promise<void> {
     const copied = await copyText(RELEASES_URL);
@@ -130,6 +161,80 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
       setOpening(false);
     }
   }
+
+  /** 结束后的提示：成功给出「安装程序已启动」，失败给可读原因，取消只提示不报错。 */
+  function announce(state: UpdateDownloadState): void {
+    if (state.phase === 'done') {
+      toast.success(state.message ?? '更新已就绪');
+      return;
+    }
+    if (state.phase === 'failed' && state.needsPermission) {
+      toast.info(state.error ?? '请允许安装未知应用后重试');
+      return;
+    }
+    if (state.phase === 'failed') {
+      toast.error(fail('下载更新', state.error, '请稍后重试'));
+      return;
+    }
+    if (state.message !== null) toast.info(state.message);
+  }
+
+  async function startDownload(): Promise<void> {
+    if (info === null || busy) return;
+    if (plan.kind === 'refresh') {
+      globalThis.location?.reload();
+      return;
+    }
+    const controller = new AbortController();
+    running.current = controller;
+    const final = await runUpdateDownload({
+      plan,
+      host: createUpdateHost(platform === 'android' ? 'android' : 'windows'),
+      signal: controller.signal,
+      onState: (next) => {
+        if (running.current === controller) setDownload(next);
+      },
+    });
+    if (running.current !== controller) return;
+    running.current = null;
+    setDownload(final);
+    announce(final);
+  }
+
+  /** 下载中点主按钮 = 取消：中止网络并回到 idle，不产生失败提示。 */
+  function cancelDownload(): void {
+    running.current?.abort();
+  }
+
+  async function onPrimary(): Promise<void> {
+    if (busy) {
+      cancelDownload();
+      return;
+    }
+    if (download.phase === 'done') {
+      onClose();
+      return;
+    }
+    await startDownload();
+  }
+
+  const statusText =
+    download.phase === 'failed'
+      ? download.needsPermission
+        ? (download.error ?? '')
+        : fail('下载更新', download.error, '请稍后重试')
+      : download.phase === 'idle'
+        ? (download.message ?? (plan.kind === 'refresh' ? '新版本已发布，刷新页面后生效' : ''))
+        : formatDownloadProgress(download);
+  const primaryLabel = busy
+    ? '取消下载'
+    : download.phase === 'done'
+      ? '完成'
+      : plan.kind === 'refresh'
+        ? '刷新页面'
+        : download.phase === 'failed'
+          ? '重试'
+          : '下载并安装';
 
   return (
     <Dialog
@@ -150,6 +255,24 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
             className="max-h-56 overflow-y-auto overscroll-contain rounded-md border border-line bg-surface-muted p-3"
           />
         )}
+        {plan.kind === 'unavailable' && (
+          <p className="text-xs text-muted" data-role="update-unavailable">
+            {fail('自动更新', plan.reason, '请到发布页下载')}
+          </p>
+        )}
+        {busy && (
+          <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted" data-role="update-progress">
+            <div
+              className="h-full bg-primary transition-[width]"
+              style={{ width: `${Math.round((download.progress ?? 0) * 100)}%` }}
+            />
+          </div>
+        )}
+        {statusText !== '' && (
+          <p className="text-xs text-muted" data-role="update-status">
+            {statusText}
+          </p>
+        )}
         <label className="flex flex-col gap-1 text-xs text-muted">
           <span>发布页链接</span>
           <Input
@@ -168,12 +291,20 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
             复制链接
           </Button>
           <Button
-            variant="primary"
+            variant="secondary"
             data-role="update-open-release"
             loading={opening}
             onClick={() => void openReleasePage()}
           >
             打开发布页
+          </Button>
+          <Button
+            variant="primary"
+            data-role="update-download"
+            disabled={plan.kind === 'unavailable' && !busy && download.phase !== 'failed'}
+            onClick={() => void onPrimary()}
+          >
+            {primaryLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
