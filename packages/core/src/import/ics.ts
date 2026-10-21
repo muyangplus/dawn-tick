@@ -33,11 +33,30 @@ export interface IcsTimeSlot {
   end_time: string;
 }
 
+/**
+ * 额外条目：课表模型表达不了的单次事件（调课落点、自定义时间课次、日程）。
+ * 与 `schedules` 的周次位图模型不同，这里直接给起止时刻，不生成 RRULE。
+ */
+export interface IcsExtraEvent {
+  uid: string;
+  summary: string;
+  /** 开始时刻（毫秒） */
+  start: number;
+  /** 结束时刻（毫秒）；全天条目忽略，按开始日期的次日结束 */
+  end: number;
+  location?: string | null;
+  description?: string | null;
+  /** 全天条目：DTSTART/DTEND 写成 DATE 值，日期按学期时区取 */
+  allDay?: boolean;
+}
+
 export interface IcsExportInput {
   semester: IcsSemester;
   courses: readonly IcsCourse[];
   schedules: readonly IcsSchedule[];
   timeSlots: readonly IcsTimeSlot[];
+  /** 额外条目：先写课表排课，再写这些单次事件 */
+  extraEvents?: readonly IcsExtraEvent[];
   calendarName?: string;
   stamp?: number;
 }
@@ -190,8 +209,40 @@ export function exportIcs(input: IcsExportInput): string {
     }
   }
 
+  for (const event of input.extraEvents ?? []) {
+    pushExtraEvent(lines, event, stamp, input.semester.time_zone);
+  }
+
   lines.push('END:VCALENDAR');
   return `${lines.map(foldLine).join('\r\n')}\r\n`;
+}
+
+/** 单次事件：全天条目写 DATE 值（DTEND 为次日），其余写 UTC 时刻。 */
+function pushExtraEvent(
+  lines: string[],
+  event: IcsExtraEvent,
+  stamp: number,
+  timeZone: string,
+): void {
+  lines.push('BEGIN:VEVENT');
+  lines.push(`UID:${event.uid}`);
+  lines.push(`DTSTAMP:${icsStamp(stamp)}`);
+  if (event.allDay === true) {
+    const date = formatDate(event.start, timeZone);
+    lines.push(`DTSTART;VALUE=DATE:${date.replace(/-/g, '')}`);
+    lines.push(`DTEND;VALUE=DATE:${addDays(date, 1).replace(/-/g, '')}`);
+  } else {
+    lines.push(`DTSTART:${icsStamp(event.start)}`);
+    lines.push(`DTEND:${icsStamp(event.end)}`);
+  }
+  lines.push(`SUMMARY:${escapeIcsText(event.summary)}`);
+  if (event.location !== undefined && event.location !== null) {
+    lines.push(`LOCATION:${escapeIcsText(event.location)}`);
+  }
+  if (event.description !== undefined && event.description !== null && event.description.length > 0) {
+    lines.push(`DESCRIPTION:${escapeIcsText(event.description)}`);
+  }
+  lines.push('END:VEVENT');
 }
 
 function icsEpoch(date: string, time: string, timeZone: string): number {
