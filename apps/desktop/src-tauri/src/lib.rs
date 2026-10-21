@@ -2,6 +2,14 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
+mod paths;
+mod updater;
+mod widget_window;
+
+use paths::reveal_path;
+use updater::run_installer;
+use widget_window::{ensure_mini, hide_widget, show_main, show_widget, widget_measure, widget_resize};
+
 /// 与 Web 端、移动端共用的建表 SQL。
 pub const SCHEMA_SQL: &str = include_str!("../../../../packages/core/src/schema/001_init.sql");
 /// 002：待办类型扩充与逐条开关（事件表重建）。
@@ -1330,94 +1338,6 @@ fn is_writable(dir: &std::path::Path) -> bool {
         }
         Err(_) => false,
     }
-}
-
-#[cfg(desktop)]
-fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
-    use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-
-    if let Some(window) = app.get_webview_window("mini") {
-        return Some(window);
-    }
-    let built = WebviewWindowBuilder::new(app, "mini", WebviewUrl::App("mini.html".into()))
-        .title("晓刻 DawnTick · 悬浮窗")
-        .inner_size(240.0, 104.0)
-        .resizable(false)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .transparent(true)
-        .visible(false)
-        .build();
-    match built {
-        Ok(window) => {
-            // 首次出现放在主屏右下角，避免出现在奇怪的位置
-            if let Ok(Some(monitor)) = window.primary_monitor() {
-                let size = monitor.size();
-                let scale = monitor.scale_factor();
-                let width = (260.0 * scale) as i32;
-                let height = (140.0 * scale) as i32;
-                let x = size.width as i32 - width;
-                let y = size.height as i32 - height;
-                let _ = window.set_position(tauri::PhysicalPosition::new(x.max(0), y.max(0)));
-            }
-            Some(window)
-        }
-        Err(error) => {
-            append_log(&format!("创建悬浮窗失败: {error}"));
-            None
-        }
-    }
-}
-
-/// 悬浮窗各样式对应的窗口尺寸（逻辑像素）。
-fn widget_size(variant: &str) -> (f64, f64) {
-    match variant {
-        "today" => (268.0, 236.0),
-        "minimal" => (196.0, 68.0),
-        "combo" => (288.0, 268.0),
-        _ => (240.0, 104.0),
-    }
-}
-
-/// 按当前样式调整悬浮窗大小并显示。
-#[tauri::command]
-async fn show_widget(app: tauri::AppHandle, variant: Option<String>) -> Result<(), String> {
-    let key = variant.unwrap_or_else(|| "bar".to_string());
-    let window = ensure_mini(&app).ok_or_else(|| "悬浮窗不可用".to_string())?;
-    let (width, height) = widget_size(&key);
-    let _ = window.set_size(tauri::LogicalSize::new(width, height));
-    window.show().map_err(|error| format!("显示悬浮窗失败: {error}"))?;
-    let _ = window.set_focus();
-    append_log(&format!("已显示悬浮窗（{key}）"));
-    Ok(())
-}
-
-/// 隐藏悬浮窗。
-#[tauri::command]
-async fn hide_widget(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    if let Some(window) = app.get_webview_window("mini") {
-        window.hide().map_err(|error| format!("隐藏悬浮窗失败: {error}"))?;
-        append_log("已隐藏悬浮窗");
-    }
-    Ok(())
-}
-
-/// 从悬浮窗打开主窗口：还原最小化、显示并前置。
-#[tauri::command]
-async fn show_main(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri::Manager;
-    let window = app
-        .get_webview_window(MAIN_WINDOW)
-        .ok_or_else(|| "主窗口不可用".to_string())?;
-    let _ = window.unminimize();
-    window.show().map_err(|error| format!("显示主窗口失败: {error}"))?;
-    window
-        .set_focus()
-        .map_err(|error| format!("聚焦主窗口失败: {error}"))?;
-    append_log("从悬浮窗打开主窗口");
-    Ok(())
 }
 
 /// 允许交给外部程序的链接：只有 http 与 https，且不含换行与引号。
@@ -2778,6 +2698,10 @@ pub fn run() {
             show_widget,
             hide_widget,
             show_main,
+            widget_measure,
+            widget_resize,
+            reveal_path,
+            run_installer,
             tray_status,
             open_external_url,
             open_log_dir,
