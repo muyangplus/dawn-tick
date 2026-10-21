@@ -30,7 +30,11 @@ jobs:
       - name: 版本号一致性
         run: node tools/release/version.mjs --check
       - run: pnpm typecheck
-      - run: pnpm test
+      - name: 单元与集成测试
+        env:
+          # 产品面向中国时区：测试里有用例按本地时区推算日期，runner 默认 UTC 会漂
+          TZ: Asia/Shanghai
+        run: pnpm test
       - name: 界面冒烟
         env:
           # 冒烟固定在产品主时区：runner 默认 UTC 会让「首次启动按系统时区对齐」把设置改成 UTC，时间文案全飘
