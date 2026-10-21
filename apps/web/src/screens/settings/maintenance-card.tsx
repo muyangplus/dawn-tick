@@ -11,7 +11,6 @@ import {
   type PresetSource,
 } from '../../preset-update.ts';
 import { logInfo, logWarn } from '../../log.ts';
-import { resolveReceiveBeta } from '../../update.ts';
 import { canUseWidget } from '../../lib/capabilities.ts';
 import { readElevationStatus, requestElevation } from '../../autostart.ts';
 import { registerPendingRestart } from '../../pending-restart.ts';
@@ -19,19 +18,13 @@ import { useAction } from '../../lib/action.ts';
 import { fail } from '../../copy/zh.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { ExternalLink } from '../../components/ui/external-link.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
 import { Field } from '../../components/ui/input.tsx';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SwitchField,
-} from '../../components/ui/controls.tsx';
+import { Select, SelectContent, SelectItem, SelectTrigger, SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { exportLogs } from './file-export.ts';
 import { said } from './format.ts';
+import { UpdateActions } from './update-actions.tsx';
 import type { UpdateCheckApi } from './use-update-check.ts';
 
 /** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
@@ -55,8 +48,9 @@ export interface MaintenanceCardProps {
 }
 
 /**
- * 更新与维护卡：版本检查、发布页、测试版开关、诊断日志与预设仓库。
+ * 更新与维护卡：更新区（检查更新、渠道开关、忽略版本、回滚）、诊断日志与预设仓库。
  *
+ * 更新区拆到 `update-actions.tsx`，这里只负责挂载与保留维护类动作；
  * 自己持有预设更新与运行权限的进行中状态和结果；版本检查的状态由 `useUpdateCheck` 提供，
  * 让设备页顶部的「检查更新」与本卡显示同一份进度。
  */
@@ -66,8 +60,6 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
   const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
   const [presetResult, setPresetResult] = useState<StatusMessage | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
-  /** 打开「接收测试版更新」前的警告：测试版可能不稳定，确认后才写设置 */
-  const [betaWarningOpen, setBetaWarningOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,54 +142,7 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label="检查更新"
-          loading={update.busy}
-          onClick={() => void update.run()}
-        >
-          检查更新
-        </Button>
-        <ExternalLink
-          dataRole="release-page-link"
-          className="text-xs text-primary-strong underline"
-          href="https://github.com/muyangplus/dawn-tick/releases"
-          ariaLabel="打开发布页（GitHub）"
-        >
-          打开发布页
-        </ExternalLink>
-        {update.result !== null && (
-          <StatusLine dataRole="update-result" at={update.result.at}>
-            {update.result.text}
-          </StatusLine>
-        )}
-      </div>
-      {CHANNEL !== 'dev' ? (
-        <SwitchField
-          label="接收测试版更新"
-          description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到测试版'}
-          checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-          onCheckedChange={(checked) => {
-            if (checked && !resolveReceiveBeta(settings.receiveBeta, CHANNEL)) {
-              setBetaWarningOpen(true);
-              return;
-            }
-            void onPatch({ receiveBeta: checked });
-          }}
-          ariaLabel="接收测试版更新"
-        />
-      ) : (
-        <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
-      )}
-      <SwitchField
-        label="自动检查版本更新"
-        description="启动后自动查一次，有新版本时弹出更新信息"
-        checked={settings.autoCheckUpdate}
-        onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
-        ariaLabel="自动检查版本更新"
-      />
+      <UpdateActions storage={storage} settings={settings} onPatch={onPatch} update={update} />
       {CHANNEL === 'dev' && (
         <SwitchField
           label="开发者特性"
@@ -296,28 +241,6 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
         </div>
       )}
       <span className="text-xs text-muted">只在应用内检查版本</span>
-      <Dialog open={betaWarningOpen} onOpenChange={setBetaWarningOpen}>
-        <DialogContent
-          title="开启测试版更新？"
-          description="测试版会先于正式版收到改动，可能包含未完成或不稳定的功能；出问题时可在「应用诊断日志」里导出日志反馈。"
-          data-role="beta-warning-dialog"
-        >
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setBetaWarningOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setBetaWarningOpen(false);
-                void onPatch({ receiveBeta: true });
-              }}
-            >
-              仍要开启
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
