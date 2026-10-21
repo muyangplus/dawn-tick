@@ -26,6 +26,7 @@ import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
+import { toastSaved } from '../src/screens/settings/file-export.ts';
 import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
@@ -3123,6 +3124,76 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
+
+  // —— I-12：导出成功显示保存路径，并可「打开所在位置」（桌面端用 Tauri 桩） ——
+  const tauriCalls: string[] = [];
+  const stubSavePath = 'C:\\Users\\tester\\DawnTick-backup-2026-10-21.json';
+  const tauriInternals = {
+    invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      tauriCalls.push(command);
+      if (command === 'plugin:dialog|save') return stubSavePath;
+      if (command === 'write_text_file' || command === 'reveal_path') return String(args?.path ?? '');
+      return undefined;
+    },
+    transformCallback: () => 0,
+  };
+  const installTauriStub = (): void => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = tauriInternals;
+    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = tauriInternals;
+  };
+  const clearTauriStub = (): void => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  };
+  installTauriStub();
+  // 走设备页顶部「导出备份」→ 对话框 JSON 导出这条真实入口：系统保存对话框与写盘都用桩
+  if (clickByText(view.container, '导出备份')) await flush(10);
+  if (clickByLabel(document.body, '导出为 JSON 文件')) await flush(6);
+  const exportSubmitted = clickByText(document.body, '导出');
+  await flush(24);
+  const savedToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+    (item.textContent ?? '').includes('已保存到'),
+  );
+  const revealSaved =
+    savedToast === undefined
+      ? undefined
+      : [...savedToast.querySelectorAll<HTMLButtonElement>('button')].find(
+          (item) => (item.textContent ?? '').trim() === '打开所在位置',
+        );
+  check(
+    '导出成功后 toast 显示保存路径并可打开所在位置',
+    exportSubmitted &&
+      tauriCalls.includes('write_text_file') &&
+      savedToast !== undefined &&
+      (savedToast.textContent ?? '').includes(stubSavePath) &&
+      revealSaved !== undefined,
+    `写盘=${tauriCalls.includes('write_text_file') ? '已调用' : '未调用'}；提示=${
+      savedToast?.textContent?.trim() ?? '(无)'
+    }`,
+  );
+  revealSaved?.click();
+  await flush(8);
+  check(
+    '「打开所在位置」调用 reveal_path',
+    tauriCalls.includes('reveal_path'),
+    `原生调用：${[...new Set(tauriCalls)].join('、')}`,
+  );
+  clearTauriStub();
+  // 没有原生（浏览器下载）时没有本地路径：提示里不出现「打开所在位置」按钮
+  toastSaved('无路径保存提示', null);
+  await flush(6);
+  const plainToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+    (item.textContent ?? '').includes('无路径保存提示'),
+  );
+  check(
+    '没有原生路径时不显示打开所在位置',
+    plainToast !== undefined &&
+      ![...plainToast.querySelectorAll('button')].some(
+        (item) => (item.textContent ?? '').trim() === '打开所在位置',
+      ),
+    `提示=${plainToast?.textContent?.trim() ?? '(无)'}`,
+  );
+
   // 导入备份：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
   if (clickByLabel(view.container, '导入备份')) await flush(10);
   check(

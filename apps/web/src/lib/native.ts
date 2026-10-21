@@ -42,6 +42,10 @@ export const NATIVE_COMMANDS = [
   'show_widget',
   'hide_widget',
   'show_main',
+  'widget_measure',
+  'widget_resize',
+  'reveal_path',
+  'run_installer',
   'tray_status',
   'open_external_url',
   'open_log_dir',
@@ -51,6 +55,28 @@ export const NATIVE_COMMANDS = [
 
 /** 已注册的 Tauri 命令名。 */
 export type NativeCommand = (typeof NATIVE_COMMANDS)[number];
+
+/** 悬浮窗尺寸来源：默认 / 记住的 / 按内容 / 手动拉伸。 */
+export type WidgetSizeSource = 'default' | 'remembered' | 'content' | 'manual';
+
+/**
+ * `widget_measure` / `widget_resize` 的返回：一次尺寸计算的结果。
+ *
+ * 与 Rust `widget_window::WidgetLayout` 的 camelCase 序列化逐字对应：
+ * `width` / `height` 是**实际应用**的尺寸（已夹取并取整，逻辑像素），
+ * `requested*` 是夹取前请求的值，`remembered` 是没有记忆时的 null。
+ */
+export interface WidgetLayout {
+  variant: string;
+  width: number;
+  height: number;
+  requestedWidth: number;
+  requestedHeight: number;
+  source: WidgetSizeSource;
+  clamped: boolean;
+  maxHeight: number;
+  remembered: { width: number; height: number } | null;
+}
 
 /** 把 `invoke` 的拒绝值（Rust `Err(String)` / JS Error / 其他）归一成一行文本。 */
 export function nativeErrorMessage(cause: unknown): string {

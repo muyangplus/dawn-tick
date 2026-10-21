@@ -175,6 +175,24 @@ export async function openLogDirectory(): Promise<string | null> {
   }
 }
 
+/**
+ * 在资源管理器中定位文件或目录（`reveal_path`）。
+ *
+ * 文件会在所在文件夹里选中，目录直接打开；平台不支持、路径不存在或调用失败返回 false。
+ */
+export async function revealPath(path: string): Promise<boolean> {
+  if (!isDesktopApp()) return false;
+  try {
+    const shown = await invokeNative<string>('reveal_path', { path });
+    if (shown === undefined) return false;
+    logInfo('export', '已在资源管理器中定位', { path: shown });
+    return true;
+  } catch (cause: unknown) {
+    logWarn('export', '打开所在位置失败', { path, message: nativeErrorMessage(cause) });
+    return false;
+  }
+}
+
 export interface SaveTextResult {
   /** 是否写出成功；用户取消时为 false 且 `cancelled` 为 true */
   ok: boolean;

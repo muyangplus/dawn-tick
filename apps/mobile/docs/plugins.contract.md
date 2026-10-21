@@ -12,7 +12,7 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/install/ApkInstallerPlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/share/FileSharePlugin.kt`
     （两者共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
-- 第 5、6 节的 Android 侧已实现，`apps/web/src/lib/plugins.ts` 的接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）在后续批次补齐；补齐前 `plugins.test.ts` 不会校验这两节。
+- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–6 节，`plugins.test.ts` 与其余插件一并对齐。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库没有 Android 构建链，编译与真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
@@ -81,7 +81,7 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 | 项 | 内容 |
 |---|---|
 | 插件名 | `ApkInstaller` |
-| TS 接口 | `ApkInstallerPlugin`（待接线） |
+| TS 接口 | `ApkInstallerPlugin` |
 | Android 实现 | `ApkInstallerPlugin.kt` |
 
 | 方法 | 参数 | 返回字段 | 说明 |
@@ -93,7 +93,7 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 | 项 | 内容 |
 |---|---|
 | 插件名 | `FileShare` |
-| TS 接口 | `FileSharePlugin`（待接线） |
+| TS 接口 | `FileSharePlugin` |
 | Android 实现 | `FileSharePlugin.kt` |
 
 | 方法 | 参数 | 返回字段 | 说明 |
