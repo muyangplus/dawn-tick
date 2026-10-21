@@ -8,6 +8,7 @@ import {
   icsToSchedules,
   parseIcs,
   type IcsCourse,
+  type IcsExtraEvent,
   type IcsSchedule,
   type IcsSemester,
   type IcsTimeSlot,
@@ -140,6 +141,47 @@ test('RRULE 展开支持 COUNT 与 EXDATE', () => {
   assert.equal(dates.length, 3);
   assert.equal(formatDate(dates[0] as number, 'Asia/Shanghai'), '2026-09-07');
   assert.equal(formatDate(dates[1] as number, 'Asia/Shanghai'), '2026-09-21');
+});
+
+test('额外单次事件按时刻与全天写入', () => {
+  const start = dateWallClockToEpoch('2026-09-16', '10:00', 'Asia/Shanghai');
+  const end = dateWallClockToEpoch('2026-09-16', '11:40', 'Asia/Shanghai');
+  const dayStart = dateWallClockToEpoch('2026-10-01', '00:00', 'Asia/Shanghai');
+  const extraEvents: IcsExtraEvent[] = [
+    {
+      uid: 's-1-2026-09-14-move@dawn-tick',
+      summary: '高等数学',
+      start,
+      end,
+      location: '教三-305',
+      description: '张老师 高数',
+    },
+    { uid: 'holiday-1@dawn-tick', summary: '国庆节', start: dayStart, end: dayStart, allDay: true },
+  ];
+  const text = exportIcs({
+    semester,
+    courses,
+    schedules: [],
+    timeSlots,
+    extraEvents,
+    stamp: 1759900000000,
+  });
+
+  assert.ok(text.includes('UID:s-1-2026-09-14-move@dawn-tick'));
+  assert.ok(text.includes('DTSTART:20260916T020000Z'));
+  assert.ok(text.includes('DTEND:20260916T034000Z'));
+  assert.ok(text.includes('SUMMARY:高等数学'));
+  assert.ok(text.includes('LOCATION:教三-305'));
+  assert.ok(text.includes('DTSTART;VALUE=DATE:20261001'));
+  assert.ok(text.includes('DTEND;VALUE=DATE:20261002'));
+
+  const calendar = parseIcs(text);
+  assert.equal(calendar.events.length, 2);
+  assert.equal(calendar.events[0]?.start, start);
+  assert.equal(calendar.events[0]?.location, '教三-305');
+  // DATE 值不带时区：按浮动日期读成当天零点的 UTC 时刻
+  assert.equal(formatDate(calendar.events[1]?.start ?? 0, 'UTC'), '2026-10-01');
+  assert.equal(calendar.events[1]?.summary, '国庆节');
 });
 
 test('不支持的频度给出警告', () => {
