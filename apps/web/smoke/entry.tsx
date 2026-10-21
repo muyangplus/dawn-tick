@@ -2234,13 +2234,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   await gotoSettings();
 
-  if (clickByTextStart(view.container, '网页课表')) await flush(10);
+  // 渠道 ②：教务系统内嵌窗口承载选校与入口（Web 上明确给出「改用粘贴」的下一步）
+  if (clickByTextStart(view.container, '教务系统内嵌窗口')) await flush(10);
   check(
-    '网页导入提供书签与粘贴',
-    view.container.querySelector('textarea[aria-label="书签小工具代码"]') !== null &&
-      view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]') !== null &&
-      (view.container.textContent ?? '').includes('识别并预览') &&
-      (view.container.textContent ?? '').includes('1. 安装书签'),
+    '教务渠道给出选校与入口地址',
+    view.container.querySelector('[data-role="window-source"]') !== null &&
+      view.container.querySelector('[data-role="school-picker"]') !== null &&
+      view.container.querySelector('input[aria-label="入口地址"]') !== null,
     '',
   );
 
@@ -2434,6 +2434,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     }`,
   );
 
+  check(
+    'Web 上教务渠道给出改用粘贴的下一步',
+    (view.container.textContent ?? '').includes('当前平台没有内嵌教务窗口') &&
+      [...view.container.querySelectorAll('button')].some(
+        (node) => (node.textContent ?? '').trim() === '改用粘贴文本',
+      ),
+    '',
+  );
+  if (clickByText(view.container, '改用粘贴文本')) await flush(10);
+  check(
+    '网页导入提供书签与粘贴',
+    view.container.querySelector('textarea[aria-label="书签小工具代码"]') !== null &&
+      view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]') !== null &&
+      (view.container.textContent ?? '').includes('识别并预览') &&
+      (view.container.textContent ?? '').includes('1. 安装书签'),
+    '',
+  );
+
   const pasteBox = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBox instanceof window.HTMLTextAreaElement) {
     setInputValue(pasteBox, PAGE_SAMPLE);
@@ -2449,15 +2467,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     setInputValue(pasteBoxSecond, PAGE_WEEKDAY_SAMPLE);
     await flush(6);
   }
-  const mappingSummary = [...view.container.querySelectorAll('summary')].find((item) =>
-    (item.textContent ?? '').includes('手动指定表格'),
+  const mappingButton = [...view.container.querySelectorAll('button')].find(
+    (item) => (item.textContent ?? '').trim() === '手动指定表格',
   );
-  check('提供手动校正映射入口', mappingSummary !== undefined, '');
-  if (mappingSummary instanceof HTMLElement) mappingSummary.click();
-  await flush(8);
-  if (clickByText(view.container, '读取页面表格')) await flush(10);
-  check('页面表格预览可读', (view.container.textContent ?? '').includes('星期一'), '');
-  if (clickByText(view.container, '按此映射识别')) await flush(22);
+  check('提供手动校正映射入口', mappingButton !== undefined, '');
+  mappingButton?.click();
+  await flush(10);
+  check(
+    '手动映射在抽屉里打开',
+    document.querySelector('[data-role="manual-mapping"]') !== null &&
+      document.querySelector('[data-role="manual-mapping"]')?.getAttribute('data-container') === 'sheet',
+    '',
+  );
+  if (clickByText(document.body, '读取页面表格')) await flush(10);
+  check('页面表格预览可读', (document.body.textContent ?? '').includes('星期一'), '');
+  if (clickByText(document.body, '按此映射识别')) await flush(22);
   check('按手动映射识别成功', (view.container.textContent ?? '').includes('解析到'), '');
 
   if (clickByText(document.body, '取消') === false) {
@@ -3921,13 +3945,58 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     check(
       '导入步骤第 4 步叫完成',
       importStepText.includes('选择方式') &&
-        importStepText.includes('登录或上传') &&
+        importStepText.includes('获取课表') &&
         importStepText.includes('预览') &&
         importStepText.includes('完成') &&
         !importStepText.includes('确认'),
       importStepText,
     );
-    if (clickByTextStart(importApp.container, '网页课表')) await flush(10);
+    const compactStepBefore =
+      importApp.container.querySelector('[data-role="step-compact"]')?.textContent?.trim() ?? '';
+    check(
+      '窄屏步骤收成「第 1/4 步 · 选择方式」',
+      compactStepBefore.includes('第 1/4 步') && compactStepBefore.includes('选择方式'),
+      compactStepBefore,
+    );
+    const channelCards = [...importApp.container.querySelectorAll<HTMLElement>('[data-role="channel-card"]')];
+    check(
+      '导入入口列清三个渠道',
+      channelCards.length === 3 &&
+        ['paste', 'window', 'manual'].every((id) =>
+          channelCards.some((card) => card.getAttribute('data-channel') === id),
+        ) &&
+        channelCards.every(
+          (card) => (card.textContent ?? '').includes('适用：') && (card.textContent ?? '').includes('产出：'),
+        ),
+      channelCards.map((card) => card.getAttribute('data-channel') ?? '?').join(' / '),
+    );
+    if (clickByTextStart(importApp.container, '粘贴文本')) await flush(10);
+    const compactStepAfter =
+      importApp.container.querySelector('[data-role="step-compact"]')?.textContent?.trim() ?? '';
+    check(
+      '窄屏步骤在第二屏显示「第 2/4 步 · 获取课表」',
+      compactStepAfter.includes('第 2/4 步') && compactStepAfter.includes('获取课表'),
+      compactStepAfter,
+    );
+    const pasteTabs = importApp.container.querySelector('[data-role="paste-source-tabs"]');
+    check(
+      '粘贴渠道内分「粘贴网页课表 / 选择文件」两种取材',
+      pasteTabs !== null &&
+        (pasteTabs.textContent ?? '').includes('粘贴网页课表') &&
+        (pasteTabs.textContent ?? '').includes('选择文件'),
+      '',
+    );
+    if (clickByText(importApp.container, '选择文件')) await flush(8);
+    const fileBox = importApp.container.querySelector<HTMLInputElement>('input[aria-label="选择课表文件"]');
+    check(
+      '文件取材接受 CSV / Excel / ICS',
+      fileBox !== null &&
+        fileBox.accept.includes('.csv') &&
+        fileBox.accept.includes('.xlsx') &&
+        fileBox.accept.includes('.ics'),
+      fileBox?.accept ?? '(无)',
+    );
+    if (clickByText(importApp.container, '粘贴网页课表')) await flush(8);
     const importPaste = importApp.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="粘贴课表页面内容"]',
     );
@@ -3951,21 +4020,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     );
     manualButton?.click();
     await flush(10);
-    const mappingDetails = importApp.container.querySelector<HTMLDetailsElement>(
-      '[data-role="manual-mapping"]',
-    );
-    const headerRowBox = mappingDetails?.querySelector<HTMLInputElement>('input[aria-label="表头行"]');
+    const mappingSheet = document.querySelector('[data-role="manual-mapping"]');
+    const headerRowBox = mappingSheet?.querySelector<HTMLInputElement>('input[aria-label="表头行"]');
     check(
-      '手动指定表格入口展开并聚焦表头行',
-      mappingDetails?.open === true &&
+      '识别失败打开手动映射抽屉并聚焦表头行',
+      mappingSheet !== null &&
+        mappingSheet.getAttribute('data-container') === 'sheet' &&
         headerRowBox !== null &&
         document.activeElement === headerRowBox,
-      `open=${mappingDetails?.open ?? '(无)'} focus=${
+      `sheet=${mappingSheet === null ? '无' : '有'} focus=${
         document.activeElement instanceof window.HTMLInputElement
           ? document.activeElement.getAttribute('aria-label')
           : '(非输入框)'
       }`,
     );
+    if (clickByLabel(document.body, '关闭手动映射')) await flush(8);
 
     if (importPaste instanceof window.HTMLTextAreaElement) {
       setInputValue(importPaste, PAGE_SAMPLE);
@@ -4010,6 +4079,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       batchOk,
       `勾选=${previewBoxes().filter((box) => box.checked).length}/${previewBoxes().length} ${previewText().slice(0, 24)}`,
     );
+    const previewRows = [
+      ...(preview?.querySelectorAll<HTMLElement>('[data-role="import-row"], [data-role="import-conflict-row"]') ??
+        []),
+    ];
+    check(
+      '预览改为卡片行（窄屏不再横向挤表格）',
+      preview !== null && preview.querySelector('table') === null && previewRows.length > 0,
+      `行 ${previewRows.length} / 表格 ${preview?.querySelectorAll('table').length ?? 0}`,
+    );
 
     if (clickByText(importApp.container, '确认导入')) await flush(30);
     const importFinished = (importApp.container.textContent ?? '').includes('导入完成');
@@ -4031,7 +4109,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(12);
     conflictApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]')?.click();
     await flush(10);
-    if (clickByTextStart(conflictApp.container, '网页课表')) await flush(10);
+    if (clickByTextStart(conflictApp.container, '粘贴文本')) await flush(10);
 
     const previewBox = (): HTMLElement | null =>
       conflictApp.container.querySelector('[data-role="import-preview"]');
@@ -4074,7 +4152,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     const filter = filterBox();
     filter?.click();
     await flush(6);
-    const visibleRows = [...(previewBox()?.querySelectorAll<HTMLElement>('tbody tr') ?? [])];
+    const visibleRows = [
+      ...(previewBox()?.querySelectorAll<HTMLElement>(
+        '[data-role="import-row"], [data-role="import-conflict-row"]',
+      ) ?? []),
+    ];
     check(
       '只看冲突项：冲突行可见，非冲突行隐藏',
       filter !== null &&
@@ -4137,10 +4219,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       '没有冲突项时提示出现',
       ready &&
         filterBox()?.checked === true &&
-        (previewBox()?.querySelectorAll('tbody tr').length ?? -1) === 0 &&
+        (previewBox()?.querySelectorAll('[data-role="import-row"], [data-role="import-conflict-row"]').length ??
+          -1) === 0 &&
         emptyHint !== null &&
         (emptyHint.textContent ?? '').includes('没有冲突项'),
-      `提示=${emptyHint?.textContent?.trim() ?? '(无)'} 行=${previewBox()?.querySelectorAll('tbody tr').length ?? -1}`,
+      `提示=${emptyHint?.textContent?.trim() ?? '(无)'} 行=${
+        previewBox()?.querySelectorAll('[data-role="import-row"], [data-role="import-conflict-row"]').length ?? -1
+      }`,
     );
     conflictApp.root.unmount();
   }
