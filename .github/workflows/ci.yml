@@ -78,4 +78,17 @@ jobs:
       - run: pnpm -C apps/mobile exec cap sync android
       - name: 编译 debug APK（不发版，只验证安卓工程可编译）
         working-directory: apps/mobile/android
-        run: sh ./gradlew assembleDebug --no-daemon
+        run: |
+          set -o pipefail
+          LOG="$RUNNER_TEMP/android-build.log"
+          # 编译失败时把日志推到 ci-debug 分支：Actions 日志需要仓库权限，公开仓库匿名读不到
+          if ! sh ./gradlew assembleDebug --no-daemon 2>&1 | tee "$LOG"; then
+            mkdir -p ci-debug
+            cp "$LOG" ci-debug/android-build.log
+            git checkout -B ci-debug
+            git add -A ci-debug
+            git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
+              commit -m "ci: 安卓编译失败日志（自动化提交，仅 ci-debug 分支）" || true
+            git push -f origin HEAD:refs/heads/ci-debug || true
+            exit 1
+          fi
