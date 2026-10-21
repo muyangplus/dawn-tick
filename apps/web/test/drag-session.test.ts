@@ -3,12 +3,18 @@ import assert from 'node:assert/strict';
 import type { AppData, LessonCell } from '../src/data.ts';
 import {
   bodyRangeOf,
+  beginLessonPress,
   clashLabel,
   clashingLessons,
   dragRows,
   emptyDragEdgeOf,
   firstClash,
+  lessonDraggable,
+  lessonDropChanged,
   lessonDropPeriod,
+  lessonLongPress,
+  lessonPressMove,
+  lessonTouchAction,
   periodAt,
   resizeEmptyRange,
   stepEmptyRange,
@@ -46,6 +52,63 @@ function appData(cells: LessonCell[], courses: { id: string; name: string }[]): 
   }
   return { grid, courses } as unknown as AppData;
 }
+
+test('lessonDraggable / lessonTouchAction：只有参与拖动的卡片才吃手势，其余留纵向滚动', () => {
+  const base = cell({ date: '2026-03-02', periodStart: 1, periodEnd: 2 });
+  assert.equal(lessonDraggable(base), true);
+  assert.equal(lessonTouchAction(base), 'none');
+  // 停课、已调课、调课落点、实验、非本周都不参与拖动，页面要能照常滚
+  for (const overrides of [
+    { cancelled: true },
+    { movedOut: true },
+    { movedIn: true },
+    { lab: true },
+    { inWeek: false },
+  ] as const) {
+    const lesson = { ...base, ...overrides };
+    assert.equal(lessonDraggable(lesson), false);
+    assert.equal(lessonTouchAction(lesson), 'pan-y');
+  }
+  // 停课优先于其它状态：依然不可拖
+  assert.equal(lessonDraggable({ ...base, cancelled: true, inWeek: false }), false);
+});
+
+test('beginLessonPress / lessonLongPress：按下不算拖动，长按只生效一次', () => {
+  const press = beginLessonPress({ pointerId: 3, pointerType: 'touch', x: 100, y: 100 });
+  assert.equal(press.pointerId, 3);
+  assert.equal(press.pointerType, 'touch');
+  assert.equal(press.active, false);
+  assert.equal(press.captured, false);
+  assert.equal(lessonLongPress(press), true);
+  assert.equal(lessonLongPress({ ...press, active: true }), false);
+  // 拿不到 pointerType（如 jsdom）时按鼠标/触控笔处理
+  assert.equal(beginLessonPress({ pointerId: 1, pointerType: undefined, x: 0, y: 0 }).pointerType, 'pointer');
+});
+
+test('lessonPressMove：touch 抖动取消长按，鼠标越过阈值直接开拖，拖动后移动才捕获', () => {
+  const touch = beginLessonPress({ pointerId: 1, pointerType: 'touch', x: 100, y: 100 });
+  // 抖动不超过阈值：继续等长按
+  assert.deepEqual(lessonPressMove(touch, 104, 104), { outcome: 'ignore', capture: false });
+  // 触屏越过阈值：这一下按滑动处理，取消长按
+  assert.deepEqual(lessonPressMove(touch, 100, 120), { outcome: 'cancel', capture: false });
+
+  // 鼠标：越过阈值立即进入拖动，并在同一拍请求捕获（拖动入口不再被长按计时器卡住）
+  const mouse = beginLessonPress({ pointerId: 2, pointerType: 'mouse', x: 100, y: 100 });
+  assert.deepEqual(lessonPressMove(mouse, 100, 120), { outcome: 'activate', capture: true });
+  assert.deepEqual(lessonPressMove({ ...mouse, active: true }, 100, 120), { outcome: 'ignore', capture: true });
+  // 已捕获后不再重复请求
+  assert.deepEqual(lessonPressMove({ ...mouse, active: true, captured: true }, 100, 120), {
+    outcome: 'ignore',
+    capture: false,
+  });
+});
+
+test('lessonDropChanged：同一天同一节松手不算调整', () => {
+  const lesson = { date: '2026-03-02', periodStart: 3 };
+  assert.equal(lessonDropChanged(lesson, '2026-03-02', 3), false);
+  assert.equal(lessonDropChanged(lesson, '2026-03-02', 4), true);
+  assert.equal(lessonDropChanged(lesson, '2026-03-03', 3), true);
+});
 
 test('periodAt：按列高换算节次，越界夹到首尾节', () => {
   // 列顶 100，行高 60，无补白：100→1 节，160→2 节

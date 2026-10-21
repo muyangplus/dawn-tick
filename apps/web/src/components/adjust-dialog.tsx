@@ -6,11 +6,13 @@ import { formatPeriodRange } from '../lib/format.ts';
 import { logInfo } from '../log.ts';
 import {
   applyCancel,
+  applyExam,
   applyExtra,
   applyMove,
   applySwap,
   overlapAt,
   planCancel,
+  planExam,
   planExtra,
   planMove,
   planSwap,
@@ -35,6 +37,7 @@ const MODE_ITEMS = [
   { id: 'cancel', label: '停课' },
   { id: 'swap', label: '调休' },
   { id: 'extra', label: '临时加课' },
+  { id: 'exam', label: '改为考试' },
 ] as const;
 
 const SCOPE_ITEMS = [
@@ -57,7 +60,7 @@ export interface AdjustDialogProps {
 }
 
 /**
- * 全仓唯一的调课弹窗：改期 / 停课 / 调休 / 临时加课四选一。
+ * 全仓唯一的调课弹窗：改期 / 停课 / 调休 / 临时加课 / 改为考试 五选一。
  * 课程详情、日程卡与拖拽三个入口都打开它，只传预填参数（`target`）；
  * 校验与写库在 `screens/timetable/move-controller.ts`，这里只留表单状态与呈现。
  */
@@ -98,6 +101,9 @@ export function AdjustDialog({
   const [extraStart, setExtraStart] = useState('1');
   const [extraEnd, setExtraEnd] = useState('2');
 
+  // 改为考试：日期与节次复用改期那组输入，备注单独一份
+  const [examNote, setExamNote] = useState('');
+
   const course = useMemo(() => data.courses.find((item) => item.id === courseId), [data.courses, courseId]);
   const schedules = course?.schedules ?? [];
   const schedule = useMemo(() => schedules.find((item) => item.id === scheduleId), [schedules, scheduleId]);
@@ -117,6 +123,7 @@ export function AdjustDialog({
         String(drop === undefined ? target.periodEnd : drop.periodStart + (target.periodEnd - target.periodStart)),
       );
       setNewRoom('');
+      setExamNote('');
       setTargetWeek(String(semester === null ? 1 : weekOfDate(drop?.date ?? target.date, semester.start_date)));
       // 落点在原日期同一周就按「这一次」，跨周默认「指定日期」
       const sameWeek =
@@ -133,6 +140,7 @@ export function AdjustDialog({
     setNewStart('1');
     setNewEnd('2');
     setNewRoom('');
+    setExamNote('');
     setTargetWeek(String(semester === null ? 1 : weekOfDate(data.today, semester.start_date)));
     setExtraDate(data.today);
     if (data.courses.length > 0) setCourseId(data.courses[0]?.id ?? '');
@@ -271,6 +279,43 @@ export function AdjustDialog({
     onOpenChange(false);
   }
 
+  async function submitExam(): Promise<void> {
+    const planned = planExam({
+      semester,
+      schedule,
+      courseId,
+      courseName: course?.name ?? '',
+      sourceDate,
+      date: newDate,
+      periodStart,
+      periodEnd,
+      note: examNote,
+      slots: data.slots,
+      timeZone: data.timeZone,
+    });
+    if (!planned.ok) {
+      toast.error(planned.message);
+      return;
+    }
+    const examPlan = planned.plan;
+    const result = await run({
+      scope: 'adjust',
+      label: '正在改为考试…',
+      ok: `已改为考试：${examPlan.date} ${formatPeriodRange(examPlan.periodStart, examPlan.periodEnd)}`,
+      fail: { what: '改为考试失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+      task: () => applyExam(storage, examPlan, { userId: USER_ID, semesterId: semesterId() }),
+    });
+    if (!result.ok) return;
+    logInfo('adjust', '已改为考试', {
+      scheduleId: examPlan.scheduleId,
+      date: examPlan.date,
+      periods: `${examPlan.periodStart}-${examPlan.periodEnd}`,
+      note: examPlan.note !== null,
+    });
+    onChanged();
+    onOpenChange(false);
+  }
+
   async function submitSwap(): Promise<void> {
     const planned = planSwap({ semester, restFrom, restTo });
     if (!planned.ok) {
@@ -339,7 +384,9 @@ export function AdjustDialog({
         ? `停掉「${course?.name ?? '课程'}」${sourceDate} 的这一次课，其他周次不受影响`
         : mode === 'swap'
           ? '把原日期那天的课表整体搬到目标上课日'
-          : '只加这一次，可在课程管理里删除';
+          : mode === 'exam'
+            ? `把「${course?.name ?? '课程'}」${sourceDate} 的这一次课改成 ${newDate} 的考试，原课次从课表移除`
+            : '只加这一次，可在课程管理里删除';
 
   return (
     <FormSurface
@@ -368,7 +415,7 @@ export function AdjustDialog({
         ))}
       </div>
 
-      {(mode === 'move' || mode === 'cancel') && (
+      {(mode === 'move' || mode === 'cancel' || mode === 'exam') && (
         <div className="flex flex-col gap-3">
           <Field label="课程">
             <Select value={courseId} onValueChange={setCourseId}>
@@ -405,7 +452,10 @@ export function AdjustDialog({
               </Select>
             </Field>
           )}
-          <Field label="原日期" hint="这一天的那节课次被调整">
+          <Field
+            label="原日期"
+            hint={mode === 'exam' ? '这一天的这节课会被移除' : '这一天的那节课次被调整'}
+          >
             <Input
               type="date"
               value={sourceDate}
@@ -488,6 +538,52 @@ export function AdjustDialog({
               </Field>
             )}
           </div>
+        </div>
+      )}
+
+      {mode === 'exam' && (
+        <div className="flex flex-col gap-3">
+          <Field label="考试日期" hint="默认取「调整后日期」，可跨周">
+            <Input
+              type="date"
+              value={newDate}
+              aria-label="考试日期"
+              onChange={(event) => setNewDate(event.target.value)}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-3">
+            <Field label="起始节">
+              <Input
+                type="number"
+                min={1}
+                max={40}
+                className="w-20"
+                aria-label="考试起始节"
+                value={newStart}
+                onChange={(event) => setNewStart(event.target.value)}
+              />
+            </Field>
+            <Field label="结束节">
+              <Input
+                type="number"
+                min={1}
+                max={40}
+                className="w-20"
+                aria-label="考试结束节"
+                value={newEnd}
+                onChange={(event) => setNewEnd(event.target.value)}
+              />
+            </Field>
+          </div>
+          <Field label="备注（可选）">
+            <Input
+              value={examNote}
+              aria-label="考试备注"
+              placeholder="如 开卷、带计算器"
+              onChange={(event) => setExamNote(event.target.value)}
+            />
+          </Field>
+          <span className="text-xs text-muted">考试写进日程并开启倒计时，原课次按停课处理</span>
         </div>
       )}
 
@@ -579,18 +675,23 @@ export function AdjustDialog({
         <Button
           variant="primary"
           loading={busy}
-          disabled={semester === null || ((mode === 'move' || mode === 'cancel') && schedule === undefined)}
+          disabled={
+            semester === null ||
+            ((mode === 'move' || mode === 'cancel' || mode === 'exam') && schedule === undefined)
+          }
           onClick={() => {
             void (mode === 'move'
               ? submitMove()
               : mode === 'cancel'
                 ? submitCancel()
-                : mode === 'swap'
-                  ? submitSwap()
-                  : submitExtra());
+                : mode === 'exam'
+                  ? submitExam()
+                  : mode === 'swap'
+                    ? submitSwap()
+                    : submitExtra());
           }}
         >
-          {mode === 'cancel' ? '确认停课' : '应用调整'}
+          {mode === 'cancel' ? '确认停课' : mode === 'exam' ? '改为考试' : '应用调整'}
         </Button>
       </DialogFooter>
     </FormSurface>

@@ -5,8 +5,10 @@ import {
   createCourse,
   createSchedule,
   createSemester,
+  dateWallClockToEpoch,
   dayOfWeek,
   listManagedCourses,
+  listTimeSlots,
   weekOfDate,
   weekStart,
   validatedStorage,
@@ -18,12 +20,15 @@ import { weekDateOf } from '../src/data.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
   applyCancel,
+  applyExam,
   applyExtra,
   applyMove,
   applySwap,
+  examClockOf,
   overlapAt,
   periodsValid,
   planCancel,
+  planExam,
   planExtra,
   planMove,
   planSwap,
@@ -327,6 +332,120 @@ test('planCancel / applyCancel：只停原日期那一次', async () => {
   assert.equal(events.length, 1);
   assert.equal(events[0]?.['on_date'], sourceDate);
   assert.equal(events[0]?.['title'], '停课：高等数学');
+});
+
+test('examClockOf / planExam：节次换钟点并校验日期、节次与作息', async () => {
+  const storage = await open('move-exam-plan');
+  const { semester, math } = await seed(storage);
+  const schedule = math.schedules[0];
+  assert.ok(schedule !== undefined);
+  const slots = await listTimeSlots(storage, semester.id);
+  const sourceDate = weekDateOf(semester, 5, 1);
+  const examDate = weekDateOf(semester, 6, 3);
+  const base = {
+    semester,
+    schedule,
+    courseId: math.id,
+    courseName: math.name,
+    sourceDate,
+    date: examDate,
+    periodStart: 3,
+    periodEnd: 4,
+    note: '',
+    slots,
+    timeZone: TIME_ZONE,
+  };
+
+  // 节次 → 起止钟点：第 3 节开始、第 4 节结束
+  assert.deepEqual(examClockOf(slots, 3, 4), {
+    startTime: slots.find((slot) => slot.period_no === 3)?.start_time,
+    endTime: slots.find((slot) => slot.period_no === 4)?.end_time,
+  });
+  assert.equal(examClockOf(slots, 39, 40), null);
+
+  const planned = planExam({ ...base, note: ' 开卷 ' });
+  assert.equal(planned.ok, true);
+  if (!planned.ok) return;
+  assert.equal(planned.plan.scheduleId, schedule.id);
+  assert.equal(planned.plan.courseId, math.id);
+  assert.equal(planned.plan.title, '高等数学');
+  assert.equal(planned.plan.date, examDate);
+  assert.equal(planned.plan.dayOfWeek, 3);
+  assert.equal(planned.plan.periodStart, 3);
+  assert.equal(planned.plan.periodEnd, 4);
+  // 考试时间取节次对应的起止钟点，并换算成同一时区的时间戳
+  assert.equal(planned.plan.startAt, dateWallClockToEpoch(examDate, planned.plan.startTime, TIME_ZONE));
+  assert.equal(planned.plan.endAt, dateWallClockToEpoch(examDate, planned.plan.endTime, TIME_ZONE));
+  assert.equal(planned.plan.note, '开卷');
+
+  // 校验口径与改期一致：缺课次 / 节次非法 / 学期外 / 没有这节作息
+  assert.deepEqual(planExam({ ...base, schedule: undefined }), {
+    ok: false,
+    message: '请先选课程与要改成考试的课次',
+  });
+  assert.deepEqual(planExam({ ...base, periodEnd: 0 }), {
+    ok: false,
+    message: '节次需要是 1 起、且结束不小于开始',
+  });
+  assert.deepEqual(planExam({ ...base, date: '2027-01-01' }), {
+    ok: false,
+    message: `考试日期要在学期内（${weekDateOf(semester, 1, 1)} 至 ${weekDateOf(semester, TOTAL_WEEKS, 7)}）`,
+  });
+  assert.deepEqual(planExam({ ...base, periodStart: 39, periodEnd: 40 }), {
+    ok: false,
+    message: '第 39–40 节没有对应的作息时间',
+  });
+});
+
+test('applyExam：写一条考试并停掉原课次', async () => {
+  const storage = await open('move-exam-apply');
+  const { semester, math } = await seed(storage);
+  const schedule = math.schedules[0];
+  assert.ok(schedule !== undefined);
+  const slots = await listTimeSlots(storage, semester.id);
+  const sourceDate = weekDateOf(semester, 5, 1);
+  const examDate = weekDateOf(semester, 6, 3);
+  const planned = planExam({
+    semester,
+    schedule,
+    courseId: math.id,
+    courseName: math.name,
+    sourceDate,
+    date: examDate,
+    periodStart: 3,
+    periodEnd: 4,
+    note: '开卷',
+    slots,
+    timeZone: TIME_ZONE,
+  });
+  assert.equal(planned.ok, true);
+  if (!planned.ok) return;
+  await applyExam(storage, planned.plan, { userId: USER_ID, semesterId: semester.id });
+
+  const events = await storage.collection<Record<string, unknown>>('events').getAll();
+  const exam = events.find((row) => row['type'] === 'exam');
+  assert.ok(exam !== undefined);
+  assert.equal(exam['title'], '高等数学');
+  assert.equal(exam['on_date'], examDate);
+  assert.equal(exam['start_at'], planned.plan.startAt);
+  assert.equal(exam['end_at'], planned.plan.endAt);
+  assert.equal(exam['subject'], math.id);
+  assert.equal(exam['note'], '开卷');
+  assert.equal(exam['countdown'], 1);
+  assert.equal(exam['start_time'], planned.plan.startTime);
+  assert.equal(exam['end_time'], planned.plan.endTime);
+  assert.equal(exam['as_day_of_week'], 3);
+  assert.equal(exam['show_in_timetable'], 1);
+  // 节次列只留给实验：考试按起止钟点进课表
+  assert.equal(exam['period_start'], null);
+  assert.equal(exam['period_end'], null);
+  // 原课次按停课移除：调课记录指向原排课与原日期
+  const cancelled = events.filter((row) => row['type'] === 'reschedule' && row['action'] === 'cancel');
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0]?.['ref_schedule_id'], schedule.id);
+  assert.equal(cancelled[0]?.['on_date'], sourceDate);
+  assert.equal(cancelled[0]?.['title'], '改为考试：高等数学');
+  assert.ok(events.length >= 2);
 });
 
 test('planSwap / applySwap：记一条调休', async () => {
