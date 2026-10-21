@@ -45,15 +45,30 @@ object WidgetRenderer {
     private const val FALLBACK_WIDGET_HEIGHT_DP = 110
 
     /**
-     * 内置回退色：快照没有携带 colors 时使用（取 design/tokens.ts 里 vivid 预设的正文/次要文字色）。
-     * 快照带 colors 时以快照为准，小组件配色随主题预设与明暗模式变化。
+     * 内置回退色：旧快照（R-04 之前，没有 colors）时使用，取 vivid 预设的语义色。
+     * 快照带 colors 时以快照为准（surface / ink / muted / accent 都随主题预设），这里只兜底。
      */
     private const val INK_LIGHT = 0xFF1F1B24.toInt()
     private const val MUTED_LIGHT = 0xFF6B6475.toInt()
+    private const val ACCENT_LIGHT = 0xFFB3261E.toInt()
     private const val INK_DARK = 0xFFF3EFF6.toInt()
     private const val MUTED_DARK = 0xFFA79FB3.toInt()
-    private const val DANGER_DARK_MODE = 0xFFFF8A8A.toInt()
-    private const val DANGER_LIGHT_MODE = 0xFFB3261E.toInt()
+    private const val ACCENT_DARK = 0xFFFF8A8A.toInt()
+
+    /** 快照缺失 colors 时的一整套回退配色，按明暗模式二选一（不用 if 链逐色判断）。 */
+    private data class FallbackPalette(
+        val ink: Int,
+        val muted: Int,
+        val accent: Int,
+    )
+
+    private val LIGHT_FALLBACK = FallbackPalette(INK_LIGHT, MUTED_LIGHT, ACCENT_LIGHT)
+    private val DARK_FALLBACK = FallbackPalette(INK_DARK, MUTED_DARK, ACCENT_DARK)
+
+    private fun fallbackPalette(dark: Boolean): FallbackPalette = when (dark) {
+        true -> DARK_FALLBACK
+        false -> LIGHT_FALLBACK
+    }
 
     private fun isNightMode(context: Context): Boolean =
         (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
@@ -69,6 +84,7 @@ object WidgetRenderer {
         }
     }
 
+    /** 旧快照没有 colors.surface 时按背景设置回退三态 drawable；新快照直接用 surface 上色。 */
     private fun backgroundResource(background: String): Int = when (background) {
         "dark" -> R.drawable.widget_bg_dark
         "transparent" -> R.drawable.widget_bg_transparent
@@ -84,16 +100,29 @@ object WidgetRenderer {
         accentIds: IntArray = intArrayOf(),
     ) {
         val background = snapshot?.background ?: "light"
-        views.setInt(R.id.widget_root, "setBackgroundResource", backgroundResource(background))
-        val dark = background == "dark" || (background == "transparent" && isNightMode(context))
+        val dark = when (background) {
+            "dark" -> true
+            "transparent" -> isNightMode(context)
+            else -> false
+        }
         val colors = snapshot?.colors
-        // 快照色优先（随主题走），缺失或非法时回退按背景/夜间模式选的常量
-        val ink = parseColor(colors?.ink) ?: (if (dark) INK_DARK else INK_LIGHT)
-        val muted = parseColor(colors?.muted) ?: (if (dark) MUTED_DARK else MUTED_LIGHT)
-        val accent = parseColor(colors?.danger) ?: (if (dark) DANGER_DARK_MODE else DANGER_LIGHT_MODE)
+        val fallback = fallbackPalette(dark)
+        // 快照色优先（随主题预设走），缺失或非法时回退内置常量
+        val ink = parseColor(colors?.ink) ?: fallback.ink
+        val muted = parseColor(colors?.muted) ?: fallback.muted
+        // accent 是 R-04 新字段；旧快照只有 danger，按同一槽位回退
+        val accent = parseColor(colors?.accent) ?: parseColor(colors?.danger) ?: fallback.accent
         for (id in primaryIds) views.setTextColor(id, ink)
         for (id in mutedIds) views.setTextColor(id, muted)
         for (id in accentIds) views.setTextColor(id, accent)
+
+        // 卡面：快照 surface（透明底带 alpha）优先；旧快照回退三态 drawable
+        val surface = parseColor(colors?.surface)
+        if (surface != null) {
+            views.setInt(R.id.widget_surface, "setBackgroundColor", surface)
+        } else {
+            views.setBackgroundResource(R.id.widget_surface, backgroundResource(background))
+        }
     }
 
     private fun dp(context: Context, value: Int): Int = TypedValue.applyDimension(

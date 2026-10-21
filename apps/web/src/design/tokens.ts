@@ -246,13 +246,23 @@ function kebab(key: string): string {
   return key.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`);
 }
 
-/** 运行时变量：`--dt-*` 供 Tailwind 令牌映射，其余为迁移期的旧变量名。 */
+/**
+ * 运行时变量：`--dt-*` 供 Tailwind 令牌映射，其余为迁移期的旧变量名。
+ *
+ * 另外按模式命名两套令牌（`--dt-light-*` / `--dt-dark-*`）：悬浮窗的「浅色 / 深色」背景
+ * 设置与应用的深浅模式相互独立，需要在同一份样式里取到另一种模式的预设配色。
+ */
 export function cssVariables(preset: ThemePreset, mode: 'light' | 'dark'): Record<string, string> {
   const tokens = resolveTokens(preset, mode);
   const variables: Record<string, string> = {};
   for (const [key, value] of Object.entries(tokens)) {
     variables[`--dt-${kebab(key)}`] = value;
     variables[`--${key}`] = value;
+  }
+  for (const scopedMode of ['light', 'dark'] as const) {
+    for (const [key, value] of Object.entries(resolveTokens(preset, scopedMode))) {
+      variables[`--dt-${scopedMode}-${kebab(key)}`] = value;
+    }
   }
   PRESETS[preset].courses.forEach((color, index) => {
     variables[`--dt-course-${index}`] = color;

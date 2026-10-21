@@ -350,7 +350,14 @@ export function AppearanceCard({ settings, onPatch }: AppearanceCardProps) {
         onCheckedChange={(checked) => void onPatch({ holidayCountdown: checked })}
         ariaLabel="假期倒计时"
       />
-      <Field label="小组件背景">
+      <Field
+        label="小组件背景"
+        help={
+          hasMobileWidgets()
+            ? '浅色/深色固定底色，透明跟随主题'
+            : '浅色/深色固定底色，透明跟随当前主题；悬浮窗同样生效'
+        }
+      >
         <Select
           value={settings.widgetBackground}
           onValueChange={(value) => void onPatch({ widgetBackground: value as WidgetBackground })}

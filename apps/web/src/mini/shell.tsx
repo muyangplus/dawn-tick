@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { WidgetBackground, WidgetVariant } from '@dawn-tick/core';
 import { isDesktopApp } from '../lib/capabilities.ts';
+import { miniShellClassName } from './background.ts';
 
 export interface MiniShellProps {
   variant: WidgetVariant;
@@ -9,7 +10,7 @@ export interface MiniShellProps {
   onOpen?: (() => void) | undefined;
   /** 顶部左侧文案，默认应用名；上课中传「正在上课」 */
   label?: string | undefined;
-  /** 小组件背景设置：浅色 / 深色 / 透明 */
+  /** 小组件背景设置：浅色 / 深色 / 透明；浅/深固定取该模式的预设配色，透明跟随当前主题 */
   background?: WidgetBackground;
   children: ReactNode;
 }
@@ -17,7 +18,8 @@ export interface MiniShellProps {
 /**
  * 悬浮窗外壳：`data-tauri-drag-region="deep"` 让整窗（含文字）可拖动；
  * 双击整窗或点标题栏「打开」打开主窗口，关闭按钮仍只隐藏。
- * 底色与 Android 小组件三态同口径。
+ * 底色与 Android 小组件三态同口径：浅色/深色固定取当前预设对应模式的令牌，
+ * 透明跟随应用主题；两套模式令牌由 applyTheme 写在 :root，样式见 styles.css。
  */
 export function MiniShell({
   variant,
@@ -29,7 +31,7 @@ export function MiniShell({
 }: MiniShellProps) {
   return (
     <main
-      className={`mini mini-${variant} mini-bg-${background}`}
+      className={miniShellClassName(variant, background)}
       data-tauri-drag-region="deep"
       data-background={background}
       onDoubleClick={onOpen}

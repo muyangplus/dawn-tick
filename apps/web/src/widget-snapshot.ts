@@ -1,5 +1,6 @@
 import type { AppSettings, Storage } from '@dawn-tick/core';
 import type { AppData } from './data.ts';
+import { parseHex } from './design/contrast.ts';
 import { resolveTokens } from './design/tokens.ts';
 import { writeMetaJson } from './lib/meta.ts';
 import { WIDGET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
@@ -8,13 +9,20 @@ import { PLUGIN_NAMES, loadPlugin, type WidgetRefreshPlugin } from './lib/plugin
 
 export const WIDGET_SNAPSHOT_KEY = WIDGET_SNAPSHOT_META_KEY;
 
-/** 小组件配色：取设计令牌的语义色，Kotlin 侧缺失时回退内置常量。 */
+/**
+ * 小组件配色：取设计令牌的语义色，与悬浮窗同一口径；Kotlin 侧缺失时回退内置常量。
+ * 字段名即 Kotlin `WidgetStore.kt` 的 JSON 键名，由 `check-widget-contract.mjs` 双向校验。
+ */
 export interface WidgetColors {
   /** 正文色，对应 `ColorTokens.text`。 */
   ink: string;
   /** 次要文字色，对应 `ColorTokens.muted`。 */
   muted: string;
-  /** 强调色（倒计时/天数），取 AA 达标的 `ColorTokens.dangerStrong`。 */
+  /** 卡面底色，对应 `ColorTokens.surface`；透明背景为带 alpha 的 `#AARRGGBB`。 */
+  surface: string;
+  /** 强调色（倒计时/天数），取 AA 达标的 `ColorTokens.primaryStrong`，与悬浮窗倒计时一致。 */
+  accent: string;
+  /** A-15 旧字段：`ColorTokens.dangerStrong`；新快照继续携带，旧版 APK 仍能读到强调色。 */
   danger: string;
 }
 
@@ -47,7 +55,7 @@ export interface WidgetSnapshot {
   week: number;
   timeZone: string;
   background: AppSettings['widgetBackground'];
-  /** 主题语义色；旧版快照可能没有该字段，Android 侧回退内置常量。 */
+  /** 主题语义色（含卡面底色与强调色）；旧版快照可能没有该字段，Android 侧回退内置常量。 */
   colors?: WidgetColors | null;
   /** 正在上的那一节课：有它时前端显示剩余时间，没有时看 next */
   current: WidgetLesson | null;
@@ -75,10 +83,35 @@ function widgetColorMode(settings: AppSettings): 'light' | 'dark' {
   return settings.theme;
 }
 
-/** 快照配色：预设与模式都来自设置，保证小组件颜色随主题变化。 */
+/** 透明底的不透明度：与悬浮窗 `.mini-bg-transparent` 的 55% 保持一致。 */
+export const WIDGET_TRANSPARENT_ALPHA = 0.55;
+
+/** 给 `#RRGGBB` 补 alpha，产出 Android `Color.parseColor` 支持的 `#AARRGGBB`。 */
+export function withAlpha(hex: string, alpha: number): string {
+  const { r, g, b } = parseHex(hex);
+  const channel = (value: number): string =>
+    Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
+  return `#${channel(alpha * 255)}${channel(r)}${channel(g)}${channel(b)}`.toUpperCase();
+}
+
+/** 卡面底色：透明背景按统一不透明度叠在桌面上，其余直接用预设的 surface。 */
+export function buildWidgetSurface(
+  background: AppSettings['widgetBackground'],
+  surface: string,
+): string {
+  return background === 'transparent' ? withAlpha(surface, WIDGET_TRANSPARENT_ALPHA) : surface;
+}
+
+/** 快照配色：预设与模式都来自设置，保证小组件与悬浮窗的配色随主题一致。 */
 export function buildWidgetColors(settings: AppSettings): WidgetColors {
   const tokens = resolveTokens(settings.themePreset, widgetColorMode(settings));
-  return { ink: tokens.text, muted: tokens.muted, danger: tokens.dangerStrong };
+  return {
+    ink: tokens.text,
+    muted: tokens.muted,
+    surface: buildWidgetSurface(settings.widgetBackground, tokens.surface),
+    accent: tokens.primaryStrong,
+    danger: tokens.dangerStrong,
+  };
 }
 
 /** Android 主屏小组件读取的快照，避免小组件侧重复实现课表逻辑。 */
