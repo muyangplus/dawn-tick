@@ -2,7 +2,9 @@ package com.dawntick.app;
 
 import android.os.Bundle;
 
+import com.dawntick.app.install.ApkInstallerPlugin;
 import com.dawntick.app.school.SchoolWindowPlugin;
+import com.dawntick.app.share.FileSharePlugin;
 import com.dawntick.app.system.SystemActionsPlugin;
 import com.dawntick.app.widget.WidgetPinPlugin;
 import com.dawntick.app.widget.WidgetRefreshPlugin;
@@ -15,6 +17,9 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SchoolWindowPlugin.class);
         registerPlugin(WidgetPinPlugin.class);
         registerPlugin(SystemActionsPlugin.class);
+        // I-03 自动更新、I-12 导出：交给系统安装器 / 分享面板，Web 侧接线在后续批次
+        registerPlugin(ApkInstallerPlugin.class);
+        registerPlugin(FileSharePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

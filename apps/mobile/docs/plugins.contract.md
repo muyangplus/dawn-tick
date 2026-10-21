@@ -9,6 +9,10 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/school/SchoolWindowPlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/widget/WidgetPinPlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/widget/WidgetRefreshPlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/install/ApkInstallerPlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/share/FileSharePlugin.kt`
+    （两者共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
+- 第 5、6 节的 Android 侧已实现，`apps/web/src/lib/plugins.ts` 的接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）在后续批次补齐；补齐前 `plugins.test.ts` 不会校验这两节。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库没有 Android 构建链，编译与真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
@@ -72,7 +76,32 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 |---|---|---|---|
 | `refresh` | 无 | 无（resolve 空） | Web 层写完小组件快照后请求立即重绘 |
 
-## 5. 变更检查清单
+## 5. ApkInstaller
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `ApkInstaller` |
+| TS 接口 | `ApkInstallerPlugin`（待接线） |
+| Android 实现 | `ApkInstallerPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `installApk` | `path: string` | `opened: boolean`、`needsPermission?: boolean` | `path` 只接受应用缓存 / 外部私有下载目录内的绝对路径或 `file://` URI，且扩展名必须是 `.apk`；未授权「安装未知应用」时跳本应用设置页并返回 `opened: false`、`needsPermission: true`，用户授权后重试一次 |
+
+## 6. FileShare
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `FileShare` |
+| TS 接口 | `FileSharePlugin`（待接线） |
+| Android 实现 | `FileSharePlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `shareFile` | `path: string`、`mimeType?: string` | `shared: boolean` | `ACTION_SEND` + FileProvider 分享；`mimeType` 缺省按扩展名推断，推不出按 `application/octet-stream` |
+| `revealFile` | `path: string` | `opened: boolean`、`via?: string` | Android 没有「打开所在文件夹」：先开系统文件应用的所在目录，失败退 `content://` 目录，再失败回退分享面板；`via` 取值 `documents` / `content` / `share` |
+
+## 7. 变更检查清单
 
 改插件契约时按顺序过一遍：
 
