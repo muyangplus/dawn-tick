@@ -20,7 +20,7 @@ export function LoadingScreen({ slowAfterMs = LOADING_SLOW_MS }: { slowAfterMs?:
   }, [slowAfterMs]);
   return (
     <main
-      className="flex h-full flex-col items-center justify-center gap-3 bg-page p-4"
+      className="dt-screen-in flex h-full flex-col items-center justify-center gap-3 bg-page p-4"
       role="status"
       aria-live="polite"
       data-role="loading-screen"
@@ -30,7 +30,7 @@ export function LoadingScreen({ slowAfterMs = LOADING_SLOW_MS }: { slowAfterMs?:
       </div>
       <p className="text-sm text-ink">正在载入…</p>
       {slow && (
-        <p className="text-xs text-muted" data-role="loading-slow">
+        <p className="dt-screen-in text-xs text-muted" data-role="loading-slow">
           仍在载入…
         </p>
       )}
@@ -60,7 +60,7 @@ export function ErrorScreen({
   const Icon = corrupt ? Database : TriangleAlert;
   return (
     <main
-      className="flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4"
+      className="dt-screen-in flex h-full items-start justify-center overflow-y-auto overscroll-contain bg-page p-4"
       data-role="error-screen"
     >
       <div className="my-auto flex w-full max-w-md flex-col items-center gap-3 text-center" role="alert">

@@ -17,7 +17,7 @@ export function TabsTrigger({ className, ...props }: ComponentProps<typeof TabsP
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        'inline-flex min-h-tap items-center justify-center rounded-full px-4 text-sm text-muted',
+        'dt-tab-motion inline-flex min-h-tap items-center justify-center rounded-full px-4 text-sm text-muted',
         'data-[state=active]:bg-surface data-[state=active]:text-primary-strong data-[state=active]:shadow-sm',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
         className,

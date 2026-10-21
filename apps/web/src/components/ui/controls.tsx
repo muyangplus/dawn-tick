@@ -20,7 +20,7 @@ export function Checkbox({ className, ...props }: ComponentProps<typeof Checkbox
       {...props}
     >
       <CheckboxPrimitive.Indicator className="flex items-center justify-center">
-        <Check className="size-4" aria-hidden />
+        <Check className="dt-check-icon size-4" aria-hidden />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );
@@ -30,7 +30,7 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
   return (
     <SwitchPrimitive.Root
       className={cn(
-        'inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-line-strong transition-colors',
+        'dt-switch-motion inline-flex h-6 w-11 shrink-0 items-center rounded-full border border-line-strong',
         // 24px 高：上下各外扩 10px 补到 44px 命中区，视觉高度不变
         "relative after:absolute after:content-[''] after:-inset-y-2.5 after:left-0 after:right-0",
         'bg-surface-muted data-[state=checked]:bg-primary',
@@ -39,7 +39,7 @@ export function Switch({ className, ...props }: ComponentProps<typeof SwitchPrim
       )}
       {...props}
     >
-      <SwitchPrimitive.Thumb className="block size-5 translate-x-0.5 rounded-full bg-surface shadow-sm transition-transform data-[state=checked]:translate-x-[1.375rem]" />
+      <SwitchPrimitive.Thumb className="dt-switch-thumb block size-5 translate-x-0.5 rounded-full bg-surface shadow-sm data-[state=checked]:translate-x-[1.375rem]" />
     </SwitchPrimitive.Root>
   );
 }
@@ -139,7 +139,7 @@ export function SelectContent({
         position="popper"
         sideOffset={4}
         className={cn(
-          'z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-line bg-surface shadow-md',
+          'dt-select-content z-50 max-h-72 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-line bg-surface shadow-md',
           className,
         )}
         {...props}

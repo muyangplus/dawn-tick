@@ -87,7 +87,7 @@ export function WeekPicker({
               aria-pressed={selected}
               onClick={() => toggle(week)}
               className={cn(
-                'tabular size-tap rounded-sm border text-xs',
+                'dt-btn-motion tabular size-tap rounded-sm border text-xs',
                 selected ? 'border-primary-strong bg-primary text-on-primary' : 'border-line text-muted',
               )}
             >

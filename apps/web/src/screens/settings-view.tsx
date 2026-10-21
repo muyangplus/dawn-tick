@@ -171,12 +171,12 @@ export function SettingsView({
         className={cn('grid items-start gap-3', twoColumn && 'desktop:grid-cols-[2fr_1fr]')}
         data-role="settings-grid"
       >
-        <div className="flex min-w-0 flex-col gap-3" data-role="settings-main">
+        <div className="dt-stagger flex min-w-0 flex-col gap-3" data-role="settings-main">
           {mainCards.map(renderCard)}
         </div>
         {sideCards.length > 0 && (
           <aside
-            className="flex min-w-0 flex-col gap-3"
+            className="dt-stagger flex min-w-0 flex-col gap-3"
             data-role="settings-side"
             aria-label="设置侧栏"
           >
