@@ -5,6 +5,7 @@ import {
   THEME_PRESETS,
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
+  WIDGET_VARIANT_LABEL,
   WIDGET_VARIANTS,
   type AppSettings,
   type MotionMode,
@@ -63,13 +64,6 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   light: '浅色',
   dark: '深色',
   transparent: '透明',
-};
-
-const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
-  bar: '紧凑条：下一节课 + 倒计时',
-  today: '今日课表：今天的课，当前课高亮',
-  minimal: '极简数字：只显示大号倒计时',
-  combo: '组合卡：下一节课 + 待办作业',
 };
 
 export interface AppearanceCardProps {

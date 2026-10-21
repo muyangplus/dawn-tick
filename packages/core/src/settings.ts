@@ -5,8 +5,16 @@ export type ThemeMode = 'light' | 'dark' | 'system';
 export type ThemePreset = 'vivid' | 'fresh' | 'mono' | 'muted';
 export type WidgetBackground = 'light' | 'dark' | 'transparent';
 /** Windows 悬浮窗样式 */
-export type WidgetVariant = 'bar' | 'today' | 'minimal' | 'combo';
-export const WIDGET_VARIANTS: readonly WidgetVariant[] = ['bar', 'today', 'minimal', 'combo'];
+export type WidgetVariant = 'bar' | 'today' | 'minimal' | 'combo' | 'exam';
+export const WIDGET_VARIANTS: readonly WidgetVariant[] = ['bar', 'today', 'minimal', 'combo', 'exam'];
+/** 悬浮窗样式选择器的中文名；新增样式时只改这里，设置页与测试同源。 */
+export const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
+  bar: '紧凑条：下一节课 + 倒计时',
+  today: '今日课表：今天的课，当前课高亮',
+  minimal: '极简数字：只显示大号倒计时',
+  combo: '组合卡：下一节课 + 待办作业',
+  exam: '考试倒计时：下一场考试 + 剩余天数',
+};
 
 export const THEME_PRESETS: readonly ThemePreset[] = ['vivid', 'fresh', 'mono', 'muted'];
 /** 周视图可显示的天数：1–7 天任意一天。 */
@@ -363,6 +371,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
     !(WIDGET_BACKGROUNDS as readonly string[]).includes(patch.widgetBackground)
   ) {
     throw new RangeError(`小组件背景只能是 ${WIDGET_BACKGROUNDS.join(' / ')}`);
+  }
+  if (
+    patch.widgetVariant !== undefined &&
+    !(WIDGET_VARIANTS as readonly string[]).includes(patch.widgetVariant)
+  ) {
+    throw new RangeError(`悬浮窗样式只能是 ${WIDGET_VARIANTS.join(' / ')}`);
   }
 
   if (patch.timeZone !== undefined) await storage.writeMeta(KEYS.timeZone, patch.timeZone);

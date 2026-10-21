@@ -27,14 +27,64 @@ const MAX_ROWS: u32 = 32;
 /// 尺寸记忆的 app_meta 键：与主窗口几何（`window_geometry`）同表、同一套读写函数。
 const WIDGET_GEOMETRY_KEY: &str = "widget_geometry";
 
+/// 一种悬浮窗样式的静态规格：默认尺寸与缺省内容行数。
+struct VariantSpec {
+    variant: &'static str,
+    width: f64,
+    height: f64,
+    /// 前端没传行数时按这个行数估算内容高度；`None` 表示高度固定、不随行数变化。
+    default_rows: Option<u32>,
+}
+
+/// 样式表：新增样式只加一行，默认尺寸与缺省行数都收在这里，避免写死 if 链。
+const VARIANTS: &[VariantSpec] = &[
+    VariantSpec {
+        variant: "bar",
+        width: 240.0,
+        height: 104.0,
+        default_rows: Some(DEFAULT_ROWS),
+    },
+    VariantSpec {
+        variant: "today",
+        width: 268.0,
+        height: 236.0,
+        default_rows: Some(DEFAULT_ROWS),
+    },
+    VariantSpec {
+        variant: "minimal",
+        width: 196.0,
+        height: 68.0,
+        default_rows: None,
+    },
+    VariantSpec {
+        variant: "combo",
+        width: 288.0,
+        height: 268.0,
+        default_rows: Some(DEFAULT_ROWS),
+    },
+    // 考试倒计时：窄条，考试名 + 倒计时/日期两行
+    VariantSpec {
+        variant: "exam",
+        width: 240.0,
+        height: 96.0,
+        default_rows: Some(2),
+    },
+];
+
+/// 未知样式统一回退到表首项 bar。
+const DEFAULT_VARIANT: &str = "bar";
+
+fn variant_spec(variant: &str) -> &'static VariantSpec {
+    VARIANTS
+        .iter()
+        .find(|spec| spec.variant == variant)
+        .unwrap_or(&VARIANTS[0])
+}
+
 /// 各样式按内容的默认尺寸（逻辑像素）：没有记住尺寸时用它。
 pub fn widget_size(variant: &str) -> (f64, f64) {
-    match variant {
-        "today" => (268.0, 236.0),
-        "minimal" => (196.0, 68.0),
-        "combo" => (288.0, 268.0),
-        _ => (240.0, 104.0),
-    }
+    let spec = variant_spec(variant);
+    (spec.width, spec.height)
 }
 
 /// 尺寸（逻辑像素）。落盘形态固定为 `width` / `height` 两个数字。
@@ -112,15 +162,14 @@ pub fn clamp_widget_size(width: f64, height: f64, screen_height: Option<f64>) ->
 }
 
 /// 按行数估算内容高度（逻辑像素）：头部 + 上下留白 + 行高 × 行数。
-/// `minimal` 只有一行大数字，行数不影响高度；行数缺省 3，最多按 32 行算。
+/// 行数缺省时用该样式的 `default_rows`；`minimal` 高度固定，行数不影响高度；最多按 32 行算。
 pub fn content_height(variant: &str, rows: Option<u32>) -> f64 {
-    match variant {
-        "minimal" => widget_size("minimal").1,
-        _ => {
-            let rows = rows.unwrap_or(DEFAULT_ROWS).min(MAX_ROWS);
-            HEADER_HEIGHT + BODY_PADDING + ROW_HEIGHT * rows as f64
-        }
-    }
+    let spec = variant_spec(variant);
+    let Some(default_rows) = spec.default_rows else {
+        return spec.height;
+    };
+    let rows = rows.unwrap_or(default_rows).min(MAX_ROWS);
+    HEADER_HEIGHT + BODY_PADDING + ROW_HEIGHT * rows as f64
 }
 
 /// 组装布局结果：夹取 + 取整 + 标记来源与被夹取状态。
@@ -276,7 +325,7 @@ pub(crate) fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow
     if let Some(window) = app.get_webview_window("mini") {
         return Some(window);
     }
-    let (width, height) = widget_size("bar");
+    let (width, height) = widget_size(DEFAULT_VARIANT);
     let built = WebviewWindowBuilder::new(app, "mini", WebviewUrl::App("mini.html".into()))
         .title("晓刻 DawnTick · 悬浮窗")
         .inner_size(width, height)
@@ -315,7 +364,7 @@ fn variant_key(variant: Option<String>) -> String {
     variant
         .map(|text| text.trim().to_string())
         .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| "bar".to_string())
+        .unwrap_or_else(|| DEFAULT_VARIANT.to_string())
 }
 
 /// 按内容调整悬浮窗高度（并沿用当前/记忆的宽度），不写入记忆、不显示窗口。
@@ -441,8 +490,27 @@ mod tests {
         assert_eq!(widget_size("today"), (268.0, 236.0));
         assert_eq!(widget_size("minimal"), (196.0, 68.0));
         assert_eq!(widget_size("combo"), (288.0, 268.0));
+        // 考试倒计时：窄条
+        assert_eq!(widget_size("exam"), (240.0, 96.0));
         // 未知样式按 bar 处理
         assert_eq!(widget_size("nope"), (240.0, 104.0));
+    }
+
+    #[test]
+    fn exam_variant_uses_two_rows_with_one_row_empty_state() {
+        // 考试名 + 倒计时/日期两行：36 + 12 + 26 × 2
+        assert_eq!(content_height("exam", Some(2)), 100.0);
+        // 前端没传行数时按样式表里的 2 行兜底
+        assert_eq!(content_height("exam", None), 100.0);
+        // 无考试空态一行
+        assert_eq!(content_height("exam", Some(1)), 74.0);
+        // 默认布局同样走样式表（show_widget 首次显示的口径）
+        let layout = remembered_layout("exam", None, Some(1080.0));
+        assert_eq!((layout.width, layout.height), (240.0, 96.0));
+        assert_eq!(layout.source, "default");
+        // 未知样式继续按 bar 的尺寸与行数口径
+        assert_eq!(widget_size("unknown"), widget_size("bar"));
+        assert_eq!(content_height("unknown", Some(2)), content_height("bar", Some(2)));
     }
 
     #[test]
