@@ -38,6 +38,13 @@ import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
 import { setStorageOpenerForTests } from '../src/db/platform.ts';
 import {
+  ACTION_LABEL,
+  isReminderSuppressed,
+  planReminderAction,
+  reminderActionIds,
+  takeDue,
+} from '../src/lib/reminder-actions.ts';
+import {
   PRESET_CONTENT_META_KEY,
   PRESET_SNAPSHOT_META_KEY,
   PRESET_SNAPSHOT_URL,
@@ -702,6 +709,66 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const check = (name: string, ok: boolean, detail = ''): void => {
     results.push({ name, ok, detail });
   };
+
+  // R-07：提醒动作纯逻辑桩（不动原生桥）。三类代表提醒：课前（课程）、作业、考试。
+  const actionNow = Date.now();
+  const classReminder = { id: 'class-1', kind: 'class' as const, targetId: 'course-1', triggerAt: actionNow };
+  const homeworkReminder = { id: 'homework-1', kind: 'homework' as const, targetId: 'event-9', triggerAt: actionNow };
+  const examReminder = { id: 'exam-1', kind: 'exam' as const, targetId: 'event-10', triggerAt: actionNow };
+  const classLabels = reminderActionIds('class').map((id) => ACTION_LABEL[id]).join(' / ');
+  check(
+    'R-07 课前提醒动作集合：贪睡 / 勿扰，没有完成',
+    classLabels === `${ACTION_LABEL.snooze} / ${ACTION_LABEL.mute}` &&
+      !reminderActionIds('class').includes('done'),
+    classLabels,
+  );
+  const eventLabels = reminderActionIds('homework').map((id) => ACTION_LABEL[id]).join(' / ');
+  const eventKinds = ['todo', 'homework', 'exam', 'lab'] as const;
+  check(
+    'R-07 日程提醒动作集合：待办/作业/考试/实验都有完成',
+    eventLabels === `${ACTION_LABEL.snooze} / ${ACTION_LABEL.done} / ${ACTION_LABEL.mute}` &&
+      eventKinds.every((kind) => reminderActionIds(kind).includes('done')),
+    eventLabels,
+  );
+
+  const snoozePlan = planReminderAction(homeworkReminder, 'snooze', actionNow, 'Asia/Shanghai');
+  const snoozeAt = snoozePlan?.action === 'snooze' ? snoozePlan.triggerAt : 0;
+  const snoozedItem = { ...homeworkReminder, triggerAt: snoozeAt };
+  check(
+    'R-07 贪睡 10 分钟后同一提醒再次投递',
+    snoozePlan?.action === 'snooze' &&
+      snoozeAt === actionNow + 10 * 60_000 &&
+      takeDue([snoozedItem], actionNow + 9 * 60_000).due.length === 0 &&
+      takeDue([snoozedItem], actionNow + 10 * 60_000).due.length === 1,
+    `next=${new Date(snoozeAt).toISOString()}`,
+  );
+
+  const mutePlan = planReminderAction(classReminder, 'mute', actionNow, 'Asia/Shanghai');
+  const muteUntil = mutePlan?.action === 'mute' ? mutePlan.until : 0;
+  const muteState = { mutes: [{ targetId: 'course-1', until: muteUntil }], done: [] };
+  check(
+    'R-07 勿扰 1 小时只跳过当前条目窗口内的提醒',
+    mutePlan?.action === 'mute' &&
+      muteUntil === actionNow + 60 * 60_000 &&
+      isReminderSuppressed({ targetId: 'course-1', triggerAt: actionNow + 30 * 60_000 }, muteState) &&
+      !isReminderSuppressed({ targetId: 'course-1', triggerAt: muteUntil + 1 }, muteState) &&
+      !isReminderSuppressed({ targetId: 'course-2', triggerAt: actionNow + 30 * 60_000 }, muteState),
+    `until=${new Date(muteUntil).toISOString()}`,
+  );
+
+  const donePlan = planReminderAction(examReminder, 'done', actionNow, 'Asia/Shanghai');
+  const doneUntil = donePlan?.action === 'done' ? donePlan.suppressUntil : 0;
+  const doneState = { mutes: [], done: [{ targetId: 'event-10', until: doneUntil }] };
+  check(
+    'R-07 完成写回 events.done 且当天不再提醒',
+    donePlan?.action === 'done' &&
+      donePlan.write.eventId === 'event-10' &&
+      donePlan.write.fields.done === 1 &&
+      doneUntil > actionNow &&
+      isReminderSuppressed({ targetId: 'event-10', triggerAt: doneUntil - 1 }, doneState) &&
+      !isReminderSuppressed({ targetId: 'event-10', triggerAt: doneUntil }, doneState),
+    `suppressUntil=${new Date(doneUntil).toISOString()}`,
+  );
 
   const empty = mount(<App />);
   await flush(10);

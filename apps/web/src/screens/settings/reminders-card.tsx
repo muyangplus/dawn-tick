@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { formatDateTime, type AppSettings } from '@dawn-tick/core';
-import { isAndroidApp } from '../../lib/capabilities.ts';
+import { isAndroidApp, isDesktopApp } from '../../lib/capabilities.ts';
+import { ACTION_LABEL } from '../../lib/reminder-actions.ts';
 import {
   isIgnoringBatteryOptimizations,
   requestIgnoreBatteryOptimizations,
@@ -172,6 +173,12 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
         接下来 7 天待提醒 {COUNT('reminder', reminders.upcoming.length)}
         {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
       </span>
+      {(androidApp || isDesktopApp()) && (
+        <span className="text-xs text-muted" data-role="reminder-actions">
+          {androidApp ? '通知动作' : '托盘提醒动作'}：{ACTION_LABEL.snooze} · {ACTION_LABEL.mute}
+          ；待办/作业/考试/实验另有「{ACTION_LABEL.done}」；课前提醒没有「{ACTION_LABEL.done}」
+        </span>
+      )}
     </>
   );
 }

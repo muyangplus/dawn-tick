@@ -101,6 +101,23 @@
         <receiver
             android:name=".widget.WidgetPinResultReceiver"
             android:exported="false" />
+
+        <!-- R-07 提醒动作：闹钟到点投递提醒、通知按钮动作；都只由应用自己的 PendingIntent 触发 -->
+        <receiver
+            android:name=".reminder.ReminderAlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".reminder.ReminderActionReceiver"
+            android:exported="false" />
+        <!-- 开机/应用更新后 AlarmManager 闹钟会被清掉：重新排定持久化里的提醒 -->
+        <receiver
+            android:name=".reminder.ReminderBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Android 11+ 包可见性：判断「有没有浏览器能打开这个链接」必须声明，否则一律被判为打开失败 -->
