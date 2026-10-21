@@ -19,6 +19,8 @@ import {
   toBase64Utf8,
   updateSemester,
   validatedStorage,
+  WIDGET_VARIANT_LABEL,
+  WIDGET_VARIANTS,
   writeSettings,
 } from '@dawn-tick/core';
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
@@ -27,6 +29,7 @@ import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
+import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { toastSaved } from '../src/screens/settings/file-export.ts';
@@ -3036,7 +3039,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="假期倒计时"]') !== null,
     '',
   );
-  check('悬浮窗样式可选四种', view.container.querySelector('[aria-label="悬浮窗样式"]') !== null, '');
+  check(
+    '设置页悬浮窗样式含考试倒计时',
+    WIDGET_VARIANTS.length === 5 &&
+      WIDGET_VARIANTS.includes('exam') &&
+      WIDGET_VARIANT_LABEL.exam.includes('考试倒计时') &&
+      view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
+    `样式 ${WIDGET_VARIANTS.join(' / ')}`,
+  );
   check(
     '手机端小组件清单与引导只在 Android 出现',
     MOBILE_WIDGETS.length === 4 &&
@@ -4234,6 +4244,58 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(4);
   check('悬浮窗关闭按钮触发隐藏', hidden === 1, `隐藏 ${hidden} 次`);
   mini.root.unmount();
+
+  // —— 考试倒计时样式：用桩数据断言悬浮窗正文（最近一场 + 共 N 场 / 无考试空态） ——
+  const examNow = Date.parse('2026-10-18T18:30:00+08:00');
+  const examStub = [
+    { title: '大学英语四级', on_date: '2026-10-25', start_at: Date.parse('2026-10-25T09:00:00+08:00') },
+    { title: '高等数学期末', on_date: '2026-10-21', start_at: Date.parse('2026-10-21T09:00:00+08:00') },
+    { title: '已过期考试', on_date: '2026-10-01', start_at: Date.parse('2026-10-01T09:00:00+08:00') },
+  ];
+  const examMini = mount(
+    <MiniShell variant="exam" background="light" label="考试倒计时" onHide={() => {}}>
+      <ExamWidgetBody exams={examStub} now={examNow} timeZone="Asia/Shanghai" />
+    </MiniShell>,
+  );
+  await flush(4);
+  const examRoot = examMini.container.querySelector('main.mini');
+  const examTitle =
+    examMini.container.querySelector('[data-role="mini-exam-title"]')?.textContent?.trim() ?? '';
+  const examCountdown =
+    examMini.container.querySelector('[data-role="mini-exam-countdown"]')?.textContent?.trim() ?? '';
+  const examMeta =
+    examMini.container.querySelector('[data-role="mini-exam-meta"]')?.textContent?.trim() ?? '';
+  check(
+    '考试倒计时悬浮窗显示最近一场与总场数',
+    examRoot?.className.includes('mini-exam') === true &&
+      examTitle === '高等数学期末' &&
+      examCountdown === '还有 3 天' &&
+      examMeta.includes('10/21') &&
+      examMeta.includes('共 2 场'),
+    `标题=${examTitle || '(无)'} / ${examCountdown || '(无)'} / ${examMeta || '(无)'}`,
+  );
+  examMini.root.unmount();
+
+  const examEmpty = mount(
+    <MiniShell variant="exam" background="light" onHide={() => {}}>
+      <ExamWidgetBody exams={[]} now={examNow} timeZone="Asia/Shanghai" />
+    </MiniShell>,
+  );
+  await flush(4);
+  const examEmptyText =
+    examEmpty.container.querySelector('[data-role="mini-exam-empty"]')?.textContent?.trim() ?? '';
+  check('考试倒计时悬浮窗无考试时空态', examEmptyText === '暂无考试', examEmptyText || '(无)');
+  examEmpty.root.unmount();
+
+  const examStore = validatedStorage(await openIndexedDbStorage());
+  const examSaved = await writeSettings(examStore, { widgetVariant: 'exam' });
+  check(
+    '考试倒计时样式可切换并落库',
+    examSaved.widgetVariant === 'exam',
+    examSaved.widgetVariant,
+  );
+  // 还原，避免影响同一份库上后续的断言
+  await writeSettings(examStore, { widgetVariant: 'bar' });
 
   // —— 日志时间戳：与原生 startup.log 同一口径（本地时间 + 偏移，毫秒） ——
   const sampleTime = formatLogTimestamp(Date.UTC(2026, 9, 13, 10, 1, 34, 123));
