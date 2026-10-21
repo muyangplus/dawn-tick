@@ -1,4 +1,5 @@
 import { dayStampUtc } from '../../lib/dates.ts';
+import { revealExportedFile, savedFileActions, shareExportedFile } from '../../lib/export-files.ts';
 import { clearLogs, logsText } from '../../log.ts';
 import { openLogDirectory, revealPath, saveTextFile } from '../../system-actions.ts';
 import { fail } from '../../copy/zh.ts';
@@ -32,11 +33,21 @@ export async function saveText(
 
 /**
  * 保存成功提示（I-12）：桌面端给出实际路径，并附「打开所在位置」按钮（调 `reveal_path`）；
+ * Android 的路径在应用缓存里，给出「分享」与「打开所在位置」（走 FileShare 插件）；
  * 浏览器下载没有本地路径，只提示结果，按钮不出现。
  */
 export function toastSaved(message: string, path: string | null): void {
   if (path === null) {
     toast.success(message);
+    return;
+  }
+  const actions = savedFileActions();
+  if (actions === 'android') {
+    toast.success(message, {
+      description: `已保存到 ${path}`,
+      action: { label: '分享', onClick: () => void shareSavedFile(path) },
+      cancel: { label: '打开所在位置', onClick: () => void revealSavedFile(path) },
+    });
     return;
   }
   toast.success(message, {
@@ -53,6 +64,18 @@ export function toastSaved(message: string, path: string | null): void {
 /** 「打开所在位置」失败时给可读提示；成功不再额外打扰。 */
 async function revealSavedPath(path: string): Promise<void> {
   if (await revealPath(path)) return;
+  toast.error(fail('打开所在位置', null, '请稍后重试，或手动到文件管理器里打开'));
+}
+
+/** Android「分享」失败时给可读提示；成功不再额外打扰。 */
+async function shareSavedFile(path: string): Promise<void> {
+  if (await shareExportedFile(path)) return;
+  toast.error(fail('分享文件', null, '请稍后重试，或到文件管理器里发送'));
+}
+
+/** Android「打开所在位置」失败时给可读提示。 */
+async function revealSavedFile(path: string): Promise<void> {
+  if (await revealExportedFile(path)) return;
   toast.error(fail('打开所在位置', null, '请稍后重试，或手动到文件管理器里打开'));
 }
 

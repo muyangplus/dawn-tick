@@ -1,7 +1,8 @@
 import { toBase64Bytes } from '@dawn-tick/core';
-import { isDesktopApp } from './lib/capabilities.ts';
+import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from './lib/plugins.ts';
+import { writeAndroidFile } from './lib/export-files.ts';
 import { logInfo, logWarn } from './log.ts';
 
 /** 插件接口定义已集中到 `lib/plugins.ts`，这里保留原导出路径供旧调用方使用。 */
@@ -230,6 +231,17 @@ export async function saveTextFile(
       return { ok: false, cancelled: false, path: null, error: message };
     }
   }
+  if (isAndroidApp()) {
+    try {
+      const path = await writeAndroidFile(name, content);
+      logInfo('export', '已写入文件', { path, bytes: content.length });
+      return { ok: true, cancelled: false, path, error: null };
+    } catch (cause: unknown) {
+      const message = nativeErrorMessage(cause);
+      logWarn('export', '写入文件失败', { name, message });
+      return { ok: false, cancelled: false, path: null, error: message };
+    }
+  }
   try {
     downloadInBrowser(name, content);
     logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
@@ -279,6 +291,17 @@ export async function saveBinaryFile(
         base64: toBase64Bytes(content),
       });
       if (path === undefined) throw new Error('当前平台不支持写入文件');
+      logInfo('export', '已写入二进制文件', { path, bytes: content.length });
+      return { ok: true, cancelled: false, path, error: null };
+    } catch (cause: unknown) {
+      const message = nativeErrorMessage(cause);
+      logWarn('export', '写入二进制文件失败', { name, message });
+      return { ok: false, cancelled: false, path: null, error: message };
+    }
+  }
+  if (isAndroidApp()) {
+    try {
+      const path = await writeAndroidFile(name, content);
       logInfo('export', '已写入二进制文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
