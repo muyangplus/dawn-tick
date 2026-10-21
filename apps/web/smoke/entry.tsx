@@ -2323,9 +2323,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   const devicesActions = view.container.querySelector<HTMLElement>('[data-role="devices-actions"]');
   check(
-    '设备页顶部提供导出备份、恢复快照与检查更新',
+    '设备页顶部提供导出备份、导出课表（ICS）、恢复快照与检查更新',
     devicesActions !== null &&
-      ['导出备份', '恢复快照', '检查更新'].every((label) =>
+      ['导出备份', '导出课表（ICS）', '恢复快照', '检查更新'].every((label) =>
         (devicesActions.textContent ?? '').includes(label),
       ),
     (devicesActions?.textContent ?? '(无)').trim(),
@@ -3481,12 +3481,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   // —— I-12：导出成功显示保存路径，并可「打开所在位置」（桌面端用 Tauri 桩） ——
   const tauriCalls: string[] = [];
+  const writtenFiles: Array<{ path: string; content: string }> = [];
+  let lastSaveOptions: Record<string, unknown> | null = null;
   const stubSavePath = 'C:\\Users\\tester\\DawnTick-backup-2026-10-21.json';
   const tauriInternals = {
     invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
       tauriCalls.push(command);
-      if (command === 'plugin:dialog|save') return stubSavePath;
-      if (command === 'write_text_file' || command === 'reveal_path') return String(args?.path ?? '');
+      if (command === 'plugin:dialog|save') {
+        lastSaveOptions = (args?.['options'] ?? null) as Record<string, unknown> | null;
+        return stubSavePath;
+      }
+      if (command === 'write_text_file') {
+        writtenFiles.push({
+          path: String(args?.['path'] ?? ''),
+          content: String(args?.['content'] ?? ''),
+        });
+        return String(args?.['path'] ?? '');
+      }
+      if (command === 'reveal_path') return String(args?.['path'] ?? '');
       return undefined;
     },
     transformCallback: () => 0,
@@ -3531,6 +3543,53 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '「打开所在位置」调用 reveal_path',
     tauriCalls.includes('reveal_path'),
     `原生调用：${[...new Set(tauriCalls)].join('、')}`,
+  );
+
+  // —— R-01：设备页导出课表（ICS） ——
+  const icsEntry = clickByText(view.container, '导出课表（ICS）');
+  await flush(16);
+  const icsDialog = document.querySelector<HTMLElement>('[data-role="ics-export-dialog"]');
+  const icsDialogText = icsDialog?.textContent ?? '';
+  const icsLessonBox = document.querySelector<HTMLInputElement>('input[aria-label="导出 课表"]');
+  const icsEventBox = document.querySelector<HTMLInputElement>('input[aria-label="导出 日程"]');
+  check(
+    '设备页导出课表（ICS）入口按 Q17 展示学期与模块勾选',
+    icsEntry &&
+      icsDialog !== null &&
+      icsDialogText.includes('2026-2027 第一学期') &&
+      /课程 \d+ 门/.test(icsDialogText) &&
+      /排课 \d+ 条/.test(icsDialogText) &&
+      icsLessonBox?.checked === true &&
+      icsLessonBox?.disabled === true &&
+      icsEventBox?.checked === false &&
+      icsEventBox?.disabled === false &&
+      icsDialogText.includes('停课不导出'),
+    `入口=${icsEntry} 对话框=${icsDialog === null ? '无' : '有'} 课表=${
+      icsLessonBox?.checked === true ? '已选' : '未选'
+    } 日程=${icsEventBox?.checked === true ? '已选' : '未选'}`,
+  );
+  // 勾选日程后导出：写入 .ics，沿用「已保存到路径」toast
+  icsEventBox?.click();
+  await flush(8);
+  const icsSubmitted = clickByText(document.body, '导出');
+  await flush(24);
+  const icsFile = [...writtenFiles].reverse().find((item) => item.content.includes('BEGIN:VCALENDAR'));
+  const icsToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+    (item.textContent ?? '').includes('已导出课表（ICS'),
+  );
+  const icsDefaultPath = String(lastSaveOptions?.['defaultPath'] ?? '');
+  check(
+    '勾选日程后导出课表（ICS）写入 .ics 并提示保存路径',
+    icsSubmitted &&
+      icsFile !== undefined &&
+      icsFile.content.includes('SUMMARY:高等数学') &&
+      icsFile.content.includes('SUMMARY:组会') &&
+      /^DawnTick-2026-2027 第一学期-\d{4}-\d{2}-\d{2}\.ics$/.test(icsDefaultPath) &&
+      icsToast !== undefined &&
+      (icsToast.textContent ?? '').includes(stubSavePath),
+    `文件名=${icsDefaultPath || '(无)'} 内容=${icsFile === undefined ? '无' : '已写入'} 提示=${
+      icsToast?.textContent?.trim() ?? '(无)'
+    }`,
   );
   clearTauriStub();
   // 没有原生（浏览器下载）时没有本地路径：提示里不出现「打开所在位置」按钮

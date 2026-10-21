@@ -18,8 +18,13 @@ export async function saveText(
   content: string,
   extension: string,
   filterName: string,
+  mime?: string,
 ): Promise<SavedTextResult> {
-  const result = await saveTextFile(name, content, { extension, filterName });
+  const result = await saveTextFile(
+    name,
+    content,
+    mime === undefined ? { extension, filterName } : { extension, filterName, mime },
+  );
   if (result.cancelled) {
     toast.info('已取消保存');
     return { saved: false, path: null };

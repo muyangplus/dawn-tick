@@ -207,7 +207,7 @@ export interface SaveTextResult {
 export async function saveTextFile(
   name: string,
   content: string,
-  options: { filterName?: string; extension?: string } = {},
+  options: { filterName?: string; extension?: string; mime?: string } = {},
 ): Promise<SaveTextResult> {
   const extension = options.extension ?? 'txt';
   if (isDesktopApp()) {
@@ -243,7 +243,7 @@ export async function saveTextFile(
     }
   }
   try {
-    downloadInBrowser(name, content);
+    downloadInBrowser(name, content, options.mime);
     logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
