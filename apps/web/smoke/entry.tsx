@@ -4209,6 +4209,27 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       mini.container.querySelector('.mini-title')?.getAttribute('data-tauri-drag-region') === null,
     `拖动区=${miniRoot?.getAttribute('data-tauri-drag-region') ?? '(无)'}`,
   );
+  check(
+    '悬浮窗默认背景挂浅色类名',
+    miniRoot?.classList.contains('mini-bg-light') === true &&
+      miniRoot.getAttribute('data-background') === 'light',
+    `${miniRoot?.className ?? '(无)'}`,
+  );
+  const miniDark = mount(
+    <MiniShell variant="today" background="dark" onHide={() => {}}>
+      <div className="mini-empty">暂无课程</div>
+    </MiniShell>,
+  );
+  await flush(2);
+  const miniDarkRoot = miniDark.container.querySelector('main.mini');
+  check(
+    '悬浮窗背景设置映射为 mini-bg-* 类名',
+    miniDarkRoot?.classList.contains('mini-bg-dark') === true &&
+      miniDarkRoot.getAttribute('data-background') === 'dark' &&
+      miniDarkRoot.classList.contains('mini-today'),
+    `${miniDarkRoot?.className ?? '(无)'}`,
+  );
+  miniDark.root.unmount();
   const miniOpen = mini.container.querySelector<HTMLElement>('button.mini-open');
   check(
     '悬浮窗标题栏有「打开」且不占用拖动区',
