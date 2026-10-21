@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
-import { addDays, dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
+import { dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
@@ -14,12 +14,18 @@ import {
   LONG_PRESS_MS,
   MOVE_TOLERANCE,
   SUPPRESS_SLOT_CLICK_MS,
+  beginLessonPress,
   bodyRangeOf,
   clashLabel,
   dragRows,
   emptyDragEdgeOf,
   firstClash,
+  lessonDraggable,
+  lessonDropChanged,
   lessonDropPeriod,
+  lessonLongPress,
+  lessonPressMove,
+  lessonTouchAction,
   periodAt,
   resizeEmptyRange,
   stepEmptyRange,
@@ -27,11 +33,13 @@ import {
   type EmptyDragMode,
   type EmptyDragState,
   type EmptyTarget,
+  type LessonPress,
 } from './timetable/drag-session.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
+import { isHolidayRunStart, lessonsOf, measureCards, occupied } from './timetable/week-grid-helpers.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
 import { weekEmptyKind } from '../lib/week-empty.ts';
-import { ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, nextRowHeight, rowHeightFor, type CardMeasurement } from '../lib/row-height.ts';
+import { ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, nextRowHeight, rowHeightFor } from '../lib/row-height.ts';
 import { logDebug, logWarn } from '../log.ts';
 
 /** 同一宽度下最多连调两次行高：滚动条出现/消失会让宽度抖动，再调就会来回跳。 */
@@ -47,22 +55,6 @@ const TAP_AREA =
 const WHEEL_TAP_AREA =
   "relative after:absolute after:content-[''] after:-top-7 after:bottom-0 after:-left-1 after:-right-1";
 
-/** 多天假期第一天：当天放假且前一天不放假。 */
-/** 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。 */
-function isHolidayRunStart(data: AppData, date: string): boolean {
-  if (!data.holidayLabels.has(date)) return false;
-  return !data.holidayLabels.has(addDays(date, -1));
-}
-
-/** 连堂与「停课」等占多节的条目：节次落在其覆盖范围内即算该格被占用。 */
-function occupied(data: AppData, date: string, period: number): boolean {
-  for (let current = period; current >= 1; current -= 1) {
-    const cells = data.grid.get(`${date}:${current}`) ?? [];
-    if (cells.some((cell) => period >= current && period <= Math.max(cell.periodStart, cell.periodEnd))) return true;
-  }
-  return false;
-}
-
 interface DragState {
   cell: LessonCell;
   date: string;
@@ -71,13 +63,10 @@ interface DragState {
   y: number;
 }
 
-interface DragSession {
-  pointerId: number;
+/** 拖动中的课次会话：纯状态在 drag-session，按时器与捕获节点留在视图。 */
+interface LessonDragSession extends LessonPress {
   lesson: LessonCell;
-  startX: number;
-  startY: number;
   timer: number;
-  active: boolean;
   /** 长按生效后接收指针事件的卡片节点：指针移出卡片后事件仍可达 */
   element: HTMLElement | null;
 }
@@ -109,26 +98,6 @@ export interface WeekViewProps {
   compact: boolean;
 }
 
-function lessonsOf(data: AppData): LessonCell[] {
-  const out: LessonCell[] = [];
-  for (const list of data.grid.values()) out.push(...list);
-  return out;
-}
-
-/** 量一次课表卡片：卡片内容高度 + 它占几节，交给行高换算。 */
-function measureCards(): CardMeasurement[] {
-  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]')).filter(
-    (card) => card.closest('[data-role="drag-ghost"]') === null && card.closest('[data-custom-time]') === null,
-  );
-  return cards.map((card) => {
-    const cell = card.closest<HTMLElement>('[data-role="lesson-cell"]');
-    return {
-      span: Number(cell?.dataset.span ?? '0'),
-      contentHeight: card.scrollHeight,
-    };
-  });
-}
-
 export function WeekView({
   data,
   showOtherWeeks,
@@ -153,7 +122,7 @@ export function WeekView({
   const adjustCount = useRef(0);
   const adjustStart = useRef(0);
   const touchStart = useRef<number | null>(null);
-  const session = useRef<DragSession | null>(null);
+  const session = useRef<LessonDragSession | null>(null);
   const suppressNextClick = useRef(false);
   const columns = useRef(new Map<string, HTMLElement>());
   const dropRef = useRef<{ date: string; period: number } | null>(null);
@@ -519,7 +488,9 @@ export function WeekView({
     session.current = null;
   }
 
-  function releaseCapture(active: DragSession): void {
+  function releaseCapture(active: LessonDragSession): void {
+    if (!active.captured) return;
+    active.captured = false;
     try {
       active.element?.releasePointerCapture(active.pointerId);
     } catch {
@@ -527,37 +498,42 @@ export function WeekView({
     }
   }
 
-  /** 长按 350ms 后进入拖动；未达时长前抬手仍是单击（打开课程详情）。停课的课次不参与拖动。 */
+  /** 长按生效（或鼠标拖起来）：把这次课次挂到拖动鬼影上，落点按按下位置算。 */
+  function startLessonDrag(active: LessonDragSession, x: number, y: number): void {
+    active.active = true;
+    dropRef.current = targetCellOf(x, y);
+    setDrag({
+      cell: active.lesson,
+      date: dropRef.current?.date ?? active.lesson.date,
+      period: dropRef.current?.period ?? active.lesson.periodStart,
+      x,
+      y,
+    });
+  }
+
+  /**
+   * 课次卡片的拖动入口：触屏长按 350ms，鼠标/触控笔越过抖动阈值即可拖；
+   * 指针捕获推迟到真正移动之后（先让滚动与单击优先）。停课等不参与拖动的卡片直接跳过。
+   */
   function onLessonPointerDown(event: React.PointerEvent<HTMLDivElement>, lesson: LessonCell): void {
     // 每次按下都先复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次单击
     suppressNextClick.current = false;
-    if (event.button !== 0 || !lesson.inWeek || lesson.cancelled || lesson.movedOut || lesson.movedIn) return;
+    if (event.button !== 0 || !lessonDraggable(lesson)) return;
     clearSession();
-    const active: DragSession = {
-      pointerId: event.pointerId,
+    const active: LessonDragSession = {
+      ...beginLessonPress({
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        x: event.clientX,
+        y: event.clientY,
+      }),
       lesson,
-      startX: event.clientX,
-      startY: event.clientY,
       timer: 0,
-      active: false,
       element: event.currentTarget,
     };
     active.timer = window.setTimeout(() => {
-      if (session.current !== active) return;
-      active.active = true;
-      try {
-        active.element?.setPointerCapture(active.pointerId);
-      } catch {
-        // 某些环境（jsdom 等）不支持指针捕获，退化为普通事件流
-      }
-      dropRef.current = targetCellOf(active.startX, active.startY);
-      setDrag({
-        cell: lesson,
-        date: dropRef.current?.date ?? lesson.date,
-        period: dropRef.current?.period ?? lesson.periodStart,
-        x: active.startX,
-        y: active.startY,
-      });
+      if (session.current !== active || !lessonLongPress(active)) return;
+      startLessonDrag(active, active.startX, active.startY);
     }, LONG_PRESS_MS);
     session.current = active;
   }
@@ -565,11 +541,24 @@ export function WeekView({
   function onLessonPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
     const active = session.current;
     if (active === null || active.pointerId !== event.pointerId) return;
-    if (!active.active) {
-      const moved = Math.hypot(event.clientX - active.startX, event.clientY - active.startY);
-      if (moved > MOVE_TOLERANCE) clearSession();
+    const step = lessonPressMove(active, event.clientX, event.clientY);
+    if (step.outcome === 'cancel') {
+      clearSession();
       return;
     }
+    if (step.outcome === 'activate') {
+      window.clearTimeout(active.timer);
+      startLessonDrag(active, event.clientX, event.clientY);
+    }
+    if (step.capture && !active.captured) {
+      active.captured = true;
+      try {
+        active.element?.setPointerCapture(active.pointerId);
+      } catch {
+        // 某些环境（jsdom 等）不支持指针捕获，退化为普通事件流
+      }
+    }
+    if (!active.active) return;
     event.preventDefault();
     const drop = targetCellOf(event.clientX, event.clientY);
     dropRef.current = drop;
@@ -600,7 +589,7 @@ export function WeekView({
     dropRef.current = null;
     if (drop === null || periodCount === 0) return;
     // 落回原处（同一天同一节）不算调整
-    if (drop.date === lesson.date && drop.period === lesson.periodStart) return;
+    if (!lessonDropChanged(lesson, drop.date, drop.period)) return;
     onMoveLesson(lesson, drop.date, lessonDropPeriod(drop.period, lesson, periodCount));
   }
 
@@ -1029,7 +1018,8 @@ export function WeekView({
                       style={{
                         top: `${top}px`,
                         height: `${height}px`,
-                        ...(lesson.inWeek ? { touchAction: 'none' as const } : {}),
+                        // 可拖的卡片独占手势；停课/已调课/非本周只留纵向滚动，页面照常滚
+                        touchAction: lessonTouchAction(lesson),
                       }}
                       onPointerDown={(event) => onLessonPointerDown(event, lesson)}
                       onPointerMove={onLessonPointerMove}
@@ -1089,10 +1079,7 @@ export function WeekView({
                           }
                           onSelectLesson(lesson);
                         }}
-                        className={cn(
-                          'h-full',
-                          lesson.inWeek && !lesson.cancelled && !lesson.movedOut && !lesson.movedIn && !lesson.lab && 'cursor-grab select-none',
-                        )}
+                        className={cn('h-full', lessonDraggable(lesson) && 'cursor-grab select-none')}
                       />
                     </div>
                     );

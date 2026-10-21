@@ -128,6 +128,85 @@ export function lessonDropPeriod(dropPeriod: number, lesson: LessonCell, periodC
   return Math.min(periodCount - span + 1, Math.max(1, dropPeriod));
 }
 
+/** 课次卡片是否参与拖动：本周的普通课程；停课、已调课、调课落点、实验与虚线课都不拖。 */
+export function lessonDraggable(
+  lesson: Pick<LessonCell, 'inWeek' | 'cancelled' | 'movedOut' | 'movedIn' | 'lab'>,
+): boolean {
+  return lesson.inWeek && !lesson.cancelled && !lesson.movedOut && !lesson.movedIn && !lesson.lab;
+}
+
+/**
+ * 卡片占用的触摸手势：只有可拖动的卡片才独占手势（none），
+ * 停课/已调课/非本周等不参与拖动的卡片一律留纵向滚动（pan-y），页面照常滚。
+ */
+export function lessonTouchAction(lesson: Parameters<typeof lessonDraggable>[0]): 'none' | 'pan-y' {
+  return lessonDraggable(lesson) ? 'none' : 'pan-y';
+}
+
+/**
+ * 课次卡片的一次按压：计时器、指针捕获节点由视图持有，
+ * 这里只记指针起点与阶段，判定都做成纯函数。
+ */
+export interface LessonPress {
+  pointerId: number;
+  /** 指针类型：touch 走长按，鼠标/触控笔移动越过阈值即拖 */
+  pointerType: string;
+  startX: number;
+  startY: number;
+  /** 长按生效（或鼠标越过阈值）后进入拖动 */
+  active: boolean;
+  /** 已请求过指针捕获：只在真正移动越过阈值后做一次 */
+  captured: boolean;
+}
+
+/** 按下时建立按压状态：此时还不算拖动。 */
+export function beginLessonPress(input: {
+  pointerId: number;
+  pointerType: string | null | undefined;
+  x: number;
+  y: number;
+}): LessonPress {
+  return {
+    pointerId: input.pointerId,
+    // jsdom 等环境拿不到 pointerType 时按鼠标处理：移动即可拖，长按也仍然有效
+    pointerType: input.pointerType === 'touch' ? 'touch' : 'pointer',
+    startX: input.x,
+    startY: input.y,
+    active: false,
+    captured: false,
+  };
+}
+
+/** 长按计时器到点是否进入拖动：已经拖起来（鼠标抢先）就不再重复触发。 */
+export function lessonLongPress(press: LessonPress): boolean {
+  return !press.active;
+}
+
+export type LessonPressOutcome = 'ignore' | 'cancel' | 'activate';
+
+/**
+ * 长按期间的指针移动：
+ * - touch 移动越过抖动阈值 → 取消长按（这一下是滚动/滑动，不是按住拖动）；
+ * - 鼠标/触控笔移动越过阈值 → 立即进入拖动，不必等满长按时长（回归：新建课程「拖不动」）；
+ * - 已进入拖动后越过阈值 → 请求一次指针捕获，之后的移动不再依赖卡片节点。
+ */
+export function lessonPressMove(
+  press: LessonPress,
+  x: number,
+  y: number,
+): { outcome: LessonPressOutcome; capture: boolean } {
+  const moved = Math.hypot(x - press.startX, y - press.startY) > MOVE_TOLERANCE;
+  if (press.active) return { outcome: 'ignore', capture: !press.captured && moved };
+  if (!moved) return { outcome: 'ignore', capture: false };
+  if (press.pointerType === 'touch') return { outcome: 'cancel', capture: false };
+  return { outcome: 'activate', capture: true };
+}
+
+/** 落点是否真的换了位置：同一天同一节松手不算调整。 */
+export function lessonDropChanged(lesson: Pick<LessonCell, 'date' | 'periodStart'>, date: string, period: number): boolean {
+  return lesson.date !== date || lesson.periodStart !== period;
+}
+
 /** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
 export function clashingLessons(data: AppData, date: string, start: number, end: number): LessonCell[] {
   const out: LessonCell[] = [];
