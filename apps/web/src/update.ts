@@ -64,9 +64,16 @@ export interface UpdateStatus {
   manifest: UpdateManifest | null;
 }
 
+/**
+ * 提示里展示的渠道 = 这版发布本身的渠道：beta 预发布显示测试版，正式版显示正式版。
+ * 不能拿「接收测试版」开关或查询源推断——开关打开后查到更高的正式版时，仍应显示正式版。
+ */
+export function releaseChannelOf(status: Pick<UpdateStatus, 'feed' | 'manifest'>): UpdateChannel {
+  return status.manifest?.channel ?? status.feed;
+}
+
 /** 指定渠道下用户应该查询哪个源。 */
-export function resolveFeed(channel: UpdateChannel, receiveBeta: boolean): UpdateChannel {
-  if (channel === 'dev') return 'dev';
+export function resolveFeed(channel: UpdateChannel, receiveBeta: boolean): UpdateChannel {  if (channel === 'dev') return 'dev';
   if (channel === 'beta') return receiveBeta ? 'beta' : 'release';
   return receiveBeta ? 'beta' : 'release';
 }

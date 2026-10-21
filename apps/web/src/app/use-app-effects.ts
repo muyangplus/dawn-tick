@@ -13,6 +13,7 @@ import { CHANNEL, appVersion } from '../channel.ts';
 import type { AppData } from '../data.ts';
 import type { NoticeDismissOptions } from '../components/app-dialogs.tsx';
 import { NOTICE_BETA, NOTICE_DEV, RELEASES_URL } from '../components/app-dialogs.tsx';
+import { closeUpdatePrompt, requestUpdatePrompt, useUpdatePrompt } from '../components/update-prompt.ts';
 import { openExternalUrl } from '../system-actions.ts';
 
 function parseSeenNotices(value: unknown): string[] | null {
@@ -60,8 +61,8 @@ export function useAppEffects(input: {
   const { storage, screenStorage, settings, data } = input;
   /** 待展示的渠道提示（开发版频繁更新 / 测试版不稳定），按 id 记录已提示过 */
   const [notice, setNotice] = useState<string | null>(null);
-  /** 发现新版本时的更新信息弹窗 */
-  const [updateInfo, setUpdateInfo] = useState<UpdateStatus | null>(null);
+  /** 发现新版本时的更新信息弹窗：与设置页手动检查共用同一份数据源 */
+  const updateInfo = useUpdatePrompt();
   /** 递增触发一次额外的自动检查（切到测试版后） */
   const [checkTick, setCheckTick] = useState(0);
   /** 启动权限只申请一次，设置变化不再重复弹系统弹窗 */
@@ -128,8 +129,8 @@ export function useAppEffects(input: {
         currentVersion: appVersion(),
       });
       if (cancelled || !status.available) return;
-      // 检查到新版本：弹窗显示版本、渠道与发布说明
-      setUpdateInfo(status);
+      // 检查到严格更高的新版本：交给统一的更新弹窗（版本、渠道、当前版本与发布说明）
+      requestUpdatePrompt(status);
     })();
     return () => {
       cancelled = true;
@@ -218,7 +219,7 @@ export function useAppEffects(input: {
       const target = screenStorage;
       if (target !== null) void markNoticeSeen(target, id);
       if (options.openReleases === true) openExternalUrl(RELEASES_URL);
-      // 从公测版提示回来时自动检查一次更新（按钮路径不查，与原来一致）
+      // 从测试版提示回来时自动检查一次更新（按钮路径不查，与原来一致）
       if (id === NOTICE_BETA && options.recheck === true && settings.autoCheckUpdate) {
         autoChecked.current = false;
         setCheckTick((tick) => tick + 1);
@@ -228,7 +229,7 @@ export function useAppEffects(input: {
     [screenStorage, settings.autoCheckUpdate],
   );
 
-  const closeUpdate = useCallback(() => setUpdateInfo(null), []);
+  const closeUpdate = useCallback(() => closeUpdatePrompt(), []);
   const recheckUpdate = useCallback(() => {
     autoChecked.current = false;
     setCheckTick((tick) => tick + 1);

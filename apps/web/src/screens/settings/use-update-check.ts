@@ -4,7 +4,8 @@ import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { fail } from '../../copy/zh.ts';
 import { useAction } from '../../lib/action.ts';
-import { checkForUpdate, resolveReceiveBeta, verifyHint } from '../../update.ts';
+import { checkForUpdate, releaseChannelOf, resolveReceiveBeta, verifyHint } from '../../update.ts';
+import { requestUpdatePrompt } from '../../components/update-prompt.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 import type { StatusMessage } from '../../components/ui/status-line.tsx';
 import { said } from './format.ts';
@@ -44,11 +45,14 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
           return;
         }
         const manifest = status.manifest;
+        const channelLabel = CHANNEL_LABEL[releaseChannelOf(status)];
         const message = status.available
-          ? `发现新版本 ${status.latest}（${CHANNEL_LABEL[status.feed]}），可在发布页下载`
-          : `已是最新版本（${CHANNEL_LABEL[status.feed]}）`;
+          ? `发现新版本 ${status.latest}（${channelLabel}），可在发布页查看`
+          : `已是最新版本（${channelLabel}）`;
         setResult(said(message));
         toast.success(message);
+        // 手动检查与启动自检共用同一个更新弹窗：只在远端版本严格更高时打开
+        if (status.available) requestUpdatePrompt(status);
         logInfo('update', '检查更新', {
           feed: status.feed,
           current: status.current,
