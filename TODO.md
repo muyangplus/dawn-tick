@@ -96,7 +96,7 @@
 |---|---|---|---|
 | I-01 | 新版本判定错误：只在新版本 > 当前版本时提示；渠道标签取发布本身的渠道（`receiveBeta` 开关不参与显示） | `update.ts`、`app-dialogs.tsx`、`use-app-effects.ts`、`use-update-check.ts` | 已完成（`e08a63d`） |
 | I-02 | 更新弹窗统一（手动检查 = 启动检查）、正确渲染 Markdown、修「打开浏览器卡死 / 链接复制不了」 | `app-dialogs.tsx`、`channel.ts`、`ui/*` | 已完成（`e08a63d`） |
-| I-03 | 自动更新：三端自动下载 → 校验 → 安装前确认（Windows 跑安装包、Android 唤起安装器、Web 刷新提示） | `update.ts`、`lib/native.ts`、Rust 壳、Android 插件 | 待办 |
+| I-03 | 自动更新：三端自动下载 → 校验 → 安装前确认（Windows 跑安装包、Android 唤起安装器、Web 刷新提示） | `update.ts`、`lib/native.ts`、Rust 壳、Android 插件 | 进行中（分支 `task/i-03`） |
 | I-04 | 测试版打开开关时警告一次；开发版首次启动警告并引导装正式版；测试版/开发版不再显示黑框日志 | `channel.ts`、`app-dialogs.tsx`、Rust `set_dev_console` | 已完成（`3fe6cc3`） |
 | I-05 | 默认周视图改为 5 天、「今天为第一天」开、「始终不显示周末」开 | `packages/core/src/settings.ts` | 已完成（`23b8186`） |
 | I-06 | 时区显示 `(UTC+8)` 偏移，候选 = 常用列表 + 搜索全部 IANA | `settings/appearance-card.tsx`、新增时区数据模块 | 已完成（`23b8186`） |
@@ -107,8 +107,8 @@
 | I-11 | 调课支持把类型改为考试（生成考试条目/转换日程） | `adjust-dialog.tsx`、`move-controller.ts`、core `events` | 已完成（`61046b1`） |
 | I-12 | 导出数据后显示保存路径并可打开所在目录（Windows）/分享（Android） | `settings/file-export.ts`、`system-actions.ts`、Rust、Android | Windows 已完成（`b9de30d`）；Android 落盘随 I-03 批次 |
 | I-13 | 重构导入流程：讲清各渠道、窄屏体验、减少嵌套卡片 | `import-flow.tsx`、`screens/import/*` | 已完成（`6c9ddb5`） |
-| I-14 | 局域网同步一期：配对码 + 按范围（课表/待办/设置）互传，复用 `sync.ts` | 新模块 + Rust/Android 传输层 | 待办 |
-| I-15 | 动效与局部美化：页面/列表进入过渡、按钮与弹层微交互、间距与层级微调（不改整体布局与配色体系） | `styles.css`、`ui/*`、页面根节点 | 待办 |
+| I-14 | 局域网同步一期：配对码 + 按范围（课表/待办/设置）互传，复用 `sync.ts` | 新模块 + Rust/Android 传输层 | 已完成（`1750edb`，协议见 `apps/mobile/docs/lan-sync.contract.md`） |
+| I-15 | 动效与局部美化：页面/列表进入过渡、按钮与弹层微交互、间距与层级微调（不改整体布局与配色体系） | `styles.css`、`ui/*`、页面根节点 | 已完成（`9ea95e8`，令牌 120/160/220ms） |
 
 **边界（已确认，Q28–Q33）**
 - 自动更新：三端都自动下载，**安装前确认**；Windows 下载安装包并校验后弹「安装并重启」，Android 下载 APK 后唤起系统安装器，Web 只提示并刷新。
