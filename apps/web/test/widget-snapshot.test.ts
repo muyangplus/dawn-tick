@@ -269,10 +269,10 @@ test('Kotlin 渲染器优先快照色，缺失 colors 时回退常量', () => {
   assert.match(renderer, /parseColor\(colors\?\.ink\) \?: fallback\.ink/);
   assert.match(renderer, /parseColor\(colors\?\.muted\) \?: fallback\.muted/);
   assert.match(renderer, /parseColor\(colors\?\.accent\) \?: parseColor\(colors\?\.danger\) \?: fallback\.accent/);
-  assert.match(renderer, /val surface = parseColor\(colors\?\.surface\)/);
+  assert.match(renderer, /val surface = parseColor\(colors\?\.surface\) \?: fallback\.surface/);
   assert.match(renderer, /views\.setInt\(R\.id\.widget_surface, "setBackgroundColor", surface\)/);
-  // 旧快照没有 surface 时回退三态 drawable
-  assert.match(renderer, /views\.setBackgroundResource\(R\.id\.widget_surface, backgroundResource\(background\)\)/);
+  // RemoteViews 没有 setBackgroundResource：旧快照也走 setBackgroundColor + 回退色
+  assert.ok(!/views\.setBackgroundResource\(/.test(renderer), 'RemoteViews 不支持 setBackgroundResource');
   // 回退常量仍在
   for (const constant of [
     'INK_LIGHT',
@@ -281,6 +281,8 @@ test('Kotlin 渲染器优先快照色，缺失 colors 时回退常量', () => {
     'INK_DARK',
     'MUTED_DARK',
     'ACCENT_DARK',
+    'SURFACE_LIGHT',
+    'SURFACE_DARK',
   ]) {
     assert.ok(renderer.includes(constant), `缺少回退常量 ${constant}`);
   }
