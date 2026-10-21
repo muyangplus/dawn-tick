@@ -166,7 +166,8 @@ test('不显示周末时一周概览的快照不含周六日课程', () => {
   const hidden = buildWidgetSnapshot(data, { ...DEFAULT_SETTINGS, hideWeekends: true }, 1);
   assert.deepEqual([...new Set(hidden.grid.map((item) => item.dayOfWeek))].sort(), [1]);
 
-  const shown = buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1);
+  // 关掉「不显示周末」后周末课程照常进快照（默认值已改为开，这里显式关掉）
+  const shown = buildWidgetSnapshot(data, { ...DEFAULT_SETTINGS, hideWeekends: false }, 1);
   assert.equal(shown.grid.length, 3);
 });
 

@@ -105,9 +105,11 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   timeZone: DEFAULT_TIME_ZONE,
   autoTimeZone: false,
+  /** 新安装默认 5 天：一周工作日，列宽最宽；存量用户已落库的值不受影响 */
   viewDays: 5,
   weekStartsToday: true,
-  hideWeekends: false,
+  /** 新安装默认不显示周末；存量用户显式存过的 0/1 优先 */
+  hideWeekends: true,
   theme: 'system',
   themePreset: 'vivid',
   motion: 'system',

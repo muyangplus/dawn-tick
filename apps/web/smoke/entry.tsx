@@ -715,6 +715,27 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '知道了')) await flush(10);
   check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
+  // I-05：新装默认「今天为第一天」与「始终不显示周末」都开。冒烟固定时钟是周日，
+  // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
+  clickByText(view.container, '设置');
+  await flush(12);
+  const switchByAria = (label: string): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`);
+  check(
+    '新安装默认：今天为第一天、隐藏周末都开',
+    switchByAria('今天为第一天')?.getAttribute('aria-checked') === 'true' &&
+      switchByAria('始终不显示周末')?.getAttribute('aria-checked') === 'true',
+    `今天为第一天=${switchByAria('今天为第一天')?.getAttribute('aria-checked')} / 隐藏周末=${switchByAria('始终不显示周末')?.getAttribute('aria-checked')}`,
+  );
+  switchByAria('始终不显示周末')?.click();
+  await flush(16);
+  clickByText(view.container, '课表');
+  await flush(16);
+  check(
+    '关掉隐藏周末后周日列回到窗口',
+    view.container.querySelector(`[data-date="${todayText}"]`) !== null,
+    view.container.querySelector(`[data-date="${todayText}"]`) === null ? '仍无周日列' : '',
+  );
   const text = view.container.textContent ?? '';
   check('课表渲染课程', text.includes('高数'), text.slice(0, 80));
   const firstColumn = view.container.querySelector<HTMLElement>('[data-date]');
@@ -1895,6 +1916,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     helpButton !== null && helpBody !== null && (helpBody.textContent ?? '').includes('列宽按屏宽等分'),
     helpBody?.textContent?.trim() ?? '(未打开)',
   );
+  check(
+    '「?」浮层限宽且长词可断行，不溢出视口',
+    helpBody !== null &&
+      helpBody.className.includes('max-w-[min(20rem,calc(100vw-2rem))]') &&
+      helpBody.className.includes('break-words'),
+    helpBody?.className ?? '(未打开)',
+  );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
 
@@ -2499,18 +2527,40 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   await gotoSettings();
-  // 时区与待办排序都是选择列表
-  const zoneTrigger = view.container.querySelector('[aria-label="时区"]');
-  if (zoneTrigger instanceof window.HTMLElement) zoneTrigger.click();
+  // I-06：时区改为可搜索列表，常用候选带 UTC 偏移，输入即筛选全部 IANA 时区
+  const zoneTrigger = view.container.querySelector<HTMLInputElement>('[aria-label="时区"]');
+  zoneTrigger?.focus();
   await flush(10);
-  const zoneOptions = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
+  const zoneOptionsIn = (): string[] =>
+    [...document.querySelectorAll('[aria-label="时区候选"] [role="option"]')].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+  const zoneOptions = zoneOptionsIn();
   check(
-    '时区改为选择列表且默认上海',
-    zoneTrigger !== null && zoneOptions.includes('Asia/Shanghai') && zoneOptions.includes('UTC'),
-    `候选 ${zoneOptions.length} 项`,
+    '时区候选是可搜索列表且带 UTC 偏移',
+    zoneTrigger !== null &&
+      zoneOptions.some((item) => item.startsWith('Asia/Shanghai') && item.includes('(UTC+8)')) &&
+      zoneOptions.some((item) => item.startsWith('UTC') && item.includes('(UTC+0)')),
+    `候选 ${zoneOptions.length} 项：${zoneOptions.slice(0, 3).join(' / ')}`,
   );
-  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  await flush(6);
+  check(
+    '时区默认上海并显示为「Asia/Shanghai (UTC+8)」',
+    zoneTrigger?.placeholder === 'Asia/Shanghai (UTC+8)',
+    zoneTrigger?.placeholder ?? '(无)',
+  );
+  if (zoneTrigger !== null) {
+    setInputValue(zoneTrigger, 'kolkata');
+    await flush(10);
+    const searched = zoneOptionsIn();
+    check(
+      '时区搜索命中全部 IANA 时区（含别名 Asia/Kolkata）',
+      searched.some((item) => item.startsWith('Asia/Kolkata') && item.includes('(UTC+5:30)')),
+      searched.join(' / ') || '(无候选)',
+    );
+    setInputValue(zoneTrigger, '');
+    zoneTrigger.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(6);
+  }
   const sortTrigger = view.container.querySelector('[aria-label="待办排序"]');
   if (sortTrigger instanceof window.HTMLElement) sortTrigger.click();
   await flush(10);
@@ -2526,6 +2576,22 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
   // 应用诊断日志：开关 + 级别（dev 默认最详细）；日志区块随「更新与维护」在设备页
   await gotoDevices();
+  // I-08：WebDAV 地址旁的「?」与其它说明共用同一个浮层：限宽 + 断词，长 URL 不会横向溢出
+  const davHelp = view.container.querySelector<HTMLElement>('[aria-label="说明：WebDAV 地址"]');
+  davHelp?.click();
+  await flush(10);
+  const davHelpBody = document.querySelector('[data-role="help-body"]');
+  check(
+    'WebDAV 地址的「?」浮层限宽可断词',
+    davHelp !== null &&
+      davHelpBody !== null &&
+      davHelpBody.className.includes('max-w-[min(20rem,calc(100vw-2rem))]') &&
+      davHelpBody.className.includes('break-words') &&
+      (davHelpBody.textContent ?? '').includes('https://dav.example.com'),
+    (davHelpBody?.textContent ?? '(未打开)').slice(0, 40),
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
   const logBlock = view.container.querySelector('[data-role="log-settings"]');
   const logLevelTrigger = view.container.querySelector('[aria-label="日志级别"]');
   if (logLevelTrigger instanceof window.HTMLElement) logLevelTrigger.click();
@@ -2563,7 +2629,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const switchOf = (label: string): HTMLElement | null =>
     view.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`);
   check(
-    '课表视图开关默认：今天为第一天开、不显示周末关',
+    '课表视图开关与已保存设置一致：今天为第一天开、隐藏周末关',
     switchOf('今天为第一天')?.getAttribute('aria-checked') === 'true' &&
       switchOf('始终不显示周末')?.getAttribute('aria-checked') === 'false',
     `${switchOf('今天为第一天')?.getAttribute('aria-checked')} / ${switchOf('始终不显示周末')?.getAttribute('aria-checked')}`,

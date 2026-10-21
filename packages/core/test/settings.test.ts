@@ -26,21 +26,31 @@ test('周视图天数超出范围被拒绝', async () => {
   assert.equal((await readSettings(storage)).viewDays, DEFAULT_SETTINGS.viewDays);
 });
 
-test('课表视图开关：今天为第一天默认开、不显示周末默认关', async () => {
+test('课表视图开关：今天为第一天、不显示周末默认都开', async () => {
   const storage = createStorage();
   const defaults = await readSettings(storage);
   assert.equal(defaults.weekStartsToday, true);
-  assert.equal(defaults.hideWeekends, false);
+  assert.equal(defaults.hideWeekends, true);
 
-  const changed = await writeSettings(storage, { weekStartsToday: false, hideWeekends: true });
+  const changed = await writeSettings(storage, { weekStartsToday: false, hideWeekends: false });
   assert.equal(changed.weekStartsToday, false);
-  assert.equal(changed.hideWeekends, true);
+  assert.equal(changed.hideWeekends, false);
   assert.equal(await storage.readMeta('week_starts_today'), '0');
-  assert.equal(await storage.readMeta('hide_weekends'), '1');
+  assert.equal(await storage.readMeta('hide_weekends'), '0');
 
   const reloaded = await readSettings(storage);
   assert.equal(reloaded.weekStartsToday, false);
-  assert.equal(reloaded.hideWeekends, true);
+  assert.equal(reloaded.hideWeekends, false);
+});
+
+test('旧库缺少 hide_weekends 时按新默认（不显示周末开）读取', async () => {
+  const storage = createStorage();
+  // 只写旧版本已有的键：hide_weekends 缺失，模拟从旧版本升上来的库
+  await storage.writeMeta('view_days', '7');
+  await storage.writeMeta('week_starts_today', '1');
+  const settings = await readSettings(storage);
+  assert.equal(settings.hideWeekends, true, '缺失时跟随默认值，不落库也能读到新默认');
+  assert.equal(await storage.readMeta('hide_weekends'), undefined, '读取默认值不写库');
 });
 
 test('日志模式默认跟随存储位置，可手动开或关', async () => {
