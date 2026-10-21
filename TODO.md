@@ -120,18 +120,18 @@
 
 ## 3. 后续拓展（原 §4，5 条）
 
-### R-01 ICS 课表导出入口（待办，优先级最高）
+### R-01 ICS 课表导出入口（已完成 `faed587`/`5f82459`）
 
 - 目标：设备页加「导出课表（ICS）」，读当前学期课程与排课，调用 core 已有的 `exportIcs`（`packages/core/src/import/ics.ts`），用 `saveTextFile` 保存 `.ics`。
 - 口径：按 Q17 让用户勾选导出模块（课表必选，日程可选）；调课/放假/自定义时间是否写入 ICS 需先定。
 - 验收：导出后重新导入，课程/排课/周次与导出前一致；冒烟 +1；core 往返用例已有（`import-ics.test.ts`）。
 
-### R-03 Windows 悬浮窗增加考试倒计时样式（待办）
+### R-03 Windows 悬浮窗增加考试倒计时样式（已完成 `e643129`）
 
 - 目标：悬浮窗增加「最近考试倒计时」样式，复用 `widget-snapshot` 的考试数据与 `formatDayCountdown`。
 - 验收：悬浮窗可选该样式；无考试时给空态；设置页样式选择器同步。
 
-### R-04 主题预设联动悬浮窗与 Android 小组件（待办）
+### R-04 主题预设联动悬浮窗与 Android 小组件（已完成 `c0d6650`/`63226da`）
 
 - 现状：A-15 已让快照携带 `colors:{ink,muted,danger}`，Kotlin `applyTheme` 优先读快照色；悬浮窗仍用固定色。
 - 目标：悬浮窗按主题取色；Android 小组件背景/强调色跟随主题预设；`res/values/dimens.xml` 只保留尺寸。
