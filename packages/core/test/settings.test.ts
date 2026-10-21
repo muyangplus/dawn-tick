@@ -4,6 +4,8 @@ import {
   DEFAULT_SETTINGS,
   VIEW_DAY_OPTIONS,
   WAL_MODES,
+  WIDGET_VARIANT_LABEL,
+  WIDGET_VARIANTS,
   readSettings,
   writeSettings,
 } from '../src/settings.ts';
@@ -93,4 +95,34 @@ test('备份设置默认开、保留 10 份且范围受限', async () => {
   await assert.rejects(() => writeSettings(storage, { backupKeep: 0 }), /保留份数/);
   await assert.rejects(() => writeSettings(storage, { backupKeep: 101 }), /保留份数/);
   assert.equal((await readSettings(storage)).backupKeep, 3, '非法值不落库');
+});
+
+test('悬浮窗样式包含考试倒计时，默认仍是紧凑条', async () => {
+  assert.deepEqual([...WIDGET_VARIANTS], ['bar', 'today', 'minimal', 'combo', 'exam']);
+  assert.ok(WIDGET_VARIANT_LABEL.exam.includes('考试倒计时'));
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).widgetVariant, 'bar');
+});
+
+test('旧库悬浮窗样式读取兼容，未知值回退 bar', async () => {
+  const storage = createStorage();
+  // 旧版本已落库的四种样式原样保留
+  for (const variant of ['bar', 'today', 'minimal', 'combo'] as const) {
+    await storage.writeMeta('widget_variant', variant);
+    assert.equal((await readSettings(storage)).widgetVariant, variant);
+  }
+  // 新增样式可读写并持久化
+  const saved = await writeSettings(storage, { widgetVariant: 'exam' });
+  assert.equal(saved.widgetVariant, 'exam');
+  assert.equal(await storage.readMeta('widget_variant'), 'exam');
+  assert.equal((await readSettings(storage)).widgetVariant, 'exam');
+  // 未知值（旧库/未来版本写坏）回退 bar，不抛异常
+  await storage.writeMeta('widget_variant', 'exam-future');
+  assert.equal((await readSettings(storage)).widgetVariant, 'bar');
+  // 写入未知值被拒绝，库里的值保持不变
+  await assert.rejects(
+    () => writeSettings(storage, { widgetVariant: 'exam-future' as unknown as 'exam' }),
+    /悬浮窗样式/,
+  );
+  assert.equal(await storage.readMeta('widget_variant'), 'exam-future');
 });

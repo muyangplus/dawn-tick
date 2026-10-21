@@ -22,6 +22,8 @@ import { formatCountdown, formatRemaining } from '../lib/format.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
 import { canUseWidget, measureWidget, openMainWindow, watchWidgetResize } from '../widget-window.ts';
 import { MiniShell } from './shell.tsx';
+import { examWidgetView } from './exam.ts';
+import { ExamWidgetBody } from './exam.tsx';
 import { miniEmptyText, shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
 import '../styles.css';
 
@@ -154,6 +156,8 @@ function Mini() {
   const next = data?.nextLesson;
   const zone = data?.timeZone ?? 'UTC';
   const background = settings?.widgetBackground ?? 'light';
+  /** 考试倒计时样式：最近一场未过期考试 + 总场数（纯函数，冒烟可用桩数据断言） */
+  const examView = examWidgetView(data?.exams ?? [], now, zone);
   const hide = (): void => void hideWindow();
   // 悬浮窗是常用入口：双击整窗或点标题栏「打开」都能回主窗口
   const openMain = (): void => void openMainWindow();
@@ -209,6 +213,8 @@ function Mini() {
     if (variant === 'today') return Math.max(1, todayShown.length);
     // combo 上半区固定 3 行（标签 / 课程名 / 时间行）+ 待办区标签 1 行
     if (variant === 'combo') return 4 + Math.max(1, comboTasks.length);
+    // exam：考试名 1 行 + 倒计时/日期 1 行；没有考试时只有空态 1 行
+    if (variant === 'exam') return examView.next === null ? 1 : 2;
     // bar：课程名 + 时间行
     return 2;
   })();
@@ -261,6 +267,14 @@ function Mini() {
                 : next?.courseName ?? '暂无后续课程'}
           </span>
         </div>
+      </MiniShell>
+    );
+  }
+
+  if (variant === 'exam') {
+    return (
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label="考试倒计时" background={background}>
+        <ExamWidgetBody exams={data?.exams ?? []} now={now} timeZone={zone} />
       </MiniShell>
     );
   }
