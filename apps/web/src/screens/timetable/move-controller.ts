@@ -3,6 +3,7 @@ import {
   createEvent,
   createReschedule,
   createSchedule,
+  dateWallClockToEpoch,
   dayOfWeek,
   rangesOverlap,
   updateSchedule,
@@ -12,14 +13,15 @@ import {
   type ManagedSchedule,
   type SemesterRow,
   type Storage,
+  type TimeSlotRow,
 } from '@dawn-tick/core';
 import { dayRangeOf, type DayRange } from '../../lib/day-nav.ts';
 import { weekDateOf } from '../../data.ts';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** 调课弹窗的四个主操作。 */
-export type AdjustMode = 'move' | 'cancel' | 'swap' | 'extra';
+/** 调课弹窗的五个主操作。 */
+export type AdjustMode = 'move' | 'cancel' | 'swap' | 'extra' | 'exam';
 
 /** 改期的四种生效范围。 */
 export type AdjustScope = 'this' | 'weekly' | 'week' | 'date';
@@ -260,6 +262,128 @@ export async function applyCancel(
     onDate: input.sourceDate,
     action: 'cancel',
     title: `停课：${input.courseName}`,
+  });
+}
+
+/** 「改为考试」的执行计划：这一课次转成一条考试，并从课表里移除。 */
+export interface ExamPlan {
+  scheduleId: string;
+  courseId: string;
+  /** 考试标题：默认取课程名 */
+  title: string;
+  /** 被改掉的那一次课的原日期 */
+  sourceDate: string;
+  /** 考试日期（调整后日期） */
+  date: string;
+  dayOfWeek: number;
+  periodStart: number;
+  periodEnd: number;
+  /** 节次对应的钟点，供课表按真实时间定位 */
+  startTime: string;
+  endTime: string;
+  /** 同一组钟点换算出的时间戳，考试列表与倒计时按它排序 */
+  startAt: number;
+  endAt: number;
+  note: string | null;
+}
+
+export type ExamPlanResult = { ok: true; plan: ExamPlan } | { ok: false; message: string };
+
+export interface ExamInput {
+  semester: SemesterRow | null;
+  schedule: ManagedSchedule | undefined;
+  courseId: string;
+  courseName: string;
+  sourceDate: string;
+  /** 考试日期 */
+  date: string;
+  periodStart: number;
+  periodEnd: number;
+  note: string;
+  slots: readonly TimeSlotRow[];
+  timeZone: string;
+}
+
+/** 节次对应的起止钟点：缺这一节时返回 null，由调用方给出可读的错误。 */
+export function examClockOf(
+  slots: readonly TimeSlotRow[],
+  periodStart: number,
+  periodEnd: number,
+): { startTime: string; endTime: string } | null {
+  const start = slots.find((slot) => slot.period_no === periodStart);
+  const end = slots.find((slot) => slot.period_no === periodEnd);
+  if (start === undefined || end === undefined) return null;
+  return { startTime: start.start_time, endTime: end.end_time };
+}
+
+/** 改为考试：校验日期/节次并算出要落库的考试；不写库。 */
+export function planExam(input: ExamInput): ExamPlanResult {
+  const { semester, schedule } = input;
+  if (semester === null || schedule === undefined) {
+    return { ok: false, message: '请先选课程与要改成考试的课次' };
+  }
+  if (!periodsValid(input.periodStart, input.periodEnd)) {
+    return { ok: false, message: '节次需要是 1 起、且结束不小于开始' };
+  }
+  const sourceError = semesterDateError(semester, input.sourceDate, '原日期');
+  if (sourceError !== null) return { ok: false, message: sourceError };
+  const targetError = semesterDateError(semester, input.date, '考试日期');
+  if (targetError !== null) return { ok: false, message: targetError };
+  const clock = examClockOf(input.slots, input.periodStart, input.periodEnd);
+  if (clock === null) {
+    return { ok: false, message: `第 ${input.periodStart}–${input.periodEnd} 节没有对应的作息时间` };
+  }
+  const title = input.courseName.trim();
+  const note = input.note.trim();
+  return {
+    ok: true,
+    plan: {
+      scheduleId: schedule.id,
+      courseId: input.courseId,
+      title: title.length === 0 ? '考试' : title,
+      sourceDate: input.sourceDate,
+      date: input.date,
+      dayOfWeek: dayOfWeek(input.date),
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      startTime: clock.startTime,
+      endTime: clock.endTime,
+      startAt: dateWallClockToEpoch(input.date, clock.startTime, input.timeZone),
+      endAt: dateWallClockToEpoch(input.date, clock.endTime, input.timeZone),
+      note: note.length === 0 ? null : note,
+    },
+  };
+}
+
+/** 落库：写一条考试（进课表与倒计时），并把原日期这一次课按停课移除。 */
+export async function applyExam(
+  storage: Storage,
+  plan: ExamPlan,
+  input: { userId: string; semesterId: string },
+): Promise<void> {
+  await createEvent(storage, {
+    userId: input.userId,
+    semesterId: input.semesterId,
+    type: 'exam',
+    title: plan.title,
+    onDate: plan.date,
+    startAt: plan.startAt,
+    endAt: plan.endAt,
+    subject: plan.courseId.length === 0 ? null : plan.courseId,
+    note: plan.note,
+    countdown: true,
+    startTime: plan.startTime,
+    endTime: plan.endTime,
+    asDayOfWeek: plan.dayOfWeek,
+    showInTimetable: true,
+  });
+  await createReschedule(storage, {
+    userId: input.userId,
+    semesterId: input.semesterId,
+    refScheduleId: plan.scheduleId,
+    onDate: plan.sourceDate,
+    action: 'cancel',
+    title: `改为考试：${plan.title}`,
   });
 }
 
