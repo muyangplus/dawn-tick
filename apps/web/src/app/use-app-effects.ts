@@ -80,7 +80,8 @@ export function useAppEffects(input: {
     applyDevFeatures(settings.devFeatures);
     void (async () => {
       try {
-        await invokeNative('set_dev_console', { enabled: settings.devFeatures });
+        // 黑框控制台只在开发渠道且显式开了开发者特性时出现：测试版/正式版不该弹出控制台
+        await invokeNative('set_dev_console', { enabled: CHANNEL === 'dev' && settings.devFeatures });
       } catch {
         // 非桌面端没有控制台
       }

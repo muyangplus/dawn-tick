@@ -19,6 +19,7 @@ import { useAction } from '../../lib/action.ts';
 import { fail } from '../../copy/zh.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { ExternalLink } from '../../components/ui/external-link.tsx';
+import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
 import { Field } from '../../components/ui/input.tsx';
 import {
   Select,
@@ -65,6 +66,8 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
   const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
   const [presetResult, setPresetResult] = useState<StatusMessage | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
+  /** 打开「接收测试版更新」前的警告：测试版可能不稳定，确认后才写设置 */
+  const [betaWarningOpen, setBetaWarningOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,11 +176,17 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
       </div>
       {CHANNEL !== 'dev' ? (
         <SwitchField
-          label="接收公测版更新"
-          description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到公测版'}
+          label="接收测试版更新"
+          description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到测试版'}
           checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-          onCheckedChange={(checked) => void onPatch({ receiveBeta: checked })}
-          ariaLabel="接收公测版更新"
+          onCheckedChange={(checked) => {
+            if (checked && !resolveReceiveBeta(settings.receiveBeta, CHANNEL)) {
+              setBetaWarningOpen(true);
+              return;
+            }
+            void onPatch({ receiveBeta: checked });
+          }}
+          ariaLabel="接收测试版更新"
         />
       ) : (
         <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
@@ -287,6 +296,28 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
         </div>
       )}
       <span className="text-xs text-muted">只在应用内检查版本</span>
+      <Dialog open={betaWarningOpen} onOpenChange={setBetaWarningOpen}>
+        <DialogContent
+          title="开启测试版更新？"
+          description="测试版会先于正式版收到改动，可能包含未完成或不稳定的功能；出问题时可在「应用诊断日志」里导出日志反馈。"
+          data-role="beta-warning-dialog"
+        >
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setBetaWarningOpen(false)}>
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setBetaWarningOpen(false);
+                void onPatch({ receiveBeta: true });
+              }}
+            >
+              仍要开启
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -745,9 +745,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   };
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
   check(
-    'dev 构建首次提示开发版滚动更新',
+    'dev 构建首次提示开发版并引导安装正式版',
     (document.body.textContent ?? '').includes('开发版提示') &&
-      (document.body.textContent ?? '').includes('开发版滚动更新'),
+      (document.body.textContent ?? '').includes('日常使用建议安装正式版') &&
+      (document.body.textContent ?? '').includes('下载正式版'),
     (document.body.textContent ?? '').slice(0, 60),
   );
   if (clickByText(document.body, '知道了')) await flush(10);

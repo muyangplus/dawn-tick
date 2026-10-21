@@ -44,8 +44,17 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
     >
       <DialogContent
         title={notice === NOTICE_BETA ? '测试版提示' : '开发版提示'}
-        description={notice === NOTICE_BETA ? '测试版可能不稳定，反馈请附日志' : '开发版滚动更新'}
+        description={
+          notice === NOTICE_BETA
+            ? '测试版可能不稳定，反馈请附日志'
+            : '开发版仅用于开发与测试，日常使用建议安装正式版'
+        }
       >
+        <p className="text-xs text-muted" data-role="channel-notice-detail">
+          {notice === NOTICE_BETA
+            ? '测试版会先于正式版收到改动，可能包含未完成的功能；遇到问题请在反馈里附上「应用诊断日志」。'
+            : '开发版随每次提交滚动更新，不保证稳定，也不参与测试版开关。'}
+        </p>
         <DialogFooter>
           <Button
             variant="secondary"
@@ -53,8 +62,9 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
               if (notice === null) return;
               onDismiss(notice, { openReleases: true });
             }}
+            data-role="channel-notice-releases"
           >
-            查看发布页
+            下载正式版
           </Button>
           <Button
             variant="primary"
