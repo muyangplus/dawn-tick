@@ -111,7 +111,7 @@ class FileSharePlugin : Plugin() {
         send.putExtra(Intent.EXTRA_STREAM, uri)
         send.clipData = ClipData.newRawUri("export", uri)
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        val chooser = Intent.createChooser(send, context.getString(android.R.string.share))
+        val chooser = Intent.createChooser(send, "分享")
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(chooser)

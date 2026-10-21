@@ -36,7 +36,8 @@ data class LanRequest(
     val receivedAt: Long,
 ) {
     /** 字段名与 Rust `lan_sync_poll`、TS `LanSyncRequest` 逐字一致。 */
-    fun toJsObject(): JSONObject = JSONObject()
+    /** 转成 Capacitor 的 JSObject：call.resolve 只认 JSObject，JSONObject 不兼容。 */
+    fun toJsObject(): com.getcapacitor.JSObject = com.getcapacitor.JSObject()
         .put("id", id)
         .put("method", method)
         .put("path", path)
