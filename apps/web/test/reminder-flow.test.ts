@@ -6,18 +6,21 @@ import {
   addDays,
   computeReminders,
   createCourse,
+  createEvent,
   createSchedule,
   createSemester,
   dayOfWeek,
   formatDate,
   loadReminderData,
   setReminder,
+  updateEvent,
   validatedStorage,
   weekOfDate,
   weekStart,
   type Storage,
 } from '@dawn-tick/core';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
+import { collect } from '../src/reminder-collect.ts';
 
 const USER_ID = 'u1';
 const TIME_ZONE = 'Asia/Shanghai';
@@ -120,4 +123,40 @@ test('默认设置仍可用于提醒计算', async () => {
   const items = await remindersFor(storage);
   assert.ok(Array.isArray(items));
   assert.equal(DEFAULT_SETTINGS.timeZone, TIME_ZONE);
+});
+
+test('已完成的日程不再进入投递队列', async () => {
+  const storage = await open('reminder-done');
+  await seedTodayLesson(storage);
+  const semesters = await storage.collection<Record<string, unknown>>('semesters').getAll();
+  const semesterId = String(semesters[0]?.['id']);
+  const today = formatDate(Date.now(), TIME_ZONE);
+  const exam = await createEvent(storage, {
+    userId: USER_ID,
+    semesterId,
+    type: 'exam',
+    title: '期末模拟考',
+    onDate: today,
+    startAt: Date.now() + 2 * 60 * 60 * 1000,
+  });
+  await setReminder(storage, {
+    userId: USER_ID,
+    targetType: 'event',
+    targetId: String(exam['id']),
+    advanceMinutes: 30,
+    skipHolidays: true,
+  });
+
+  const before = await collect(storage, semesterId, TIME_ZONE, { enabled: false, minutes: 10 });
+  const hit = before.find((item) => item.targetId === String(exam['id']));
+  assert.ok(hit !== undefined, '未完成的考试应在投递队列里');
+  assert.equal(hit?.kind, 'exam');
+
+  await updateEvent(storage, String(exam['id']), { done: 1 });
+  const after = await collect(storage, semesterId, TIME_ZONE, { enabled: false, minutes: 10 });
+  assert.equal(
+    after.some((item) => item.targetId === String(exam['id'])),
+    false,
+    '已完成条目不应再次提醒',
+  );
 });
