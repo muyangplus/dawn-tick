@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { UpdateStatus } from '../update.ts';
 import { releaseChannelOf } from '../update.ts';
 import type { ApplyMode } from '../webdav.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../channel.ts';
 import { fail } from '../copy/zh.ts';
+import { errorMessage } from '../lib/errors.ts';
+import { isIgnoredVersion } from '../lib/update-preferences.ts';
+import type { UpdatePrompt } from './update-prompt.ts';
 import {
   INITIAL_UPDATE_STATE,
   formatDownloadProgress,
@@ -92,8 +94,8 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
 }
 
 export interface UpdateDialogProps {
-  /** 发现的新版本；null 表示不展示。与启动自检共用 `update-prompt` 的数据形状。 */
-  info: UpdateStatus | null;
+  /** 发现的新版本（含此前忽略过的版本）；null 表示不展示。与启动自检共用 `update-prompt`。 */
+  info: UpdatePrompt | null;
   onClose: () => void;
 }
 
@@ -120,34 +122,33 @@ async function openReleasePageOnce(url: string, timeoutMs = 8000): Promise<boole
  */
 export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   const [opening, setOpening] = useState(false);
+  const [ignoring, setIgnoring] = useState(false);
   const [download, setDownload] = useState<UpdateDownloadState>(INITIAL_UPDATE_STATE);
   /** 进行中的下载：关闭弹窗或换版本时中止，避免后台继续下载 */
   const running = useRef<AbortController | null>(null);
-  const notes = info?.manifest?.notes?.trim() ?? '';
+  const status = info?.status ?? null;
+  const notes = status?.manifest?.notes?.trim() ?? '';
   /** 渠道取发布本身的渠道：beta 预发布=测试版、正式版=正式版，不看接收开关 */
-  const channel = info === null ? CHANNEL : releaseChannelOf(info);
+  const channel = status === null ? CHANNEL : releaseChannelOf(status);
   const platform = updatePlatform();
-  const plan = planUpdateDownload(info?.manifest ?? null, platform);
+  const plan = planUpdateDownload(status?.manifest ?? null, platform);
   const busy = isUpdateBusy(download.phase);
+  /** 这次要弹的就是用户忽略过的版本：给「取消忽略」入口，手动检查仍能看到它 */
+  const ignored = isIgnoredVersion(status?.latest ?? null, info?.ignoredVersion ?? null);
 
-  // 关闭弹窗或换成另一个版本：中止下载并回到初始态，不把上一次的失败/完成带进新弹窗
+  // 关闭弹窗或换成另一个版本：中止下载并回到初始态；卸载时同样中止，下载不该在弹窗销毁后继续
   useEffect(() => {
     running.current?.abort();
     running.current = null;
     setDownload(INITIAL_UPDATE_STATE);
-  }, [info?.latest]);
-
-  // 卸载时中止：更新下载不该在弹窗销毁后继续占用网络
-  useEffect(() => {
     return () => {
       running.current?.abort();
     };
-  }, []);
+  }, [status?.latest]);
 
   async function copyReleaseLink(): Promise<void> {
     const copied = await copyText(RELEASES_URL);
-    if (copied) toast.success('已复制发布页链接');
-    else toast.error('复制失败，请手动选中链接复制');
+    toast[copied ? 'success' : 'error'](copied ? '已复制发布页链接' : '复制失败，请手动选中链接复制');
   }
 
   async function openReleasePage(): Promise<void> {
@@ -180,7 +181,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   }
 
   async function startDownload(): Promise<void> {
-    if (info === null || busy) return;
+    if (status === null || busy) return;
     if (plan.kind === 'refresh') {
       globalThis.location?.reload();
       return;
@@ -202,13 +203,9 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   }
 
   /** 下载中点主按钮 = 取消：中止网络并回到 idle，不产生失败提示。 */
-  function cancelDownload(): void {
-    running.current?.abort();
-  }
-
   async function onPrimary(): Promise<void> {
     if (busy) {
-      cancelDownload();
+      running.current?.abort();
       return;
     }
     if (download.phase === 'done') {
@@ -217,6 +214,31 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     }
     await startDownload();
   }
+
+  /** 写 app_meta 失败时不让弹窗状态悄悄错位：忽略/取消忽略都回一句可读结果 */
+  async function changeIgnored(run: () => Promise<void>, ok: string, what: string): Promise<void> {
+    try {
+      await run();
+      toast.success(ok);
+    } catch (cause: unknown) {
+      toast.error(fail(what, errorMessage(cause), '请稍后再试'));
+    }
+  }
+
+  /** 忽略这个版本：只记住版本号并关弹窗，下一次出现更高版本时照常提示。 */
+  async function ignoreVersion(): Promise<void> {
+    if (info === null || ignoring) return;
+    setIgnoring(true);
+    try {
+      await changeIgnored(info.ignore, '已忽略该版本，不再自动提示', '忽略版本');
+    } finally {
+      setIgnoring(false);
+    }
+  }
+
+  /** 取消忽略：弹窗保持打开，界面同步回到「可更新」状态。 */
+  const unignoreVersion = (): Promise<void> =>
+    info === null ? Promise.resolve() : changeIgnored(info.unignore, '已取消忽略，下次检查会再提示', '取消忽略');
 
   const statusText =
     download.phase === 'failed'
@@ -245,7 +267,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     >
       <DialogContent
         data-role="update-dialog"
-        title={`发现新版本 ${info?.latest ?? ''}`}
+        title={`发现新版本 ${status?.latest ?? ''}`}
         description={`当前版本 ${appVersion()} · 发布渠道 ${CHANNEL_LABEL[channel]}`}
       >
         {notes !== '' && (
@@ -254,6 +276,11 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
             dataRole="update-notes"
             className="max-h-56 overflow-y-auto overscroll-contain rounded-md border border-line bg-surface-muted p-3"
           />
+        )}
+        {ignored && (
+          <p className="text-xs text-muted" data-role="update-ignored">
+            已忽略此版本，可在这里取消忽略
+          </p>
         )}
         {plan.kind === 'unavailable' && (
           <p className="text-xs text-muted" data-role="update-unavailable">
@@ -287,6 +314,24 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
           <Button variant="ghost" onClick={onClose}>
             稍后
           </Button>
+          {ignored ? (
+            <Button
+              variant="secondary"
+              data-role="update-unignore"
+              onClick={() => void unignoreVersion()}
+            >
+              取消忽略
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              data-role="update-ignore"
+              loading={ignoring}
+              onClick={() => void ignoreVersion()}
+            >
+              忽略此版本
+            </Button>
+          )}
           <Button variant="secondary" data-role="update-copy-link" onClick={() => void copyReleaseLink()}>
             复制链接
           </Button>

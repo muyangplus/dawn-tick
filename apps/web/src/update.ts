@@ -241,7 +241,8 @@ function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
 }
 
 /** 把 GitHub 发布响应转成本模块清单：channel 固定为本次查询的 feed，取不到版本或结构不符时返回 null。 */
-function manifestFromRelease(feed: UpdateChannel, value: unknown): UpdateManifest | null {
+/** 回滚到正式版也从发布列表里挑目标（`lib/update-preferences.ts`），因此导出这条纯转换。 */
+export function manifestFromRelease(feed: UpdateChannel, value: unknown): UpdateManifest | null {
   const record = asRecord(value);
   if (record === null) return null;
   const version = versionFromTag(record['tag_name']) ?? versionFromAssets(record['assets']);

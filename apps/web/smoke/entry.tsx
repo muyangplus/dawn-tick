@@ -26,6 +26,7 @@ import {
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
 import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
+import type { UpdateStatus } from '../src/update.ts';
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
@@ -3300,7 +3301,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       },
     },
   });
-  requestUpdatePrompt({
+  const releasePrompt: UpdateStatus = {
     available: true,
     error: null,
     feed: 'beta',
@@ -3313,7 +3314,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         '### 更新内容\n\n- 新增 Markdown 发布说明\n- 修复发布页链接\n\n' +
         '**Full Changelog**: https://github.com/muyangplus/dawn-tick/compare/v0.4.1...v0.5.0',
     },
-  });
+  };
+  requestUpdatePrompt(releasePrompt);
   await flush(12);
   const updateDialog = document.querySelector<HTMLElement>('[data-role="update-dialog"]');
   const updateNotes = document.querySelector<HTMLElement>('[data-role="update-notes"]');
@@ -3345,6 +3347,35 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       clipboardWrites[0] === RELEASES_URL &&
       (document.body.textContent ?? '').includes('已复制发布页链接'),
     `剪贴板=${clipboardWrites[0] ?? '(空)'}`,
+  );
+  // 「忽略此版本」：记进 app_meta，设备页更新区出现已忽略版本与取消忽略；再弹同一个版本仍可取消忽略
+  const ignoreButton = document.querySelector<HTMLElement>('[data-role="update-ignore"]');
+  ignoreButton?.click();
+  await flush(16);
+  const ignoredLine = view.container.querySelector<HTMLElement>('[data-role="ignored-version"]');
+  check(
+    '更新弹窗可忽略此版本，设备页更新区给出已忽略版本与取消忽略',
+    ignoreButton !== null &&
+      document.querySelector('[data-role="update-dialog"]') === null &&
+      (ignoredLine?.textContent ?? '').includes('已忽略的版本：0.5.0') &&
+      view.container.querySelector('[data-role="unignore-version"]') !== null,
+    ignoredLine?.textContent?.trim() ?? '(无)',
+  );
+  requestUpdatePrompt(releasePrompt);
+  await flush(12);
+  check(
+    '忽略后手动检查仍能打开更新弹窗，并提示可取消忽略',
+    (document.querySelector('[data-role="update-ignored"]')?.textContent ?? '').includes('已忽略此版本，可在这里取消忽略') &&
+      document.querySelector('[data-role="update-unignore"]') !== null,
+    document.querySelector('[data-role="update-ignored"]')?.textContent?.trim() ?? '(无)',
+  );
+  document.querySelector<HTMLElement>('[data-role="update-unignore"]')?.click();
+  await flush(16);
+  check(
+    '取消忽略后弹窗与设备页都不再显示已忽略版本',
+    document.querySelector('[data-role="update-ignored"]') === null &&
+      view.container.querySelector('[data-role="ignored-version"]') === null,
+    view.container.querySelector('[data-role="ignored-version"]')?.textContent?.trim() ?? '(无)',
   );
   // —— I-03：桌面端更新弹窗给出「下载并安装」；下载失败给可读原因并可重试（全程用桩，不真实下载） ——
   const updateTauriInternals = {
@@ -3392,6 +3423,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       updateDownload !== null && (updateDownload.textContent ?? '').includes('下载并安装'),
       updateDownload?.textContent?.trim() ?? '(无)',
     );
+    const rollbackButton = view.container.querySelector<HTMLElement>('[data-role="rollback-stable"]');
+    check(
+      '开发版 + 桌面端给出「回滚到正式版」入口',
+      rollbackButton !== null && (rollbackButton.textContent ?? '').includes('回滚到正式版'),
+      rollbackButton?.textContent?.trim() ?? '(无)',
+    );
     updateDownload?.click();
     await flush(24);
     const updateStatus = document.querySelector<HTMLElement>('[data-role="update-status"]');
@@ -3412,6 +3449,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   }
 
   check('关闭更新弹窗后不再显示', document.querySelector('[data-role="update-dialog"]') === null, '');
+  check(
+    '浏览器端不提供「回滚到正式版」（只能刷新页面）',
+    view.container.querySelector('[data-role="rollback-stable"]') === null,
+    view.container.querySelector('[data-role="rollback-stable"]')?.textContent?.trim() ?? '(无)',
+  );
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
   const helpBlock = view.container.querySelector('[data-role="about-help"]');
