@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   MOTION_LABEL,
   MOTION_MODES,
@@ -6,7 +6,6 @@ import {
   VIEW_DAY_OPTIONS,
   WIDGET_BACKGROUNDS,
   WIDGET_VARIANTS,
-  isValidTimeZone,
   type AppSettings,
   type MotionMode,
   type ThemePreset,
@@ -27,6 +26,7 @@ import {
 import { readTrayStatus } from '../../storage-config.ts';
 import { StartupSettings } from '../../components/startup-settings.tsx';
 import { Button } from '../../components/ui/button.tsx';
+import { Combobox } from '../../components/ui/combobox.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
 import {
   Select,
@@ -37,6 +37,8 @@ import {
 } from '../../components/ui/controls.tsx';
 import { StatusLine } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
+import { formatTimeZoneLabel, utcOffsetLabel } from '../../lib/tz-offset.ts';
+import { isValidTimeZoneName, timeZoneCandidates } from '../../lib/timezones.ts';
 import { fail } from '../../copy/zh.ts';
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
@@ -63,31 +65,6 @@ const WIDGET_LABEL: Record<WidgetBackground, string> = {
   transparent: '透明',
 };
 
-/** 时区候选：常用 IANA 时区，默认上海；系统时区不在列表里时会额外补一项。 */
-export const TIME_ZONE_OPTIONS: readonly string[] = [
-  'Asia/Shanghai',
-  'Asia/Hong_Kong',
-  'Asia/Taipei',
-  'Asia/Tokyo',
-  'Asia/Seoul',
-  'Asia/Singapore',
-  'Asia/Bangkok',
-  'Asia/Kolkata',
-  'Asia/Dubai',
-  'Europe/London',
-  'Europe/Paris',
-  'Europe/Berlin',
-  'Europe/Moscow',
-  'America/New_York',
-  'America/Chicago',
-  'America/Denver',
-  'America/Los_Angeles',
-  'America/Sao_Paulo',
-  'Australia/Sydney',
-  'Pacific/Auckland',
-  'UTC',
-];
-
 const WIDGET_VARIANT_LABEL: Record<WidgetVariant, string> = {
   bar: '紧凑条：下一节课 + 倒计时',
   today: '今日课表：今天的课，当前课高亮',
@@ -112,7 +89,12 @@ export function AppearanceCard({ settings, onPatch }: AppearanceCardProps) {
   const [pinPending, setPinPending] = useState<MobileWidgetState['id'] | null>(null);
   /** 每种尺寸在桌面上的状态（已添加 / 被停用） */
   const [pinStates, setPinStates] = useState<MobileWidgetState[] | null>(null);
-  const zoneInvalid = !isValidTimeZone(settings.timeZone);
+  /** 时区搜索词：空着时显示当前时区（占位符），有输入时在全部 IANA 时区里筛 */
+  const [zoneQuery, setZoneQuery] = useState('');
+  const zoneCandidates = useMemo(() => timeZoneCandidates(zoneQuery), [zoneQuery]);
+  /** 偏移按当前时刻算：夏令时区在不同季节显示不同偏移，不缓存结果 */
+  const zoneNow = Date.now();
+  const zoneInvalid = !isValidTimeZoneName(settings.timeZone);
 
   useEffect(() => {
     if (!canUseWidget()) return;
@@ -396,21 +378,36 @@ export function AppearanceCard({ settings, onPatch }: AppearanceCardProps) {
         hint="默认上海；首次启动会按系统时区对齐一次"
         error={zoneInvalid ? '时区名无效' : undefined}
       >
-        <Select value={settings.timeZone} onValueChange={(value) => void onPatch({ timeZone: value })}>
-          <SelectTrigger aria-label="时区">
-            <span>{settings.timeZone}</span>
-          </SelectTrigger>
-          <SelectContent>
-            {TIME_ZONE_OPTIONS.map((zone) => (
-              <SelectItem key={zone} value={zone}>
-                {zone}
-              </SelectItem>
-            ))}
-            {!TIME_ZONE_OPTIONS.includes(settings.timeZone) && (
-              <SelectItem value={settings.timeZone}>{settings.timeZone}</SelectItem>
-            )}
-          </SelectContent>
-        </Select>
+        <div
+          className="flex flex-col"
+          onBlur={(event) => {
+            // 焦点离开这一块（含候选列表）时清空搜索词，重新显示当前时区
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setZoneQuery('');
+          }}
+        >
+          <Combobox
+            items={zoneCandidates}
+            keyOf={(zone) => zone}
+            value={zoneQuery}
+            onValueChange={setZoneQuery}
+            onSelect={(zone) => {
+              setZoneQuery('');
+              void onPatch({ timeZone: zone });
+            }}
+            renderItem={(zone) => {
+              const offset = utcOffsetLabel(zone, zoneNow);
+              return (
+                <span className="flex w-full min-w-0 items-center justify-between gap-2">
+                  <span className="truncate">{zone}</span>
+                  {offset !== null && <span className="shrink-0 text-xs text-muted">({offset})</span>}
+                </span>
+              );
+            }}
+            placeholder={formatTimeZoneLabel(settings.timeZone, zoneNow)}
+            ariaLabel="时区"
+            emptyText="没有匹配的时区，试试输入城市或地区名"
+          />
+        </div>
       </Field>
       <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
         <input

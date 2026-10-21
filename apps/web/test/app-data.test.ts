@@ -77,7 +77,8 @@ test('新建学期并加课后，周视图与今日视图都能看到', async ()
     weeks: [week],
   });
 
-  const data = await loadAppData(storage, DEFAULT_SETTINGS);
+  // 窗口要包含今天（周末也算），显式关掉跳过周末
+  const data = await loadAppData(storage, { ...DEFAULT_SETTINGS, hideWeekends: false });
   assert.notEqual(data.semester, null);
   assert.equal(data.week, week);
   assert.equal(data.todayOfWeek, dow);
@@ -145,8 +146,10 @@ test('窗口起点：今天为第一天，关掉后从本周周一开头', async
     timeZone: TIME_ZONE,
   });
 
-  assert.equal((await loadAppData(storage, DEFAULT_SETTINGS)).windowStart, today);
-  const fromMonday = await loadAppData(storage, { ...DEFAULT_SETTINGS, weekStartsToday: false });
+  // 这条只测「今天为第一天 / 关掉后从周一开始」：显式关掉跳过周末，避免周末运行时起点被顺延
+  const showWeekends = { ...DEFAULT_SETTINGS, hideWeekends: false };
+  assert.equal((await loadAppData(storage, showWeekends)).windowStart, today);
+  const fromMonday = await loadAppData(storage, { ...showWeekends, weekStartsToday: false });
   assert.equal(fromMonday.windowStart, weekStart(today));
   assert.equal(fromMonday.windowDates[0], weekStart(today));
 });
@@ -172,11 +175,12 @@ test('不显示周末：列数按天数、日期里没有周六日', async () =>
   assert.equal(data.windowStart, data.windowDates[0]);
 });
 
-test('默认窗口起点的纯函数：周末顺延到下一个工作日', async () => {
+test('默认窗口起点的纯函数：默认跳过周末，关掉后周末原样保留', async () => {
   const { defaultWindowStart, resolveWindowStart } = await import('../src/data.ts');
   const saturday = '2026-10-17';
   const sunday = '2026-10-18';
-  assert.equal(defaultWindowStart(saturday, DEFAULT_SETTINGS), saturday);
+  // I-05 起默认「不显示周末」：起点落在周末时顺延到下一个工作日
+  assert.equal(defaultWindowStart(saturday, DEFAULT_SETTINGS), '2026-10-19');
   assert.equal(
     defaultWindowStart(saturday, { ...DEFAULT_SETTINGS, hideWeekends: true }),
     '2026-10-19',
@@ -187,7 +191,9 @@ test('默认窗口起点的纯函数：周末顺延到下一个工作日', async
   );
   assert.equal(defaultWindowStart(sunday, { ...DEFAULT_SETTINGS, hideWeekends: true }), '2026-10-19');
   assert.equal(resolveWindowStart('2026-10-16', { ...DEFAULT_SETTINGS, hideWeekends: true }), '2026-10-16');
-  assert.equal(resolveWindowStart(sunday, DEFAULT_SETTINGS), sunday);
+  // 关掉后周末保持原样，周末列才能出现
+  assert.equal(defaultWindowStart(saturday, { ...DEFAULT_SETTINGS, hideWeekends: false }), saturday);
+  assert.equal(resolveWindowStart(sunday, { ...DEFAULT_SETTINGS, hideWeekends: false }), sunday);
 });
 
 // ————————————————— 拆出来的四个纯函数 —————————————————
@@ -207,8 +213,12 @@ function semesterRow(startDate: string, totalWeeks = 20): SemesterRow {
 
 test('loadSemesterContext：窗口起点、周次与列数都是纯计算', () => {
   const semester = semesterRow('2026-03-02');
-  // 默认：今天为第一天，5 天窗口，今天落在第 1 周
-  const today = loadSemesterContext({ semester, today: '2026-03-04', settings: DEFAULT_SETTINGS });
+  // 默认：今天为第一天，5 天窗口，今天落在第 1 周（这里显式关掉跳过周末，专测连续 5 天）
+  const today = loadSemesterContext({
+    semester,
+    today: '2026-03-04',
+    settings: { ...DEFAULT_SETTINGS, hideWeekends: false },
+  });
   assert.equal(today.windowStart, '2026-03-04');
   assert.deepEqual(today.windowDates, ['2026-03-04', '2026-03-05', '2026-03-06', '2026-03-07', '2026-03-08']);
   assert.deepEqual(today.weekOfDay, [1, 1, 1, 1, 1]);
@@ -237,11 +247,11 @@ test('loadSemesterContext：窗口起点、周次与列数都是纯计算', () =
   assert.equal(byWeek.viewWeek, 3);
   assert.deepEqual(byWeek.weekOfDay, [3, 3, 3, 3, 3]);
 
-  // 跨周窗口：7 天从周三开始时覆盖两周
+  // 跨周窗口：7 天从周三开始时覆盖两周（不跳过周末才能连续 7 天）
   const spanning = loadSemesterContext({
     semester,
     today: '2026-03-04',
-    settings: { ...DEFAULT_SETTINGS, viewDays: 7 },
+    settings: { ...DEFAULT_SETTINGS, viewDays: 7, hideWeekends: false },
   });
   assert.equal(spanning.windowSpansWeeks, true);
   assert.deepEqual(spanning.weekOfDay, [1, 1, 1, 1, 1, 2, 2]);
