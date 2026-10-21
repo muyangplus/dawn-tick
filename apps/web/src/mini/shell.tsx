@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { WidgetBackground, WidgetVariant } from '@dawn-tick/core';
+import { isDesktopApp } from '../lib/capabilities.ts';
 
 export interface MiniShellProps {
   variant: WidgetVariant;
@@ -54,6 +55,28 @@ export function MiniShell({
         </div>
       </div>
       <div className="mini-body">{children}</div>
+      {isDesktopApp() && (
+        <div
+          className="mini-resize"
+          data-role="mini-resize"
+          role="separator"
+          aria-label="调整悬浮窗大小"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            void resizeWidgetWindow();
+          }}
+        />
+      )}
     </main>
   );
+}
+
+/** 悬浮窗右下角拉伸手柄：交给窗口系统接管拖拽，结束时由 widget-window 的 onResized 记住尺寸。 */
+async function resizeWidgetWindow(): Promise<void> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().startResizeDragging('SouthEast');
+  } catch {
+    // 不支持窗口拉伸的环境（浏览器 / 旧壳）忽略
+  }
 }

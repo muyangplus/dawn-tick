@@ -129,6 +129,7 @@
   }
 
   .mini {
+    position: relative;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -415,4 +416,25 @@
     background: var(--dt-overlay);
     cursor: progress;
   }
+}
+
+/* 悬浮窗右下角的拉伸手柄：无边框窗口靠它进入系统 resize */
+.mini-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.mini-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--dt-line-strong, rgb(0 0 0 / 0.25));
+  border-bottom: 1px solid var(--dt-line-strong, rgb(0 0 0 / 0.25));
 }
