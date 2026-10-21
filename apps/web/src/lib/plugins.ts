@@ -1,5 +1,6 @@
 import { loadCapacitorPlugin } from './native.ts';
 import type { LanSyncRequest } from './native.ts';
+import type { ReminderKind } from './reminder-actions.ts';
 
 /**
  * Capacitor 插件契约：插件名、方法名、参数与返回字段的唯一 TS 定义。
@@ -10,7 +11,8 @@ import type { LanSyncRequest } from './native.ts';
  * - Android 侧实现分别位于 `apps/mobile/android/app/src/main/java/com/dawntick/app/`
  *   下的 `system/SystemActionsPlugin.java`、`widget/WidgetPinPlugin.kt`、
  *   `school/SchoolWindowPlugin.kt`、`widget/WidgetRefreshPlugin.kt`、
- *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`、`lan/LanSyncPlugin.kt`；
+ *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`、`lan/LanSyncPlugin.kt`、
+ *   `reminder/ReminderActionsPlugin.kt`；
  * - 两端对照表见 `apps/mobile/docs/plugins.contract.md`。改方法名或返回字段时三处一起改
  *   （本文件、Java/Kotlin 实现、契约文档），否则 JS 侧只会静默拿到 `undefined`；
  * - `apps/web/test/plugins.test.ts` 静态核对方法名与文档，Android 编译在打包机上另跑。
@@ -25,6 +27,7 @@ export const PLUGIN_NAMES = {
   apkInstaller: 'ApkInstaller',
   fileShare: 'FileShare',
   lanSync: 'LanSync',
+  reminderActions: 'ReminderActions',
 } as const;
 
 /** 插件名联合类型。 */
@@ -51,6 +54,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.apkInstaller]: ['installApk'],
   [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
   [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'poll', 'respond'],
+  [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'requestPermissionInfo', 'pollActions'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
 /** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
@@ -140,6 +144,49 @@ export interface LanSyncPlugin {
   poll(): Promise<LanSyncRequest | null>;
   /** 回应 `poll` 取到的请求；原生层写回 HTTP 响应。 */
   respond(options: { id: number; status: number; body: string }): Promise<void>;
+}
+
+/** 通知/托盘动作事件：`id` 是排定时的通知 id，`kind` 与 `targetId` 供进程重启后找回条目。 */
+export interface ReminderActionEvent {
+  id: number;
+  action: string;
+  /** 课程 id 或 `events.id`；旧版本原生层可能不带 */
+  targetId?: string;
+  /** `class` / `todo` / `homework` / `exam` / `lab`；旧版本原生层可能不带 */
+  kind?: string;
+}
+
+/**
+ * 提醒动作插件（R-07）：课前/日程提醒的定时、投递与通知按钮。
+ *
+ * 边界：只接管提醒投递，LocalNotifications 的其它用途保持原样；
+ * 动作语义（贪睡/完成/勿扰）在 TS `lib/reminder-actions.ts`，原生侧只负责排定、
+ * 展示通知、把按钮动作回传，并在进程不在线时把动作排队等 `pollActions`。
+ */
+export interface ReminderActionsPlugin {
+  /**
+   * 排定一条提醒；同一 `id` 重复调用按最后一次覆盖。
+   * `at` 是 epoch 毫秒，`kind` 决定通知上出现哪些动作。
+   */
+  schedule(options: {
+    id: number;
+    title: string;
+    body?: string;
+    at: number;
+    kind: ReminderKind;
+    targetId?: string;
+  }): Promise<void>;
+  /** 取消一条提醒：闹钟与已展示的通知一起清掉。 */
+  cancel(options: { id: number }): Promise<void>;
+  /** 通知权限与精确闹钟状态：只报告，不弹系统弹窗。 */
+  requestPermissionInfo(): Promise<{ notifications?: string; exactAlarm?: string }>;
+  /** 取走进程不在线时堆积的动作；队列空时 `actions` 为空数组。 */
+  pollActions(): Promise<{ actions?: ReminderActionEvent[] }>;
+  /** 通知动作回传：插件在线时即时触发；进程重启后由 `pollActions` 补齐。 */
+  addListener(
+    eventName: 'actionPerformed',
+    listener: (payload: ReminderActionEvent) => void,
+  ): Promise<{ remove: () => Promise<void> }>;
 }
 
 /**

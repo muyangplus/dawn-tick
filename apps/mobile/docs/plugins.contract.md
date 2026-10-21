@@ -13,7 +13,9 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/share/FileSharePlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/LanSyncPlugin.kt`
     （局域网同步的传输层在 `.../lan/LanSyncServer.kt`；`share/` 与 `install/` 共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
-- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–7 节，`plugins.test.ts` 与其余插件一并对齐。
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/reminder/ReminderActionsPlugin.kt`
+    （提醒投递在 `.../reminder/ReminderNotifier.kt`、`.../reminder/ReminderAlarms.kt`，动作按钮与离线队列在 `.../reminder/ReminderReceivers.kt`、`.../reminder/ReminderStore.kt`）
+- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–8 节，`plugins.test.ts` 与其余插件一并对齐。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库没有 Android 构建链，编译与真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
@@ -120,7 +122,33 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 | `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
 | `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
 
-## 8. 变更检查清单
+## 8. ReminderActions
+
+提醒动作（R-07）：课前/日程提醒的定时、投递与通知按钮。插件只接管提醒投递，`LocalNotifications` 的其它用途保持原样；动作语义（贪睡 10 分钟 / 完成 / 勿扰 1 小时）与纯函数在 TS `apps/web/src/lib/reminder-actions.ts`，Android 只负责排定、展示通知、回传动作，并在进程不在线时把动作排队。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `ReminderActions` |
+| TS 接口 | `ReminderActionsPlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `reminder/ReminderActionsPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `schedule` | `id: number`、`title: string`、`body?: string`、`at: number`、`kind: string`、`targetId?: string` | 无（resolve 空） | `at` 是 epoch 毫秒；`kind` 决定动作集合（见下表）；同一 `id` 重复调用按最后一次覆盖 |
+| `cancel` | `id: number` | 无（resolve 空） | 取消闹钟并清掉已展示的通知 |
+| `requestPermissionInfo` | 无 | `notifications?: string`、`exactAlarm?: string` | 只报告不弹窗；取值 `granted` / `denied` |
+| `pollActions` | 无 | `actions?: { id?: number; action?: string; targetId?: string; kind?: string }[]` | 取走进程不在线时堆积的动作；队列空时为空数组 |
+
+动作集合（与 TS `reminder-actions.ts`、Rust `reminder_actions.rs` 逐项一致）：
+
+| `kind` | 通知动作 |
+|---|---|
+| `class`（课前提醒） | `snooze`、`mute` |
+| `todo` / `homework` / `exam` / `lab`（日程提醒） | `snooze`、`done`、`mute` |
+
+动作回传：插件在线时通过 `notifyListeners("actionPerformed", { id, action, targetId, kind })` 交给 JS；进程重启后由前端 `pollActions()` 补取。原生会先按同一语义执行一次（贪睡重排、完成/勿扰取消闹钟与通知），JS 负责写回 `events.done` 与维护勿扰窗口。
+
+## 9. 变更检查清单
 
 改插件契约时按顺序过一遍：
 

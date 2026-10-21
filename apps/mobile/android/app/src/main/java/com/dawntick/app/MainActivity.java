@@ -4,6 +4,7 @@ import android.os.Bundle;
 
 import com.dawntick.app.install.ApkInstallerPlugin;
 import com.dawntick.app.lan.LanSyncPlugin;
+import com.dawntick.app.reminder.ReminderActionsPlugin;
 import com.dawntick.app.school.SchoolWindowPlugin;
 import com.dawntick.app.share.FileSharePlugin;
 import com.dawntick.app.system.SystemActionsPlugin;
@@ -23,6 +24,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(FileSharePlugin.class);
         // I-14 局域网同步：安卓作为服务端时起本机 HTTP 监听，鉴权与数据都在 Web 层
         registerPlugin(LanSyncPlugin.class);
+        // R-07 提醒动作：提醒投递、通知按钮与贪睡/完成/勿扰
+        registerPlugin(ReminderActionsPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
