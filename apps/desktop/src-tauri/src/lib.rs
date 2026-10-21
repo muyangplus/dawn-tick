@@ -2,10 +2,12 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
+mod lan_sync;
 mod paths;
 mod updater;
 mod widget_window;
 
+use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
 use updater::run_installer;
 use widget_window::{ensure_mini, hide_widget, show_main, show_widget, widget_measure, widget_resize};
@@ -2706,7 +2708,11 @@ pub fn run() {
             open_external_url,
             open_log_dir,
             write_text_file,
-            write_binary_file
+            write_binary_file,
+            lan_sync_start,
+            lan_sync_stop,
+            lan_sync_poll,
+            lan_sync_respond
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()
