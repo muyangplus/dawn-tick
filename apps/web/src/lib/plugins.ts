@@ -8,7 +8,8 @@ import { loadCapacitorPlugin } from './native.ts';
  *   `widget-pin.ts`、`import-window.ts`、`widget-snapshot.ts`；
  * - Android 侧实现分别位于 `apps/mobile/android/app/src/main/java/com/dawntick/app/`
  *   下的 `system/SystemActionsPlugin.java`、`widget/WidgetPinPlugin.kt`、
- *   `school/SchoolWindowPlugin.kt`、`widget/WidgetRefreshPlugin.kt`；
+ *   `school/SchoolWindowPlugin.kt`、`widget/WidgetRefreshPlugin.kt`、
+ *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`；
  * - 两端对照表见 `apps/mobile/docs/plugins.contract.md`。改方法名或返回字段时三处一起改
  *   （本文件、Java/Kotlin 实现、契约文档），否则 JS 侧只会静默拿到 `undefined`；
  * - `apps/web/test/plugins.test.ts` 静态核对方法名与文档，Android 编译在打包机上另跑。
@@ -20,6 +21,8 @@ export const PLUGIN_NAMES = {
   schoolWindow: 'SchoolWindow',
   widgetPin: 'DawnTickWidget',
   widgetRefresh: 'WidgetRefresh',
+  apkInstaller: 'ApkInstaller',
+  fileShare: 'FileShare',
 } as const;
 
 /** 插件名联合类型。 */
@@ -43,6 +46,8 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.schoolWindow]: ['open'],
   [PLUGIN_NAMES.widgetPin]: ['requestPin', 'readStates'],
   [PLUGIN_NAMES.widgetRefresh]: ['refresh'],
+  [PLUGIN_NAMES.apkInstaller]: ['installApk'],
+  [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
 /** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
@@ -93,6 +98,28 @@ export interface WidgetPinPlugin {
 export interface WidgetRefreshPlugin {
   /** 触发所有已放置小组件重绘；无返回值。 */
   refresh(): Promise<void>;
+}
+
+/** 安卓 APK 安装器：把下载好的安装包交给系统安装器。 */
+export interface ApkInstallerPlugin {
+  /**
+   * 唤起系统安装器。
+   *
+   * `path` 只接受应用缓存 / 外部私有下载目录内的绝对路径或 `file://` URI，且必须是 `.apk`；
+   * 未授权「安装未知应用」时跳本应用设置页并返回 `opened: false`、`needsPermission: true`。
+   */
+  installApk(options: { path: string }): Promise<{ opened?: boolean; needsPermission?: boolean }>;
+}
+
+/** 安卓文件分享：分享导出文件，或打开它所在的系统文件目录。 */
+export interface FileSharePlugin {
+  /** `ACTION_SEND` + FileProvider 分享；`mimeType` 缺省按扩展名推断。 */
+  shareFile(options: { path: string; mimeType?: string }): Promise<{ shared: boolean }>;
+  /**
+   * Android 没有「打开所在文件夹」：先开系统文件应用的所在目录，失败退 `content://` 目录，
+   * 再失败回退分享面板；`via` 取值 `documents` / `content` / `share`。
+   */
+  revealFile(options: { path: string }): Promise<{ opened: boolean; via?: string }>;
 }
 
 /**

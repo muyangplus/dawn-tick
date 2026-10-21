@@ -20,7 +20,7 @@ import { describeError, logDebug, logError, logInfo, logWarn, installLogHandlers
 import { fail } from '../lib/fail.ts';
 import { formatCountdown, formatRemaining } from '../lib/format.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
-import { openMainWindow } from '../widget-window.ts';
+import { canUseWidget, measureWidget, openMainWindow, watchWidgetResize } from '../widget-window.ts';
 import { MiniShell } from './shell.tsx';
 import { miniEmptyText, shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
 import '../styles.css';
@@ -193,6 +193,44 @@ function Mini() {
     if (nextDate === dayAfter) return '后天';
     return nextDate;
   })();
+  // 实际渲染的列表：today 用当天/预告课程，combo 用未完成且带截止时间的待办（最多 3 条）
+  const todayShown = showTomorrow ? tomorrowPreviewLessons(previewLessons).slice(0, 3) : todayLessons;
+  const comboTasks = (data?.todos ?? [])
+    .filter((row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined)
+    .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
+    .slice(0, 3);
+  /**
+   * 正文行数：让原生按内容定高（Rust `content_height` = 头部 + 留白 + 行高 × 行数）。
+   * minimal 只有一行大数字，行数不影响高度；空态也占一行。
+   */
+  const contentRows = ((): number | undefined => {
+    if (variant === 'minimal') return undefined;
+    if (error !== null) return 1;
+    if (variant === 'today') return Math.max(1, todayShown.length);
+    // combo 上半区固定 3 行（标签 / 课程名 / 时间行）+ 待办区标签 1 行
+    if (variant === 'combo') return 4 + Math.max(1, comboTasks.length);
+    // bar：课程名 + 时间行
+    return 2;
+  })();
+
+  // 行数或样式变了才请原生定高：同一份内容不重复 resize（StrictMode 双跑也只调一次）
+  const measuredKey = useRef('');
+  useEffect(() => {
+    if (!canUseWidget()) return;
+    const key = `${variant}:${contentRows ?? ''}`;
+    if (key === measuredKey.current) return;
+    measuredKey.current = key;
+    void measureWidget(variant, contentRows).then((layout) => {
+      // 失败时清掉指纹，下一次数据刷新再试
+      if (layout === null) measuredKey.current = '';
+    });
+  }, [variant, contentRows]);
+
+  // 用户拖动边框后 200ms 防抖记忆尺寸；非桌面端 watchWidgetResize 直接返回空函数
+  useEffect(() => {
+    if (!canUseWidget()) return;
+    return watchWidgetResize(variant);
+  }, [variant]);
 
   if (error !== null) {
     return (
@@ -229,7 +267,7 @@ function Mini() {
 
   if (variant === 'today') {
     // 预告最多列 3 节，且不再插入独立标签行，避免把课程名挤出悬浮窗
-    const lessons = showTomorrow ? tomorrowPreviewLessons(previewLessons).slice(0, 3) : todayLessons;
+    const lessons = todayShown;
     return (
       <MiniShell
         variant={variant}
@@ -269,10 +307,7 @@ function Mini() {
   }
 
   if (variant === 'combo') {
-    const tasks = (data?.todos ?? [])
-      .filter((row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined)
-      .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
-      .slice(0, 3);
+    const tasks = comboTasks;
     return (
       <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={headLabel} background={background}>
         <div className="mini-combo-top">

@@ -28,7 +28,7 @@ import { fail } from '../../copy/zh.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { saveText } from './file-export.ts';
+import { saveText, toastSaved } from './file-export.ts';
 
 export interface ExportDialogProps {
   open: boolean;
@@ -77,7 +77,7 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           toast.success(`已生成 Base64 文本（${label}）`);
           return;
         }
-        toast.success(outcome.path === null ? `已下载 ${outcome.name}` : `已保存到 ${outcome.path}`);
+        toastSaved(outcome.path === null ? `已下载 ${outcome.name}` : `已导出备份（${label}）`, outcome.path);
         onOpenChange(false);
       },
     });
@@ -87,10 +87,10 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
   async function saveBase64Backup(): Promise<void> {
     if (exportText === '') return;
     const day = dayStampUtc(Date.now());
-    if (await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', 'Base64 文本')) {
-      toast.success('已保存 Base64 文本');
-      onOpenChange(false);
-    }
+    const result = await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', 'Base64 文本');
+    if (!result.saved) return;
+    toastSaved('已保存 Base64 文本', result.path);
+    onOpenChange(false);
   }
 
   return (

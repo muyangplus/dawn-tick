@@ -16,6 +16,8 @@ const SOURCES = [
   { name: PLUGIN_NAMES.schoolWindow, file: 'school/SchoolWindowPlugin.kt' },
   { name: PLUGIN_NAMES.widgetPin, file: 'widget/WidgetPinPlugin.kt' },
   { name: PLUGIN_NAMES.widgetRefresh, file: 'widget/WidgetRefreshPlugin.kt' },
+  { name: PLUGIN_NAMES.apkInstaller, file: 'install/ApkInstallerPlugin.kt' },
+  { name: PLUGIN_NAMES.fileShare, file: 'share/FileSharePlugin.kt' },
 ] as const;
 
 function readAndroid(file: string): string {
@@ -49,7 +51,9 @@ test('Capacitor 插件方法名与 Android 实现、契约文档一致', () => {
 
 test('插件名与加载入口集中在 lib/plugins.ts', () => {
   assert.deepEqual(Object.values(PLUGIN_NAMES).toSorted(), [
+    'ApkInstaller',
     'DawnTickWidget',
+    'FileShare',
     'SchoolWindow',
     'SystemActions',
     'WidgetRefresh',
