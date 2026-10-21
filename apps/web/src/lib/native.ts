@@ -51,6 +51,10 @@ export const NATIVE_COMMANDS = [
   'open_log_dir',
   'write_text_file',
   'write_binary_file',
+  'lan_sync_start',
+  'lan_sync_stop',
+  'lan_sync_poll',
+  'lan_sync_respond',
 ] as const;
 
 /** 已注册的 Tauri 命令名。 */
@@ -76,6 +80,28 @@ export interface WidgetLayout {
   clamped: boolean;
   maxHeight: number;
   remembered: { width: number; height: number } | null;
+}
+
+/** 局域网同步的监听地址：端口由系统分配，TS 再拼配对码与有效期。 */
+export interface LanSyncListen {
+  host: string;
+  port: number;
+}
+
+/**
+ * `lan_sync_poll` 取到的一条待处理请求。
+ *
+ * 与 Rust `lan_sync::LanSyncRequest`、Android `LanSyncServer.LanRequest` 字段一致：
+ * `id` 回应时原样带回，`authorization` 未带时为 null（TS 侧据此判 401）。
+ */
+export interface LanSyncRequest {
+  id: number;
+  method: string;
+  path: string;
+  query: string;
+  authorization: string | null;
+  body: string;
+  receivedAt: number;
 }
 
 /** 把 `invoke` 的拒绝值（Rust `Err(String)` / JS Error / 其他）归一成一行文本。 */

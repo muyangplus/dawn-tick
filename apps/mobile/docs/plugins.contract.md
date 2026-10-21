@@ -11,8 +11,9 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/widget/WidgetRefreshPlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/install/ApkInstallerPlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/share/FileSharePlugin.kt`
-    （两者共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
-- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–6 节，`plugins.test.ts` 与其余插件一并对齐。
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/LanSyncPlugin.kt`
+    （局域网同步的传输层在 `.../lan/LanSyncServer.kt`；`share/` 与 `install/` 共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
+- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–7 节，`plugins.test.ts` 与其余插件一并对齐。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库没有 Android 构建链，编译与真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
@@ -101,7 +102,25 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 | `shareFile` | `path: string`、`mimeType?: string` | `shared: boolean` | `ACTION_SEND` + FileProvider 分享；`mimeType` 缺省按扩展名推断，推不出按 `application/octet-stream` |
 | `revealFile` | `path: string` | `opened: boolean`、`via?: string` | Android 没有「打开所在文件夹」：先开系统文件应用的所在目录，失败退 `content://` 目录，再失败回退分享面板；`via` 取值 `documents` / `content` / `share` |
 
-## 7. 变更检查清单
+## 7. LanSync
+
+局域网同步（I-14）的 Android 服务端。插件只做监听、排队、取请求与回响应；
+配对码、令牌、范围与数据导出导入全在 TS，协议见 `apps/mobile/docs/lan-sync.contract.md`。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `LanSync` |
+| TS 接口 | `LanSyncPlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `lan/LanSyncPlugin.kt`（服务在 `lan/LanSyncServer.kt`） |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `start` | 无 | `host?: string`、`port?: number` | 绑定本机局域网 IPv4 与系统分配端口；没有局域网地址时 reject |
+| `stop` | 无 | 无（resolve 空） | 关监听并清空队列、等待中的响应 |
+| `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
+| `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
+
+## 8. 变更检查清单
 
 改插件契约时按顺序过一遍：
 

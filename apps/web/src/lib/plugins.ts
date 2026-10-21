@@ -1,4 +1,5 @@
 import { loadCapacitorPlugin } from './native.ts';
+import type { LanSyncRequest } from './native.ts';
 
 /**
  * Capacitor 插件契约：插件名、方法名、参数与返回字段的唯一 TS 定义。
@@ -9,7 +10,7 @@ import { loadCapacitorPlugin } from './native.ts';
  * - Android 侧实现分别位于 `apps/mobile/android/app/src/main/java/com/dawntick/app/`
  *   下的 `system/SystemActionsPlugin.java`、`widget/WidgetPinPlugin.kt`、
  *   `school/SchoolWindowPlugin.kt`、`widget/WidgetRefreshPlugin.kt`、
- *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`；
+ *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`、`lan/LanSyncPlugin.kt`；
  * - 两端对照表见 `apps/mobile/docs/plugins.contract.md`。改方法名或返回字段时三处一起改
  *   （本文件、Java/Kotlin 实现、契约文档），否则 JS 侧只会静默拿到 `undefined`；
  * - `apps/web/test/plugins.test.ts` 静态核对方法名与文档，Android 编译在打包机上另跑。
@@ -23,6 +24,7 @@ export const PLUGIN_NAMES = {
   widgetRefresh: 'WidgetRefresh',
   apkInstaller: 'ApkInstaller',
   fileShare: 'FileShare',
+  lanSync: 'LanSync',
 } as const;
 
 /** 插件名联合类型。 */
@@ -48,6 +50,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.widgetRefresh]: ['refresh'],
   [PLUGIN_NAMES.apkInstaller]: ['installApk'],
   [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
+  [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'poll', 'respond'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
 /** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
@@ -120,6 +123,23 @@ export interface FileSharePlugin {
    * 再失败回退分享面板；`via` 取值 `documents` / `content` / `share`。
    */
   revealFile(options: { path: string }): Promise<{ opened: boolean; via?: string }>;
+}
+
+/**
+ * 安卓局域网同步服务：只做监听、排队、取请求与回响应。
+ *
+ * 配对码/令牌校验、范围与数据导出导入都在 TS（`apps/web/src/lan-sync*.ts`），
+ * 插件不认识业务 JSON；协议见 `apps/mobile/docs/lan-sync.contract.md`。
+ */
+export interface LanSyncPlugin {
+  /** 起监听；`port` 由系统分配，`host` 是本机局域网地址。 */
+  start(): Promise<{ host?: string; port?: number }>;
+  /** 关监听并让内存里的令牌全部失效。 */
+  stop(): Promise<void>;
+  /** 取一条待处理请求；队列空时无字段，调用方按 null 处理。 */
+  poll(): Promise<LanSyncRequest | null>;
+  /** 回应 `poll` 取到的请求；原生层写回 HTTP 响应。 */
+  respond(options: { id: number; status: number; body: string }): Promise<void>;
 }
 
 /**

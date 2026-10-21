@@ -3331,6 +3331,27 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   check(
+    '设备页有局域网同步：对方地址、配对码与范围勾选',
+    view.container.querySelector('[data-role="lan-sync"]') !== null &&
+      (view.container.querySelector('[data-role="lan-sync-title"]')?.textContent ?? '').includes('局域网同步') &&
+      view.container.querySelector('[data-role="lan-sync-peer"]') !== null &&
+      view.container.querySelector('[data-role="lan-sync-pair-code"]') !== null &&
+      view.container.querySelector('input[aria-label="同步 课表"]') !== null &&
+      view.container.querySelector('input[aria-label="同步 待办"]') !== null &&
+      view.container.querySelector('input[aria-label="同步 设置"]') !== null &&
+      view.container.querySelector('button[aria-label="从对方拉取"]')?.hasAttribute('disabled') === true &&
+      view.container.querySelector('button[aria-label="推送到对方"]')?.hasAttribute('disabled') === true,
+    (view.container.querySelector('[data-role="lan-sync"]')?.textContent ?? '').slice(0, 60),
+  );
+  check(
+    '浏览器端只做局域网同步发起方，不显示开启配对',
+    view.container.querySelector('[data-role="lan-sync-server"]') === null &&
+      view.container.querySelector('[data-role="lan-sync-server-hint"]') !== null &&
+      (view.container.querySelector('[data-role="lan-sync"]')?.textContent ?? '').includes('浏览器端'),
+    '',
+  );
+
+  check(
     '主区底部留白按底部栏与悬浮按钮高度计算',
     (view.container.querySelector('[data-role="app-main"]')?.className ?? '').includes('--dt-bottom-nav') &&
       (view.container.querySelector('[data-role="app-main"]')?.className ?? '').includes('--dt-bottom-fab'),

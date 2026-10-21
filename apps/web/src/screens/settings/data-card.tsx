@@ -19,6 +19,7 @@ import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { BackupBlock } from './backup-block.tsx';
+import { LanSyncBlock } from './lan-sync-block.tsx';
 import { TransferBlock } from './transfer-block.tsx';
 import { WebdavBlock } from './webdav-block.tsx';
 import { useSnapshots } from './use-snapshots.ts';
@@ -220,6 +221,7 @@ export function DataCard({
         onSettingsReplaced={onSettingsReplaced}
         onSnapshotsChanged={snapshots.refresh}
       />
+      <LanSyncBlock storage={storage} onSettingsReplaced={onSettingsReplaced} onChanged={onChanged} />
       <TransferBlock settings={settings} onOpenExport={onOpenExport} onOpenImport={onOpenImport} />
     </>
   );
