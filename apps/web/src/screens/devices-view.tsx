@@ -147,12 +147,12 @@ export function DevicesView({
         className={cn('grid items-start gap-3', twoColumn && 'desktop:grid-cols-[2fr_1fr]')}
         data-role="devices-grid"
       >
-        <div className="flex min-w-0 flex-col gap-3" data-role="devices-main">
+        <div className="dt-stagger flex min-w-0 flex-col gap-3" data-role="devices-main">
           {mainCards.map(renderCard)}
         </div>
         {sideCards.length > 0 && (
           <aside
-            className="flex min-w-0 flex-col gap-3"
+            className="dt-stagger flex min-w-0 flex-col gap-3"
             data-role="devices-side"
             aria-label="设备与同步侧栏"
           >

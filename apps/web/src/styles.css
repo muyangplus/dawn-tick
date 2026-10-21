@@ -438,3 +438,247 @@
   border-right: 1px solid var(--dt-line-strong, rgb(0 0 0 / 0.25));
   border-bottom: 1px solid var(--dt-line-strong, rgb(0 0 0 / 0.25));
 }
+
+/* ══ I-15 动效增强 开始 ══════════════════════════════════════════════
+   统一时长/曲线令牌；新增动效只用 transform / opacity / filter 等合成属性。
+   唯一例外是折叠卡展开高度：用 Radix 提供的 --radix-collapsible-content-height。
+   所有时长 ≤ 240ms；[data-motion=off] 与系统 reduced-motion 由下方停用规则压到 1ms。
+   ══════════════════════════════════════════════════════════════════ */
+@layer components {
+  :root {
+    --dt-motion-fast: 120ms;
+    --dt-motion-base: 160ms;
+    --dt-motion-slow: 220ms;
+    --dt-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes dt-card-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes dt-sheet-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dt-toast-in {
+    from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dt-toast-out {
+    to { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  }
+
+  @keyframes dt-collapse-open {
+    from { height: 0; opacity: 0; }
+    to { height: var(--radix-collapsible-content-height); opacity: 1; }
+  }
+
+  @keyframes dt-select-in {
+    from { opacity: 0; transform: translateY(-2px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dt-check-in {
+    from { opacity: 0; transform: scale(0.6); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* 抽屉：底部面板上浮 + 轻微缩放；比原有 rise 多一档 scale */
+  .dt-sheet[data-state='open'] {
+    animation: dt-sheet-in var(--dt-motion-slow) var(--dt-motion-ease);
+  }
+
+  .dt-panel {
+    transform-origin: center;
+  }
+
+  /* 按钮：颜色/边框/阴影过渡 + 按下回弹；不改变任何尺寸 */
+  .dt-btn-motion {
+    transition:
+      background-color var(--dt-motion-fast) ease-out,
+      border-color var(--dt-motion-fast) ease-out,
+      color var(--dt-motion-fast) ease-out,
+      opacity var(--dt-motion-fast) ease-out,
+      box-shadow var(--dt-motion-base) var(--dt-motion-ease),
+      transform var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  .dt-btn-motion:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  /* 卡片：只抬升 1px + 加深阴影，仍用主题阴影令牌 */
+  .dt-card-motion {
+    box-shadow: var(--shadow-sm);
+    transition:
+      transform var(--dt-motion-base) var(--dt-motion-ease),
+      box-shadow var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  @media (hover: hover) {
+    .dt-card-motion:hover {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .dt-btn-motion:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    .dt-btn-motion:active:not(:disabled) {
+      transform: translateY(0) scale(0.98);
+    }
+  }
+
+  /* 设置 / 设备页卡片列表依次淡入，最多影响前 6 项，延迟合计 ≤100ms */
+  .dt-stagger > * {
+    /* 用 backwards 而不是 both：动画结束后释放 transform，卡片的 hover 抬升才生效 */
+    animation: dt-card-in var(--dt-motion-base) var(--dt-motion-ease) backwards;
+  }
+
+  .dt-stagger > :nth-child(1) { animation-delay: 0ms; }
+  .dt-stagger > :nth-child(2) { animation-delay: 20ms; }
+  .dt-stagger > :nth-child(3) { animation-delay: 40ms; }
+  .dt-stagger > :nth-child(4) { animation-delay: 60ms; }
+  .dt-stagger > :nth-child(5) { animation-delay: 80ms; }
+  .dt-stagger > :nth-child(n + 6) { animation-delay: 100ms; }
+
+  /* 折叠卡展开：Radix 在 open 时提供高度变量；关闭仍即时卸载，避免断言等待 */
+  .dt-collapse {
+    overflow: hidden;
+  }
+
+  .dt-collapse[data-state='open'] {
+    animation: dt-collapse-open var(--dt-motion-slow) var(--dt-motion-ease);
+  }
+
+  .dt-chevron {
+    transition: transform var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  /* Tab 与侧栏 / 底栏选中态 */
+  .dt-tab-motion {
+    transition:
+      background-color var(--dt-motion-fast) ease-out,
+      color var(--dt-motion-fast) ease-out,
+      box-shadow var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  .dt-nav-item,
+  .dt-nav-bottom {
+    transition:
+      background-color var(--dt-motion-fast) ease-out,
+      color var(--dt-motion-fast) ease-out;
+  }
+
+  /* 底栏选中项顶部 2px 指示条：只做 scaleX / opacity，不参与布局 */
+  .dt-nav-bottom {
+    position: relative;
+  }
+
+  .dt-nav-bottom::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    width: 20px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0;
+    transform: translateX(-50%) scaleX(0.4);
+    transition:
+      opacity var(--dt-motion-fast) ease-out,
+      transform var(--dt-motion-fast) var(--dt-motion-ease);
+    pointer-events: none;
+  }
+
+  .dt-nav-bottom[aria-current='true']::after {
+    opacity: 1;
+    transform: translateX(-50%) scaleX(1);
+  }
+
+  /* 开关 / 勾选 / 下拉 / toast / 空态 / 加载页 */
+  .dt-switch-motion {
+    transition: background-color var(--dt-motion-fast) ease-out, border-color var(--dt-motion-fast) ease-out;
+  }
+
+  .dt-switch-thumb {
+    transition: transform var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  .dt-check-icon {
+    animation: dt-check-in var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  .dt-select-content[data-state='open'] {
+    animation: dt-select-in var(--dt-motion-fast) var(--dt-motion-ease);
+    transform-origin: var(--radix-select-content-transform-origin);
+  }
+
+  .dt-menu-in {
+    animation: dt-select-in var(--dt-motion-fast) var(--dt-motion-ease);
+    transform-origin: top right;
+  }
+
+  .dt-toast[data-mounted='true'] {
+    animation: dt-toast-in var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  .dt-toast[data-removed='true'] {
+    animation: dt-toast-out var(--dt-motion-fast) ease-in forwards;
+  }
+
+  .dt-empty-in {
+    animation: dt-card-in var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  .dt-screen-in {
+    animation: dt-fade-in var(--dt-motion-base) ease-out;
+  }
+
+  /* 忙碌蒙版与其中卡片淡入（原本只有旋转图标） */
+  .dt-busy-mask {
+    animation: dt-fade-in var(--dt-motion-base) ease-out;
+  }
+
+  .dt-busy-mask > span {
+    animation: dt-card-in var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  /* 停用规则补一条：连延迟一起清零，避免 stagger 在「关闭动效」下仍逐项等待 */
+  [data-motion='off'] *,
+  [data-motion='off'] *::before,
+  [data-motion='off'] *::after {
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-motion='system'] *,
+    [data-motion='system'] *::before,
+    [data-motion='system'] *::after {
+      animation-delay: 0ms !important;
+      transition-delay: 0ms !important;
+    }
+  }
+
+  /* 停用 / 减少动态时也不做位移式 hover，避免「瞬间跳到新位置」 */
+  [data-motion='off'] .dt-card-motion:hover,
+  [data-motion='off'] .dt-btn-motion:hover,
+  [data-motion='off'] .dt-btn-motion:active {
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-motion='system'] .dt-card-motion:hover,
+    [data-motion='system'] .dt-btn-motion:hover,
+    [data-motion='system'] .dt-btn-motion:active {
+      transform: none;
+    }
+  }
+}
+/* ══ I-15 动效增强 结束 ══════════════════════════════════════════════ */

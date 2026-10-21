@@ -49,17 +49,17 @@ export function CollapsibleCard({ id, title, icon: Icon, badge, children }: Coll
       >
         <CollapsiblePrimitive.Trigger
           aria-label={`${title}${open ? '：收起' : '：展开'}`}
-          className="flex min-h-tap w-full items-center gap-2 rounded-lg px-4 py-3 text-left hover:bg-surface-muted"
+          className="dt-nav-item flex min-h-tap w-full items-center gap-2 rounded-lg px-4 py-3 text-left hover:bg-surface-muted"
         >
           {Icon !== undefined && <Icon className="size-4 text-ink" aria-hidden />}
           <span className="text-sm font-semibold text-ink">{title}</span>
           {badge !== undefined && <span className="text-xs font-normal text-muted">{badge}</span>}
           <ChevronDown
-            className={cn('ml-auto size-4 shrink-0 text-muted transition-transform', open && 'rotate-180')}
+            className={cn('dt-chevron ml-auto size-4 shrink-0 text-muted', open && 'rotate-180')}
             aria-hidden
           />
         </CollapsiblePrimitive.Trigger>
-        <CollapsiblePrimitive.Content hidden={!open}>
+        <CollapsiblePrimitive.Content className="dt-collapse" hidden={!open}>
           <div className="flex flex-col gap-3 px-4 pb-4 pt-1">{children}</div>
         </CollapsiblePrimitive.Content>
       </CollapsiblePrimitive.Root>

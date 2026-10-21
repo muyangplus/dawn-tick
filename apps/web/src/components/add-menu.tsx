@@ -82,7 +82,7 @@ export function AddMenuButton({ actions }: { actions: AddActionHandlers }) {
       <summary
         aria-label="添加"
         className={cn(
-          'inline-flex min-h-tap cursor-pointer list-none items-center justify-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-on-primary',
+          'dt-btn-motion inline-flex min-h-tap cursor-pointer list-none items-center justify-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-on-primary',
           'hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-2 focus-visible:ring-offset-page',
           '[&::-webkit-details-marker]:hidden',
         )}
@@ -94,7 +94,7 @@ export function AddMenuButton({ actions }: { actions: AddActionHandlers }) {
       <div
         role="menu"
         aria-label="添加"
-        className="absolute right-0 z-30 mt-1 flex w-44 flex-col gap-1 rounded-md border border-line bg-surface p-1 shadow-md"
+        className="dt-menu-in absolute right-0 z-30 mt-1 flex w-44 flex-col gap-1 rounded-md border border-line bg-surface p-1 shadow-md"
       >
         {ADD_ACTIONS.map(({ id, label, icon: Icon }) => (
           <button
@@ -102,7 +102,7 @@ export function AddMenuButton({ actions }: { actions: AddActionHandlers }) {
             type="button"
             role="menuitem"
             data-action={id}
-            className="flex min-h-tap w-full items-center gap-2 rounded-sm px-3 text-left text-sm text-ink hover:bg-surface-muted"
+            className="dt-nav-item flex min-h-tap w-full items-center gap-2 rounded-sm px-3 text-left text-sm text-ink hover:bg-surface-muted"
             onClick={() => {
               if (root.current !== null) root.current.open = false;
               actions[id]();

@@ -10,7 +10,7 @@ export function Toaster({ mode }: { mode: 'light' | 'dark' }) {
       closeButton
       toastOptions={{
         classNames: {
-          toast: 'rounded-md border border-line bg-surface text-ink shadow-md',
+          toast: 'dt-toast rounded-md border border-line bg-surface text-ink shadow-md',
           description: 'text-muted',
           actionButton: 'bg-primary text-on-primary',
           cancelButton: 'bg-surface-muted text-ink',

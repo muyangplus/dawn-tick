@@ -69,7 +69,7 @@ export function AppSidebar({
           aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
           aria-expanded={!collapsed}
           onClick={toggle}
-          className="flex size-tap shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-muted"
+          className="dt-nav-item flex size-tap shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-muted"
         >
           {collapsed ? (
             <PanelLeftOpen className="size-4" aria-hidden />
@@ -90,7 +90,7 @@ export function AppSidebar({
               aria-label={collapsed ? item.label : undefined}
               onClick={() => onSelect(item.id)}
               className={cn(
-                'flex min-h-tap items-center gap-3 rounded-md px-3 text-sm',
+                'dt-nav-item flex min-h-tap items-center gap-3 rounded-md px-3 text-sm',
                 collapsed && 'w-11 justify-center px-0',
                 active ? 'bg-surface-muted font-medium text-primary-strong' : 'text-ink hover:bg-surface-muted',
               )}
@@ -128,7 +128,7 @@ export function BottomNav({ current, onSelect }: { current: NavId; onSelect: (id
             aria-current={active}
             onClick={() => onSelect(item.id)}
             className={cn(
-              'flex min-h-tap flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px]',
+              'dt-nav-bottom flex min-h-tap flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px]',
               active ? 'text-primary-strong' : 'text-muted',
             )}
           >

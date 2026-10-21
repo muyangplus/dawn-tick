@@ -42,7 +42,7 @@ export function EmptyState({
   const toneClass = TONE_CLASS[tone];
   return (
     <div
-      className={cn('flex flex-col items-center justify-center text-center', sizeClass.wrap, className)}
+      className={cn('dt-empty-in flex flex-col items-center justify-center text-center', sizeClass.wrap, className)}
       {...props}
     >
       {Icon !== undefined && <Icon className={cn(sizeClass.icon, toneClass.icon)} aria-hidden />}
