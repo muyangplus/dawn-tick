@@ -62,6 +62,9 @@ jobs:
   android:
     name: Android 编译校验
     runs-on: ubuntu-latest
+    # 编译失败时要推 ci-debug 分支写日志，单独给这个 job 写权限（其余 job 仍然只读）
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
