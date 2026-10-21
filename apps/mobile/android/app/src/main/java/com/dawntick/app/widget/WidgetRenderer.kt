@@ -54,16 +54,19 @@ object WidgetRenderer {
     private const val INK_DARK = 0xFFF3EFF6.toInt()
     private const val MUTED_DARK = 0xFFA79FB3.toInt()
     private const val ACCENT_DARK = 0xFFFF8A8A.toInt()
+    private const val SURFACE_LIGHT = 0xFFFFFFFF.toInt()
+    private const val SURFACE_DARK = 0xFF1E1A26.toInt()
 
     /** 快照缺失 colors 时的一整套回退配色，按明暗模式二选一（不用 if 链逐色判断）。 */
     private data class FallbackPalette(
         val ink: Int,
         val muted: Int,
         val accent: Int,
+        val surface: Int,
     )
 
-    private val LIGHT_FALLBACK = FallbackPalette(INK_LIGHT, MUTED_LIGHT, ACCENT_LIGHT)
-    private val DARK_FALLBACK = FallbackPalette(INK_DARK, MUTED_DARK, ACCENT_DARK)
+    private val LIGHT_FALLBACK = FallbackPalette(INK_LIGHT, MUTED_LIGHT, ACCENT_LIGHT, SURFACE_LIGHT)
+    private val DARK_FALLBACK = FallbackPalette(INK_DARK, MUTED_DARK, ACCENT_DARK, SURFACE_DARK)
 
     private fun fallbackPalette(dark: Boolean): FallbackPalette = when (dark) {
         true -> DARK_FALLBACK
@@ -85,11 +88,6 @@ object WidgetRenderer {
     }
 
     /** 旧快照没有 colors.surface 时按背景设置回退三态 drawable；新快照直接用 surface 上色。 */
-    private fun backgroundResource(background: String): Int = when (background) {
-        "dark" -> R.drawable.widget_bg_dark
-        "transparent" -> R.drawable.widget_bg_transparent
-        else -> R.drawable.widget_bg_light
-    }
 
     private fun applyTheme(
         views: RemoteViews,
@@ -116,13 +114,10 @@ object WidgetRenderer {
         for (id in mutedIds) views.setTextColor(id, muted)
         for (id in accentIds) views.setTextColor(id, accent)
 
-        // 卡面：快照 surface（透明底带 alpha）优先；旧快照回退三态 drawable
-        val surface = parseColor(colors?.surface)
-        if (surface != null) {
-            views.setInt(R.id.widget_surface, "setBackgroundColor", surface)
-        } else {
-            views.setBackgroundResource(R.id.widget_surface, backgroundResource(background))
-        }
+        // 卡面：快照 surface（透明底带 alpha）优先；旧快照回退按明暗取的回退色。
+        // RemoteViews 没有 setBackgroundResource，只能用 setInt 调受支持的 View 方法，这里统一走 setBackgroundColor。
+        val surface = parseColor(colors?.surface) ?: fallback.surface
+        views.setInt(R.id.widget_surface, "setBackgroundColor", surface)
     }
 
     private fun dp(context: Context, value: Int): Int = TypedValue.applyDimension(
