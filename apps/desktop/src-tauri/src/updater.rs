@@ -84,12 +84,13 @@ mod tests {
     use super::*;
 
     fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "dawntick-installer-test-{name}-{}",
-            std::process::id()
-        ));
+        // 不用系统临时目录：CI/沙箱对 %TEMP% 的写权限不稳定，测试目录放在 target 下
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp")
+            .join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("应能建临时目录");
+        std::fs::create_dir_all(&dir).expect("应能建测试目录");
         dir
     }
 
