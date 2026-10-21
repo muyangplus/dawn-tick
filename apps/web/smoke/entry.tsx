@@ -3106,6 +3106,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (settingsGrid?.className ?? '').includes('desktop:grid-cols-[2fr_1fr]'),
     `侧栏=${settingsSide === null ? '无' : (settingsSide.textContent ?? '').slice(0, 24)}`,
   );
+  // I-15：设置页卡片列表带依次淡入类，卡片本身带 hover / 折叠动效类
+  check(
+    '设置页卡片列表带依次淡入与卡片动效类',
+    (settingsMain?.className ?? '').includes('dt-stagger') &&
+      settingsMain?.firstElementChild?.classList.contains('dt-card-motion') === true,
+    `main=${settingsMain?.className ?? '(无)'} 首卡=${settingsMain?.firstElementChild?.className ?? '(无)'}`,
+  );
+  check(
+    '折叠卡内容挂展开动效类',
+    view.container.querySelector('.dt-collapse') !== null,
+    '',
+  );
   if (clickByLabel(view.container, '卡片布局')) await flush(12);
   if (clickByLabel(document.body, '卡片区域：外观：主列')) await flush(16);
   if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
@@ -3166,6 +3178,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       devicesSide.querySelector('[data-role="about-app"]') !== null &&
       (devicesGrid?.className ?? '').includes('desktop:grid-cols-[2fr_1fr]'),
     `侧栏=${devicesSide === null ? '无' : (devicesSide.textContent ?? '').slice(0, 24)}`,
+  );
+  // I-15：设备与同步页与设置页同一套卡片依次淡入
+  const devicesMain = view.container.querySelector<HTMLElement>('[data-role="devices-main"]');
+  check(
+    '设备与同步页卡片列表带依次淡入与卡片动效类',
+    (devicesMain?.className ?? '').includes('dt-stagger') &&
+      devicesMain?.firstElementChild?.classList.contains('dt-card-motion') === true,
+    `main=${devicesMain?.className ?? '(无)'} 首卡=${devicesMain?.firstElementChild?.className ?? '(无)'}`,
   );
   if (clickByLabel(view.container, '卡片布局')) await flush(12);
   if (clickByLabel(document.body, '卡片区域：关于：主列')) await flush(16);
