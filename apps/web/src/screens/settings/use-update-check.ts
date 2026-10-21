@@ -47,7 +47,7 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
         const manifest = status.manifest;
         const channelLabel = CHANNEL_LABEL[releaseChannelOf(status)];
         const message = status.available
-          ? `发现新版本 ${status.latest}（${channelLabel}），可在发布页查看`
+          ? `发现新版本 ${status.latest}（${channelLabel}），可在更新弹窗里下载安装`
           : `已是最新版本（${channelLabel}）`;
         setResult(said(message));
         toast.success(message);

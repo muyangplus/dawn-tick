@@ -3269,8 +3269,71 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (document.body.textContent ?? '').includes('已复制发布页链接'),
     `剪贴板=${clipboardWrites[0] ?? '(空)'}`,
   );
-  closeUpdatePrompt();
-  await flush(8);
+  // —— I-03：桌面端更新弹窗给出「下载并安装」；下载失败给可读原因并可重试（全程用桩，不真实下载） ——
+  const updateTauriInternals = {
+    invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (command === 'plugin:path|resolve_directory') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\';
+      if (command === 'write_binary_file' || command === 'run_installer') return String(args?.path ?? '');
+      // 桌面更新下载走原生 HTTP（plugin-http）：桩里直接断网，验证失败原因与重试入口
+      if (command === 'plugin:http|fetch') throw new Error('offline');
+      return undefined;
+    },
+    transformCallback: () => 0,
+  };
+  const installUpdateTauriStub = (): void => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = updateTauriInternals;
+    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = updateTauriInternals;
+  };
+  const clearUpdateTauriStub = (): void => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  };
+  installUpdateTauriStub();
+  try {
+    requestUpdatePrompt({
+      available: true,
+      error: null,
+      feed: 'release',
+      current: appVersion(),
+      latest: '0.5.1',
+      manifest: {
+        channel: 'release',
+        version: '0.5.1',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe',
+            size: 16,
+            checksumUrl: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe.sha256',
+          },
+        },
+      },
+    });
+    await flush(12);
+    const updateDownload = document.querySelector<HTMLElement>('[data-role="update-download"]');
+    check(
+      '桌面端更新弹窗提供「下载并安装」',
+      updateDownload !== null && (updateDownload.textContent ?? '').includes('下载并安装'),
+      updateDownload?.textContent?.trim() ?? '(无)',
+    );
+    updateDownload?.click();
+    await flush(24);
+    const updateStatus = document.querySelector<HTMLElement>('[data-role="update-status"]');
+    check(
+      '更新下载失败给出可读原因并可重试',
+      updateStatus !== null &&
+        (updateStatus.textContent ?? '').includes('下载更新失败') &&
+        (updateStatus.textContent ?? '').includes('offline') &&
+        (document.querySelector('[data-role="update-download"]')?.textContent ?? '').includes('重试'),
+      updateStatus?.textContent?.trim() ?? '(无)',
+    );
+  } finally {
+    // 先撤掉桌面桩再关弹窗：关闭会触发一次重渲染，平台判定回到 Web，
+    // 否则设备页会停留在「桌面端」渲染结果上，后面的浏览器端断言会误判。
+    clearUpdateTauriStub();
+    closeUpdatePrompt();
+    await flush(8);
+  }
+
   check('关闭更新弹窗后不再显示', document.querySelector('[data-role="update-dialog"]') === null, '');
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明

@@ -41,6 +41,8 @@ export interface UpdateAsset {
   /** 该平台自带签名的校验值：Windows 为 minisign 签名，Android 为 APK 签名摘要 */
   signature?: string;
   sha256?: string;
+  /** 发布里同名 `.sha256` 资产的地址（内容为裸 SHA256），自动更新下载后据此校验 */
+  checksumUrl?: string;
 }
 
 export interface UpdateManifest {
@@ -199,7 +201,10 @@ function versionFromAssets(assets: unknown): string | null {
   return null;
 }
 
-/** 发布资产 → 下载项：windows 优先安装包、其次便携包；android 取 APK；web 取静态包。 */
+/**
+ * 发布资产 → 下载项：windows 优先安装包、其次便携包；android 取 APK；web 取静态包。
+ * 每个产物随附同名的 `.sha256` 资产（内容为裸 SHA256），一并挂到 `checksumUrl` 上。
+ */
 function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
   if (!Array.isArray(value)) return undefined;
   const available: Array<{ name: string; url: string; size?: number }> = [];
@@ -212,10 +217,17 @@ function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
     const size = record['size'];
     available.push(typeof size === 'number' && Number.isFinite(size) ? { name, url, size } : { name, url });
   }
+  const checksumOf = (name: string): string | undefined =>
+    available.find((item) => item.name.toLowerCase() === `${name}.sha256`.toLowerCase())?.url;
   const pick = (suffix: string): UpdateAsset | undefined => {
     const found = available.find((item) => item.name.toLowerCase().endsWith(suffix));
     if (found === undefined) return undefined;
-    return found.size === undefined ? { url: found.url } : { url: found.url, size: found.size };
+    const checksumUrl = checksumOf(found.name);
+    return {
+      url: found.url,
+      ...(found.size === undefined ? {} : { size: found.size }),
+      ...(checksumUrl === undefined ? {} : { checksumUrl }),
+    };
   };
 
   const assets: NonNullable<UpdateManifest['assets']> = {};

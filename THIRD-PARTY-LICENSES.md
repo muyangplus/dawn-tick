@@ -13,6 +13,7 @@
 |---|---|---|---|
 | Web | @capacitor-community/sqlite | 8.1.1 | MIT |
 | Web | @capacitor/core | 8.5.3 | MIT |
+| Web | @capacitor/filesystem | 8.1.5 | MIT |
 | Web | @capacitor/local-notifications | 8.3.1 | MIT |
 | Web | @radix-ui/react-checkbox | 1.3.12 | MIT |
 | Web | @radix-ui/react-collapsible | 1.1.21 | MIT |
@@ -42,6 +43,7 @@
 | Android | @capacitor-community/sqlite | 8.1.1 | MIT |
 | Android | @capacitor/android | 8.5.3 | MIT |
 | Android | @capacitor/core | 8.5.3 | MIT |
+| Android | @capacitor/filesystem | 8.1.5 | MIT |
 | Android | @capacitor/local-notifications | 8.3.1 | MIT |
 | Windows | serde | 1.0.229 | MIT OR Apache-2.0 |
 | Windows | serde_json | 1.0.151 | MIT OR Apache-2.0 |
@@ -378,6 +380,32 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2017-present Drifty Co.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### @capacitor/filesystem 8.1.5（Web）
+
+```text
+MIT License
+
+Copyright (c) 2025 Ionic
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -902,6 +930,32 @@ SOFTWARE.
 MIT License
 
 Copyright (c) 2017-present Drifty Co.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+#### @capacitor/filesystem 8.1.5（Android）
+
+```text
+MIT License
+
+Copyright (c) 2025 Ionic
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

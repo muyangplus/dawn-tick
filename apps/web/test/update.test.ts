@@ -404,6 +404,11 @@ test('dev 从资产名取版本：滚动 tag（dev-latest）读不出语义化�
             browser_download_url: 'https://example.com/setup.exe',
           },
           {
+            name: 'DawnTick-0.1.1-dev-windows-x64-setup.exe.sha256',
+            size: 65,
+            browser_download_url: 'https://example.com/setup.exe.sha256',
+          },
+          {
             name: 'DawnTick-0.1.1-dev-android.apk',
             size: 60,
             browser_download_url: 'https://example.com/app.apk',
@@ -434,6 +439,11 @@ test('dev 从资产名取版本：滚动 tag（dev-latest）读不出语义化�
   assert.equal(status.manifest?.releasedAt, Date.parse('2026-05-01T12:00:00Z'));
   assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe', 'windows 优先安装包');
   assert.equal(status.manifest?.assets?.windows?.size, 120);
+  assert.equal(
+    status.manifest?.assets?.windows?.checksumUrl,
+    'https://example.com/setup.exe.sha256',
+    '同名 .sha256 资产挂到 checksumUrl，供下载后校验',
+  );
   assert.equal(status.manifest?.assets?.android?.size, 60);
   assert.equal(status.manifest?.assets?.web?.url, 'https://example.com/web.zip', 'web.zip.sha256 不算静态包');
 });
