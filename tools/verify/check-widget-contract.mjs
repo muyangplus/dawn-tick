@@ -4,7 +4,8 @@
  *
  * 快照由 Web 层写、Android 小组件读，两端各写一份字段名：
  * - TS 契约源：apps/web/src/widget-snapshot.ts 的 WidgetSnapshot / WidgetLesson /
- *   WidgetGridLesson / WidgetExam / WidgetColors 接口；
+ *   WidgetGridLesson / WidgetExam / WidgetColors 接口（WidgetColors 含卡面底色 surface
+ *   与强调色 accent，danger 为 A-15 兼容字段）；
  * - Kotlin 读取端：apps/mobile/android/app/src/main/java/com/dawntick/app/widget/WidgetStore.kt
  *   里 `xxx.optString("key")` 一类的 JSON 键名。
  *

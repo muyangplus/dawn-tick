@@ -33,10 +33,18 @@ data class WidgetExam(
     val startAt: Long,
 )
 
-/** 设计令牌语义色；旧快照没有该对象，渲染器回退内置常量。 */
+/**
+ * 设计令牌语义色；旧快照没有该对象，渲染器回退内置常量。
+ * 字段名与 `apps/web/src/widget-snapshot.ts` 的 WidgetColors 一一对应，由契约脚本校验。
+ */
 data class WidgetColors(
     val ink: String,
     val muted: String,
+    /** 卡面底色（#RRGGBB 或透明底的 #AARRGGBB）。 */
+    val surface: String,
+    /** 强调色：与悬浮窗倒计时一致的 primaryStrong。 */
+    val accent: String,
+    /** A-15 旧字段；新快照仍携带，旧版 APK 用它取强调色。 */
     val danger: String,
 )
 
@@ -138,6 +146,8 @@ object WidgetStore {
     private fun parseColors(item: JSONObject): WidgetColors = WidgetColors(
         ink = item.optString("ink"),
         muted = item.optString("muted"),
+        surface = item.optString("surface"),
+        accent = item.optString("accent"),
         danger = item.optString("danger"),
     )
 
