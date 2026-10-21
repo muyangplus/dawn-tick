@@ -4,11 +4,13 @@ use std::path::PathBuf;
 
 mod lan_sync;
 mod paths;
+mod reminder_actions;
 mod updater;
 mod widget_window;
 
 use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
+use reminder_actions::{clear_pending_reminder, set_pending_reminders};
 use updater::run_installer;
 use widget_window::{ensure_mini, hide_widget, show_main, show_widget, widget_measure, widget_resize};
 
@@ -1624,45 +1626,47 @@ fn spawn_takeover_watcher(app: tauri::AppHandle) {
 /// 常驻托盘（D29）：主窗口关闭时隐藏而不退出，紧凑条由托盘控制。
 #[cfg(desktop)]
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
-    use tauri::menu::{Menu, MenuItem};
+    use tauri::menu::Menu;
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::Manager;
 
-    let show_main = MenuItem::with_id(app, "show_main", "显示主窗口", true, None::<&str>)?;
-    let show_mini = MenuItem::with_id(app, "show_mini", "显示悬浮窗", true, None::<&str>)?;
-    let hide_mini = MenuItem::with_id(app, "hide_mini", "隐藏悬浮窗", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_main, &show_mini, &hide_mini, &quit])?;
+    let menu: Menu<_> = reminder_actions::build_menu(app)?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .tooltip("晓刻 DawnTick")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show_main" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+        .on_menu_event(|app, event| {
+            // 提醒子菜单的动作先交给 R-07 模块，其余仍是原有的窗口/退出命令
+            if reminder_actions::handle_menu_event(app, event.id.as_ref()) {
+                return;
             }
-            "show_mini" => {
-                if let Some(window) = ensure_mini(app) {
-                    let _ = window.show();
+            match event.id.as_ref() {
+                "show_main" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }
-            }
-            "hide_mini" => {
-                if let Some(window) = app.get_webview_window("mini") {
-                    let _ = window.hide();
+                "show_mini" => {
+                    if let Some(window) = ensure_mini(app) {
+                        let _ = window.show();
+                    }
                 }
-            }
-            "quit" => {
-                // 退出前补一次落盘，避免最后 500ms 内的移动/缩放随防抖一起丢掉
-                if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
-                    save_geometry_now(&main);
+                "hide_mini" => {
+                    if let Some(window) = app.get_webview_window("mini") {
+                        let _ = window.hide();
+                    }
                 }
-                app.exit(0)
+                "quit" => {
+                    // 退出前补一次落盘，避免最后 500ms 内的移动/缩放随防抖一起丢掉
+                    if let Some(main) = app.get_webview_window(MAIN_WINDOW) {
+                        save_geometry_now(&main);
+                    }
+                    app.exit(0)
+                }
+                _ => {}
             }
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -2712,7 +2716,9 @@ pub fn run() {
             lan_sync_start,
             lan_sync_stop,
             lan_sync_poll,
-            lan_sync_respond
+            lan_sync_respond,
+            set_pending_reminders,
+            clear_pending_reminder
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()

@@ -55,10 +55,18 @@ export const NATIVE_COMMANDS = [
   'lan_sync_stop',
   'lan_sync_poll',
   'lan_sync_respond',
+  'set_pending_reminders',
+  'clear_pending_reminder',
 ] as const;
 
 /** 已注册的 Tauri 命令名。 */
 export type NativeCommand = (typeof NATIVE_COMMANDS)[number];
+
+/**
+ * Windows 托盘提醒动作事件名，与 Rust `reminder_actions::REMINDER_EVENT` 逐字一致。
+ * 事件负载：`{ id: string, action: 'snooze' | 'done' | 'mute' }`。
+ */
+export const REMINDER_ACTION_EVENT = 'reminder-action';
 
 /** 悬浮窗尺寸来源：默认 / 记住的 / 按内容 / 手动拉伸。 */
 export type WidgetSizeSource = 'default' | 'remembered' | 'content' | 'manual';
