@@ -38,6 +38,9 @@ export const LAYOUT_META_KEY = 'ui_layout_v1';
 export const PRESET_SNAPSHOT_META_KEY = 'presets_snapshot_v1';
 export const PRESET_CONTENT_META_KEY = 'presets_content_v1';
 
+/** 更新运营：用户点了「忽略此版本」后记住的版本号（只忽略这一个版本）。 */
+export const IGNORED_UPDATE_VERSION_META_KEY = 'ignored_update_version';
+
 /** Android 主屏小组件读取的课表快照。 */
 export const WIDGET_SNAPSHOT_META_KEY = 'widget_snapshot';
 
@@ -72,6 +75,7 @@ export const APP_META_KEYS: readonly string[] = [
     LAYOUT_META_KEY,
     PRESET_SNAPSHOT_META_KEY,
     PRESET_CONTENT_META_KEY,
+    IGNORED_UPDATE_VERSION_META_KEY,
     WIDGET_SNAPSHOT_META_KEY,
     WEBDAV_LAST_UPLOAD_META_KEY,
     WEBDAV_LAST_SYNC_META_KEY,

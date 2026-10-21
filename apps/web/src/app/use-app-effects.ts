@@ -3,17 +3,19 @@ import type { AppSettings, Storage } from '@dawn-tick/core';
 import { invokeNative } from '../lib/native.ts';
 import { readMetaJson, writeMetaJson } from '../lib/meta.ts';
 import { SEEN_NOTICES_META_KEY } from '../lib/meta-keys.ts';
-import { applyLogSettings, describeError, logDebug, logWarn } from '../log.ts';
+import { applyLogSettings, describeError, logDebug, logInfo, logWarn } from '../log.ts';
 import { applyDevFeatures } from '../dev-features.ts';
 import { ensureStartupPermissions } from '../permissions.ts';
 import { markNotifyAsked } from '../notify.ts';
 import { isFallbackStorage } from '../db/fallback.ts';
-import { checkForUpdate, resolveReceiveBeta, type UpdateStatus } from '../update.ts';
+import { checkForUpdate, resolveReceiveBeta } from '../update.ts';
 import { CHANNEL, appVersion } from '../channel.ts';
 import type { AppData } from '../data.ts';
 import type { NoticeDismissOptions } from '../components/app-dialogs.tsx';
 import { NOTICE_BETA, NOTICE_DEV, RELEASES_URL } from '../components/app-dialogs.tsx';
-import { closeUpdatePrompt, requestUpdatePrompt, useUpdatePrompt } from '../components/update-prompt.ts';
+import { closeUpdatePrompt, requestUpdatePrompt, useUpdatePrompt, bindUpdatePromptStorage } from '../components/update-prompt.ts';
+import type { UpdatePrompt } from '../components/update-prompt.ts';
+import { readIgnoredVersion, shouldPrompt } from '../lib/update-preferences.ts';
 import { openExternalUrl } from '../system-actions.ts';
 
 function parseSeenNotices(value: unknown): string[] | null {
@@ -40,8 +42,8 @@ export interface AppEffects {
   /** 待展示的渠道提示（开发版 / 测试版），按 id 记录已提示过 */
   notice: string | null;
   dismissNotice: (notice: string, options: NoticeDismissOptions) => void;
-  /** 发现新版本时的更新信息 */
-  updateInfo: UpdateStatus | null;
+  /** 发现新版本时的更新信息（含已忽略版本，供弹窗给取消忽略入口） */
+  updateInfo: UpdatePrompt | null;
   closeUpdate: () => void;
   /** 再查一次更新（切到测试版后） */
   recheckUpdate: () => void;
@@ -105,6 +107,11 @@ export function useAppEffects(input: {
     document.documentElement.dataset.motion = settings.motion;
   }, [settings.motion]);
 
+  // 更新偏好（忽略的版本）绑定到界面上这份存储：弹窗与设备页更新区共用同一份记录
+  useEffect(() => {
+    bindUpdatePromptStorage(screenStorage);
+  }, [screenStorage]);
+
   // 渠道提示：不是初次使用也要弹——只要这条提示没展示过
   useEffect(() => {
     const storageReady = storage;
@@ -130,6 +137,13 @@ export function useAppEffects(input: {
         currentVersion: appVersion(),
       });
       if (cancelled || !status.available) return;
+      // 忽略只针对那一个版本：远端出了更高版本仍要自动提示
+      const ignored = screenStorage === null ? null : await readIgnoredVersion(screenStorage);
+      if (cancelled) return;
+      if (!shouldPrompt({ remote: status.latest, current: appVersion(), ignored })) {
+        logInfo('update', '已忽略该版本，跳过自动提示', { version: status.latest });
+        return;
+      }
       // 检查到严格更高的新版本：交给统一的更新弹窗（版本、渠道、当前版本与发布说明）
       requestUpdatePrompt(status);
     })();
