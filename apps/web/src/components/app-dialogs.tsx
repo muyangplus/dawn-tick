@@ -1,14 +1,19 @@
+import { useState } from 'react';
 import type { UpdateStatus } from '../update.ts';
+import { releaseChannelOf } from '../update.ts';
 import type { ApplyMode } from '../webdav.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../channel.ts';
-import { openExternalUrl } from '../system-actions.ts';
+import { copyText, openExternalUrl } from '../system-actions.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
+import { Input } from './ui/input.tsx';
+import { Markdown } from './ui/markdown.tsx';
+import { toast } from './ui/toaster.tsx';
 
 /** 发布页地址：渠道提示与更新提示的下载入口共用 */
 export const RELEASES_URL = 'https://github.com/muyangplus/dawn-tick/releases';
 
-/** 渠道提示的 id：开发版可能频繁更新、公测版可能不稳定 */
+/** 渠道提示的 id：开发版可能频繁更新、测试版可能不稳定 */
 export const NOTICE_DEV = 'dev-frequent-updates';
 export const NOTICE_BETA = 'beta-unstable';
 
@@ -27,7 +32,7 @@ export interface NoticeDialogProps {
   onDismiss: (notice: string, options: NoticeDismissOptions) => void;
 }
 
-/** 渠道提示：开发版可能频繁更新、公测版可能不稳定；每条只弹一次，新增提示对老用户也会弹。 */
+/** 渠道提示：开发版可能频繁更新、测试版可能不稳定；每条只弹一次，新增提示对老用户也会弹。 */
 export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
   return (
     <Dialog
@@ -38,8 +43,8 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
       }}
     >
       <DialogContent
-        title={notice === NOTICE_BETA ? '公测版提示' : '开发版提示'}
-        description={notice === NOTICE_BETA ? '公测版可能不稳定，反馈请附日志' : '开发版滚动更新'}
+        title={notice === NOTICE_BETA ? '测试版提示' : '开发版提示'}
+        description={notice === NOTICE_BETA ? '测试版可能不稳定，反馈请附日志' : '开发版滚动更新'}
       >
         <DialogFooter>
           <Button
@@ -67,13 +72,55 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
 }
 
 export interface UpdateDialogProps {
-  /** 发现的新版本；null 表示不展示 */
+  /** 发现的新版本；null 表示不展示。与启动自检共用 `update-prompt` 的数据形状。 */
   info: UpdateStatus | null;
   onClose: () => void;
 }
 
-/** 发现新版本：显示版本、渠道与发布说明，只提示不下载。 */
+/**
+ * 原生「用默认浏览器打开」可能迟迟不返回：只在点击时调用一次并设上限，
+ * 超时按失败提示；弹窗打开时不做任何预加载/预取。
+ */
+async function openReleasePageOnce(url: string, timeoutMs = 8000): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), timeoutMs);
+  });
+  try {
+    return await Promise.race([openExternalUrl(url), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * 发现新版本：版本号、发布渠道、当前版本与发布说明（Markdown）。
+ * 只提示不下载；「复制链接」与「打开发布页」互不依赖，打开失败也能复制。
+ */
 export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
+  const [opening, setOpening] = useState(false);
+  const notes = info?.manifest?.notes?.trim() ?? '';
+  /** 渠道取发布本身的渠道：beta 预发布=测试版、正式版=正式版，不看接收开关 */
+  const channel = info === null ? CHANNEL : releaseChannelOf(info);
+
+  async function copyReleaseLink(): Promise<void> {
+    const copied = await copyText(RELEASES_URL);
+    if (copied) toast.success('已复制发布页链接');
+    else toast.error('复制失败，请手动选中链接复制');
+  }
+
+  async function openReleasePage(): Promise<void> {
+    if (opening) return;
+    setOpening(true);
+    try {
+      const opened = await openReleasePageOnce(RELEASES_URL);
+      if (opened) toast.success('已在默认浏览器打开发布页');
+      else toast.info('打开浏览器失败，请改用「复制链接」');
+    } finally {
+      setOpening(false);
+    }
+  }
+
   return (
     <Dialog
       open={info !== null}
@@ -82,20 +129,41 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
       }}
     >
       <DialogContent
+        data-role="update-dialog"
         title={`发现新版本 ${info?.latest ?? ''}`}
-        description={`当前 ${appVersion()} · 渠道 ${CHANNEL_LABEL[info?.manifest?.channel ?? info?.feed ?? CHANNEL]}`}
+        description={`当前版本 ${appVersion()} · 发布渠道 ${CHANNEL_LABEL[channel]}`}
       >
-        {info?.manifest?.notes !== undefined && info.manifest.notes.trim().length > 0 && (
-          <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-line bg-surface-muted p-2 text-xs text-ink">
-            {info.manifest.notes}
-          </pre>
+        {notes !== '' && (
+          <Markdown
+            source={notes}
+            dataRole="update-notes"
+            className="max-h-56 overflow-y-auto overscroll-contain rounded-md border border-line bg-surface-muted p-3"
+          />
         )}
+        <label className="flex flex-col gap-1 text-xs text-muted">
+          <span>发布页链接</span>
+          <Input
+            readOnly
+            data-role="update-release-url"
+            aria-label="发布页链接"
+            value={RELEASES_URL}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </label>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             稍后
           </Button>
-          <Button variant="primary" onClick={() => openExternalUrl(RELEASES_URL)}>
-            去发布页下载
+          <Button variant="secondary" data-role="update-copy-link" onClick={() => void copyReleaseLink()}>
+            复制链接
+          </Button>
+          <Button
+            variant="primary"
+            data-role="update-open-release"
+            loading={opening}
+            onClick={() => void openReleasePage()}
+          >
+            打开发布页
           </Button>
         </DialogFooter>
       </DialogContent>

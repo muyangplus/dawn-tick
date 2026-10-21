@@ -22,6 +22,9 @@ import {
   writeSettings,
 } from '@dawn-tick/core';
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
+import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
+import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
+import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
@@ -3001,6 +3004,66 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       releaseLink.href.includes('muyangplus/dawn-tick/releases'),
     releaseLink?.getAttribute('href') ?? '(无)',
   );
+
+  // 更新弹窗：启动自检与手动检查共用同一份数据；发布说明按 Markdown 渲染，复制链接走剪贴板
+  const clipboardWrites: string[] = [];
+  Object.defineProperty(globalThis.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async (value: string) => {
+        clipboardWrites.push(value);
+      },
+    },
+  });
+  requestUpdatePrompt({
+    available: true,
+    error: null,
+    feed: 'beta',
+    current: appVersion(),
+    latest: '0.5.0',
+    manifest: {
+      channel: 'release',
+      version: '0.5.0',
+      notes:
+        '### 更新内容\n\n- 新增 Markdown 发布说明\n- 修复发布页链接\n\n' +
+        '**Full Changelog**: https://github.com/muyangplus/dawn-tick/compare/v0.4.1...v0.5.0',
+    },
+  });
+  await flush(12);
+  const updateDialog = document.querySelector<HTMLElement>('[data-role="update-dialog"]');
+  const updateNotes = document.querySelector<HTMLElement>('[data-role="update-notes"]');
+  const noteHeading = updateNotes?.querySelector('h3');
+  const noteItems = updateNotes?.querySelectorAll('li') ?? [];
+  const noteStrong = updateNotes?.querySelector('strong');
+  check(
+    '更新弹窗渲染 Markdown 标题、列表与 Full Changelog',
+    updateDialog !== null &&
+      (noteHeading?.textContent ?? '') === '更新内容' &&
+      noteItems.length === 2 &&
+      (noteStrong?.textContent ?? '') === 'Full Changelog' &&
+      updateNotes?.querySelector('a[href*="compare"]') !== null,
+    `标题=${noteHeading?.textContent ?? '(无)'} / 列表=${noteItems.length} 项`,
+  );
+  check(
+    '更新弹窗显示版本、当前版本与发布本身的渠道',
+    (updateDialog?.textContent ?? '').includes('发现新版本 0.5.0') &&
+      (updateDialog?.textContent ?? '').includes(`当前版本 ${appVersion()}`) &&
+      (updateDialog?.textContent ?? '').includes('发布渠道 正式版'),
+    (updateDialog?.textContent ?? '').slice(0, 48),
+  );
+  const copyRelease = document.querySelector<HTMLElement>('[data-role="update-copy-link"]');
+  copyRelease?.click();
+  await flush(10);
+  check(
+    '更新弹窗复制发布页链接可用',
+    copyRelease !== null &&
+      clipboardWrites[0] === RELEASES_URL &&
+      (document.body.textContent ?? '').includes('已复制发布页链接'),
+    `剪贴板=${clipboardWrites[0] ?? '(空)'}`,
+  );
+  closeUpdatePrompt();
+  await flush(8);
+  check('关闭更新弹窗后不再显示', document.querySelector('[data-role="update-dialog"]') === null, '');
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
   const helpBlock = view.container.querySelector('[data-role="about-help"]');

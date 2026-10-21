@@ -8,9 +8,11 @@ import {
   compareVersions,
   defaultReceiveBeta,
   pickBetaCandidate,
+  releaseChannelOf,
   resolveFeed,
   resolveReceiveBeta,
 } from '../src/update.ts';
+import { CHANNEL_LABEL } from '../src/channel.ts';
 
 function manifestResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -132,6 +134,57 @@ test('同版本或更旧版本不算更新', async () => {
     fetchImpl: async () => manifestResponse(releaseBody({ assets: [] })),
   });
   assert.equal(older.available, false, '不允许降级');
+});
+
+test('判定：只有远端版本严格大于当前版本才提示', async () => {
+  const cases: Array<[current: string, latest: string, expected: boolean]> = [
+    ['0.2.0', '0.2.0', false],
+    ['0.3.0', '0.2.0', false],
+    ['0.1.9', '0.2.0', true],
+    ['0.2.0-beta.1', '0.2.0', true],
+    ['0.2.0', '0.2.0-beta.1', false],
+  ];
+  for (const [current, latest, expected] of cases) {
+    const status = await checkForUpdate({
+      channel: 'release',
+      receiveBeta: false,
+      currentVersion: current,
+      fetchImpl: async () => manifestResponse(releaseBody({ tag_name: `v${latest}`, assets: [] })),
+    });
+    assert.equal(status.available, expected, `当前 ${current}、远端 ${latest} 应${expected ? '' : '不'}提示`);
+  }
+});
+
+test('提示渠道取发布本身的渠道，不取接收测试版开关', async () => {
+  // 正式版用户打开「接收测试版」后，查到更高的正式版：仍然显示正式版
+  const stable = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: true,
+    currentVersion: '0.1.0',
+    fetchImpl: async () =>
+      manifestResponse([releaseBody({ tag_name: 'v0.2.0', prerelease: false, assets: [] })]),
+  });
+  assert.equal(stable.feed, 'beta', '查询源是发布列表');
+  assert.equal(stable.manifest?.channel, 'release', '发布本身是正式版');
+  assert.equal(releaseChannelOf(stable), 'release');
+  assert.equal(CHANNEL_LABEL[releaseChannelOf(stable)], '正式版');
+
+  // 测试版用户查到 beta 预发布：显示测试版
+  const beta = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.1.0-beta.1',
+    fetchImpl: async () =>
+      manifestResponse([
+        releaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true, assets: [] }),
+      ]),
+  });
+  assert.equal(beta.manifest?.channel, 'beta');
+  assert.equal(releaseChannelOf(beta), 'beta');
+  assert.equal(CHANNEL_LABEL[releaseChannelOf(beta)], '测试版');
+
+  // 没有清单时退回本次查询的源
+  assert.equal(releaseChannelOf({ feed: 'dev', manifest: null }), 'dev');
 });
 
 test('渠道不一致的清单被忽略', async () => {
