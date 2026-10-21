@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 的可见范围：只给导出/安装用到的两个私有目录，别的一律不暴露。
+     之前这里挂的是 external-path "."（整块共享存储都能被 content:// 读到），已收紧。
+
+     - cache-path name="app_cache" path="."       → /data/user/0/<包名>/cache/
+       （下载的安装包、导出文件都写在这里，具体路径校验见 files/LocalFile.kt）
+     - external-files-path name="app_downloads"  → /storage/emulated/0/Android/data/<包名>/files/Download/
+       （Environment.DIRECTORY_DOWNLOADS 的实际目录名是单数 Download） -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
+    <cache-path name="app_cache" path="." />
+    <external-files-path name="app_downloads" path="Download/" />
 </paths>
