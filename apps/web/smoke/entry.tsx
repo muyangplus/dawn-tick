@@ -487,6 +487,40 @@ async function dragLesson(
   return true;
 }
 
+/**
+ * 直接拖动课程卡：按下后立刻越过抖动阈值再拖到目标列，不先按住等长按。
+ * 回归 I-10：新建/普通课程卡只认「按住不动」时，快速拖动会被当成滑动而取消。
+ */
+async function quickDragLesson(
+  container: HTMLElement,
+  name: string,
+  moveTo: { day: number; clientY?: number },
+): Promise<boolean> {
+  const found = findLessonCard(container, name);
+  if (found === null) return false;
+  stubRect(found.holder, 100, 100);
+  found.holder.dispatchEvent(pointerEvent('pointerdown', { pointerId: 5, button: 0, clientX: 150, clientY: 104 }));
+  // 先原地越过阈值：鼠标/触控笔应当直接进入拖动，而不是等满长按时长
+  found.holder.dispatchEvent(pointerEvent('pointermove', { pointerId: 5, clientX: 152, clientY: 130 }));
+  await flush(2);
+  const column = container.querySelector(`[data-day="${moveTo.day}"]`);
+  if (column instanceof window.HTMLElement) stubRect(column, moveTo.day * 100, 100);
+  found.holder.dispatchEvent(
+    pointerEvent('pointermove', { pointerId: 5, clientX: moveTo.day * 100 + 50, clientY: moveTo.clientY ?? 130 }),
+  );
+  await flush(2);
+  found.holder.dispatchEvent(
+    pointerEvent('pointerup', {
+      pointerId: 5,
+      clientX: moveTo.day * 100 + 50,
+      clientY: moveTo.clientY ?? 130,
+    }),
+  );
+  await flush(6);
+  window.dispatchEvent(pointerEvent('pointercancel', { pointerId: 5 }));
+  return true;
+}
+
 /** 找到课程卡（CourseCard 渲染的按钮）与承接指针事件的外层容器。 */
 function findLessonCard(container: HTMLElement, name: string): { card: HTMLElement; holder: HTMLElement } | null {
   const card = [...container.querySelectorAll('[data-tone]')].find((item) =>
@@ -932,6 +966,30 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
   check('取消调课弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
 
+  // I-10 回归：普通课程卡按住直接拖（不先长按等待）也要打开同一个调课弹窗
+  const quickDragged = await quickDragLesson(view.container, '高数', { day: 3 });
+  await flush(6);
+  check(
+    'I-10 课程卡按住直接拖即可打开调课弹窗',
+    quickDragged && document.querySelector('[data-role="adjust-dialog"]') !== null,
+    quickDragged ? '已拖到第 3 列' : '没找到可拖的课程卡',
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // I-09：可拖动卡片独占触摸手势；不参与拖动的卡片留纵向滚动，页面才滚得动
+  const lessonTouchActionOf = (selector: string): string => {
+    const cell = view.container
+      .querySelector<HTMLElement>(selector)
+      ?.closest<HTMLElement>('[data-role="lesson-cell"]');
+    return cell?.style.touchAction ?? '(无)';
+  };
+  check('I-09 可拖动卡片才独占触摸手势', lessonTouchActionOf('[data-tone="solid"]') === 'none', '');
+  check(
+    'I-09 非本周卡片留纵向滚动',
+    lessonTouchActionOf('[data-dashed="true"]') === 'pan-y',
+    lessonTouchActionOf('[data-dashed="true"]'),
+  );
+
   // C1b：单击课程卡打开详情。拖动收尾只抑制紧随的那一次 click，且 pointerdown 会复位抑制标记。
   await dragLesson(view.container, '高数');
   await flush(4);
@@ -1191,6 +1249,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (document.body.textContent ?? '').includes('与「高等数学」第 1–2 节重叠，已同时保留'),
     (document.body.textContent ?? '').slice(-70),
   );
+  // I-10 回归：刚新建出来的课程卡也要能直接拖（不需要先按住等长按）
+  check('新建的课程出现在课表', findLessonCard(view.container, '重叠测试课') !== null, '');
+  const quickNewDrag = await quickDragLesson(view.container, '重叠测试课', { day: 3 });
+  await flush(6);
+  const newDragDialog = document.querySelector<HTMLElement>('[data-role="adjust-dialog"]');
+  check(
+    'I-10 新建的课程卡可直接拖动打开调课弹窗',
+    quickNewDrag && newDragDialog !== null && (document.body.textContent ?? '').includes('重叠测试课'),
+    `弹窗=${newDragDialog === null ? '无' : '有'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
 
   // C2b-2：多节占位块按住下半（下缘跟随）：向下继续扩展、向上收缩
   clickGridCell(view.container, 5, 1);
@@ -1659,6 +1728,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (cancelledCard.textContent ?? '').includes('往期'),
     cancelledCard?.textContent?.trim() ?? '(无)',
   );
+  // I-09：停课卡不参与拖动，但也不能吃掉页面滚动（touch-action 只留纵向滚动）
+  const cancelledCell = cancelledCard?.closest('[data-role="lesson-cell"]');
+  check(
+    'I-09 停课卡不参与拖动也不吃滚动',
+    cancelledCell instanceof window.HTMLElement &&
+      cancelledCell.style.touchAction === 'pan-y' &&
+      !(cancelledCard?.className ?? '').includes('cursor-grab'),
+    `touch-action=${cancelledCell instanceof window.HTMLElement ? cancelledCell.style.touchAction : '(无)'} / grab=${
+      (cancelledCard?.className ?? '').includes('cursor-grab') ? '有' : '无'
+    }`,
+  );
   if (clickByText(view.container, '日程')) await flush(12);
 
   if (clickMenu(view.container, '添加', '加待办')) await flush(12);
@@ -1841,10 +1921,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (item) => (item.textContent ?? '').trim() === label,
     );
   check(
-    '调课弹窗含四个主操作',
+    '调课弹窗含五个主操作',
     openAdjustTrimmed &&
       adjustDialogOpened &&
-      ['改期', '停课', '调休', '临时加课'].every((label) => adjustText.includes(label)),
+      ['改期', '停课', '调休', '临时加课', '改为考试'].every((label) => adjustText.includes(label)),
     '',
   );
   check('改期可直接选课与课次', document.querySelector('[aria-label="课程"]') !== null, '');
@@ -1870,6 +1950,22 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '临时加课')) await flush(8);
   check('临时加课可自定义名称', document.querySelector('[aria-label="或自定义课程名称"]') !== null, '');
   check('临时加课主按钮为应用调整', adjustHasButton('应用调整'), '');
+  // I-11：把这次课改成考试 —— 日期取调整后日期、节次换钟点、可写备注，主按钮随之变化
+  if (clickByText(document.body, '改为考试')) await flush(8);
+  check(
+    'I-11 改为考试给出日期、节次与备注',
+    document.querySelector('[aria-label="考试日期"]') !== null &&
+      document.querySelector('[aria-label="考试起始节"]') !== null &&
+      document.querySelector('[aria-label="考试结束节"]') !== null &&
+      document.querySelector('[aria-label="考试备注"]') !== null &&
+      (document.body.textContent ?? '').includes('原课次从课表移除'),
+    `主按钮=${adjustHasButton('改为考试') ? '改为考试' : '未变'}`,
+  );
+  check(
+    'I-11 改为考试主按钮随之变化',
+    adjustHasButton('改为考试') && !adjustHasButton('应用调整') && !adjustHasButton('确认停课'),
+    '',
+  );
   if (clickByText(document.body, '取消')) await flush(6);
 
   setNotifyPermission('granted');
@@ -3349,6 +3445,62 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       .map((index) => globalThis.localStorage?.key(index) ?? '')
       .join(' / '),
   );
+
+  // I-11 端到端：把一次课改成考试 → 写一条考试（进课表、开倒计时）并把原课次按停课移除。
+  // 放在 view 卸载前：此时课表里还有课程与排课，写库结果不影响后面的设置页用例。
+  {
+    const switched = clickByText(view.container, '日程');
+    await flush(14);
+    const adjustOpened = clickMenu(view.container, '更多操作', '调课');
+    await flush(14);
+    const openedSurface = document.querySelector('[data-role="adjust-dialog"]');
+    const switchedExam = clickByText(document.body, '改为考试');
+    await flush(10);
+    const examDateInput = document.querySelector<HTMLInputElement>('input[aria-label="考试日期"]');
+    const examDate = examDateInput?.value ?? '';
+    // 模式按钮带 aria-pressed，页脚主按钮没有：按这个差异点主按钮，避免又点回模式切换
+    const adjustSurface = document.querySelector('[data-role="adjust-dialog"]');
+    const submitExam = [...(adjustSurface?.querySelectorAll('button') ?? [])].find(
+      (item) => (item.textContent ?? '').trim() === '改为考试' && item.getAttribute('aria-pressed') === null,
+    );
+    submitExam?.click();
+    await flush(24);
+    const toasts = document.body.textContent ?? '';
+    const probeStorage = validatedStorage(await openIndexedDbStorage());
+    const rows = await probeStorage.collection<Record<string, unknown>>('events').getAll();
+    const examRow = rows.find((row) => row['type'] === 'exam' && row['on_date'] === examDate && row['deleted_at'] === null);
+    const removedRow = rows.find(
+      (row) =>
+        row['type'] === 'reschedule' &&
+        row['action'] === 'cancel' &&
+        String(row['title'] ?? '').startsWith('改为考试：') &&
+        row['deleted_at'] === null,
+    );
+    check(
+      'I-11 端到端：日程页调课弹窗可切到改为考试',
+      switched && adjustOpened && openedSurface !== null && switchedExam && examDate !== '',
+      `课表→日程=${switched ? 'ok' : '无'} / 弹窗=${openedSurface === null ? '无' : '有'} / 切模式=${
+        switchedExam ? 'ok' : '无'
+      } / 日期=${examDate === '' ? '(无)' : examDate} / 主按钮=${
+        submitExam === undefined ? '无' : (submitExam as HTMLButtonElement).disabled ? '禁用' : '可点'
+      }`,
+    );
+    check(
+      'I-11 改为考试落库：写考试并从课表移除原课次',
+      submitExam !== undefined &&
+        toasts.includes('已改为考试') &&
+        examRow !== undefined &&
+        examRow['start_time'] !== null &&
+        examRow['end_time'] !== null &&
+        examRow['countdown'] === 1 &&
+        examRow['show_in_timetable'] === 1 &&
+        removedRow !== undefined,
+      `提示=${toasts.includes('已改为考试') ? '有' : '无'} / 考试=${
+        examRow === undefined ? '无' : String(examRow['on_date'])
+      } / 移除记录=${removedRow === undefined ? '无' : '有'}`,
+    );
+  }
+
 
   // 会话级：重新挂载（相当于切页面再回来）后仍然是「不再询问」。
   // 注意：从这里起 view 已卸载，后续一律以 remounted 为锚点。
