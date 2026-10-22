@@ -5,10 +5,11 @@ import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx
 import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } from './cards/registry.ts';
 import { readLayout } from './cards/layout-store.ts';
 import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
+import { semesterStatsCard } from './cards/semester-stats-card.tsx';
 import { useScheduleActions } from './cards/use-schedule-actions.ts';
 
 // 显式引用这几张卡片，保证注册先于首次渲染完成。
-void [actionsCard, timelineCard, examsCard, tomorrowCard];
+void [actionsCard, timelineCard, examsCard, tomorrowCard, semesterStatsCard];
 
 export interface ScheduleViewProps {
   data: AppData;
