@@ -36,7 +36,8 @@ PUBLISH_VERSION_JSON_REQUIRED = [
     '--version="$MANIFEST_VERSION"',
     '--tag="$TAG"',
     '--out=out',
-    "-name 'version.json'",
+    # 校验清单覆盖全部产物（含 version.json）：`sha256sum * > SHA256SUMS.txt`
+    'SHA256SUMS.txt',
 ]
 
 

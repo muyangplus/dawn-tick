@@ -132,8 +132,10 @@ export interface UpdateDownloadTarget {
   fileName: string;
   /** 清单给出的字节数：服务端没给 content-length 时用它显示进度 */
   size: number | null;
-  /** 发布里同名 `.sha256` 资产地址 */
-  checksumUrl: string | null;
+  /** 发布里的原始文件名：在 `SHA256SUMS.txt` 里按它取摘要 */
+  assetName: string;
+  /** 发布里 `SHA256SUMS.txt` 的地址 */
+  checksumsUrl: string | null;
   /** 清单里直接给出的摘要 */
   sha256: string | null;
 }
@@ -193,7 +195,8 @@ export function planUpdateDownload(manifest: UpdateManifest | null, platform: Up
       url: asset.url,
       fileName,
       size: asset.size ?? null,
-      checksumUrl: asset.checksumUrl ?? null,
+      assetName: asset.name ?? fileNameFromUrl(asset.url),
+      checksumsUrl: manifest?.checksumsUrl ?? null,
       sha256: asset.sha256 ?? null,
     },
   };
@@ -201,9 +204,38 @@ export function planUpdateDownload(manifest: UpdateManifest | null, platform: Up
 
 const SHA256_TEXT = /([0-9a-f]{64})/i;
 
-/** 从 `.sha256` 文件内容（裸摘要或 `摘要  文件名`）取出摘要。 */
+/** `sha256sum` 的一行：`<64 位 hex>  <文件名>`（文本模式两个空格，二进制模式带 `*`）。 */
+const CHECKSUM_LINE = /^([0-9a-f]{64})[ \t]+\*?(.+?)\s*$/i;
+
+/** 从裸摘要或 `摘要  文件名` 文本里取出摘要。 */
 export function parseSha256(text: string): string | null {
   return SHA256_TEXT.exec(text)?.[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * 解析发布里的 `SHA256SUMS.txt`：返回「小写文件名 → 摘要」。
+ * 以 `#` 开头的注释行与空行跳过；文件名只取最后一段，避免 `./` 或路径前缀影响匹配。
+ */
+export function parseChecksums(text: string): Record<string, string> {
+  const table: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const matched = CHECKSUM_LINE.exec(trimmed);
+    if (matched === null) continue;
+    const digest = matched[1] ?? '';
+    const rawName = matched[2] ?? '';
+    if (digest === '' || rawName === '') continue;
+    const base = rawName.split('/').pop() ?? rawName;
+    table[base.toLowerCase()] = digest.toLowerCase();
+  }
+  return table;
+}
+
+/** 资产地址里最后一段文件名（测试桩与相对地址也能用）。 */
+function fileNameFromUrl(url: string): string {
+  const pathname = url.split('?')[0] ?? url;
+  return pathname.split('/').pop() ?? pathname;
 }
 
 export function digestMatches(actual: string, expected: string): boolean {
@@ -246,14 +278,14 @@ export async function downloadBytes(request: DownloadRequest): Promise<Uint8Arra
   });
 }
 
-/** 平台出口：写安装包、启动安装器、读发布里的 `.sha256`。全部可注入，便于单测。 */
+/** 平台出口：写安装包、启动安装器、读发布里的 `SHA256SUMS.txt`。全部可注入，便于单测。 */
 export interface UpdateDownloadHost {
   fetchImpl?: typeof fetch;
   /** 写入安装包，返回原生可用的路径（桌面绝对路径 / Android `file://` URI） */
   write: (fileName: string, bytes: Uint8Array) => Promise<string>;
   /** 交给系统安装器；`needsPermission` 表示已跳系统设置、授权后重试 */
   install: (path: string) => Promise<{ needsPermission: boolean }>;
-  /** 读同名 `.sha256` 资产；没有该资产时返回 null */
+  /** 读发布里的 `SHA256SUMS.txt`；没有该资产时返回 null */
   readChecksum: (url: string, signal?: AbortSignal) => Promise<string | null>;
 }
 
@@ -277,9 +309,16 @@ async function expectedDigest(
     const parsed = parseSha256(target.sha256);
     if (parsed !== null) return parsed;
   }
-  if (target.checksumUrl === null) return null;
-  const text = await host.readChecksum(target.checksumUrl, signal);
-  return text === null ? null : parseSha256(text);
+  if (target.checksumsUrl === null) return null;
+  const text = await host.readChecksum(target.checksumsUrl, signal);
+  if (text === null) return null;
+  const table = parseChecksums(text);
+  // 合并校验文件里按发布时的原始文件名登记；落盘名（固定名）兜底，方便直连清单只给摘要的场景
+  return (
+    table[target.assetName.toLowerCase()] ??
+    table[target.fileName.toLowerCase()] ??
+    null
+  );
 }
 
 function shortened(digest: string): string {

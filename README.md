@@ -83,7 +83,7 @@
 | beta | `main` | 手动 | `vX.Y.Z-beta.<n>` | 预发布，保留历史 |
 | release | `main` | 打标签 | `vX.Y.Z` | 正式 Release |
 
-产物名为 `DawnTick-<version>-<channel>-<平台>`，每个产物附同名 `.sha256` 文件；完整规则见 [发布与版本](docs/06-发布与版本.md)。
+产物名为 `DawnTick-<version>-<channel>-<平台>`，校验统一看发布里的 `SHA256SUMS.txt`；完整规则见 [发布与版本](docs/06-发布与版本.md)。
 
 ## 许可证
 

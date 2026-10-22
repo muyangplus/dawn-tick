@@ -9,6 +9,7 @@ import {
   formatDownloadProgress,
   installerFileName,
   isUpdateBusy,
+  parseChecksums,
   parseSha256,
   planUpdateDownload,
   reduceUpdateState,
@@ -19,9 +20,11 @@ import {
 } from '../src/lib/update-download.ts';
 import { joinPath } from '../src/lib/update-install.ts';
 
+const CHECKSUMS_URL = 'https://example.com/download/SHA256SUMS.txt';
+
 /** 发布清单：资产名与发布流程一致（`DawnTick-<版本>-<渠道>-…`）。 */
-function manifestWith(assets: UpdateManifest['assets']): UpdateManifest {
-  return { channel: 'release', version: '0.5.0', assets };
+function manifestWith(assets: UpdateManifest['assets'], checksumsUrl = CHECKSUMS_URL): UpdateManifest {
+  return { channel: 'release', version: '0.5.0', assets, checksumsUrl };
 }
 
 function bytesOf(text: string): Uint8Array {
@@ -74,8 +77,12 @@ function fakeHost(options: { checksum?: string | null; needsPermission?: boolean
 
 const WINDOWS_ASSET = {
   url: 'https://example.com/download/DawnTick-0.5.0-release-windows-x64-setup.exe',
+  name: 'DawnTick-0.5.0-release-windows-x64-setup.exe',
   size: 12,
-  checksumUrl: 'https://example.com/download/DawnTick-0.5.0-release-windows-x64-setup.exe.sha256',
+};
+const ANDROID_ASSET = {
+  url: 'https://example.com/download/DawnTick-0.5.0-release-android.apk',
+  name: 'DawnTick-0.5.0-release-android.apk',
 };
 
 // —— 渠道 → 资产选择 ——
@@ -83,7 +90,7 @@ const WINDOWS_ASSET = {
 test('桌面取 Windows 安装包，Android 取 APK，Web 只提示刷新', () => {
   const manifest = manifestWith({
     windows: WINDOWS_ASSET,
-    android: { url: 'https://example.com/download/DawnTick-0.5.0-release-android.apk', size: 9 },
+    android: { ...ANDROID_ASSET, size: 9 },
     web: { url: 'https://example.com/download/DawnTick-0.5.0-release-web.zip' },
   });
 
@@ -92,7 +99,8 @@ test('桌面取 Windows 安装包，Android 取 APK，Web 只提示刷新', () =
   if (windows.kind !== 'download') return;
   assert.equal(windows.target.url, WINDOWS_ASSET.url);
   assert.equal(windows.target.fileName, 'DawnTick-update.exe', '固定落盘名，重复下载覆盖旧包');
-  assert.equal(windows.target.checksumUrl, WINDOWS_ASSET.checksumUrl);
+  assert.equal(windows.target.checksumsUrl, CHECKSUMS_URL);
+  assert.equal(windows.target.assetName, WINDOWS_ASSET.name);
 
   const android = planUpdateDownload(manifest, 'android');
   assert.equal(android.kind, 'download');
@@ -136,10 +144,22 @@ test('sha256 解析与比对：支持裸摘要与 `摘要  文件名`', async ()
   assert.equal(digestMatches('0'.repeat(64), digest), false);
 });
 
+test('parseChecksums：按文件名取摘要，跳过注释与空行', () => {
+  const a = 'a'.repeat(64);
+  const b = 'b'.repeat(64);
+  const table = parseChecksums(
+    `# 由发布流程生成\n\n${a}  DawnTick-0.5.0-release-windows-x64-setup.exe\n${b} *DawnTick-0.5.0-release-android.apk\n`,
+  );
+  assert.equal(table['dawntick-0.5.0-release-windows-x64-setup.exe'], a);
+  assert.equal(table['dawntick-0.5.0-release-android.apk'], b);
+  assert.deepEqual(parseChecksums(''), {});
+  assert.deepEqual(parseChecksums('not a checksum line'), {});
+});
+
 test('下载成功：流式进度 → 校验 → 写盘 → 启动安装器', async () => {
   const content = 'hello update';
   const bytes = bytesOf(content);
-  const checksum = `${digestOf(bytes)}  DawnTick-setup.exe\n`;
+  const checksum = `${digestOf(bytes)}  ${WINDOWS_ASSET.name}\n`;
   const { host, calls } = fakeHost({ checksum });
   const states: UpdateDownloadState[] = [];
   const plan = planUpdateDownload(manifestWith({ windows: WINDOWS_ASSET }), 'windows');
@@ -160,7 +180,7 @@ test('下载成功：流式进度 → 校验 → 写盘 → 启动安装器', as
   assert.equal(states.find((state) => state.progress === 1)?.total, bytes.length, '进度用 content-length');
   assert.deepEqual(calls.writes.map((item) => item.name), ['DawnTick-update.exe']);
   assert.equal(new TextDecoder().decode(calls.writes[0]?.bytes), content);
-  assert.deepEqual(calls.checksumUrls, [WINDOWS_ASSET.checksumUrl]);
+  assert.deepEqual(calls.checksumUrls, [CHECKSUMS_URL]);
   assert.deepEqual(calls.installs, ['C:\\data\\DawnTick-update.exe']);
 });
 
@@ -168,7 +188,7 @@ test('没有 content-length 时用清单里的 size 显示进度', async () => {
   const content = '123456789012';
   const bytes = bytesOf(content);
   assert.equal(bytes.length, WINDOWS_ASSET.size);
-  const { host } = fakeHost({ checksum: digestOf(bytes) });
+  const { host } = fakeHost({ checksum: `${digestOf(bytes)}  ${WINDOWS_ASSET.name}\n` });
   const plan = planUpdateDownload(manifestWith({ windows: WINDOWS_ASSET }), 'windows');
   const states: UpdateDownloadState[] = [];
 
@@ -187,7 +207,7 @@ test('没有 content-length 时用清单里的 size 显示进度', async () => {
 
 test('校验失败：不写盘、不安装，原因可读', async () => {
   const bytes = bytesOf('tampered');
-  const { host, calls } = fakeHost({ checksum: '0'.repeat(64) });
+  const { host, calls } = fakeHost({ checksum: `${'0'.repeat(64)}  ${WINDOWS_ASSET.name}\n` });
   const plan = planUpdateDownload(manifestWith({ windows: WINDOWS_ASSET }), 'windows');
 
   const final = await runUpdateDownload({ plan, host, fetchImpl: async () => streamResponse([bytes]) });
@@ -211,7 +231,7 @@ test('没有校验文件时不安装（fail closed）', async () => {
   assert.equal(calls.installs.length, 0);
 });
 
-test('清单直接带 sha256 时不再拉取 .sha256 资产', async () => {
+test('清单直接带 sha256 时不再拉取 SHA256SUMS.txt', async () => {
   const bytes = bytesOf('inline digest');
   const digest = digestOf(bytes);
   const { host, calls } = fakeHost();
@@ -257,14 +277,9 @@ test('没有资产时不下载，直接给失败原因', async () => {
 
 test('Android 未授权「安装未知应用」：保留路径并提示授权后重试', async () => {
   const bytes = bytesOf('apk');
-  const { host, calls } = fakeHost({ checksum: digestOf(bytes), needsPermission: true });
+  const { host, calls } = fakeHost({ checksum: `${digestOf(bytes)}  ${ANDROID_ASSET.name}\n`, needsPermission: true });
   const plan = planUpdateDownload(
-    manifestWith({
-      android: {
-        url: 'https://example.com/download/DawnTick-0.5.0-release-android.apk',
-        checksumUrl: 'https://example.com/download/DawnTick-0.5.0-release-android.apk.sha256',
-      },
-    }),
+    manifestWith({ android: ANDROID_ASSET }),
     'android',
   );
 

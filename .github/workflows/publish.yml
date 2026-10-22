@@ -323,9 +323,8 @@ jobs:
             --out=out
 
           cd out
-          for file in $(find . -maxdepth 1 -type f \( -name '*.exe' -o -name '*.apk' -o -name '*.zip' -o -name 'version.json' \) -printf '%f\n'); do
-            sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
-          done
+          # 合并校验文件：一行一个产物的 sha256，客户端下载安装包后整表取摘要校验
+          sha256sum * > SHA256SUMS.txt
           ls -l
 
       - name: 滚动渠道先删除旧发布

@@ -404,9 +404,9 @@ test('dev 从资产名取版本：滚动 tag（dev-latest）读不出语义化�
             browser_download_url: 'https://example.com/setup.exe',
           },
           {
-            name: 'DawnTick-0.1.1-dev-windows-x64-setup.exe.sha256',
-            size: 65,
-            browser_download_url: 'https://example.com/setup.exe.sha256',
+            name: 'SHA256SUMS.txt',
+            size: 128,
+            browser_download_url: 'https://example.com/SHA256SUMS.txt',
           },
           {
             name: 'DawnTick-0.1.1-dev-android.apk',
@@ -418,11 +418,7 @@ test('dev 从资产名取版本：滚动 tag（dev-latest）读不出语义化�
             size: 30,
             browser_download_url: 'https://example.com/web.zip',
           },
-          {
-            name: 'DawnTick-0.1.1-dev-web.zip.sha256',
-            size: 1,
-            browser_download_url: 'https://example.com/web.zip.sha256',
-          },
+
         ],
       });
     },
@@ -440,12 +436,17 @@ test('dev 从资产名取版本：滚动 tag（dev-latest）读不出语义化�
   assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe', 'windows 优先安装包');
   assert.equal(status.manifest?.assets?.windows?.size, 120);
   assert.equal(
-    status.manifest?.assets?.windows?.checksumUrl,
-    'https://example.com/setup.exe.sha256',
-    '同名 .sha256 资产挂到 checksumUrl，供下载后校验',
+    status.manifest?.checksumsUrl,
+    'https://example.com/SHA256SUMS.txt',
+    '合并校验文件挂到 checksumsUrl，供下载后校验',
+  );
+  assert.equal(
+    status.manifest?.assets?.windows?.name,
+    'DawnTick-0.1.1-dev-windows-x64-setup.exe',
+    '保留发布时的原始文件名，用于在 SHA256SUMS.txt 里定位摘要',
   );
   assert.equal(status.manifest?.assets?.android?.size, 60);
-  assert.equal(status.manifest?.assets?.web?.url, 'https://example.com/web.zip', 'web.zip.sha256 不算静态包');
+  assert.equal(status.manifest?.assets?.web?.url, 'https://example.com/web.zip', 'SHA256SUMS.txt 不算静态包');
 });
 
 test('windows 只有便携包时退回 portable.zip', async () => {

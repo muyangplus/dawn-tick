@@ -55,8 +55,8 @@ function windowsInstaller(version: string) {
       url: `https://example.com/DawnTick-${version}-release-windows-x64-setup.exe`,
     },
     {
-      name: `DawnTick-${version}-release-windows-x64-setup.exe.sha256`,
-      url: `https://example.com/DawnTick-${version}-release-windows-x64-setup.exe.sha256`,
+      name: 'SHA256SUMS.txt',
+      url: 'https://example.com/SHA256SUMS.txt',
     },
   ];
 }
@@ -115,7 +115,7 @@ test('pickRollbackTarget：挑最新正式版，跳过预发布', () => {
   assert.equal(target.kind, 'target');
   if (target.kind !== 'target') return;
   assert.equal(target.version, '0.5.0', '预发布不参与回滚');
-  assert.ok(target.manifest.assets?.windows?.checksumUrl?.endsWith('.sha256'), '保留校验文件地址');
+  assert.ok(target.manifest.checksumsUrl?.endsWith('/SHA256SUMS.txt'), '保留合并校验文件地址');
 });
 
 test('pickRollbackTarget：没有正式版时给出可读原因', () => {

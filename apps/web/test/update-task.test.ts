@@ -22,20 +22,20 @@ function digest(): string {
   return createHash('sha256').update(CONTENT).digest('hex');
 }
 
+const WINDOWS_NAME = 'DawnTick-0.7.0-release-windows-x64-setup.exe';
+const ANDROID_NAME = 'DawnTick-0.7.0-release-android.apk';
+
 function manifest(assets: UpdateManifest['assets'] = {}): UpdateManifest {
   return {
     channel: 'release',
     version: '0.7.0',
+    checksumsUrl: 'https://example.com/download/SHA256SUMS.txt',
     assets: {
-      windows: {
-        url: WINDOWS_URL,
-        size: CONTENT.length,
-        checksumUrl: `${WINDOWS_URL}.sha256`,
-      },
+      windows: { url: WINDOWS_URL, name: WINDOWS_NAME, size: CONTENT.length },
       android: {
         url: 'https://example.com/download/DawnTick-0.7.0-release-android.apk',
+        name: ANDROID_NAME,
         size: CONTENT.length,
-        checksumUrl: 'https://example.com/download/DawnTick-0.7.0-release-android.apk.sha256',
       },
       ...assets,
     },
@@ -65,7 +65,10 @@ function fakeHost(options: HostOptions = {}): { host: UpdateDownloadHost; calls:
         headers: { 'content-length': String(CONTENT.length) },
       });
     },
-    readChecksum: async () => (options.checksum === undefined ? digest() : options.checksum),
+    readChecksum: async () =>
+      options.checksum === undefined
+        ? `${digest()}  ${WINDOWS_NAME}\n${digest()}  ${ANDROID_NAME}\n`
+        : options.checksum,
     write: async (name) => {
       calls.writes.push(name);
       return `C:\\data\\${name}`;
@@ -192,7 +195,7 @@ test('没有可安装资产：failed + 可读原因', async () => {
 
 test('校验失败：不写盘、不安装，任务保持 failed（fail closed）', async () => {
   reset();
-  const { host, calls } = fakeHost({ checksum: '0'.repeat(64) });
+  const { host, calls } = fakeHost({ checksum: `${'0'.repeat(64)}  ${WINDOWS_NAME}\n` });
   const final = await startBackgroundUpdate(manifest(), { platform: 'windows', host });
   assert.equal(final.status, 'failed');
   assert.match(String(final.error), /校验失败/);

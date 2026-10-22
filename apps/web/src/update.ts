@@ -37,12 +37,13 @@ const GITHUB_API_ACCEPT = 'application/vnd.github+json';
 
 export interface UpdateAsset {
   url: string;
+  /** 发布里的原始文件名：在 `SHA256SUMS.txt` 里按它定位摘要（version.json 直连清单可能没有） */
+  name?: string;
   size?: number;
   /** 该平台自带签名的校验值：Windows 为 minisign 签名，Android 为 APK 签名摘要 */
   signature?: string;
+  /** 清单里直接给出的摘要（version.json 等直连清单用） */
   sha256?: string;
-  /** 发布里同名 `.sha256` 资产的地址（内容为裸 SHA256），自动更新下载后据此校验 */
-  checksumUrl?: string;
 }
 
 export interface UpdateManifest {
@@ -52,6 +53,8 @@ export interface UpdateManifest {
   commit?: string;
   notes?: string;
   assets?: Partial<Record<'windows' | 'android' | 'web', UpdateAsset>>;
+  /** 发布里 `SHA256SUMS.txt` 的地址（`sha256sum` 文本，一行一个产物） */
+  checksumsUrl?: string;
 }
 
 export interface UpdateStatus {
@@ -201,11 +204,16 @@ function versionFromAssets(assets: unknown): string | null {
   return null;
 }
 
+/** 发布里的合并校验文件（`sha256sum * > SHA256SUMS.txt`），匹配大小写不敏感的固定名。 */
+const CHECKSUMS_ASSET = 'sha256sums.txt';
+
 /**
  * 发布资产 → 下载项：windows 优先安装包、其次便携包；android 取 APK；web 取静态包。
- * 每个产物随附同名的 `.sha256` 资产（内容为裸 SHA256），一并挂到 `checksumUrl` 上。
+ * 校验统一走发布里的 `SHA256SUMS.txt`（内含每个产物的摘要），自动更新下载后据此校验。
  */
-function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
+function assetsFromRelease(
+  value: unknown,
+): { assets: NonNullable<UpdateManifest['assets']>; checksumsUrl?: string } | undefined {
   if (!Array.isArray(value)) return undefined;
   const available: Array<{ name: string; url: string; size?: number }> = [];
   for (const raw of value) {
@@ -217,16 +225,13 @@ function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
     const size = record['size'];
     available.push(typeof size === 'number' && Number.isFinite(size) ? { name, url, size } : { name, url });
   }
-  const checksumOf = (name: string): string | undefined =>
-    available.find((item) => item.name.toLowerCase() === `${name}.sha256`.toLowerCase())?.url;
   const pick = (suffix: string): UpdateAsset | undefined => {
     const found = available.find((item) => item.name.toLowerCase().endsWith(suffix));
     if (found === undefined) return undefined;
-    const checksumUrl = checksumOf(found.name);
     return {
       url: found.url,
+      name: found.name,
       ...(found.size === undefined ? {} : { size: found.size }),
-      ...(checksumUrl === undefined ? {} : { checksumUrl }),
     };
   };
 
@@ -237,7 +242,9 @@ function assetsFromRelease(value: unknown): UpdateManifest['assets'] {
   if (windows !== undefined) assets.windows = windows;
   if (android !== undefined) assets.android = android;
   if (web !== undefined) assets.web = web;
-  return Object.keys(assets).length === 0 ? undefined : assets;
+  if (Object.keys(assets).length === 0) return undefined;
+  const checksums = available.find((item) => item.name.toLowerCase() === CHECKSUMS_ASSET);
+  return checksums === undefined ? { assets } : { assets, checksumsUrl: checksums.url };
 }
 
 /** 把 GitHub 发布响应转成本模块清单：channel 固定为本次查询的 feed，取不到版本或结构不符时返回 null。 */
@@ -261,8 +268,11 @@ export function manifestFromRelease(feed: UpdateChannel, value: unknown): Update
     const commit = NOTES_COMMIT.exec(notes);
     if (commit !== null && commit[1] !== undefined) manifest.commit = commit[1];
   }
-  const assets = assetsFromRelease(record['assets']);
-  if (assets !== undefined) manifest.assets = assets;
+  const parsedAssets = assetsFromRelease(record['assets']);
+  if (parsedAssets !== undefined) {
+    manifest.assets = parsedAssets.assets;
+    if (parsedAssets.checksumsUrl !== undefined) manifest.checksumsUrl = parsedAssets.checksumsUrl;
+  }
   return isUpdateManifest(manifest) ? manifest : null;
 }
 

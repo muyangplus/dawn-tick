@@ -3522,11 +3522,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       manifest: {
         channel: 'release',
         version: '0.5.1',
+        checksumsUrl: 'https://example.com/SHA256SUMS.txt',
         assets: {
           windows: {
             url: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.1-release-windows-x64-setup.exe',
             size: 16,
-            checksumUrl: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe.sha256',
           },
         },
       },
@@ -3577,11 +3578,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const backgroundManifest: UpdateManifest = {
     channel: 'release',
     version: '0.5.3',
+    checksumsUrl: 'https://example.com/SHA256SUMS.txt',
     assets: {
       windows: {
         url: 'https://example.com/DawnTick-0.5.3-release-windows-x64-setup.exe',
+        name: 'DawnTick-0.5.3-release-windows-x64-setup.exe',
         size: backgroundBytes.length,
-        checksumUrl: 'https://example.com/DawnTick-0.5.3-release-windows-x64-setup.exe.sha256',
       },
     },
   };
@@ -3602,7 +3604,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         }),
         { status: 200, headers: { 'content-length': String(backgroundBytes.length) } },
       ),
-    readChecksum: async () => backgroundDigest,
+    readChecksum: async () => `${backgroundDigest}  DawnTick-0.5.3-release-windows-x64-setup.exe\n`,
     write: async (name) => `C:\\Temp\\${name}`,
     install: async () => ({ needsPermission: false }),
   };
