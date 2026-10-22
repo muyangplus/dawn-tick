@@ -7,7 +7,9 @@ import {
   digestMatches,
   downloadBytes,
   formatDownloadProgress,
+  formatTransferProgress,
   installerFileName,
+  installPreparedUpdate,
   isUpdateBusy,
   parseSha256,
   planUpdateDownload,
@@ -341,6 +343,46 @@ test('流式下载中取消：已接收的数据不再继续，抛出可读取�
   await assert.rejects(pending, /已取消下载/);
 });
 
+// —— 后台下载（deferInstall） ——
+
+test('后台下载：校验后停在 ready 不自动安装，安装动作再交给安装器', async () => {
+  const bytes = bytesOf('deferred update');
+  const { host, calls } = fakeHost();
+  const plan = planUpdateDownload(
+    manifestWith({ windows: { url: WINDOWS_ASSET.url, sha256: digestOf(bytes) } }),
+    'windows',
+  );
+
+  const ready = await runUpdateDownload({
+    plan,
+    host,
+    fetchImpl: async () => streamResponse([bytes]),
+    deferInstall: true,
+  });
+
+  assert.equal(ready.phase, 'ready');
+  assert.equal(ready.progress, 1);
+  assert.equal(ready.path, 'C:\\data\\DawnTick-update.exe');
+  assert.equal(calls.installs.length, 0, '就绪阶段不拉起安装器');
+
+  const done = await installPreparedUpdate({ host, path: String(ready.path) });
+  assert.equal(done.phase, 'done');
+  assert.deepEqual(calls.installs, ['C:\\data\\DawnTick-update.exe']);
+});
+
+test('安装包就绪后启动安装器失败：给可读原因，可重试', async () => {
+  const { host } = fakeHost();
+  const failingHost: UpdateDownloadHost = {
+    ...host,
+    install: async () => {
+      throw new Error('安装器拒绝启动');
+    },
+  };
+  const failed = await installPreparedUpdate({ host: failingHost, path: 'C:\\data\\DawnTick-update.exe' });
+  assert.equal(failed.phase, 'failed');
+  assert.equal(failed.error, '安装器拒绝启动');
+});
+
 // —— 状态机 ——
 
 test('状态机只接受合法转移', () => {
@@ -350,6 +392,10 @@ test('状态机只接受合法转移', () => {
 
   const verifying = reduceUpdateState(started, { type: 'verify' });
   assert.equal(verifying.phase, 'verifying');
+  const ready = reduceUpdateState(verifying, { type: 'ready', message: '安装包已就绪', path: 'C:\\a.exe' });
+  assert.equal(ready.phase, 'ready');
+  assert.equal(isUpdateBusy(ready.phase), false);
+  assert.equal(reduceUpdateState(ready, { type: 'install' }).phase, 'installing');
   const installing = reduceUpdateState(verifying, { type: 'install' });
   assert.equal(installing.phase, 'installing');
   const done = reduceUpdateState(installing, { type: 'done', message: '安装程序已启动，请按提示完成安装' });
@@ -379,6 +425,15 @@ test('路径拼接与进度文案', () => {
 
   const downloading = { ...INITIAL_UPDATE_STATE, phase: 'downloading' as const, received: 1536, total: 2048, progress: 0.75 };
   assert.equal(formatDownloadProgress(downloading), '已下载 1.5 KB / 2.0 KB（75%）');
+  assert.equal(
+    formatTransferProgress({ ...downloading, bytesPerSecond: 1024, remainingMs: 1000 }),
+    '已下载 1.5 KB / 2.0 KB（75%） · 1.0 KB/s · 剩余 1 秒',
+  );
+  assert.equal(
+    formatTransferProgress({ ...downloading, bytesPerSecond: null, remainingMs: null }),
+    '已下载 1.5 KB / 2.0 KB（75%）',
+    '速度未知时只留字节与百分比',
+  );
   const unknown = { ...INITIAL_UPDATE_STATE, phase: 'downloading' as const, received: 10 };
   assert.equal(formatDownloadProgress(unknown), '已下载 10 B');
   assert.equal(formatDownloadProgress({ ...INITIAL_UPDATE_STATE, phase: 'verifying', message: '正在校验安装包…' }), '正在校验安装包…');
