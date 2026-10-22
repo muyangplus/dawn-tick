@@ -5,6 +5,7 @@ import { InlineError } from '../../components/ui/inline-error.tsx';
 import { cn } from '../../lib/cn.ts';
 import { fail } from '../../lib/fail.ts';
 import { ImportSurface } from './import-surface.tsx';
+import { ImportDiagnosticsPanel } from './import-diagnostics-panel.tsx';
 import { ManualMappingSheet } from './manual-mapping-sheet.tsx';
 import { FILE_ACCEPT, type PasteSource } from './import-flow-model.ts';
 import type { PasteSourceApi } from './use-paste-source.ts';
@@ -146,6 +147,15 @@ function PagePane({ paste }: { paste: PasteSourceApi }) {
         onMapDayCount={paste.setMapDayCount}
         onMapPeriodColumn={paste.setMapPeriodColumn}
       />
+
+      {paste.diagnostics !== null && (
+        <ImportDiagnosticsPanel
+          summary={paste.diagnostics}
+          defaultOpen={paste.pageFailure !== null || paste.mappingFailure !== null}
+          onCopy={paste.copyDiagnostics}
+          onExport={paste.exportDiagnostics}
+        />
+      )}
     </div>
   );
 }
