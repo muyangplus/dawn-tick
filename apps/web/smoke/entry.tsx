@@ -29,6 +29,7 @@ import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update
 import type { UpdateStatus } from '../src/update.ts';
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
+import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
@@ -3498,6 +3499,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[role="switch"][aria-label="启动时快照"]') !== null &&
       view.container.querySelector('[data-role="backup-keep"]') !== null &&
       view.container.querySelector('[data-role="backup-kind"]')?.textContent?.includes('JSON 快照') === true &&
+      (view.container.querySelector('[data-role="snapshot-plain"]')?.textContent ?? '').includes('快照不加密') &&
       view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
     (view.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').slice(0, 80),
   );
@@ -3595,6 +3597,37 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       base64Ok &&
       document.body.textContent?.includes('复制文本') === true,
     `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
+  );
+
+  // —— 导出加密：勾选后出现口令与确认，warning 说明忘记口令无法恢复 ——
+  const encryptionBox = document.querySelector<HTMLInputElement>('input[aria-label="用口令加密"]');
+  encryptionBox?.click();
+  await flush(6);
+  const exportPasswordInput = document.querySelector<HTMLInputElement>('input[aria-label="加密口令"]');
+  const exportPasswordConfirm = document.querySelector<HTMLInputElement>('input[aria-label="确认加密口令"]');
+  const encryptionWarning = document.querySelector<HTMLElement>('[data-role="export-password-warning"]');
+  const encryptionScope = document.querySelector<HTMLElement>('[data-role="export-encryption-scope"]');
+  check(
+    '导出可选口令加密并警示忘记口令无法恢复',
+    encryptionBox?.checked === true &&
+      exportPasswordInput?.type === 'password' &&
+      exportPasswordConfirm?.type === 'password' &&
+      (encryptionWarning?.textContent ?? '').includes('忘记口令将无法恢复') &&
+      (encryptionScope?.textContent ?? '').includes('自动快照') &&
+      (encryptionScope?.textContent ?? '').includes('不加密'),
+    `勾选=${encryptionBox?.checked === true} 警示=${encryptionWarning?.textContent?.trim() ?? '(无)'}`,
+  );
+  if (exportPasswordInput !== null) setInputValue(exportPasswordInput, 'smoke-pass-8');
+  if (exportPasswordConfirm !== null) setInputValue(exportPasswordConfirm, 'smoke-pass-8');
+  await flush(4);
+  const encryptedSubmitted = clickByText(document.body, '生成文本');
+  await flush(30);
+  const encryptedBox = document.querySelector<HTMLTextAreaElement>('[data-role="export-base64"]');
+  const encryptedText = (encryptedBox?.value ?? '').trim();
+  check(
+    '加密导出生成 DAWNTICK-ENC 信封文本',
+    encryptedSubmitted && encryptedText.startsWith('DAWNTICK-ENC 1 ') && isEncryptedBackup(encryptedText),
+    `长度 ${encryptedText.length}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
@@ -3742,6 +3775,49 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '粘贴 Base64 文本可导入备份',
     pasteParsed &&
+      document.body.textContent?.includes('按修改时间合并') === true &&
+      document.querySelector('input[aria-label="导入 课程与排课"]') !== null,
+    (document.body.textContent ?? '').slice(-60),
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // —— 导入加密备份：先要口令，输错可重试，对口令后照常进入模块选择 ——
+  if (clickByLabel(view.container, '导入备份')) await flush(10);
+  const encryptedImportBox = document.querySelector<HTMLTextAreaElement>('[data-role="import-text"]');
+  if (encryptedImportBox !== null) setInputValue(encryptedImportBox, encryptedText);
+  await flush(6);
+  const encryptedImportSubmitted = clickByText(document.body, '从文本导入');
+  await flush(20);
+  const unlockDialog = document.querySelector<HTMLElement>('[data-role="unlock-backup-dialog"]');
+  const unlockInput = document.querySelector<HTMLInputElement>('input[aria-label="备份口令"]');
+  check(
+    '导入加密备份时提示输入口令',
+    encryptedImportSubmitted && unlockDialog !== null && unlockInput?.type === 'password',
+    `对话框=${unlockDialog === null ? '无' : '有'}`,
+  );
+  if (unlockInput !== null) setInputValue(unlockInput, 'wrong-pass-8');
+  await flush(4);
+  const wrongSubmitted = clickByText(document.body, '解密并导入');
+  await flush(30);
+  const unlockError = document.querySelector<HTMLElement>(
+    '[data-role="unlock-backup-dialog"] [role="alert"]',
+  );
+  check(
+    '错误口令给出可读错误并允许重试',
+    wrongSubmitted &&
+      document.querySelector('[data-role="unlock-backup-dialog"]') !== null &&
+      (unlockError?.textContent ?? '').includes('口令错误') &&
+      document.querySelector('input[aria-label="备份口令"]') !== null,
+    `错误=${unlockError?.textContent?.trim() ?? '(无)'}`,
+  );
+  const retryInput = document.querySelector<HTMLInputElement>('input[aria-label="备份口令"]');
+  if (retryInput !== null) setInputValue(retryInput, 'smoke-pass-8');
+  await flush(4);
+  const retrySubmitted = clickByText(document.body, '解密并导入');
+  await flush(40);
+  check(
+    '口令正确后解密并进入导入模块选择',
+    retrySubmitted &&
       document.body.textContent?.includes('按修改时间合并') === true &&
       document.querySelector('input[aria-label="导入 课程与排课"]') !== null,
     (document.body.textContent ?? '').slice(-60),
