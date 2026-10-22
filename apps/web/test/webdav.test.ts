@@ -15,6 +15,7 @@ import {
   type DavSettings,
 } from '../src/webdav.ts';
 import { readZipEntries } from '../src/zip-read.ts';
+import { setSecretStoreForTests, type SecretStore } from '../src/lib/credentials.ts';
 
 const settings: DavSettings = {
   webdavUrl: 'https://dav.example.com/DawnTick',
@@ -245,4 +246,100 @@ test('整包带上预设并在应用时恢复', async () => {
   assert.equal(outcome.presets, true);
   assert.equal(await target.readMeta('presets_snapshot_v1'), '{"version":"1"}');
   assert.equal(await target.readMeta('presets_content_v1'), '{"schools":[]}');
+});
+
+/** 统一假密钥库：密文是 `cipher(明文)`，只用于验证请求前的透明解密。 */
+function fakeSecretStore(): SecretStore {
+  return {
+    encrypt: async (value: string) => `cipher(${value})`,
+    decrypt: async (ciphertext: string) => {
+      const matched = /^cipher\((.*)\)$/s.exec(ciphertext);
+      if (matched === null) throw new Error('密文损坏');
+      return matched[1] as string;
+    },
+    isAvailable: async () => true,
+  };
+}
+
+test('密码是 enc:v1 信封时先解密再用于鉴权', async () => {
+  setSecretStoreForTests(fakeSecretStore());
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 200 }));
+  try {
+    await remoteStatus({ ...settings, webdavPassword: 'enc:v1:cipher(p@ss)' });
+    const expected = Buffer.from('小明:p@ss', 'utf8').toString('base64');
+    assert.equal(calls[0]?.authorization, `Basic ${expected}`, '发出的应是解密后的密码');
+  } finally {
+    restore();
+    setSecretStoreForTests(undefined);
+  }
+});
+
+test('密码解不开时不发请求并给出可读错误', async () => {
+  setSecretStoreForTests({
+    encrypt: async () => 'cipher(x)',
+    decrypt: async () => {
+      throw new Error('key lost');
+    },
+    isAvailable: async () => true,
+  });
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 200 }));
+  try {
+    const status = await remoteStatus({ ...settings, webdavPassword: 'enc:v1:broken' });
+    assert.equal(status.ok, false);
+    assert.match(status.error ?? '', /无法解密/);
+    assert.equal(calls.length, 0, '解不开的密码不能当 Basic 凭据发出去');
+  } finally {
+    restore();
+    setSecretStoreForTests(undefined);
+  }
+});
+
+test('自动同步用存储里的当前密码，而不是内存中的旧信封', async () => {
+  const storage = new MemoryStorage();
+  await storage.writeMeta('webdav_password', 'stored-secret');
+  const on = {
+    ...DEFAULT_SETTINGS,
+    webdavUrl: settings.webdavUrl,
+    webdavUser: 'u',
+    webdavPassword: 'enc:v1:cipher(stale)',
+    webdavAuto: true,
+  };
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 201 }));
+  try {
+    const outcome = await maybeAutoSync(storage, on, {
+      startup: true,
+      now: Date.parse('Tue, 14 Oct 2026 02:00:00 GMT'),
+    });
+    assert.equal(outcome.action, 'uploaded');
+    const expected = Buffer.from('u:stored-secret', 'utf8').toString('base64');
+    assert.ok(
+      calls.some((call) => call.authorization === `Basic ${expected}`),
+      '请求头应使用存储里的密码',
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('自动同步遇到解不开的密码直接报错', async () => {
+  setSecretStoreForTests({
+    encrypt: async () => 'cipher(x)',
+    decrypt: async () => {
+      throw new Error('key lost');
+    },
+    isAvailable: async () => true,
+  });
+  const storage = new MemoryStorage();
+  await storage.writeMeta('webdav_password', 'enc:v1:broken');
+  const on = { ...DEFAULT_SETTINGS, webdavUrl: settings.webdavUrl, webdavUser: 'u', webdavAuto: true };
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 201 }));
+  try {
+    const outcome = await maybeAutoSync(storage, on, { startup: true, now: Date.now() });
+    assert.equal(outcome.action, 'error');
+    assert.match(outcome.detail ?? '', /无法解密/);
+    assert.equal(calls.length, 0);
+  } finally {
+    restore();
+    setSecretStoreForTests(undefined);
+  }
 });
