@@ -28,6 +28,8 @@ import type { AppData } from '../src/data.ts';
 import { SemesterStatsCard } from '../src/screens/cards/semester-stats-card.tsx';
 import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
+import { resetUpdateTask, startUpdateTask } from '../src/lib/update-task.ts';
+import { planUpdateDownload, sha256Hex } from '../src/lib/update-download.ts';
 import type { UpdateStatus } from '../src/update.ts';
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
@@ -3510,31 +3512,36 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   };
   installUpdateTauriStub();
-  try {
-    requestUpdatePrompt({
-      available: true,
-      error: null,
-      feed: 'release',
-      current: appVersion(),
-      latest: '0.5.1',
-      manifest: {
-        channel: 'release',
-        version: '0.5.1',
-        assets: {
-          windows: {
-            url: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe',
-            size: 16,
-            checksumUrl: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe.sha256',
-          },
+  const desktopUpdateStatus: UpdateStatus = {
+    available: true,
+    error: null,
+    feed: 'release',
+    current: appVersion(),
+    latest: '0.5.1',
+    manifest: {
+      channel: 'release',
+      version: '0.5.1',
+      assets: {
+        windows: {
+          url: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe',
+          size: 16,
+          checksumUrl: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe.sha256',
         },
       },
-    });
+    },
+  };
+  try {
+    requestUpdatePrompt(desktopUpdateStatus);
     await flush(12);
     const updateDownload = document.querySelector<HTMLElement>('[data-role="update-download"]');
+    const updateBackground = document.querySelector<HTMLElement>('[data-role="update-background"]');
     check(
-      '桌面端更新弹窗提供「下载并安装」',
-      updateDownload !== null && (updateDownload.textContent ?? '').includes('下载并安装'),
-      updateDownload?.textContent?.trim() ?? '(无)',
+      '桌面端更新弹窗提供「下载」与「后台下载并关闭」',
+      updateDownload !== null &&
+        (updateDownload.textContent ?? '').trim() === '下载' &&
+        updateBackground !== null &&
+        (updateBackground.textContent ?? '').includes('后台下载并关闭'),
+      `主按钮=${updateDownload?.textContent?.trim() ?? '(无)'} / 后台=${updateBackground?.textContent?.trim() ?? '(无)'}`,
     );
     const rollbackButton = view.container.querySelector<HTMLElement>('[data-role="rollback-stable"]');
     check(
@@ -3553,6 +3560,144 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         (document.querySelector('[data-role="update-download"]')?.textContent ?? '').includes('重试'),
       updateStatus?.textContent?.trim() ?? '(无)',
     );
+
+    // —— 后台下载 + 并发分片：驱动后台任务 store（与弹窗、设备页同一份状态），
+    //    用可手动放行的 206 分片响应验证进度、关闭弹窗不中断、完成后可安装 ——
+    resetUpdateTask();
+    const chunkTotal = 4 * 256 * 1024;
+    const payload = new Uint8Array(chunkTotal);
+    for (let index = 0; index < chunkTotal; index += 1) payload[index] = index % 251;
+    const payloadDigest = await sha256Hex(payload);
+    const releasePumps: Array<() => void> = [];
+    let backgroundInstalls = 0;
+    const chunkedPlan = planUpdateDownload(
+      {
+        channel: 'release',
+        version: '0.5.1',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe',
+            size: chunkTotal,
+            sha256: payloadDigest,
+          },
+        },
+      },
+      'windows',
+    );
+    if (chunkedPlan.kind === 'download') {
+      const taskError: unknown[] = [];
+      void startUpdateTask({
+        version: '0.5.1',
+        plan: chunkedPlan,
+        host: {
+          readChecksum: async () => null,
+          write: async (name) => `C:\\Users\\tester\\AppData\\Local\\Temp\\${name}`,
+          install: async () => {
+            backgroundInstalls += 1;
+            return { needsPermission: false };
+          },
+        },
+        fetchImpl: async (_url, init) => {
+          const matched = /^bytes=(\d+)-(\d+)$/.exec(new Headers(init?.headers).get('range') ?? '');
+          if (matched === null) throw new Error('冒烟桩：分片请求缺少 Range');
+          const start = Number(matched[1]);
+          const end = Number(matched[2]);
+          const size = end - start + 1;
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              // 首片兼作 Range 探测：一次给完，后续分片才能并发开始
+              if (start === 0) {
+                controller.enqueue(payload.slice(start, end + 1));
+                controller.close();
+                return;
+              }
+              const quarter = Math.floor(size / 4);
+              controller.enqueue(payload.slice(start, start + quarter));
+              let step = 0;
+              releasePumps.push(() => {
+                step += 1;
+                if (step === 1) {
+                  // 第二波：总进度过半，足够算出瞬时速度与剩余时间
+                  controller.enqueue(payload.slice(start + quarter, start + quarter * 2));
+                  return;
+                }
+                controller.enqueue(payload.slice(start + quarter * 2, end + 1));
+                controller.close();
+              });
+            },
+          });
+          return {
+            ok: true,
+            status: 206,
+            headers: new Headers({ 'content-range': `bytes ${start}-${end}/${chunkTotal}` }),
+            body: stream,
+          } as unknown as Response;
+        },
+      }).catch((cause: unknown) => {
+        taskError.push(cause);
+      });
+      await flush(12);
+      const dialogStatus = document.querySelector<HTMLElement>('[data-role="update-status"]');
+      const dialogProgress = document.querySelector<HTMLElement>('[data-role="update-progress"]');
+      check(
+        '分片下载在更新弹窗展示百分比与已收/总量',
+        taskError.length === 0 &&
+          dialogProgress !== null &&
+          /已下载 .+ \/ .+（\d+%）/.test(dialogStatus?.textContent ?? ''),
+        dialogStatus?.textContent?.trim() ?? `(无) 错误=${String(taskError[0] ?? '')}`,
+      );
+      // 放行第二波分片：出现瞬时速度与剩余时间
+      for (const pump of [...releasePumps]) pump();
+      await flush(12);
+      const detailed = document.querySelector<HTMLElement>('[data-role="update-status"]')?.textContent ?? '';
+      check(
+        '分片下载进度带瞬时速度与剩余时间（mock）',
+        detailed.includes('/s') && detailed.includes('剩余'),
+        detailed.trim(),
+      );
+      // 关闭弹窗：下载在后台继续，设备页常驻同一个任务
+      closeUpdatePrompt();
+      await flush(12);
+      const panel = view.container.querySelector<HTMLElement>('[data-role="update-task"]');
+      const panelStatus = view.container.querySelector<HTMLElement>('[data-role="update-task-status"]');
+      check(
+        '下载中关闭更新弹窗后设备页仍显示后台进度',
+        document.querySelector('[data-role="update-dialog"]') === null &&
+          panel !== null &&
+          (panelStatus?.textContent ?? '').includes('已下载') &&
+          view.container.querySelector('[data-role="update-task-progress"]') !== null,
+        panelStatus?.textContent?.trim() ?? '(无)',
+      );
+      // 放行剩余分片：校验通过后停在就绪态，设备页给「安装」
+      for (const pump of [...releasePumps]) pump();
+      const readyForInstall = await waitFor(
+        () => view.container.querySelector('[data-role="update-task-install"]') !== null,
+        40,
+      );
+      const installButton = view.container.querySelector<HTMLElement>('[data-role="update-task-install"]');
+      const readyStatus = view.container.querySelector<HTMLElement>('[data-role="update-task-status"]')?.textContent ?? '';
+      check(
+        '后台下载完成并校验后设备页给出「安装」',
+        readyForInstall &&
+          (installButton?.textContent ?? '').includes('安装') &&
+          readyStatus.includes('安装包已下载并校验完成'),
+        `按钮=${installButton?.textContent?.trim() ?? '(无)'} / ${readyStatus.trim()}`,
+      );
+      installButton?.click();
+      await flush(20);
+      const installedStatus = view.container.querySelector<HTMLElement>('[data-role="update-task-status"]')?.textContent ?? '';
+      check(
+        '后台任务就绪后「安装」交给平台安装出口',
+        backgroundInstalls === 1 && installedStatus.includes('安装程序已启动'),
+        `安装次数=${backgroundInstalls} / ${installedStatus.trim()}`,
+      );
+    }
+    resetUpdateTask();
+    await flush(8);
+    // 重新打开一次弹窗：finally 里的 closeUpdatePrompt 需要一次真实重渲染，
+    // 让设备页从「桌面端」判定回到 Web（与基线时序一致）
+    requestUpdatePrompt(desktopUpdateStatus);
+    await flush(8);
   } finally {
     // 先撤掉桌面桩再关弹窗：关闭会触发一次重渲染，平台判定回到 Web，
     // 否则设备页会停留在「桌面端」渲染结果上，后面的浏览器端断言会误判。
@@ -3566,6 +3711,33 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '浏览器端不提供「回滚到正式版」（只能刷新页面）',
     view.container.querySelector('[data-role="rollback-stable"]') === null,
     view.container.querySelector('[data-role="rollback-stable"]')?.textContent?.trim() ?? '(无)',
+  );
+
+  // Web 渠道的后台任务：没有安装包，就绪动作换成「刷新页面」
+  resetUpdateTask();
+  await flush(8);
+  void startUpdateTask({
+    version: '0.5.1',
+    plan: { kind: 'refresh' },
+    host: {
+      readChecksum: async () => null,
+      write: async () => '',
+      install: async () => ({ needsPermission: false }),
+    },
+  }).catch(() => undefined);
+  await flush(12);
+  const refreshButton = view.container.querySelector<HTMLElement>('[data-role="update-task-refresh"]');
+  check(
+    'Web 渠道后台任务就绪后给出「刷新页面」',
+    refreshButton !== null && (refreshButton.textContent ?? '').includes('刷新页面'),
+    refreshButton?.textContent?.trim() ?? '(无)',
+  );
+  resetUpdateTask();
+  await flush(8);
+  check(
+    '重置后台任务后设备页不再显示任务区',
+    view.container.querySelector('[data-role="update-task"]') === null,
+    view.container.querySelector('[data-role="update-task"]')?.textContent?.trim() ?? '(无)',
   );
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明

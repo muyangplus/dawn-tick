@@ -16,6 +16,7 @@ import { createUpdateHost, updatePlatform } from '../../lib/update-install.ts';
 import { canRollbackToStable, loadRollbackReleases, pickRollbackTarget } from '../../lib/update-preferences.ts';
 import { resolveReceiveBeta } from '../../update.ts';
 import { useIgnoredUpdateVersion, unignoreUpdateVersion } from '../../components/update-prompt.ts';
+import { UpdateTaskPanel } from '../../components/update/update-task-panel.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { ExternalLink } from '../../components/ui/external-link.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
@@ -33,11 +34,12 @@ export interface UpdateActionsProps {
 }
 
 /**
- * 更新与维护卡的「更新」区：检查更新、发布页、测试版/自动检查开关、
- * 已忽略版本与「回滚到正式版」。
+ * 更新与维护卡的「更新」区，按状态分组：
+ * ① 检查更新与发布页 → ② 后台任务进度（与更新弹窗同一份 store）→ ③ 渠道开关
+ * → ④ 版本偏好（忽略版本 / 回滚正式版）。
  *
  * 只做展示与触发：是否自动提示、要不要回滚、回滚目标是谁都由 `lib/update-preferences.ts`
- * 的纯函数决定；下载/校验/安装沿用 `update-download` 的状态机，不在这里重写。
+ * 的纯函数决定；下载/校验/安装沿用 `update-download` 的状态机，后台任务由 `lib/update-task.ts` 持有。
  */
 export function UpdateActions({ storage, settings, onPatch, update }: UpdateActionsProps) {
   const ignoredVersion = useIgnoredUpdateVersion();
@@ -152,80 +154,96 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label="检查更新"
-          loading={update.busy}
-          onClick={() => void update.run()}
-        >
-          检查更新
-        </Button>
-        <ExternalLink
-          dataRole="release-page-link"
-          className="text-xs text-primary-strong underline"
-          href="https://github.com/muyangplus/dawn-tick/releases"
-          ariaLabel="打开发布页（GitHub）"
-        >
-          打开发布页
-        </ExternalLink>
+      {/* ① 检查更新：动作与最近一次结果同组 */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            aria-label="检查更新"
+            loading={update.busy}
+            onClick={() => void update.run()}
+          >
+            检查更新
+          </Button>
+          <ExternalLink
+            dataRole="release-page-link"
+            className="text-xs text-primary-strong underline"
+            href="https://github.com/muyangplus/dawn-tick/releases"
+            ariaLabel="打开发布页（GitHub）"
+          >
+            打开发布页
+          </ExternalLink>
+        </div>
         {update.result !== null && (
           <StatusLine dataRole="update-result" at={update.result.at}>
             {update.result.text}
           </StatusLine>
         )}
       </div>
-      {CHANNEL !== 'dev' ? (
+
+      {/* ② 后台任务：与更新弹窗单一事实来源，关闭弹窗后仍在这里显示进度 */}
+      <UpdateTaskPanel />
+
+      {/* ③ 渠道与检查节奏 */}
+      <div className="flex flex-col gap-2">
+        {CHANNEL !== 'dev' ? (
+          <SwitchField
+            label="接收测试版更新"
+            description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到测试版'}
+            checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
+            onCheckedChange={(checked) => {
+              if (checked && !resolveReceiveBeta(settings.receiveBeta, CHANNEL)) {
+                setBetaWarningOpen(true);
+                return;
+              }
+              void onPatch({ receiveBeta: checked });
+            }}
+            ariaLabel="接收测试版更新"
+          />
+        ) : (
+          <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
+        )}
         <SwitchField
-          label="接收测试版更新"
-          description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到测试版'}
-          checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
-          onCheckedChange={(checked) => {
-            if (checked && !resolveReceiveBeta(settings.receiveBeta, CHANNEL)) {
-              setBetaWarningOpen(true);
-              return;
-            }
-            void onPatch({ receiveBeta: checked });
-          }}
-          ariaLabel="接收测试版更新"
+          label="自动检查版本更新"
+          description="启动后自动查一次，有新版本时弹出更新信息；关闭后仍可用上面的「检查更新」手动查"
+          checked={settings.autoCheckUpdate}
+          onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
+          ariaLabel="自动检查版本更新"
         />
-      ) : (
-        <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
-      )}
-      <SwitchField
-        label="自动检查版本更新"
-        description="启动后自动查一次，有新版本时弹出更新信息；关闭后仍可用上面的「检查更新」手动查"
-        checked={settings.autoCheckUpdate}
-        onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
-        ariaLabel="自动检查版本更新"
-      />
-      {ignoredVersion !== null && (
-        <div className="flex flex-wrap items-center gap-2" data-role="ignored-version">
-          <span className="text-xs text-muted">已忽略的版本：{ignoredVersion}</span>
-          <Button
-            size="sm"
-            variant="secondary"
-            aria-label="取消忽略版本"
-            data-role="unignore-version"
-            onClick={() => void unignore()}
-          >
-            取消忽略
-          </Button>
-        </div>
-      )}
-      {rollbackVisible && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            aria-label="回滚到正式版"
-            data-role="rollback-stable"
-            onClick={openRollback}
-          >
-            回滚到正式版
-          </Button>
-          <span className="text-xs text-muted">当前 {CHANNEL_LABEL[CHANNEL]}；回到最新正式版</span>
+      </div>
+
+      {/* ④ 版本偏好：忽略版本与回滚 */}
+      {(ignoredVersion !== null || rollbackVisible) && (
+        <div className="flex flex-col gap-2">
+          {ignoredVersion !== null && (
+            <div className="flex flex-wrap items-center gap-2" data-role="ignored-version">
+              <span className="text-xs text-muted">已忽略的版本：{ignoredVersion}</span>
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label="取消忽略版本"
+                data-role="unignore-version"
+                onClick={() => void unignore()}
+              >
+                取消忽略
+              </Button>
+            </div>
+          )}
+          {rollbackVisible && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label="回滚到正式版"
+                data-role="rollback-stable"
+                onClick={openRollback}
+              >
+                回滚到正式版
+              </Button>
+              <span className="text-xs text-muted">当前 {CHANNEL_LABEL[CHANNEL]}；回到最新正式版</span>
+            </div>
+          )}
         </div>
       )}
       <Dialog open={betaWarningOpen} onOpenChange={setBetaWarningOpen}>
