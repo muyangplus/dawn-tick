@@ -28,7 +28,9 @@ import type { AppData } from '../src/data.ts';
 import { SemesterStatsCard } from '../src/screens/cards/semester-stats-card.tsx';
 import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
-import type { UpdateStatus } from '../src/update.ts';
+import type { UpdateManifest, UpdateStatus } from '../src/update.ts';
+import { sha256Hex, type UpdateDownloadHost } from '../src/lib/update-download.ts';
+import { dismissUpdateTask, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
@@ -3566,6 +3568,117 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '浏览器端不提供「回滚到正式版」（只能刷新页面）',
     view.container.querySelector('[data-role="rollback-stable"]') === null,
     view.container.querySelector('[data-role="rollback-stable"]')?.textContent?.trim() ?? '(无)',
+  );
+
+  // —— 后台下载：关掉弹窗后设备页仍有同一任务的进度；ready 显示安装/刷新（注入假出口，不真实下载） ——
+  const backgroundBytes = new Uint8Array(320 * 1024);
+  for (let index = 0; index < backgroundBytes.length; index += 1) backgroundBytes[index] = index % 251;
+  const backgroundDigest = await sha256Hex(backgroundBytes);
+  const backgroundManifest: UpdateManifest = {
+    channel: 'release',
+    version: '0.5.3',
+    assets: {
+      windows: {
+        url: 'https://example.com/DawnTick-0.5.3-release-windows-x64-setup.exe',
+        size: backgroundBytes.length,
+        checksumUrl: 'https://example.com/DawnTick-0.5.3-release-windows-x64-setup.exe.sha256',
+      },
+    },
+  };
+  /** 假出口：第一块立刻给，剩下的等冒烟断言完再放行——不靠 sleep 抢时间窗口 */
+  let releaseSlowChunk: (() => void) | null = null;
+  const slowUpdateHost: UpdateDownloadHost = {
+    fetchImpl: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(backgroundBytes.slice(0, 96 * 1024));
+            await new Promise<void>((resolve) => {
+              releaseSlowChunk = resolve;
+            });
+            controller.enqueue(backgroundBytes.slice(96 * 1024));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { 'content-length': String(backgroundBytes.length) } },
+      ),
+    readChecksum: async () => backgroundDigest,
+    write: async (name) => `C:\\Temp\\${name}`,
+    install: async () => ({ needsPermission: false }),
+  };
+  dismissUpdateTask();
+  const backgroundPrompt: UpdateStatus = {
+    available: true,
+    error: null,
+    feed: 'release',
+    current: appVersion(),
+    latest: '0.5.3',
+    manifest: backgroundManifest,
+  };
+  void startBackgroundUpdate(backgroundManifest, { platform: 'windows', host: slowUpdateHost });
+  requestUpdatePrompt(backgroundPrompt);
+  await flush(2);
+  const dialogProgress = document.querySelector<HTMLElement>(
+    '[data-role="update-dialog"] [data-role="update-progress"]',
+  );
+  const dialogProgressDetail =
+    dialogProgress?.querySelector('[data-role="update-progress-detail"]')?.textContent ?? '';
+  check(
+    '更新弹窗：下载中给出进度、速度与剩余时间',
+    dialogProgress !== null && dialogProgressDetail.includes('速度') && dialogProgressDetail.includes('剩余'),
+    dialogProgressDetail || '(无)',
+  );
+  document.querySelector<HTMLElement>('[data-role="update-background"]')?.click();
+  await flush(2);
+  const backgroundTask = view.container.querySelector<HTMLElement>('[data-role="update-task"]');
+  const backgroundProgress = backgroundTask?.querySelector<HTMLElement>('[data-role="update-task-progress"]');
+  const backgroundDetail = backgroundProgress?.querySelector('[data-role="update-progress-detail"]')?.textContent ?? '';
+  check(
+    '下载中关闭弹窗后设备页仍显示后台任务与进度（含速度与剩余时间）',
+    document.querySelector('[data-role="update-dialog"]') === null &&
+      updateTaskSnapshot().status === 'downloading' &&
+      backgroundTask !== null &&
+      backgroundProgress !== null &&
+      backgroundDetail.includes('速度') &&
+      backgroundDetail.includes('剩余'),
+    backgroundDetail || backgroundTask?.textContent?.trim() || '(无)',
+  );
+  releaseSlowChunk?.();
+  await flush(8);
+  check(
+    '后台下载完成后设备页给出「安装」入口',
+    updateTaskSnapshot().status === 'ready' &&
+      (view.container.querySelector('[data-role="update-task-install"]')?.textContent ?? '').includes('安装'),
+    view.container.querySelector('[data-role="update-task-install"]')?.textContent?.trim() ?? '(无)',
+  );
+  requestUpdatePrompt(backgroundPrompt);
+  await flush(2);
+  check(
+    '再次打开更新弹窗：同一任务已就绪，主按钮变为「安装」',
+    (document.querySelector('[data-role="update-download"]')?.textContent ?? '').includes('安装') &&
+      (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes('可以安装'),
+    document.querySelector('[data-role="update-download"]')?.textContent?.trim() ?? '(无)',
+  );
+  closeUpdatePrompt();
+  await flush(2);
+  dismissUpdateTask();
+  await startBackgroundUpdate(
+    { channel: 'release', version: '0.5.4', assets: {} },
+    { platform: 'web' },
+  );
+  await flush(1);
+  check(
+    'Web 渠道：后台任务就绪后的动作是「刷新页面」',
+    updateTaskSnapshot().status === 'ready' &&
+      (view.container.querySelector('[data-role="update-task-install"]')?.textContent ?? '').includes('刷新页面'),
+    view.container.querySelector('[data-role="update-task-install"]')?.textContent?.trim() ?? '(无)',
+  );
+  dismissUpdateTask();
+  await flush(1);
+  check(
+    '清理后台任务后设备页不再显示下载进度',
+    view.container.querySelector('[data-role="update-task"]') === null,
+    view.container.querySelector('[data-role="update-task"]')?.textContent?.trim() ?? '(无)',
   );
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
