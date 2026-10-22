@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.6.1] - 2026-10-22
+
 ### 变更
 
 - 更新下载改为后台任务：关闭更新弹窗后继续下载，设备页常驻进度并可直接安装；Web 渠道完成后提示刷新页面
@@ -212,7 +214,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.0...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.1...dev
+[0.6.1]: https://github.com/muyangplus/dawn-tick/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/muyangplus/dawn-tick/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/muyangplus/dawn-tick/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/muyangplus/dawn-tick/compare/v0.4.0...v0.4.1
