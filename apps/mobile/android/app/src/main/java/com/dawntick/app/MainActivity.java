@@ -6,6 +6,7 @@ import com.dawntick.app.install.ApkInstallerPlugin;
 import com.dawntick.app.lan.LanSyncPlugin;
 import com.dawntick.app.reminder.ReminderActionsPlugin;
 import com.dawntick.app.school.SchoolWindowPlugin;
+import com.dawntick.app.secret.SecretStorePlugin;
 import com.dawntick.app.share.FileSharePlugin;
 import com.dawntick.app.system.SystemActionsPlugin;
 import com.dawntick.app.widget.WidgetPinPlugin;
@@ -26,6 +27,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(LanSyncPlugin.class);
         // R-07 提醒动作：提醒投递、通知按钮与贪睡/完成/勿扰
         registerPlugin(ReminderActionsPlugin.class);
+        // WebDAV 密码：AndroidKeyStore AES-GCM 加解密（Web 侧封 `enc:v1:` 信封）
+        registerPlugin(SecretStorePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

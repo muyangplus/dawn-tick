@@ -12,7 +12,7 @@ import type { ReminderKind } from './reminder-actions.ts';
  *   下的 `system/SystemActionsPlugin.java`、`widget/WidgetPinPlugin.kt`、
  *   `school/SchoolWindowPlugin.kt`、`widget/WidgetRefreshPlugin.kt`、
  *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`、`lan/LanSyncPlugin.kt`、
- *   `reminder/ReminderActionsPlugin.kt`；
+ *   `reminder/ReminderActionsPlugin.kt`、`secret/SecretStorePlugin.kt`；
  * - 两端对照表见 `apps/mobile/docs/plugins.contract.md`。改方法名或返回字段时三处一起改
  *   （本文件、Java/Kotlin 实现、契约文档），否则 JS 侧只会静默拿到 `undefined`；
  * - `apps/web/test/plugins.test.ts` 静态核对方法名与文档，Android 编译在打包机上另跑。
@@ -28,6 +28,7 @@ export const PLUGIN_NAMES = {
   fileShare: 'FileShare',
   lanSync: 'LanSync',
   reminderActions: 'ReminderActions',
+  secretStore: 'SecretStore',
 } as const;
 
 /** 插件名联合类型。 */
@@ -55,6 +56,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
   [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'poll', 'respond', 'scanDiscovery'],
   [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'requestPermissionInfo', 'pollActions'],
+  [PLUGIN_NAMES.secretStore]: ['encrypt', 'decrypt', 'isAvailable'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
 /** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
@@ -194,6 +196,21 @@ export interface ReminderActionsPlugin {
     eventName: 'actionPerformed',
     listener: (payload: ReminderActionEvent) => void,
   ): Promise<{ remove: () => Promise<void> }>;
+}
+
+/**
+ * 本机密钥库插件（WebDAV 密码加密，Android）。
+ *
+ * 只收发 Base64 密文：密钥是 AndroidKeyStore 里的 AES-256-GCM 密钥，随应用卸载销毁；
+ * 信封格式与 Windows DPAPI 一致，`enc:v1:` 前缀在 TS 侧（`lib/credentials.ts`）维护。
+ */
+export interface SecretStorePlugin {
+  /** 加密明文，返回 Base64 密文。 */
+  encrypt(options: { value: string }): Promise<{ ciphertext?: string }>;
+  /** 解密 Base64 密文；密钥丢失、密文被改动时 reject。 */
+  decrypt(options: { ciphertext: string }): Promise<{ value?: string }>;
+  /** 密钥库是否可用；不可用时 Web 层回退明文并显式提示。 */
+  isAvailable(): Promise<{ available?: boolean }>;
 }
 
 /**

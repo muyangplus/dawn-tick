@@ -20,6 +20,7 @@ const SOURCES = [
   { name: PLUGIN_NAMES.fileShare, file: 'share/FileSharePlugin.kt' },
   { name: PLUGIN_NAMES.lanSync, file: 'lan/LanSyncPlugin.kt' },
   { name: PLUGIN_NAMES.reminderActions, file: 'reminder/ReminderActionsPlugin.kt' },
+  { name: PLUGIN_NAMES.secretStore, file: 'secret/SecretStorePlugin.kt' },
 ] as const;
 
 function readAndroid(file: string): string {
@@ -59,6 +60,7 @@ test('插件名与加载入口集中在 lib/plugins.ts', () => {
     'LanSync',
     'ReminderActions',
     'SchoolWindow',
+    'SecretStore',
     'SystemActions',
     'WidgetRefresh',
   ]);
