@@ -30,6 +30,7 @@ import type { UpdateStatus } from '../src/update.ts';
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
+import { setSecretStoreForTests } from '../src/lib/credentials.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
@@ -763,6 +764,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   setLanDiscoveryScannerForTests(async () => [
     { name: '书房电脑', host: '192.168.1.5', port: 8765, seenAt: Date.now() },
   ]);
+
+  // WebDAV 密码：平台密钥库用确定性桩替代（冒烟只验证信封与界面状态，不做真实密码学）
+  setSecretStoreForTests({
+    encrypt: async (value: string) => `smoke(${value})`,
+    decrypt: async (ciphertext: string) => {
+      const matched = /^smoke\((.*)\)$/s.exec(ciphertext);
+      if (matched === null) throw new Error('冒烟桩：密文不认识');
+      return matched[1] as string;
+    },
+    isAvailable: async () => true,
+  });
 
   // R-07：提醒动作纯逻辑桩（不动原生桥）。三类代表提醒：课前（课程）、作业、考试。
   const actionNow = Date.now();
@@ -3586,6 +3598,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('button[aria-label="上传到 WebDAV"]') !== null &&
       view.container.querySelector('button[aria-label="从 WebDAV 下载"]') !== null,
     '',
+  );
+
+  // 密码只写不回显：输入后离开输入框即加密保存，状态行显示「已加密保存」，落库是 enc:v1 信封
+  const passwordInput = view.container.querySelector<HTMLInputElement>('[data-role="webdav-password"]');
+  if (passwordInput !== null) {
+    setInputValue(passwordInput, 'dav-secret');
+    await flush(6);
+    blurInput(passwordInput);
+    await flush(16);
+  }
+  const passwordStorage = validatedStorage(await openIndexedDbStorage());
+  const storedPassword = (await passwordStorage.readMeta('webdav_password')) ?? '';
+  const passwordStateLine = view.container.querySelector('[data-role="webdav-password-state"]');
+  check(
+    'WebDAV 密码加密保存且不回显',
+    passwordInput !== null &&
+      (passwordStateLine?.textContent ?? '').includes('已加密保存') &&
+      passwordInput.value === '' &&
+      storedPassword.startsWith('enc:v1:'),
+    `状态=${passwordStateLine?.textContent?.trim() ?? '(无)'} 落库=${storedPassword.slice(0, 20)}`,
   );
 
   check(
