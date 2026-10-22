@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.6.0] - 2026-10-22
+
 ### 新增
 
 - 设备页可导出课表为 `.ics`：按模块勾选（课表必选、日程可选），调课按调整后落事件，停课不导出
@@ -202,7 +204,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.5.0...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.0...dev
+[0.6.0]: https://github.com/muyangplus/dawn-tick/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/muyangplus/dawn-tick/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/muyangplus/dawn-tick/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/muyangplus/dawn-tick/compare/v0.3.0-beta.1...v0.4.0

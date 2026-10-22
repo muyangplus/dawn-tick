@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "晓刻 DawnTick",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "identifier": "com.dawntick.app",
   "build": {
     "frontendDist": "../../web/dist",
