@@ -24,6 +24,8 @@ import {
   writeSettings,
 } from '@dawn-tick/core';
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
+import type { AppData } from '../src/data.ts';
+import { SemesterStatsCard } from '../src/screens/cards/semester-stats-card.tsx';
 import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
 import type { UpdateStatus } from '../src/update.ts';
@@ -1615,6 +1617,50 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
   check('切到日程页', switchedToSchedule && scheduleText.includes('倒计时'), scheduleText.slice(0, 60));
+  // 学期概览卡片：周次、课时、出勤估算、考试与课程排行都由本机数据算出
+  const statsRoot = view.container.querySelector<HTMLElement>('[data-role="semester-stats"]');
+  const statsText = statsRoot?.textContent ?? '';
+  check(
+    '学期概览卡片显示学期周次与已上过 / 待上节数',
+    statsRoot !== null &&
+      statsText.includes('学期概览') &&
+      /第 \d+ 周 \/ 共 20 周/.test(statsText) &&
+      /已上过 \d+ 节/.test(statsText) &&
+      /待上 \d+ 节/.test(statsText),
+    statsText.slice(0, 80),
+  );
+  check(
+    '学期概览卡片显示出勤估算、考试与课程课时排行',
+    statsText.includes('出勤估算') &&
+      /\d+%/.test((statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent ?? '')) &&
+      (statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent ?? '').includes('期末模拟考') &&
+      (statsRoot?.querySelector('[data-role="semester-stats-ranking"]')?.textContent ?? '').includes('往期课'),
+    [
+      statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent?.trim(),
+      statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent?.trim(),
+    ].join(' | '),
+  );
+  // 空学期：直接挂卡片正文，断言空态与「去添加课程」入口
+  const emptyStatsData = {
+    timeZone: 'Asia/Shanghai',
+    today: todayText,
+    lessonsByDate: new Map(),
+    reschedules: [],
+    exams: [],
+    todos: [],
+    courses: [],
+    semester: null,
+  } as unknown as AppData;
+  const emptyStats = mount(<SemesterStatsCard data={emptyStatsData} onAddTodo={() => {}} />);
+  await flush(4);
+  check(
+    '学期概览：空学期显示空态与去添加课程入口',
+    emptyStats.container.querySelector('[data-role="semester-stats-empty"]') !== null &&
+      (emptyStats.container.textContent ?? '').includes('去添加课程'),
+    (emptyStats.container.textContent ?? '').slice(0, 60),
+  );
+  emptyStats.root.unmount();
+  emptyStats.container.remove();
   // 视图进入过渡：切页后视图根节点带 dt-view-enter，且根节点的 data-motion 同时存在
   const viewRoot = view.container.querySelector('[data-role="view-root"]');
   check(
