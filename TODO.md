@@ -5,7 +5,7 @@
 ## 0. 现状快照
 
 - **版本**：`0.5.0`（`versionCode 500`，2026-10-21 发布）。已发布 `v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`、`v0.5.0`；`v*` 标签触发 `publish.yml`，正文与 Full Changelog 由 `tools/release/publish.sh` 拼装，失败日志推到 `ci-debug` 分支。
-- **验证**：`pnpm test`（core 276 / web 357 / tools 36）、`pnpm ui:smoke`（394 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项，含小组件契约）。
+- **验证**：`pnpm test`（core 276 / web 404 / tools 36）、`pnpm ui:smoke`（406 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项，含小组件契约）。
 - **CI**：四个 job——`node`（typecheck / test / 界面冒烟）、`schema`、`rust`、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
 - **结构**：`apps/web/src/App.tsx` 449 行；`screens/settings-view.tsx` 212 行、`devices-view.tsx` 176 行、卡片在 `screens/settings/`；`data.ts` 732 行（`loadAppData` 70 行）；`app/` 拆出启动编排、会话、课表动作、副作用与恢复；`screens/timetable/{move-controller,drag-session}.ts`。
 - **单点**：文案 `copy/zh.ts`（`UNIT_LABEL`/`COUNT`/`DELETE`/`OVERWRITE`/`fail`）、节次范围 `lib/format.ts:formatPeriodRange`、课程色 `packages/core/src/colors.ts`、原生桥 `lib/native.ts`（30 个命令与 Rust 一一对应）、`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`。
@@ -152,15 +152,15 @@
 - 更新弹窗可「忽略此版本」，设备页展示已忽略版本并可取消；忽略只压制同一版本的自动提示，手动检查仍会提示。
 - 设备页更新区可「回滚到正式版」：只在 beta/dev 或当前版本高于最新正式版时出现，复用自动更新的下载/校验/安装链路。
 
-### R-14 局域网同步二期（进行中）
+### R-14 局域网同步二期（已完成 `c74cbdd`…`2e865c0`）
 
 - 目标：UDP 广播自动发现同网设备、服务端展示二维码配对信息（不做扫描）、启动/30 分钟自动同步、拉取前预览变更数量；冲突规则沿用一期。
 
-### R-15 备份导出加密（进行中）
+### R-15 备份导出加密（已完成 `8dda96c`/`d7b2180`）
 
 - 目标：导出 JSON / Base64 / 整包 zip 时可选口令加密（AES-GCM + PBKDF2），导入自动识别并提示输入口令；口令不落盘，忘记不可恢复；快照（后台自动备份）本批不加密。
 
-### R-16 课表图片 / PDF 导出（进行中）
+### R-16 课表图片 / PDF 导出（已完成 `49d47ba`/`4cfe434`）
 
 - 目标：设备页导出整周课表为 PNG（Canvas 手绘，2x）与单页 PDF（嵌入 PNG，无第三方依赖）；沿用主题配色与路径提示。
 
