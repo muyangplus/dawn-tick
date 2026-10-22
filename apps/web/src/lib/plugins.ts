@@ -53,7 +53,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.widgetRefresh]: ['refresh'],
   [PLUGIN_NAMES.apkInstaller]: ['installApk'],
   [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
-  [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'poll', 'respond'],
+  [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'poll', 'respond', 'scanDiscovery'],
   [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'requestPermissionInfo', 'pollActions'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
@@ -144,6 +144,13 @@ export interface LanSyncPlugin {
   poll(): Promise<LanSyncRequest | null>;
   /** 回应 `poll` 取到的请求；原生层写回 HTTP 响应。 */
   respond(options: { id: number; status: number; body: string }): Promise<void>;
+  /**
+   * 扫描同网设备（UDP 广播，短超时）：只返回设备名 / 地址 / 端口，
+   * 不含配对码或令牌；Web 端不调用。
+   */
+  scanDiscovery(options: { timeoutMs?: number }): Promise<{
+    peers?: { name?: string; host?: string; port?: number }[];
+  }>;
 }
 
 /** 通知/托盘动作事件：`id` 是排定时的通知 id，`kind` 与 `targetId` 供进程重启后找回条目。 */

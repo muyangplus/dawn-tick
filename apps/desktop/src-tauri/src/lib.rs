@@ -2,12 +2,14 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
+mod lan_discovery;
 mod lan_sync;
 mod paths;
 mod reminder_actions;
 mod updater;
 mod widget_window;
 
+use lan_discovery::lan_discovery_scan;
 use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
 use reminder_actions::{clear_pending_reminder, set_pending_reminders};
@@ -2717,6 +2719,7 @@ pub fn run() {
             lan_sync_stop,
             lan_sync_poll,
             lan_sync_respond,
+            lan_discovery_scan,
             set_pending_reminders,
             clear_pending_reminder
         ])

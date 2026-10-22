@@ -453,7 +453,7 @@ fn is_lan_ip(ip: IpAddr) -> bool {
     }
 }
 
-fn is_lan_ipv4(ip: Ipv4Addr) -> bool {
+pub(crate) fn is_lan_ipv4(ip: Ipv4Addr) -> bool {
     if ip.is_loopback() || ip.is_private() || ip.is_link_local() {
         return true;
     }
@@ -507,6 +507,11 @@ pub fn lan_sync_start() -> Result<LanSyncListen, String> {
         .ok_or_else(|| "没有找到局域网地址，请先连接 Wi-Fi 或有线网络".to_string())?;
     let server = LanSyncServer::start_on(host)?;
     let info = server.listen_info();
+    // 二期发现：只在开配对期间广播设备名与 HTTP 端口，不含配对码
+    let device_name = crate::lan_discovery::device_name();
+    if let Err(error) = crate::lan_discovery::start_local(&info.host, info.port, &device_name) {
+        crate::append_log(&format!("局域网发现广播启动失败：{error}"));
+    }
     crate::append_log(&format!(
         "局域网同步已开启：{}:{}",
         info.host, info.port
@@ -518,6 +523,7 @@ pub fn lan_sync_start() -> Result<LanSyncListen, String> {
 /// 停止配对服务并让内存里的令牌随 TS 状态一起失效。
 #[tauri::command]
 pub fn lan_sync_stop() {
+    crate::lan_discovery::stop_local();
     let server = lock_server().take();
     if let Some(server) = server {
         server.stop();

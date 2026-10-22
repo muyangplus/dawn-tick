@@ -113,14 +113,15 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 |---|---|
 | 插件名 | `LanSync` |
 | TS 接口 | `LanSyncPlugin`（`apps/web/src/lib/plugins.ts`） |
-| Android 实现 | `lan/LanSyncPlugin.kt`（服务在 `lan/LanSyncServer.kt`） |
+| Android 实现 | `lan/LanSyncPlugin.kt`（服务在 `lan/LanSyncServer.kt`，UDP 发现在 `lan/LanDiscovery.kt`） |
 
 | 方法 | 参数 | 返回字段 | 说明 |
 |---|---|---|---|
-| `start` | 无 | `host?: string`、`port?: number` | 绑定本机局域网 IPv4 与系统分配端口；没有局域网地址时 reject |
-| `stop` | 无 | 无（resolve 空） | 关监听并清空队列、等待中的响应 |
+| `start` | 无 | `host?: string`、`port?: number` | 绑定本机局域网 IPv4 与系统分配端口；没有局域网地址时 reject；成功后开始 UDP 广播（不含配对码） |
+| `stop` | 无 | 无（resolve 空） | 关监听、停广播并清空队列、等待中的响应 |
 | `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
 | `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
+| `scanDiscovery` | `timeoutMs?: number` | `peers?: { name?: string; host?: string; port?: number }[]` | UDP 短超时扫描同网设备；只返回设备名 / 地址 / 端口，按 host:port 去重 |
 
 ## 8. ReminderActions
 

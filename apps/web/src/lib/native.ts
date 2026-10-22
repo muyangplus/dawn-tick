@@ -55,6 +55,7 @@ export const NATIVE_COMMANDS = [
   'lan_sync_stop',
   'lan_sync_poll',
   'lan_sync_respond',
+  'lan_discovery_scan',
   'set_pending_reminders',
   'clear_pending_reminder',
 ] as const;
