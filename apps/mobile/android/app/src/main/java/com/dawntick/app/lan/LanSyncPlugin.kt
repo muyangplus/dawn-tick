@@ -28,6 +28,8 @@ class LanSyncPlugin : Plugin() {
                 val active = synchronized(lock) {
                     server ?: LanSyncServer.start().also { server = it }
                 }
+                // 二期发现：开配对期间广播设备名与 HTTP 端口，不含配对码
+                LanDiscoveryAdvertiser.start(active.host, active.port, LanDiscoveryCodec.deviceName())
                 call.resolve(JSObject().put("host", active.host).put("port", active.port))
             } catch (error: Exception) {
                 call.reject(error.message ?: "开启局域网配对失败", error)
@@ -41,11 +43,30 @@ class LanSyncPlugin : Plugin() {
     /** 关监听并让等待中的连接立即结束。 */
     @PluginMethod
     fun stop(call: PluginCall) {
+        LanDiscoveryAdvertiser.stop()
         synchronized(lock) {
             server?.stop()
             server = null
         }
         call.resolve()
+    }
+
+    /** 扫描同网设备（UDP 广播，短超时）；只返回设备名 / 地址 / 端口。 */
+    @PluginMethod
+    fun scanDiscovery(call: PluginCall) {
+        val timeoutMs = (call.data.opt("timeoutMs") as? Number)?.toInt() ?: 1500
+        Thread {
+            try {
+                val array = com.getcapacitor.JSArray()
+                for (peer in LanDiscovery.scan(timeoutMs)) array.put(peer.toJsObject())
+                call.resolve(JSObject().put("peers", array))
+            } catch (error: Exception) {
+                call.reject(error.message ?: "扫描局域网设备失败", error)
+            }
+        }.apply {
+            isDaemon = true
+            start()
+        }
     }
 
     /** 取一条待处理请求；队列空时 resolve 空对象，TS 侧按 null 处理。 */
@@ -83,8 +104,9 @@ class LanSyncPlugin : Plugin() {
         }
     }
 
-    /** 页面销毁时停服务：一期不做后台常驻。 */
+    /** 页面销毁时停服务与广播。 */
     override fun handleOnDestroy() {
+        LanDiscoveryAdvertiser.stop()
         synchronized(lock) {
             server?.stop()
             server = null

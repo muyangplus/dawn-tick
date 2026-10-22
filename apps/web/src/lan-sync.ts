@@ -1,5 +1,5 @@
 import type { Storage } from '@dawn-tick/core';
-import { isAndroidApp, isDesktopApp, supportsNativeHttp } from './lib/capabilities.ts';
+import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { errorMessage } from './lib/errors.ts';
 import { invokeNative, type LanSyncListen, type LanSyncRequest } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
@@ -22,6 +22,7 @@ import {
   parseLanEnvelope,
   type LanHttpReply,
 } from './lan-sync-payload.ts';
+import { lanFetch, lanResponseError, lanUtf8Length } from './lan-sync-http.ts';
 
 export * from './lan-sync-protocol.ts';
 export * from './lan-sync-payload.ts';
@@ -171,25 +172,6 @@ export function applyLanReply(runtime: LanRuntime, reply: LanHttpReply): LanRunt
   };
 }
 
-async function lanFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  if (supportsNativeHttp()) {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    return tauriFetch(url, init);
-  }
-  return globalThis.fetch(url, init);
-}
-
-function responseError(status: number, text: string, action: string): string {
-  try {
-    const parsed = JSON.parse(text) as { error?: { message?: unknown } };
-    const message = parsed.error?.message;
-    if (typeof message === 'string' && message !== '') return message;
-  } catch {
-    // 非 JSON 错误体：退回状态码文案
-  }
-  return `${action}失败（HTTP ${status}）`;
-}
-
 /** 已配对的对方：地址 + 一次性会话令牌。 */
 export interface LanSession {
   peer: PeerAddress;
@@ -223,7 +205,7 @@ export async function pairWithPeer(
       body: JSON.stringify({ code: code.trim(), schemaVersion: LAN_SYNC_PROTOCOL_VERSION }),
     });
     const text = await response.text();
-    if (!response.ok) return { ok: false, session: null, error: responseError(response.status, text, '配对') };
+    if (!response.ok) return { ok: false, session: null, error: lanResponseError(response.status, text, '配对') };
     const body = JSON.parse(text) as { token?: unknown; expiresAt?: unknown };
     if (typeof body.token !== 'string' || body.token === '') {
       return { ok: false, session: null, error: '配对响应缺少会话令牌' };
@@ -251,10 +233,6 @@ function transferFailure(error: string): LanTransferResult {
   return { ok: false, imported: 0, skipped: 0, warnings: [], error, bytes: 0 };
 }
 
-function utf8Length(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
 /** 拉取：`GET /export` → 按 merge 规则合并进本机；设置项由调用方热加载。 */
 export async function pullFromPeer(
   storage: Storage,
@@ -269,7 +247,7 @@ export async function pullFromPeer(
       headers: { Authorization: `Bearer ${session.token}` },
     });
     const text = await response.text();
-    if (!response.ok) return transferFailure(responseError(response.status, text, '拉取'));
+    if (!response.ok) return transferFailure(lanResponseError(response.status, text, '拉取'));
     const envelope = parseLanEnvelope(text);
     const result = await applyLanEnvelope(storage, envelope, { scopes, mode: 'merge', now });
     logInfo('lan-sync', '已从对方拉取', { imported: result.imported, skipped: result.skipped });
@@ -279,7 +257,7 @@ export async function pullFromPeer(
       skipped: result.skipped,
       warnings: result.warnings,
       error: null,
-      bytes: utf8Length(text),
+      bytes: lanUtf8Length(text),
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
@@ -300,7 +278,7 @@ export async function pushToPeer(
   try {
     const envelope = await buildLanEnvelope(storage, scopes, now);
     const body = JSON.stringify(envelope);
-    const bytes = utf8Length(body);
+    const bytes = lanUtf8Length(body);
     if (bytes > MAX_REQUEST_BYTES) return transferFailure('要推送的数据超过 5MB，请缩小同步范围');
     const response = await lanFetch(
       `${peerBaseUrl(session.peer)}/import?scope=${formatScope(scopes)}&mode=merge`,
@@ -311,7 +289,7 @@ export async function pushToPeer(
       },
     );
     const text = await response.text();
-    if (!response.ok) return transferFailure(responseError(response.status, text, '推送'));
+    if (!response.ok) return transferFailure(lanResponseError(response.status, text, '推送'));
     const parsed = JSON.parse(text) as { imported?: unknown; skipped?: unknown; warnings?: unknown };
     const warnings = Array.isArray(parsed.warnings)
       ? parsed.warnings.filter((item): item is string => typeof item === 'string')

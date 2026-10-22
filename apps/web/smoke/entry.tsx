@@ -39,6 +39,7 @@ import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '.
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
 import { setStorageOpenerForTests } from '../src/db/platform.ts';
+import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
 import {
   ACTION_LABEL,
   isReminderSuppressed,
@@ -757,6 +758,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const check = (name: string, ok: boolean, detail = ''): void => {
     results.push({ name, ok, detail });
   };
+
+  // 局域网二期：发现走原生 UDP，冒烟用固定列表替代（不启动任何原生进程）
+  setLanDiscoveryScannerForTests(async () => [
+    { name: '书房电脑', host: '192.168.1.5', port: 8765, seenAt: Date.now() },
+  ]);
 
   // R-07：提醒动作纯逻辑桩（不动原生桥）。三类代表提醒：课前（课程）、作业、考试。
   const actionNow = Date.now();
@@ -3602,6 +3608,55 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (view.container.querySelector('[data-role="lan-sync"]')?.textContent ?? '').includes('浏览器端'),
     '',
   );
+  // —— 局域网同步二期：发现设备 / 同步前预览 / 自动同步 ——
+  check(
+    '设备页有「发现设备」与「同步前预览」入口',
+    (view.container.querySelector('[data-role="lan-sync-discovery"]')?.textContent ?? '').includes('发现设备') &&
+      view.container.querySelector('button[aria-label="发现设备"]')?.hasAttribute('disabled') === false &&
+      (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '').includes('同步前预览'),
+    (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '(无预览说明)').slice(0, 40),
+  );
+  if (clickByLabel(view.container, '发现设备')) await flush(12);
+  const discoveredPeer = view.container.querySelector<HTMLElement>('[data-role="lan-sync-peers"] button');
+  check(
+    '发现设备列表显示「设备名 · IP」',
+    discoveredPeer !== null && (discoveredPeer.textContent ?? '').trim() === '书房电脑 · 192.168.1.5:8765',
+    (discoveredPeer?.textContent ?? '(无发现结果)').trim(),
+  );
+  discoveredPeer?.click();
+  await flush(6);
+  const filledPeer = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+  check(
+    '点击发现结果填入对方地址',
+    filledPeer?.value === '192.168.1.5:8765',
+    filledPeer?.value ?? '(未填入)',
+  );
+  const autoSwitch = view.container.querySelector<HTMLElement>('[data-role="lan-sync-auto"]');
+  check('设备页有自动同步开关', autoSwitch !== null, '');
+  for (let attempt = 0; attempt < 3 && autoSwitch?.getAttribute('aria-checked') !== 'true'; attempt += 1) {
+    autoSwitch?.click();
+    await flush(6);
+  }
+  await flush(6);
+  const autoFrequency = view.container.querySelector<HTMLElement>('[aria-label="自动同步频率"]');
+  if (autoFrequency !== null) {
+    autoFrequency.dispatchEvent(pointerEvent('pointerdown', { pointerId: 21, button: 0 }));
+    autoFrequency.click();
+  }
+  await flush(10);
+  const autoOptions = [...document.querySelectorAll('[role="option"]')].map((item) =>
+    (item.textContent ?? '').trim(),
+  );
+  check(
+    '打开自动同步后可选「每次启动 / 每 30 分钟」',
+    autoSwitch?.getAttribute('aria-checked') === 'true' &&
+      autoFrequency !== null &&
+      (autoOptions.includes('每次启动') || (autoFrequency.textContent ?? '').includes('每次启动')) &&
+      (autoOptions.includes('每 30 分钟') || (view.container.textContent ?? '').includes('每 30 分钟')),
+    `${autoSwitch?.getAttribute('aria-checked') ?? '(无开关)'} / ${autoOptions.join(' / ') || autoFrequency?.textContent?.trim() || '(无频率选择)'}`,
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
 
   check(
     '主区底部留白按底部栏与悬浮按钮高度计算',
