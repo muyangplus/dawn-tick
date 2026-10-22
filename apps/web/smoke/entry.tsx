@@ -705,6 +705,52 @@ function fakePresetSnapshot(version: string): PresetSnapshot {
   return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` } as unknown as PresetSnapshot;
 }
 
+/**
+ * jsdom 没有 Canvas 2D：给课表图片导出装一个最小上下文桩。
+ * 它只负责让绘制调用不报错，并按画布尺寸返回全零像素，PNG 编码仍走真实实现。
+ */
+function installCanvas2dStub(): () => void {
+  const prototype = window.HTMLCanvasElement.prototype;
+  const original = prototype.getContext;
+  Object.defineProperty(prototype, 'getContext', {
+    configurable: true,
+    writable: true,
+    value: function (this: HTMLCanvasElement, type: string): unknown {
+      if (type !== '2d') return null;
+      const canvas = this;
+      const state: Record<string, unknown> = {};
+      const gradient = { addColorStop: () => {} };
+      return new Proxy(state, {
+        get(target, property) {
+          if (property === 'canvas') return canvas;
+          if (property === 'measureText') return (value: string) => ({ width: String(value).length * 8 });
+          if (property === 'getImageData') {
+            return (_x: number, _y: number, width: number, height: number) => ({
+              data: new Uint8ClampedArray(width * height * 4),
+              width,
+              height,
+            });
+          }
+          if (property === 'createLinearGradient') return () => gradient;
+          if (property in target) return target[property];
+          return () => {};
+        },
+        set(target, property, value) {
+          target[property as string] = value;
+          return true;
+        },
+      });
+    },
+  });
+  return () => {
+    Object.defineProperty(prototype, 'getContext', {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  };
+}
+
 export async function runSmoke(): Promise<SmokeResult[]> {
   const results: SmokeResult[] = [];
   const check = (name: string, ok: boolean, detail = ''): void => {
@@ -2394,11 +2440,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   const devicesActions = view.container.querySelector<HTMLElement>('[data-role="devices-actions"]');
   check(
-    '设备页顶部提供导出备份、导出课表（ICS）、恢复快照与检查更新',
+    '设备页顶部提供备份 / ICS / 课表图片（PNG）/ 课表 PDF 导出、恢复快照与检查更新',
     devicesActions !== null &&
-      ['导出备份', '导出课表（ICS）', '恢复快照', '检查更新'].every((label) =>
-        (devicesActions.textContent ?? '').includes(label),
-      ),
+      ['导出备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF', '恢复快照', '检查更新'].every(
+        (label) => (devicesActions.textContent ?? '').includes(label),
+      ) &&
+      devicesActions.querySelector('[data-role="export-timetable-png"]') !== null &&
+      devicesActions.querySelector('[data-role="export-timetable-pdf"]') !== null,
     (devicesActions?.textContent ?? '(无)').trim(),
   );
   await gotoSettings();
@@ -3601,6 +3649,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   // —— I-12：导出成功显示保存路径，并可「打开所在位置」（桌面端用 Tauri 桩） ——
   const tauriCalls: string[] = [];
   const writtenFiles: Array<{ path: string; content: string }> = [];
+  const binaryWrites: Array<{ path: string; base64: string }> = [];
+  const saveDefaultPaths: string[] = [];
   let lastSaveOptions: Record<string, unknown> | null = null;
   const stubSavePath = 'C:\\Users\\tester\\DawnTick-backup-2026-10-21.json';
   const tauriInternals = {
@@ -3608,6 +3658,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       tauriCalls.push(command);
       if (command === 'plugin:dialog|save') {
         lastSaveOptions = (args?.['options'] ?? null) as Record<string, unknown> | null;
+        saveDefaultPaths.push(String(lastSaveOptions?.['defaultPath'] ?? ''));
         return stubSavePath;
       }
       if (command === 'write_text_file') {
@@ -3615,6 +3666,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
           path: String(args?.['path'] ?? ''),
           content: String(args?.['content'] ?? ''),
         });
+        return String(args?.['path'] ?? '');
+      }
+      if (command === 'write_binary_file') {
+        binaryWrites.push({ path: String(args?.['path'] ?? ''), base64: String(args?.['base64'] ?? '') });
         return String(args?.['path'] ?? '');
       }
       if (command === 'reveal_path') return String(args?.['path'] ?? '');
@@ -3710,6 +3765,55 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       icsToast?.textContent?.trim() ?? '(无)'
     }`,
   );
+
+  // —— R-02：设备页导出课表图片（PNG）与课表 PDF ——
+  // Canvas 2D 用桩（jsdom 没有），二进制写盘沿用上面的 Tauri 桩，PNG 编码与 PDF 组装走真实实现
+  const restoreCanvas = installCanvas2dStub();
+  try {
+    const pngEntry = view.container.querySelector<HTMLElement>('[data-role="export-timetable-png"]');
+    const pdfEntry = view.container.querySelector<HTMLElement>('[data-role="export-timetable-pdf"]');
+    const pngBefore = binaryWrites.length;
+    pngEntry?.click();
+    await waitFor(() => binaryWrites.length > pngBefore, 80);
+    await flush(8);
+    const pngWrite = binaryWrites[pngBefore];
+    const pngToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+      (item.textContent ?? '').includes('已导出课表图片（PNG'),
+    );
+    const pngPath =
+      [...saveDefaultPaths].reverse().find((path) => path.endsWith('.png')) ?? '';
+    check(
+      '导出课表图片（PNG）按 2x 画布生成并写入 PNG 文件',
+      pngEntry !== null &&
+        pngWrite !== undefined &&
+        pngWrite.base64.startsWith('iVBORw0KGgo') &&
+        /^DawnTick-2026-2027 第一学期-\d{4}-\d{2}-\d{2}\.png$/.test(pngPath) &&
+        pngToast !== undefined,
+      `入口=${pngEntry === null ? '无' : '有'} 文件名=${pngPath || '(无)'} Base64=${pngWrite?.base64.length ?? 0} 字符`,
+    );
+
+    const pdfBefore = binaryWrites.length;
+    pdfEntry?.click();
+    await waitFor(() => binaryWrites.length > pdfBefore, 80);
+    await flush(8);
+    const pdfWrite = binaryWrites[pdfBefore];
+    const pdfToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+      (item.textContent ?? '').includes('已导出课表 PDF'),
+    );
+    const pdfPath =
+      [...saveDefaultPaths].reverse().find((path) => path.endsWith('.pdf')) ?? '';
+    check(
+      '导出课表 PDF 嵌入 PNG 图像并写入 PDF 文件',
+      pdfEntry !== null &&
+        pdfWrite !== undefined &&
+        pdfWrite.base64.startsWith('JVBERi0xLjQ') &&
+        /^DawnTick-2026-2027 第一学期-\d{4}-\d{2}-\d{2}\.pdf$/.test(pdfPath) &&
+        pdfToast !== undefined,
+      `入口=${pdfEntry === null ? '无' : '有'} 文件名=${pdfPath || '(无)'} Base64=${pdfWrite?.base64.length ?? 0} 字符`,
+    );
+  } finally {
+    restoreCanvas();
+  }
   clearTauriStub();
   // 没有原生（浏览器下载）时没有本地路径：提示里不出现「打开所在位置」按钮
   toastSaved('无路径保存提示', null);
