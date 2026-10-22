@@ -58,6 +58,8 @@ export const NATIVE_COMMANDS = [
   'lan_discovery_scan',
   'set_pending_reminders',
   'clear_pending_reminder',
+  'secret_encrypt',
+  'secret_decrypt',
 ] as const;
 
 /** 已注册的 Tauri 命令名。 */
