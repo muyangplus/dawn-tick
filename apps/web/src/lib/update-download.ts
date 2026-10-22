@@ -1,14 +1,19 @@
 import type { UpdateAsset, UpdateManifest } from '../update.ts';
+import { downloadChunked, type DownloadProgress } from './chunked-download.ts';
 import { errorMessage } from './errors.ts';
 
 /**
  * 自动更新（I-03）的下载、校验与安装：纯逻辑 + 可注入的平台出口。
  *
  * 边界：
- * - 渠道 → 资产、SHA-256、状态机、流式下载都是纯函数，单测不碰网络与原生；
+ * - 渠道 → 资产、SHA-256、状态机都是纯函数，单测不碰网络与原生；
+ * - 并发分片下载在 `chunked-download.ts`，这里只负责把进度折进界面消费的状态；
  * - 平台出口 `UpdateDownloadHost` 只定义契约，具体实现（Tauri 写盘 / Capacitor）在 `update-install.ts`；
  * - 界面只消费 `UpdateDownloadState`，失败原因原样交给界面用 `fail()` 拼句。
  */
+
+/** 进度与取消错误定义在下载引擎里，这里原样转出，调用方不必换导入路径。 */
+export { DownloadCancelledError, type DownloadProgress } from './chunked-download.ts';
 
 export type UpdatePlatform = 'windows' | 'android' | 'web';
 
@@ -213,79 +218,32 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** 用户取消下载：不算网络失败，状态回到 idle。 */
-export class DownloadCancelledError extends Error {
-  constructor() {
-    super('已取消下载');
-    this.name = 'DownloadCancelledError';
-  }
-}
-
 /** 单独取出取消状态：直接比较 `signal.aborted` 会被 TS 当成不会变化的属性，后续判断被判成死代码。 */
 function isCancelled(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
-export interface DownloadProgress {
-  received: number;
-  total: number | null;
-}
-
 export interface DownloadRequest {
   url: string;
+  /** 已知总长（清单里的 size）：给了才能并发分片；未知时下载引擎自动走单流 */
+  totalBytes?: number | null;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
   onProgress?: (progress: DownloadProgress) => void;
 }
 
 /**
- * 流式下载：有 `ReadableStream` 就逐块累计并回调进度，没有就一次性读完。
- * 取消既靠 fetch 的 signal，也在每块之间检查——测试桩不实现 signal 时同样能停下。
+ * 下载字节：内部改走 `chunked-download` 的并发分片引擎，进度原样透传。
+ * 保留这个入口是为了让 `runUpdateDownload` 与既有调用点不必感知引擎细节。
  */
 export async function downloadBytes(request: DownloadRequest): Promise<Uint8Array> {
-  const doFetch = request.fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') throw new Error('当前环境无法联网下载更新');
-  const response = await doFetch(request.url, request.signal === undefined ? {} : { signal: request.signal });
-  if (!response.ok) throw new Error(`更新源返回 ${response.status}`);
-
-  const header = Number(response.headers?.get('content-length') ?? '');
-  const headerTotal = Number.isFinite(header) && header > 0 ? header : null;
-  const reader =
-    response.body !== null && typeof response.body?.getReader === 'function' ? response.body.getReader() : null;
-  if (reader === null) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    request.onProgress?.({ received: bytes.length, total: headerTotal ?? bytes.length });
-    return bytes;
-  }
-
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  /** 取消时先关掉流：正卡在 read() 上的下载也能立刻结束 */
-  const onAbort = (): void => {
-    void reader.cancel().catch(() => undefined);
-  };
-  request.signal?.addEventListener('abort', onAbort, { once: true });
-  try {
-    for (;;) {
-      if (isCancelled(request.signal)) throw new DownloadCancelledError();
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value === undefined) continue;
-      chunks.push(value);
-      received += value.length;
-      request.onProgress?.({ received, total: headerTotal });
-    }
-  } finally {
-    request.signal?.removeEventListener('abort', onAbort);
-  }
-  if (isCancelled(request.signal)) throw new DownloadCancelledError();
-  const bytes = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
+  return downloadChunked({
+    url: request.url,
+    ...(request.totalBytes === undefined ? {} : { totalBytes: request.totalBytes }),
+    ...(request.signal === undefined ? {} : { signal: request.signal }),
+    ...(request.fetchImpl === undefined ? {} : { fetchImpl: request.fetchImpl }),
+    ...(request.onProgress === undefined ? {} : { onProgress: request.onProgress }),
+  });
 }
 
 /** 平台出口：写安装包、启动安装器、读发布里的 `.sha256`。全部可注入，便于单测。 */
@@ -306,6 +264,8 @@ export interface RunUpdateDownloadOptions {
   /** 覆盖下载用的 fetch（测试桩与原生 HTTP 都从这里注入） */
   fetchImpl?: typeof fetch;
   onState?: (state: UpdateDownloadState) => void;
+  /** 引擎粒度的进度（含速度与剩余时间）：后台任务与进度区消费，状态机只保留字节数 */
+  onProgress?: (progress: DownloadProgress) => void;
 }
 
 async function expectedDigest(
@@ -326,11 +286,21 @@ function shortened(digest: string): string {
   return `${digest.slice(0, 12)}…`;
 }
 
-/**
- * 下载 → 校验 → 写盘 → 交给系统安装器。校验不通过或没有校验文件时一律不安装。
- * 取消（signal）回到 idle；其余异常给 failed + 可读原因，界面可重试。
- */
+/** 只下载+校验+写盘：后台任务走到这里，装不装由用户点「安装」决定。 */
+export async function prepareUpdateDownload(options: RunUpdateDownloadOptions): Promise<UpdateDownloadState> {
+  return runUpdateFlow(options, 'prepare');
+}
+
+/** 下载 → 校验 → 写盘 → 交给系统安装器（既有行为，签名不变；取消回 idle）。 */
 export async function runUpdateDownload(options: RunUpdateDownloadOptions): Promise<UpdateDownloadState> {
+  return runUpdateFlow(options, 'install');
+}
+
+/** 两个入口共用一条流程，只在「写盘后是否立刻安装」上分叉。 */
+async function runUpdateFlow(
+  options: RunUpdateDownloadOptions,
+  mode: 'prepare' | 'install',
+): Promise<UpdateDownloadState> {
   let state = INITIAL_UPDATE_STATE;
   const emit = (event: UpdateEvent): UpdateDownloadState => {
     state = reduceUpdateState(state, event);
@@ -347,10 +317,13 @@ export async function runUpdateDownload(options: RunUpdateDownloadOptions): Prom
   try {
     const bytes = await downloadBytes({
       url: plan.target.url,
+      ...(plan.target.size === null ? {} : { totalBytes: plan.target.size }),
       ...(signal === undefined ? {} : { signal }),
       ...(fetchImpl === undefined ? {} : { fetchImpl }),
-      onProgress: (progress) =>
-        emit({ type: 'progress', received: progress.received, total: progress.total ?? plan.target.size }),
+      onProgress: (progress) => {
+        options.onProgress?.(progress);
+        emit({ type: 'progress', received: progress.received, total: progress.total ?? plan.target.size });
+      },
     });
     emit({ type: 'verify' });
     const expected = await expectedDigest(plan.target, host, signal);
@@ -361,6 +334,7 @@ export async function runUpdateDownload(options: RunUpdateDownloadOptions): Prom
     }
     emit({ type: 'install' });
     const path = await host.write(plan.target.fileName, bytes);
+    if (mode === 'prepare') return emit({ type: 'done', path, message: '安装包已下载并通过校验，可以安装了' });
     const outcome = await host.install(path);
     if (outcome.needsPermission) {
       return emit({
@@ -377,13 +351,34 @@ export async function runUpdateDownload(options: RunUpdateDownloadOptions): Prom
   }
 }
 
-/** 下载进度文案：`已下载 12.3 MB / 45.0 MB（27%）`；总长未知时省略总量与百分比。 */
+/** 进度文案：`已下载 12.3 MB / 45.0 MB（27%）`；总长未知时省略总量与百分比。 */
+export function formatByteProgress(received: number, total: number | null, percent: number | null): string {
+  const receivedText = formatBytes(received);
+  const totalText = total === null ? '' : ` / ${formatBytes(total)}`;
+  const percentText = percent === null ? '' : `（${Math.round(percent * 100)}%）`;
+  return `已下载 ${receivedText}${totalText}${percentText}`;
+}
+
 export function formatDownloadProgress(state: UpdateDownloadState): string {
   if (state.phase !== 'downloading') return state.message ?? '';
-  const received = formatBytes(state.received);
-  const total = state.total === null ? '' : ` / ${formatBytes(state.total)}`;
-  const percent = state.progress === null ? '' : `（${Math.round(state.progress * 100)}%）`;
-  return `已下载 ${received}${total}${percent}`;
+  return formatByteProgress(state.received, state.total, state.progress);
+}
+
+/** 进度明细：`速度 4.2 MB/s · 剩余 12 秒`；速度/剩余都算不出来时返回空串。 */
+export function formatDownloadDetail(progress: DownloadProgress): string {
+  const parts: string[] = [];
+  if (progress.speedBytesPerSec !== null) parts.push(`速度 ${formatBytes(progress.speedBytesPerSec)}/s`);
+  if (progress.etaSeconds !== null) parts.push(`剩余 ${formatEta(progress.etaSeconds)}`);
+  return parts.join(' · ');
+}
+
+/** 剩余时间按人读的粒度取整：不到 1 分钟说秒，超过 1 小时说小时+分钟。 */
+export function formatEta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '不足 1 秒';
+  if (seconds < 60) return `${Math.ceil(seconds)} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分 ${Math.round(seconds % 60)} 秒`;
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
 }
 
 function formatBytes(bytes: number): string {
