@@ -48,19 +48,21 @@ object LanDiscoveryCodec {
             .toString()
     }
 
-    fun parse(text: String): LanDiscoveryPeer? = try {
-        val json = JSONObject(text)
-        if (json.optString("kind") != LAN_DISCOVERY_KIND) return null
-        if (json.optInt("schemaVersion", -1) != LAN_DISCOVERY_SCHEMA_VERSION) return null
-        val name = json.optString("name").trim()
-        val host = json.optString("host").trim()
-        val port = json.optInt("port", 0)
-        if (name.isEmpty() || name.length > 48) return null
-        val address = parseLanHost(host) ?: return null
-        if (port !in 1..65535) return null
-        LanDiscoveryPeer(name, address.hostAddress ?: host, port)
-    } catch (_: Exception) {
-        null
+    fun parse(text: String): LanDiscoveryPeer? {
+        return try {
+            val json = JSONObject(text)
+            if (json.optString("kind") != LAN_DISCOVERY_KIND) return null
+            if (json.optInt("schemaVersion", -1) != LAN_DISCOVERY_SCHEMA_VERSION) return null
+            val name = json.optString("name").trim()
+            val host = json.optString("host").trim()
+            val port = json.optInt("port", 0)
+            if (name.isEmpty() || name.length > 48) return null
+            val address = parseLanHost(host) ?: return null
+            if (port !in 1..65535) return null
+            LanDiscoveryPeer(name, address.hostAddress ?: host, port)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun merge(peers: List<LanDiscoveryPeer>): List<LanDiscoveryPeer> {
@@ -135,7 +137,7 @@ object LanDiscoveryAdvertiser {
             runCatching { active.close() }
         }.apply {
             isDaemon = true
-            name = "lan-discovery-announce"
+            this.name = "lan-discovery-announce"
             start()
         }
     }
