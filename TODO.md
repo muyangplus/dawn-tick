@@ -5,7 +5,7 @@
 ## 0. 现状快照
 
 - **版本**：`0.5.0`（`versionCode 500`，2026-10-21 发布）。已发布 `v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`、`v0.5.0`；`v*` 标签触发 `publish.yml`，正文与 Full Changelog 由 `tools/release/publish.sh` 拼装，失败日志推到 `ci-debug` 分支。
-- **验证**：`pnpm test`（core 276 / web 404 / tools 36）、`pnpm ui:smoke`（406 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项，含小组件契约）。
+- **验证**：`pnpm test`（core 276 / web 434 / tools 36）、`pnpm ui:smoke`（413 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项，含小组件契约）。
 - **CI**：四个 job——`node`（typecheck / test / 界面冒烟）、`schema`、`rust`、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。本机也可用 `E:\work\dsh\android-sdk` + `~/.gradle/jdks` 里的 JDK21 跑 `gradlew :app:compileDebugKotlin` 本地验证安卓编译。
 - **结构**：`apps/web/src/App.tsx` 449 行；`screens/settings-view.tsx` 212 行、`devices-view.tsx` 176 行、卡片在 `screens/settings/`；`data.ts` 732 行（`loadAppData` 70 行）；`app/` 拆出启动编排、会话、课表动作、副作用与恢复；`screens/timetable/{move-controller,drag-session}.ts`。
 - **单点**：文案 `copy/zh.ts`（`UNIT_LABEL`/`COUNT`/`DELETE`/`OVERWRITE`/`fail`）、节次范围 `lib/format.ts:formatPeriodRange`、课程色 `packages/core/src/colors.ts`、原生桥 `lib/native.ts`（30 个命令与 Rust 一一对应）、`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`。
@@ -164,15 +164,15 @@
 
 - 目标：设备页导出整周课表为 PNG（Canvas 手绘，2x）与单页 PDF（嵌入 PNG，无第三方依赖）；沿用主题配色与路径提示。
 
-### R-17 学期统计卡片（进行中）
+### R-17 学期统计卡片（已完成 `6abffe3`/`5bc8305`）
 
 - 目标：日程页新增「学期概览」卡片：周次、已上/待上节数、课程课时前 5、出勤估算、考试已考/待考与最近一场倒计时；纯本地计算，空态给行动。
 
-### R-18 WebDAV 凭据加密存储（进行中）
+### R-18 WebDAV 凭据加密存储（已完成 `51a2d45`…`aa6ee01`）
 
 - 目标：WebDAV 密码不再明文落库：Windows 走 DPAPI、Android 走 Keystore/EncryptedSharedPreferences，Web 回退时显式标注；旧明文自动迁移，读取失败要求重输。
 
-### R-19 导入诊断面板（进行中）
+### R-19 导入诊断面板（已完成 `3ee55a2`/`19444c9`）
 
 - 目标：识别失败/可疑时展示帧数、表格数、疑似课表数、网格单元、加载状态与前几行样例（脱敏），可复制或导出诊断日志。
 
