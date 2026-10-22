@@ -1,40 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
-  activeSemester,
   BACKUP_MODULES,
   BACKUP_MODULE_LABEL,
-  IMPORT_MODE_LABEL,
-  IMPORT_MODES,
-  listCourses,
-  listSchedules,
-  listTimeSlots,
-  summarizeBackup,
   type BackupModule,
-  type BackupPayload,
-  type EventRow,
-  type ImportMode,
   type Storage,
 } from '@dawn-tick/core';
-import {
-  exportConfig,
-  importConfig,
-  importResultText,
-  parseImportText,
-  presentModules,
-  readImportFile,
-  type ExportFormat,
-  type PackageExtras,
-} from '../../data-management.ts';
+import { exportConfig, type ExportFormat } from '../../data-management.ts';
 import { dayStampUtc } from '../../lib/dates.ts';
-import { buildIcsExport, type IcsExportInput } from '../../lib/ics-export.ts';
 import { copyText } from '../../system-actions.ts';
 import { useAction } from '../../lib/action.ts';
-import { errorMessage } from '../../lib/errors.ts';
 import { fail } from '../../copy/zh.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
+import { ExportEncryptionFields, exportPasswordIssue } from './backup-encryption.tsx';
 import { saveText, toastSaved } from './file-export.ts';
+
+export { ImportDialog, type ImportDialogProps } from './import-dialog.tsx';
+export { IcsExportDialog, type IcsExportDialogProps } from './ics-export-dialog.tsx';
 
 export interface ExportDialogProps {
   open: boolean;
@@ -49,10 +32,33 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
   const [exportFormat, setExportFormat] = useState<ExportFormat>('json');
   const [bundlePresets, setBundlePresets] = useState(true);
   const [bundleLogs, setBundleLogs] = useState(false);
+  const [encryptExport, setEncryptExport] = useState(false);
+  const [exportPassword, setExportPassword] = useState('');
+  const [exportPasswordConfirm, setExportPasswordConfirm] = useState('');
   const [exportText, setExportText] = useState('');
   const [exportModules, setExportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
 
+  /** 口令相关状态只活在对话框里：关闭、改口令或改加密开关都清空已生成文本。 */
+  function resetEncryption(): void {
+    setEncryptExport(false);
+    setExportPassword('');
+    setExportPasswordConfirm('');
+  }
+
+  function closeDialog(): void {
+    setExportText('');
+    resetEncryption();
+    onOpenChange(false);
+  }
+
   async function downloadBackup(): Promise<void> {
+    if (encryptExport) {
+      const issue = exportPasswordIssue(exportPassword, exportPasswordConfirm);
+      if (issue !== null) {
+        toast.error(fail('加密', issue, '请修改口令后重试'));
+        return;
+      }
+    }
     await exportAction.run({
       scope: 'backup',
       label: '正在导出备份…',
@@ -68,6 +74,7 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           format: exportFormat,
           bundlePresets,
           bundleLogs,
+          password: encryptExport ? exportPassword : undefined,
         });
         if (outcome.cancelled) {
           toast.info('已取消保存');
@@ -80,31 +87,38 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
         const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、');
         if (exportFormat === 'base64' && outcome.text !== null) {
           setExportText(outcome.text);
-          toast.success(`已生成 Base64 文本（${label}）`);
+          toast.success(
+            encryptExport ? `已生成加密 Base64 文本（${label}）` : `已生成 Base64 文本（${label}）`,
+          );
           return;
         }
-        toastSaved(outcome.path === null ? `已下载 ${outcome.name}` : `已导出备份（${label}）`, outcome.path);
-        onOpenChange(false);
+        toastSaved(
+          outcome.path === null
+            ? `已下载 ${outcome.name}`
+            : `已${encryptExport ? '加密' : ''}导出备份（${label}）`,
+          outcome.path,
+        );
+        closeDialog();
       },
     });
   }
 
-  /** 导出 Base64 文本到文件：内容与文本框一致。 */
+  /** 导出 Base64 文本到文件：内容与文本框一致（加密时就是信封文本）。 */
   async function saveBase64Backup(): Promise<void> {
     if (exportText === '') return;
     const day = dayStampUtc(Date.now());
     const result = await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', 'Base64 文本');
     if (!result.saved) return;
     toastSaved('已保存 Base64 文本', result.path);
-    onOpenChange(false);
+    closeDialog();
   }
 
   return (
     <FormDialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) setExportText('');
-        onOpenChange(next);
+        if (!next) closeDialog();
+        else onOpenChange(next);
       }}
       title="导出备份"
       description="勾选要导出的模块，并选择导出格式"
@@ -200,6 +214,23 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           </label>
         </div>
       )}
+      <ExportEncryptionFields
+        enabled={encryptExport}
+        password={exportPassword}
+        confirm={exportPasswordConfirm}
+        onEnabledChange={(next) => {
+          setEncryptExport(next);
+          setExportText('');
+        }}
+        onPasswordChange={(next) => {
+          setExportPassword(next);
+          setExportText('');
+        }}
+        onConfirmChange={(next) => {
+          setExportPasswordConfirm(next);
+          setExportText('');
+        }}
+      />
       {exportFormat === 'base64' && exportText !== '' && (
         <div className="flex flex-col gap-2">
           <span className="text-xs text-muted">复制下面这段文本，或保存成文件后传输。</span>
@@ -235,344 +266,5 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
         </div>
       )}
     </FormDialog>
-  );
-}
-
-export interface IcsExportDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  storage: Storage;
-}
-
-const ICS_USER_ID = 'u1';
-
-/**
- * 导出课表为 ICS（R-01）：按 Q17 勾选模块（课表必选、日程可选），
- * 数据组装交给 `lib/ics-export.ts`，这里只做读取、选择与保存。
- */
-export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialogProps) {
-  const exportAction = useAction();
-  const [source, setSource] = useState<IcsExportInput | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  /** 日程默认不勾：只导课表是大多数人的用法（Q17） */
-  const [includeEvents, setIncludeEvents] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setSource(null);
-    setLoadError(null);
-    setIncludeEvents(false);
-    setLoading(true);
-    void (async () => {
-      try {
-        const semester = await activeSemester(storage, ICS_USER_ID);
-        if (semester === undefined) {
-          if (!cancelled) setLoading(false);
-          return;
-        }
-        const [slots, courses, schedules, events] = await Promise.all([
-          listTimeSlots(storage, semester.id),
-          listCourses(storage, semester.id),
-          listSchedules(storage, semester.id),
-          storage.collection<EventRow>('events').getAll(),
-        ]);
-        if (!cancelled) {
-          setSource({ semester, slots, courses, schedules, events });
-          setLoading(false);
-        }
-      } catch (cause: unknown) {
-        if (!cancelled) {
-          setLoadError(errorMessage(cause));
-          setLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, storage]);
-
-  const built = useMemo(() => {
-    if (source === null) return { plan: null, error: null };
-    try {
-      return { plan: buildIcsExport(source, { includeEvents }), error: null };
-    } catch (cause: unknown) {
-      // 数据异常时留在对话框里给可读提示，不让整页渲染崩掉
-      return { plan: null, error: errorMessage(cause) };
-    }
-  }, [source, includeEvents]);
-  const plan = built.plan;
-
-  async function saveIcs(): Promise<void> {
-    if (plan === null) return;
-    await exportAction.run({
-      scope: 'export',
-      label: '正在导出课表…',
-      fail: false,
-      task: async () => {
-        const saved = await saveText(plan.fileName, plan.text, 'ics', 'ICS 日历', 'text/calendar');
-        if (!saved.saved) return;
-        toastSaved(`已导出课表（ICS，${plan.counts.courses} 门课程）`, saved.path);
-        onOpenChange(false);
-      },
-    });
-  }
-
-  const empty = plan !== null && plan.counts.lessons === 0 && plan.counts.events === 0;
-
-  return (
-    <FormDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="导出课表（ICS）"
-      description="勾选要导出的模块，生成 .ics 日历文件"
-      submitLabel="导出"
-      submitting={exportAction.busy}
-      submitDisabled={plan === null || empty || loading}
-      onSubmit={() => void saveIcs()}
-      contentAttrs={{ 'data-role': 'ics-export-dialog' }}
-    >
-      {loading && <span className="text-sm text-muted">正在读取学期数据…</span>}
-      {!loading && loadError !== null && (
-        <span className="text-sm text-danger">读取学期数据失败：{loadError}</span>
-      )}
-      {!loading && loadError === null && built.error !== null && (
-        <span className="text-sm text-danger">生成课表数据失败：{built.error}</span>
-      )}
-      {!loading && loadError === null && built.error === null && source === null && (
-        <span className="text-sm text-muted">还没有学期，先在设置里创建学期再导出。</span>
-      )}
-      {plan !== null && source !== null && (
-        <>
-          <div className="flex flex-col gap-1">
-            <span className="text-sm text-ink" data-role="ics-semester">
-              学期：{source.semester.name}
-            </span>
-            <span className="text-xs text-muted" data-role="ics-counts">
-              课程 {plan.counts.courses} 门 · 排课 {plan.counts.schedules} 条 · 上课 {plan.counts.lessons} 次
-            </span>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                className="size-4"
-                checked
-                disabled
-                aria-label="导出 课表"
-              />
-              课表（必选）
-            </label>
-            <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
-              <input
-                type="checkbox"
-                className="size-4"
-                checked={includeEvents}
-                disabled={plan.counts.events === 0}
-                aria-label="导出 日程"
-                onChange={(event) => setIncludeEvents(event.target.checked)}
-              />
-              日程
-              <span className="text-xs text-muted">
-                {plan.counts.events === 0 ? '（没有可写入的日程）' : `（${plan.counts.events} 条）`}
-              </span>
-            </label>
-          </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted" data-role="ics-policy">
-              调课按调整后的时间和地点写入；停课不导出。
-            </span>
-            {plan.notes.length > 0 && (
-              <span className="text-xs text-muted" data-role="ics-notes">
-                {plan.notes.join('；')}
-              </span>
-            )}
-            {empty && <span className="text-xs text-muted">当前学期没有可导出的课表条目。</span>}
-          </div>
-        </>
-      )}
-    </FormDialog>
-  );
-}
-
-export interface ImportDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  storage: Storage;
-  onChanged: () => void;
-}
-
-/** 导入备份对话框：文件与粘贴两种入口，解析后在同一组件里选模块与冲突处理。 */
-export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportDialogProps) {
-  const importAction = useAction();
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [importText, setImportText] = useState('');
-  const [pendingImport, setPendingImport] = useState<BackupPayload | null>(null);
-  /** 整包里带出的预设与日志：导入时随设置一起恢复，JSON 粘贴输入为 null */
-  const [pendingImportExtras, setPendingImportExtras] = useState<PackageExtras | null>(null);
-  const [importModules, setImportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
-  const [importMode, setImportMode] = useState<ImportMode>('skip');
-
-  /** 导入对话框里粘贴的文本：JSON 与 Base64 都接受。 */
-  function parsePastedBackup(): void {
-    const text = importText.trim();
-    if (text === '') {
-      toast.error('请先粘贴备份文本');
-      return;
-    }
-    try {
-      const payload = parseImportText(text);
-      setPendingImport(payload);
-      setPendingImportExtras(null);
-      setImportModules(new Set(presentModules(payload)));
-      setImportMode('skip');
-      onOpenChange(false);
-      toast.success('已解析粘贴的备份文本');
-    } catch (cause: unknown) {
-      toast.error(fail('解析备份文本', errorMessage(cause), '请检查文本是否完整'));
-    }
-  }
-
-  async function chooseBackupFile(file: File): Promise<void> {
-    const { payload, extras, error } = await readImportFile(file);
-    if (payload === null) {
-      toast.error(fail('读取备份文件', error, '请换一个文件重试'));
-      return;
-    }
-    setPendingImport(payload);
-    setPendingImportExtras(extras);
-    setImportModules(new Set(presentModules(payload)));
-    setImportMode('skip');
-    onOpenChange(false);
-  }
-
-  async function confirmImport(): Promise<void> {
-    if (pendingImport === null) return;
-    const target = pendingImport;
-    await importAction.run({
-      scope: 'backup',
-      label: '正在导入备份…',
-      fail: { what: '导入备份失败', next: '请检查备份文件与勾选模块后重试。' },
-      task: async () => {
-        const modules = [...importModules];
-        if (modules.length === 0) {
-          toast.error('请至少勾选一个模块');
-          return;
-        }
-        const result = await importConfig(storage, target, {
-          mode: importMode,
-          modules,
-          extras: pendingImportExtras,
-        });
-        toast.success(importResultText(result, importMode));
-        setPendingImport(null);
-        setPendingImportExtras(null);
-        onChanged();
-      },
-    });
-  }
-
-  return (
-    <>
-      <FormDialog
-        open={open}
-        onOpenChange={(next) => {
-          if (!next) onOpenChange(false);
-          else onOpenChange(next);
-        }}
-        title="导入备份"
-        description="选择备份文件，或直接粘贴 JSON / Base64 文本"
-        submitLabel="从文本导入"
-        submitDisabled={importText.trim().length === 0}
-        onSubmit={parsePastedBackup}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            aria-label="选择备份文件"
-            disabled={importAction.busy}
-            onClick={() => fileInput.current?.click()}
-          >
-            选择备份文件
-          </Button>
-          <span className="text-xs text-muted">支持晓刻导出的 JSON、Base64 文本与整包 zip</span>
-        </div>
-        <textarea
-          data-role="import-text"
-          aria-label="备份文本"
-          placeholder="或在此粘贴 JSON / Base64 备份文本"
-          className="h-32 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
-          value={importText}
-          onChange={(event) => setImportText(event.target.value)}
-        />
-        <input
-          ref={fileInput}
-          type="file"
-          accept="application/json,.json,.zip,.txt"
-          hidden
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file !== undefined) void chooseBackupFile(file);
-            event.target.value = '';
-          }}
-        />
-      </FormDialog>
-
-      <FormDialog
-        open={pendingImport !== null}
-        onOpenChange={(next) => {
-          if (!next) setPendingImport(null);
-        }}
-        title="导入备份"
-        description="选模块与冲突处理"
-        submitLabel="导入"
-        submitting={importAction.busy}
-        submitDisabled={importModules.size === 0}
-        onSubmit={() => void confirmImport()}
-      >
-        <div className="flex flex-col gap-1">
-          {summarizeBackup(pendingImport ?? { format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} })
-            .filter((item) => item.rows > 0)
-            .map((item) => (
-              <label key={item.module} className="flex min-h-tap items-center gap-2 text-sm text-ink">
-                <input
-                  type="checkbox"
-                  className="size-4"
-                  checked={importModules.has(item.module)}
-                  aria-label={`导入 ${BACKUP_MODULE_LABEL[item.module]}`}
-                  onChange={(event) =>
-                    setImportModules((current) => {
-                      const next = new Set(current);
-                      if (event.target.checked) next.add(item.module);
-                      else next.delete(item.module);
-                      return next;
-                    })
-                  }
-                />
-                {BACKUP_MODULE_LABEL[item.module]}
-                <span className="text-xs text-muted">{item.rows} 条</span>
-              </label>
-            ))}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {IMPORT_MODES.map((mode) => (
-            <Button
-              key={mode}
-              type="button"
-              size="sm"
-              variant={importMode === mode ? 'primary' : 'secondary'}
-              aria-label={`导入方式：${IMPORT_MODE_LABEL[mode]}`}
-              onClick={() => setImportMode(mode)}
-            >
-              {IMPORT_MODE_LABEL[mode]}
-            </Button>
-          ))}
-        </div>
-      </FormDialog>
-    </>
   );
 }

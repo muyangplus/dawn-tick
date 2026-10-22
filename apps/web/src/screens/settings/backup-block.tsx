@@ -191,6 +191,9 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
           {snapshotKind() === 'file' ? '整库文件快照（保存在数据目录）' : '库内 JSON 快照'}
         </span>
       </div>
+      <span className="text-xs text-muted" data-role="snapshot-plain">
+        快照不加密；口令加密只覆盖导出的文件
+      </span>
       {snapshotMessage !== null && (
         <StatusLine dataRole="snapshot-message" at={snapshotMessage.at}>
           {snapshotMessage.text}
