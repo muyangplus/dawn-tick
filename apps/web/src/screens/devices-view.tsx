@@ -11,6 +11,7 @@ import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/regis
 import { devicesSection } from './cards/devices-cards.tsx';
 import { AboutCard } from './settings/about-card.tsx';
 import { DataCard } from './settings/data-card.tsx';
+import { TimetableExportActions } from './settings/export-actions.tsx';
 import { MaintenanceCard } from './settings/maintenance-card.tsx';
 import { ExportDialog, IcsExportDialog, ImportDialog } from './settings/transfer-dialogs.tsx';
 import { useUpdateCheck } from './settings/use-update-check.ts';
@@ -118,6 +119,7 @@ export function DevicesView({
         <Button size="sm" variant="secondary" onClick={() => setIcsOpen(true)}>
           导出课表（ICS）
         </Button>
+        <TimetableExportActions storage={storage} settings={settings} />
         <Button
           size="sm"
           variant="secondary"
