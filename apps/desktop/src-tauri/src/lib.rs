@@ -6,6 +6,7 @@ mod lan_discovery;
 mod lan_sync;
 mod paths;
 mod reminder_actions;
+mod secret_store;
 mod updater;
 mod widget_window;
 
@@ -13,6 +14,7 @@ use lan_discovery::lan_discovery_scan;
 use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
 use reminder_actions::{clear_pending_reminder, set_pending_reminders};
+use secret_store::{secret_decrypt, secret_encrypt};
 use updater::run_installer;
 use widget_window::{ensure_mini, hide_widget, show_main, show_widget, widget_measure, widget_resize};
 
@@ -1410,7 +1412,7 @@ fn write_text_file(path: String, content: String) -> Result<String, String> {
 }
 
 /// 标准 Base64 解码；长度或字符不合法时返回 None。
-fn decode_base64(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut buffer: u32 = 0;
     let mut bits = 0u32;
@@ -2721,7 +2723,9 @@ pub fn run() {
             lan_sync_respond,
             lan_discovery_scan,
             set_pending_reminders,
-            clear_pending_reminder
+            clear_pending_reminder,
+            secret_encrypt,
+            secret_decrypt
         ])
         .plugin(
             tauri_plugin_sql::Builder::default()

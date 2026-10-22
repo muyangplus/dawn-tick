@@ -15,7 +15,9 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
     （局域网同步的传输层在 `.../lan/LanSyncServer.kt`；`share/` 与 `install/` 共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/reminder/ReminderActionsPlugin.kt`
     （提醒投递在 `.../reminder/ReminderNotifier.kt`、`.../reminder/ReminderAlarms.kt`，动作按钮与离线队列在 `.../reminder/ReminderReceivers.kt`、`.../reminder/ReminderStore.kt`）
-- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–8 节，`plugins.test.ts` 与其余插件一并对齐。
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/secret/SecretStorePlugin.kt`
+    （AndroidKeyStore AES-GCM 实现在 `.../secret/SecretVault.kt`；Windows 对应实现在 `apps/desktop/src-tauri/src/secret_store.rs`）
+- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–9 节，`plugins.test.ts` 与其余插件一并对齐。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库没有 Android 构建链，编译与真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
@@ -149,7 +151,25 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 
 动作回传：插件在线时通过 `notifyListeners("actionPerformed", { id, action, targetId, kind })` 交给 JS；进程重启后由前端 `pollActions()` 补取。原生会先按同一语义执行一次（贪睡重排、完成/勿扰取消闹钟与通知），JS 负责写回 `events.done` 与维护勿扰窗口。
 
-## 9. 变更检查清单
+## 9. SecretStore
+
+本机密钥库（WebDAV 密码加密）。Android 用 AndroidKeyStore 里的 AES-256-GCM 密钥，
+Win 端对应 DPAPI（`apps/desktop/src-tauri/src/secret_store.rs`，Tauri 命令 `secret_encrypt` / `secret_decrypt`）。
+插件只收发 Base64 密文；`enc:v1:` 信封与旧明文迁移在 TS `apps/web/src/lib/credentials.ts`。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `SecretStore` |
+| TS 接口 | `SecretStorePlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `secret/SecretStorePlugin.kt`（加解密在 `secret/SecretVault.kt`） |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `encrypt` | `value: string` | `ciphertext?: string` | 返回 Base64(12 字节 IV + GCM 密文与标签)；空串由 Web 层拦截，不走原生 |
+| `decrypt` | `ciphertext: string` | `value?: string` | 密钥丢失、密文被改动或来自别的设备时 reject |
+| `isAvailable` | 无 | `available?: boolean` | 密钥库不可用时 Web 层回退明文并在设置页显式提示 |
+
+## 10. 变更检查清单
 
 改插件契约时按顺序过一遍：
 

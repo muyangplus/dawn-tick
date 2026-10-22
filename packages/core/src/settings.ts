@@ -98,7 +98,7 @@ export interface AppSettings {
   /** WebDAV 目录地址（完整 URL） */
   webdavUrl: string;
   webdavUser: string;
-  /** WebDAV 密码：只存本机，不参与导出 */
+  /** WebDAV 密码：`enc:v1:` 信封（平台密钥加密），旧版明文读取时自动迁移；只存本机，不参与导出 */
   webdavPassword: string;
   /** 自动同步总开关 */
   webdavAuto: boolean;

@@ -9,6 +9,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { supportsNativeHttp } from './lib/capabilities.ts';
+import { readWebdavPassword, revealSecret } from './lib/credentials.ts';
 import { errorMessage } from './lib/errors.ts';
 import { readMetaNumber } from './lib/meta.ts';
 import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
@@ -52,6 +53,15 @@ function basicAuth(user: string, password: string): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return `Basic ${btoa(binary)}`;
+}
+
+/**
+ * 请求头的鉴权值：`webdavPassword` 可能已经是 `enc:v1:` 信封（设置页读出来的原值），
+ * 这里在内存里透明解密；旧版明文原样使用。解密失败抛出可读错误，由各动作归一成状态。
+ */
+async function davAuthorization(settings: DavSettings): Promise<string> {
+  const password = await revealSecret(settings.webdavPassword);
+  return basicAuth(settings.webdavUser, password);
 }
 
 /** 开启「保留历史多份」时按时间戳命名，否则固定名覆盖。 */
@@ -101,8 +111,8 @@ function statusOf(response: Response): DavStatus {
 /** 探测远端固定名备份：先 HEAD，服务器不支持就退回带 Range 的 GET。 */
 export async function remoteStatus(settings: DavSettings): Promise<DavStatus> {
   const url = remoteUrl(settings, FIXED_NAME);
-  const headers = { Authorization: basicAuth(settings.webdavUser, settings.webdavPassword) };
   try {
+    const headers = { Authorization: await davAuthorization(settings) };
     const head = await davFetch(url, { method: 'HEAD', headers });
     if (head.status !== 405 && head.status !== 501) return statusOf(head);
     const ranged = await davFetch(url, { method: 'GET', headers: { ...headers, Range: 'bytes=0-0' } });
@@ -174,7 +184,7 @@ export async function uploadPackage(
     const response = await davFetch(remoteUrl(settings, name), {
       method: 'PUT',
       headers: {
-        Authorization: basicAuth(settings.webdavUser, settings.webdavPassword),
+        Authorization: await davAuthorization(settings),
         'Content-Type': 'application/zip',
       },
       body: new Uint8Array(bytes) as unknown as BodyInit,
@@ -210,7 +220,7 @@ export async function downloadPackage(
   try {
     const response = await davFetch(remoteUrl(settings, name), {
       method: 'GET',
-      headers: { Authorization: basicAuth(settings.webdavUser, settings.webdavPassword) },
+      headers: { Authorization: await davAuthorization(settings) },
     });
     if (!response.ok) {
       return { ok: false, name, bytes: null, error: `服务器返回 ${response.status}` };
@@ -323,7 +333,18 @@ export async function maybeAutoSync(
   if (options.startup && !settings.webdavOnStart && lastSync === today) {
     return { action: 'skipped', name: FIXED_NAME, detail: null };
   }
-  const status = await remoteStatus(settings);
+  // 密码从存储现读：设置页改过密码后，内存里的 settings 可能还带着旧信封
+  const stored = await readWebdavPassword(storage);
+  if (stored.state === 'error') {
+    return { action: 'error', name: FIXED_NAME, detail: stored.message ?? '无法读取已保存的 WebDAV 密码' };
+  }
+  const dav: DavSettings = {
+    webdavUrl: settings.webdavUrl,
+    webdavUser: settings.webdavUser,
+    webdavPassword: stored.password,
+    webdavHistory: settings.webdavHistory,
+  };
+  const status = await remoteStatus(dav);
   if (status.error !== null) {
     return { action: 'error', name: FIXED_NAME, detail: status.error };
   }
@@ -332,7 +353,7 @@ export async function maybeAutoSync(
     await storage.writeMeta(LAST_SYNC_KEY, today);
     return { action: 'remote-newer', name: FIXED_NAME, detail: '远端备份比本机上传的新' };
   }
-  const uploaded = await uploadPackage(storage, settings, now);
+  const uploaded = await uploadPackage(storage, dav, now);
   await storage.writeMeta(LAST_SYNC_KEY, today);
   return uploaded.ok
     ? { action: 'uploaded', name: uploaded.name, detail: null }
