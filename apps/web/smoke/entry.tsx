@@ -4817,7 +4817,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
     // P2-02：识别失败就地给出手动映射入口，点了会展开并把焦点放到表头行
     if (importPaste instanceof window.HTMLTextAreaElement) {
-      setInputValue(importPaste, '<html><body>没有可识别的课表</body></html>');
+      setInputValue(
+        importPaste,
+        '<html><body><p>没有可识别的课表</p><table>' +
+          '<tr><th>学号</th><th>姓名</th></tr><tr><td>2026001</td><td>张三</td></tr>' +
+          '</table></body></html>',
+      );
       await flush(6);
       if (clickByText(importApp.container, '识别并预览')) await flush(22);
     }
@@ -4832,6 +4837,47 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         manualButton !== undefined,
       failureBlock?.textContent?.trim() ?? '(无)',
     );
+
+    // 识别诊断：失败时默认展开，摘要给出表格数与疑似课表数
+    const diagToggle = importApp.container.querySelector<HTMLElement>(
+      '[data-role="import-diagnostics-toggle"]',
+    );
+    const diagMetric = (key: string): string =>
+      importApp.container.querySelector(`[data-role="import-diagnostics-summary"] [data-metric="${key}"]`)
+        ?.textContent?.trim() ?? '(无)';
+    check(
+      '识别失败默认展开「查看识别诊断」',
+      diagToggle !== null &&
+        (diagToggle.textContent ?? '').includes('查看识别诊断') &&
+        diagToggle.getAttribute('aria-expanded') === 'true' &&
+        diagMetric('tables') === '1' &&
+        diagMetric('kbTables') === '0',
+      `表格数=${diagMetric('tables')} 疑似课表=${diagMetric('kbTables')} 展开=${diagToggle?.getAttribute('aria-expanded') ?? '(无)'}`,
+    );
+
+    const diagClipboard: string[] = [];
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (value: string) => {
+          diagClipboard.push(value);
+        },
+      },
+    });
+    if (clickByText(importApp.container, '复制诊断信息')) await flush(8);
+    const copiedDiagnostics = diagClipboard[0] ?? '';
+    check(
+      '复制诊断信息写入剪贴板（含版本、来源与样例行）',
+      copiedDiagnostics.includes('DawnTick 导入识别诊断') &&
+        copiedDiagnostics.includes('应用版本：') &&
+        copiedDiagnostics.includes('导入来源：粘贴网页课表') &&
+        copiedDiagnostics.includes('页面诊断 JSON') &&
+        copiedDiagnostics.includes('表格数：1') &&
+        copiedDiagnostics.includes('前 3 行样例') &&
+        !copiedDiagnostics.includes('?'),
+      copiedDiagnostics.slice(0, 60),
+    );
+
     manualButton?.click();
     await flush(10);
     const mappingSheet = document.querySelector('[data-role="manual-mapping"]');
@@ -4855,6 +4901,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       await flush(6);
       if (clickByText(importApp.container, '识别并预览')) await flush(22);
     }
+
+    // 识别成功：诊断入口收在取材步骤底部，回到第 2 步时才展开
+    if (clickByText(importApp.container, '返回')) await flush(12);
+    const successToggle = importApp.container.querySelector<HTMLElement>(
+      '[data-role="import-diagnostics-toggle"]',
+    );
+    const successSummary = importApp.container.querySelector('[data-role="import-diagnostics-summary"]');
+    check(
+      '识别成功后诊断入口在取材步骤底部折叠',
+      successToggle !== null &&
+        successToggle.getAttribute('aria-expanded') === 'false' &&
+        (successSummary === null || successSummary.closest('[hidden]') !== null),
+      `展开=${successToggle?.getAttribute('aria-expanded') ?? '(无)'}`,
+    );
+    if (clickByText(importApp.container, '识别并预览')) await flush(22);
     // P2-02：预览支持全选 / 清空 / 反选
     const preview = importApp.container.querySelector('[data-role="import-preview"]');
     const previewBoxes = (): HTMLInputElement[] => [
