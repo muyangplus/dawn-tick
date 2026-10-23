@@ -12,13 +12,14 @@ import {
   parseChecksums,
   parseSha256,
   planUpdateDownload,
+  portableFileName,
   reduceUpdateState,
   runUpdateDownload,
   sha256Hex,
   type UpdateDownloadHost,
   type UpdateDownloadState,
 } from '../src/lib/update-download.ts';
-import { joinPath } from '../src/lib/update-install.ts';
+import { createUpdateHost, joinPath } from '../src/lib/update-install.ts';
 
 const CHECKSUMS_URL = 'https://example.com/download/SHA256SUMS.txt';
 
@@ -80,6 +81,11 @@ const WINDOWS_ASSET = {
   name: 'DawnTick-0.5.0-release-windows-x64-setup.exe',
   size: 12,
 };
+const WINDOWS_PORTABLE_ASSET = {
+  url: 'https://example.com/download/DawnTick-0.5.0-release-windows-x64-portable.zip',
+  name: 'DawnTick-0.5.0-release-windows-x64-portable.zip',
+  size: 14,
+};
 const ANDROID_ASSET = {
   url: 'https://example.com/download/DawnTick-0.5.0-release-android.apk',
   name: 'DawnTick-0.5.0-release-android.apk',
@@ -97,6 +103,7 @@ test('桌面取 Windows 安装包，Android 取 APK，Web 只提示刷新', () =
   const windows = planUpdateDownload(manifest, 'windows');
   assert.equal(windows.kind, 'download');
   if (windows.kind !== 'download') return;
+  assert.equal(windows.target.kind, 'installer');
   assert.equal(windows.target.url, WINDOWS_ASSET.url);
   assert.equal(windows.target.fileName, 'DawnTick-update.exe', '固定落盘名，重复下载覆盖旧包');
   assert.equal(windows.target.checksumsUrl, CHECKSUMS_URL);
@@ -108,6 +115,71 @@ test('桌面取 Windows 安装包，Android 取 APK，Web 只提示刷新', () =
   assert.equal(android.target.fileName, 'DawnTick-update.apk');
 
   assert.deepEqual(planUpdateDownload(manifest, 'web'), { kind: 'refresh' });
+});
+
+test('便携版取便携 zip，安装版取安装包，两条分支互不串包', () => {
+  const manifest = manifestWith({
+    windows: WINDOWS_ASSET,
+    windowsPortable: WINDOWS_PORTABLE_ASSET,
+  });
+
+  const installed = planUpdateDownload(manifest, 'windows', 'installed');
+  assert.equal(installed.kind, 'download');
+  if (installed.kind === 'download') {
+    assert.equal(installed.target.kind, 'installer');
+    assert.equal(installed.target.url, WINDOWS_ASSET.url, '安装版不能被便携包挤掉');
+    assert.equal(installed.target.fileName, 'DawnTick-update.exe');
+  }
+
+  const portable = planUpdateDownload(manifest, 'windows', 'portable');
+  assert.equal(portable.kind, 'download');
+  if (portable.kind === 'download') {
+    assert.equal(portable.target.kind, 'portable');
+    assert.equal(portable.target.url, WINDOWS_PORTABLE_ASSET.url, '便携版下 zip');
+    assert.equal(portable.target.fileName, 'DawnTick-update.zip', '便携包固定落盘名');
+    assert.equal(portable.target.assetName, WINDOWS_PORTABLE_ASSET.name, '校验按 zip 的原始文件名匹配');
+    assert.equal(portable.target.checksumsUrl, CHECKSUMS_URL);
+  }
+
+  // 只有 zip 的老清单（assets.windows 就是 zip）也能走便携分支
+  const onlyZip = planUpdateDownload(
+    manifestWith({ windows: WINDOWS_PORTABLE_ASSET }),
+    'windows',
+    'portable',
+  );
+  assert.equal(onlyZip.kind, 'download');
+  if (onlyZip.kind === 'download') {
+    assert.equal(onlyZip.target.url, WINDOWS_PORTABLE_ASSET.url);
+    assert.equal(onlyZip.target.fileName, 'DawnTick-update.zip');
+  }
+
+  // 便携版不把安装包当 zip
+  const onlySetup = planUpdateDownload(manifestWith({ windows: WINDOWS_ASSET }), 'windows', 'portable');
+  assert.equal(onlySetup.kind, 'unavailable');
+  if (onlySetup.kind === 'unavailable') assert.match(onlySetup.reason, /便携包不是 zip/);
+
+  // 没有便携资产时给可读原因
+  const noPortable = planUpdateDownload(manifestWith({}), 'windows', 'portable');
+  assert.equal(noPortable.kind, 'unavailable');
+  if (noPortable.kind === 'unavailable') assert.match(noPortable.reason, /没有提供 Windows 便携包/);
+
+  // Android/Web 完全不受 installKind 影响
+  const android = planUpdateDownload(manifestWith({ android: ANDROID_ASSET }), 'android', 'portable');
+  assert.equal(android.kind, 'download');
+  if (android.kind === 'download') assert.equal(android.target.kind, 'installer');
+  assert.deepEqual(planUpdateDownload(manifest, 'web', 'portable'), { kind: 'refresh' });
+});
+
+test('桌面 host 提供便携版出口，Android 不提供', () => {
+  const stubFetch = async () => new Response('unused');
+  const windows = createUpdateHost('windows', stubFetch);
+  assert.equal(typeof windows.installPortable, 'function');
+  assert.equal(typeof windows.exitForUpdate, 'function');
+  assert.equal(typeof windows.install, 'function');
+
+  const android = createUpdateHost('android', stubFetch);
+  assert.equal(android.installPortable, undefined, 'Android 没有便携版替换');
+  assert.equal(android.exitForUpdate, undefined);
 });
 
 test('缺资产或不是安装包时给可读原因', () => {
@@ -129,6 +201,14 @@ test('缺资产或不是安装包时给可读原因', () => {
   assert.equal(installerFileName('windows', 'https://x/setup.MSI'), 'DawnTick-update.msi');
   assert.equal(installerFileName('android', 'https://x/app.apk?download=1'), 'DawnTick-update.apk');
   assert.equal(installerFileName('android', 'https://x/app.zip'), null);
+
+  assert.equal(
+    portableFileName('https://x/DawnTick-0.5.0-release-windows-x64-portable.zip'),
+    'DawnTick-update.zip',
+  );
+  assert.equal(portableFileName('https://x/pkg.zip?download=1'), 'DawnTick-update.zip');
+  assert.equal(portableFileName('https://x/DawnTick-0.5.0-release-windows-x64-setup.exe'), null);
+  assert.equal(portableFileName('https://x/pkg.zip.sha256'), null);
 });
 
 // —— SHA-256 校验 ——
@@ -182,6 +262,57 @@ test('下载成功：流式进度 → 校验 → 写盘 → 启动安装器', as
   assert.equal(new TextDecoder().decode(calls.writes[0]?.bytes), content);
   assert.deepEqual(calls.checksumUrls, [CHECKSUMS_URL]);
   assert.deepEqual(calls.installs, ['C:\\data\\DawnTick-update.exe']);
+});
+
+test('便携版下载：写 zip、按 zip 名校验，准备替换脚本而不启动安装器', async () => {
+  const content = 'portable update payload';
+  const bytes = bytesOf(content);
+  const checksum = `${digestOf(bytes)}  ${WINDOWS_PORTABLE_ASSET.name}\n`;
+  const { host, calls } = fakeHost({ checksum });
+  const portables: string[] = [];
+  const portableHost: UpdateDownloadHost = {
+    ...host,
+    installPortable: async (path) => {
+      portables.push(path);
+      return 'C:\\Temp\\dawn-tick-update-abc.cmd';
+    },
+  };
+  const plan = planUpdateDownload(
+    manifestWith({ windows: WINDOWS_ASSET, windowsPortable: WINDOWS_PORTABLE_ASSET }),
+    'windows',
+    'portable',
+  );
+  const states: UpdateDownloadState[] = [];
+
+  const final = await runUpdateDownload({
+    plan,
+    host: portableHost,
+    fetchImpl: async () => streamResponse([bytes], bytes.length),
+    onState: (state) => states.push(state),
+  });
+
+  assert.equal(final.phase, 'done');
+  assert.equal(final.message, '更新已准备，应用将退出并自动替换，随后重新启动');
+  assert.deepEqual(calls.writes.map((item) => item.name), ['DawnTick-update.zip']);
+  assert.deepEqual(portables, ['C:\\data\\DawnTick-update.zip']);
+  assert.deepEqual(calls.installs, [], '便携版不调用系统安装器');
+  assert.ok(states.some((state) => state.phase === 'installing'));
+});
+
+test('便携版缺 installPortable 时失败原因可读，不静默跳过安装', async () => {
+  const bytes = bytesOf('zip');
+  const { host, calls } = fakeHost({ checksum: `${digestOf(bytes)}  ${WINDOWS_PORTABLE_ASSET.name}\n` });
+  const plan = planUpdateDownload(
+    manifestWith({ windowsPortable: WINDOWS_PORTABLE_ASSET }),
+    'windows',
+    'portable',
+  );
+
+  const final = await runUpdateDownload({ plan, host, fetchImpl: async () => streamResponse([bytes]) });
+
+  assert.equal(final.phase, 'failed');
+  assert.match(String(final.error), /不支持便携版自动替换/);
+  assert.deepEqual(calls.installs, []);
 });
 
 test('没有 content-length 时用清单里的 size 显示进度', async () => {

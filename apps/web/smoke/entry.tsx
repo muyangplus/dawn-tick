@@ -30,6 +30,7 @@ import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
 import type { UpdateManifest, UpdateStatus } from '../src/update.ts';
 import { sha256Hex, type UpdateDownloadHost } from '../src/lib/update-download.ts';
+import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
 import { dismissUpdateTask, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
 import { appVersion } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
@@ -3645,6 +3646,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
       if (command === 'plugin:path|resolve_directory') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\';
       if (command === 'write_binary_file' || command === 'run_installer') return String(args?.path ?? '');
+      if (command === 'windows_install_kind') return 'installed';
+      if (command === 'prepare_portable_update') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\dawn-tick-update-stub.cmd';
+      if (command === 'exit_for_update') return null;
       // 桌面更新下载走原生 HTTP（plugin-http）：桩里直接断网，验证失败原因与重试入口
       if (command === 'plugin:http|fetch') throw new Error('offline');
       return undefined;
@@ -3687,6 +3691,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       updateDownload !== null && (updateDownload.textContent ?? '').includes('下载并安装'),
       updateDownload?.textContent?.trim() ?? '(无)',
     );
+    const installedKindLine = document.querySelector<HTMLElement>('[data-role="update-install-kind"]');
+    check(
+      '桌面端更新弹窗显示检测到的「安装版」',
+      (installedKindLine?.textContent ?? '').includes('安装版'),
+      installedKindLine?.textContent?.trim() ?? '(无)',
+    );
     const rollbackButton = view.container.querySelector<HTMLElement>('[data-role="rollback-stable"]');
     check(
       '开发版 + 桌面端给出「回滚到正式版」入口',
@@ -3704,11 +3714,47 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         (document.querySelector('[data-role="update-download"]')?.textContent ?? '').includes('重试'),
       updateStatus?.textContent?.trim() ?? '(无)',
     );
+    // 便携版：检测结果切到 portable 后，弹窗改下便携 zip，按钮文案说明「退出后替换」
+    setWindowsInstallKindForTests('portable');
+    requestUpdatePrompt({
+      available: true,
+      error: null,
+      feed: 'release',
+      current: appVersion(),
+      latest: '0.5.2',
+      manifest: {
+        channel: 'release',
+        version: '0.5.2',
+        checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.2-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.2-release-windows-x64-setup.exe',
+            size: 16,
+          },
+          windowsPortable: {
+            url: 'https://example.com/DawnTick-0.5.2-release-windows-x64-portable.zip',
+            name: 'DawnTick-0.5.2-release-windows-x64-portable.zip',
+            size: 16,
+          },
+        },
+      },
+    });
+    await flush(12);
+    const portableDownload = document.querySelector<HTMLElement>('[data-role="update-download"]');
+    const portableKindLine = document.querySelector<HTMLElement>('[data-role="update-install-kind"]');
+    check(
+      '便携版：弹窗标注版本类型并提供「下载并更新（退出后替换）」',
+      (portableKindLine?.textContent ?? '').includes('便携版') &&
+        (portableDownload?.textContent ?? '').includes('下载并更新（退出后替换）'),
+      `${portableKindLine?.textContent?.trim() ?? '(无)'} / ${portableDownload?.textContent?.trim() ?? '(无)'}`,
+    );
   } finally {
     // 先撤掉桌面桩再关弹窗：关闭会触发一次重渲染，平台判定回到 Web，
     // 否则设备页会停留在「桌面端」渲染结果上，后面的浏览器端断言会误判。
     clearUpdateTauriStub();
     closeUpdatePrompt();
+    setWindowsInstallKindForTests(null);
     await flush(8);
   }
 
@@ -3765,7 +3811,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     latest: '0.5.3',
     manifest: backgroundManifest,
   };
-  void startBackgroundUpdate(backgroundManifest, { platform: 'windows', host: slowUpdateHost });
+  void startBackgroundUpdate(backgroundManifest, {
+    platform: 'windows',
+    installKind: 'installed',
+    host: slowUpdateHost,
+  });
   requestUpdatePrompt(backgroundPrompt);
   await flush(2);
   const dialogProgress = document.querySelector<HTMLElement>(
@@ -3830,6 +3880,81 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     view.container.querySelector('[data-role="update-task"]') === null,
     view.container.querySelector('[data-role="update-task"]')?.textContent?.trim() ?? '(无)',
   );
+
+  // —— 便携版后台任务：注入带 installPortable / exitForUpdate 的出口，点「更新并退出」只准备脚本 ——
+  const portableBytes = new TextEncoder().encode('dawn-tick portable payload');
+  const portableDigest = await sha256Hex(portableBytes);
+  const portableWrites: string[] = [];
+  const portableScripts: string[] = [];
+  let portableExits = 0;
+  const portableHost: UpdateDownloadHost = {
+    fetchImpl: async () =>
+      new Response(portableBytes, {
+        status: 200,
+        headers: { 'content-length': String(portableBytes.length) },
+      }),
+    readChecksum: async () => `${portableDigest}  DawnTick-0.5.5-release-windows-x64-portable.zip\n`,
+    write: async (name) => {
+      portableWrites.push(name);
+      return `C:\\Temp\\${name}`;
+    },
+    install: async () => ({ needsPermission: false }),
+    installPortable: async (path) => {
+      portableScripts.push(path);
+      return 'C:\\Temp\\dawn-tick-update-portable.cmd';
+    },
+    exitForUpdate: async () => {
+      portableExits += 1;
+    },
+  };
+  const portableManifest: UpdateManifest = {
+    channel: 'release',
+    version: '0.5.5',
+    checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+    assets: {
+      windows: {
+        url: 'https://example.com/DawnTick-0.5.5-release-windows-x64-setup.exe',
+        name: 'DawnTick-0.5.5-release-windows-x64-setup.exe',
+        size: portableBytes.length,
+      },
+      windowsPortable: {
+        url: 'https://example.com/DawnTick-0.5.5-release-windows-x64-portable.zip',
+        name: 'DawnTick-0.5.5-release-windows-x64-portable.zip',
+        size: portableBytes.length,
+      },
+    },
+  };
+  dismissUpdateTask();
+  await startBackgroundUpdate(portableManifest, {
+    platform: 'windows',
+    installKind: 'portable',
+    host: portableHost,
+  });
+  await flush(1);
+  const portableTask = view.container.querySelector<HTMLElement>('[data-role="update-task"]');
+  const portableInstallButton = view.container.querySelector<HTMLElement>('[data-role="update-task-install"]');
+  check(
+    '便携版后台任务：下 zip 并标注「便携包（退出后替换）」',
+    updateTaskSnapshot().status === 'ready' &&
+      portableWrites[0] === 'DawnTick-update.zip' &&
+      (portableTask?.textContent ?? '').includes('便携包') &&
+      (portableTask?.textContent ?? '').includes('可以更新了') &&
+      (portableInstallButton?.textContent ?? '').includes('更新并退出'),
+    `${portableWrites[0] ?? '(无)'} / ${portableInstallButton?.textContent?.trim() ?? '(无)'}`,
+  );
+  portableInstallButton?.click();
+  await flush(8);
+  check(
+    '便携版：点「更新并退出」准备替换脚本并退出应用',
+    portableScripts.length === 1 &&
+      portableScripts[0] === 'C:\\Temp\\DawnTick-update.zip' &&
+      portableExits === 1 &&
+      updateTaskSnapshot().installed === true &&
+      (updateTaskSnapshot().message ?? '').includes('自动替换'),
+    `${portableScripts[0] ?? '(无)'} / 退出 ${portableExits}`,
+  );
+  dismissUpdateTask();
+  await flush(1);
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
   await expandDeviceCard('关于');
