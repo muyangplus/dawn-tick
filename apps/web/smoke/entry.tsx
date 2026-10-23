@@ -47,6 +47,16 @@ import { markStorageFallback } from '../src/db/fallback.ts';
 import { setStorageOpenerForTests } from '../src/db/platform.ts';
 import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
 import {
+  defaultLanNetwork,
+  formatLanNetworkLine,
+  readStoredLanHost,
+  resolveLanHost,
+  saveStoredLanHost,
+  sortLanNetworks,
+  type LanHostStorage,
+  type LanNetwork,
+} from '../src/lan-sync-network.ts';
+import {
   ACTION_LABEL,
   isReminderSuppressed,
   planReminderAction,
@@ -4078,6 +4088,35 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[data-role="lan-sync-server-hint"]') !== null &&
       (view.container.querySelector('[data-role="lan-sync"]')?.textContent ?? '').includes('浏览器端'),
     '',
+  );
+  // —— 多网络识别：候选排序 / 默认选择 / 切换地址（纯逻辑，不依赖真实网卡） ——
+  const networkCandidates: LanNetwork[] = [
+    { name: 'Tailscale', address: '192.168.9.9', isLan: true, kind: 'vpn', preferred: 0 },
+    { name: '以太网', address: '10.0.0.8', isLan: true, kind: 'ethernet', preferred: 1 },
+    { name: 'WLAN', address: '192.168.1.23', isLan: true, kind: 'wifi', preferred: 0 },
+    { name: 'VMnet8', address: '172.20.9.1', isLan: true, kind: 'vpn', preferred: 2 },
+  ];
+  const networkOrder = sortLanNetworks(networkCandidates).map((item) => item.address);
+  const smokeHostStore = new Map<string, string>();
+  const smokeHostStorage: LanHostStorage = {
+    getItem: (key) => smokeHostStore.get(key) ?? null,
+    setItem: (key, value) => {
+      smokeHostStore.set(key, value);
+    },
+    removeItem: (key) => {
+      smokeHostStore.delete(key);
+    },
+  };
+  saveStoredLanHost('10.0.0.8', smokeHostStorage);
+  const defaultNetwork = defaultLanNetwork(networkCandidates);
+  check(
+    '多网络识别：优先 192.168 局域网并降级 VPN，切换地址写入 dt.lan.host',
+    defaultNetwork?.address === '192.168.1.23' &&
+      networkOrder.join(',') === '192.168.1.23,10.0.0.8,192.168.9.9,172.20.9.1' &&
+      formatLanNetworkLine(defaultNetwork).startsWith('网络：192.168.1.23 · Wi-Fi') &&
+      readStoredLanHost(smokeHostStorage) === '10.0.0.8' &&
+      resolveLanHost(networkCandidates, '10.0.0.8') === '10.0.0.8',
+    `${networkOrder.join(' → ')} / ${readStoredLanHost(smokeHostStorage) ?? '(无)'}`,
   );
   // —— 局域网同步二期：发现设备 / 同步前预览 / 自动同步 ——
   check(

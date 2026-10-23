@@ -12,13 +12,14 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/install/ApkInstallerPlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/share/FileSharePlugin.kt`
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/LanSyncPlugin.kt`
-    （局域网同步的传输层在 `.../lan/LanSyncServer.kt`；`share/` 与 `install/` 共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
+    （局域网同步的传输层在 `.../lan/LanSyncServer.kt`，网络枚举在 `.../lan/LanNetworks.kt`，
+    UDP 发现在 `.../lan/LanDiscovery.kt`；`share/` 与 `install/` 共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/reminder/ReminderActionsPlugin.kt`
     （提醒投递在 `.../reminder/ReminderNotifier.kt`、`.../reminder/ReminderAlarms.kt`，动作按钮与离线队列在 `.../reminder/ReminderReceivers.kt`、`.../reminder/ReminderStore.kt`）
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/secret/SecretStorePlugin.kt`
     （AndroidKeyStore AES-GCM 实现在 `.../secret/SecretVault.kt`；Windows 对应实现在 `apps/desktop/src-tauri/src/secret_store.rs`）
 - TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–9 节，`plugins.test.ts` 与其余插件一并对齐。
-- 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库没有 Android 构建链，编译与真机验证在打包机上执行 `pnpm android:dev`。
+- 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库用 `gradlew.bat :app:compileDebugKotlin --no-daemon` 做 Android 编译检查，真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
 
@@ -119,8 +120,9 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 
 | 方法 | 参数 | 返回字段 | 说明 |
 |---|---|---|---|
-| `start` | 无 | `host?: string`、`port?: number` | 绑定本机局域网 IPv4 与系统分配端口；没有局域网地址时 reject；成功后开始 UDP 广播（不含配对码） |
-| `stop` | 无 | 无（resolve 空） | 关监听、停广播并清空队列、等待中的响应 |
+| `start` | `host?: string` | `host?: string`、`port?: number` | 绑定选中/首选的局域网 IPv4 与系统分配端口；`host` 不在本机网卡上或绑定失败时 reject。成功后开始 UDP 广播（不含配对码）；广播失败只记日志，不影响 resolve。后台线程另有 **10 秒看门狗**，超时 reject「开启配对超时：请确认已连接 Wi-Fi 后重试」 |
+| `stop` | 无 | 无（resolve 空） | 关监听、停广播并清空队列、等待中的响应；**幂等**，重复调用仍 resolve |
+| `networks` | 无 | `networks?: { name?: string; address?: string; isLan?: boolean; kind?: string; preferred?: number }[]` | 枚举本机 IPv4：排除回环，`kind` 取 `wifi` / `ethernet` / `vpn` / `other`；VPN 与虚拟网卡降级排序（`preferred` 越小越优先：192.168 > 10 > 172.16–31 > 100.64 > 169.254） |
 | `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
 | `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
 | `scanDiscovery` | `timeoutMs?: number` | `peers?: { name?: string; host?: string; port?: number }[]` | UDP 短超时扫描同网设备；只返回设备名 / 地址 / 端口，按 host:port 去重 |

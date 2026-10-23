@@ -1,6 +1,7 @@
 package com.dawntick.app.lan
 
 import android.os.Build
+import android.util.Log
 import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -96,16 +97,34 @@ object LanDiscoveryCodec {
     }
 }
 
-/** 开配对期间每 800ms 广播一次；停止时关 socket 并让线程退出。 */
+/** 开配对期间每 800ms 广播一次；停止时关 socket 并让线程退出。
+ *
+ * 广播目标：选中地址所属网段的广播地址（`NetworkInterface` 直接给出）+ 受限广播 + 环回。
+ * 整个启动过程 `runCatching` 包裹：发现失败只记日志，绝不能影响「开启配对」的 resolve。
+ */
 object LanDiscoveryAdvertiser {
+    private const val TAG = "DawnTickLanDiscovery"
+
     @Volatile private var running = false
     @Volatile private var socket: DatagramSocket? = null
     @Volatile private var thread: Thread? = null
 
     fun start(host: String, port: Int, name: String) {
+        runCatching { startInternal(host, port, name) }.onFailure { error ->
+            Log.w(TAG, "启动局域网广播失败：${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun startInternal(host: String, port: Int, name: String) {
         stop()
         val packet = LanDiscoveryCodec.encode(host, port, name) ?: return
         val bytes = packet.toByteArray(Charsets.UTF_8)
+        val targets = mutableListOf<InetAddress>()
+        LanNetworks.broadcastAddress(host)?.let { targets.add(it) }
+        for (text in listOf("255.255.255.255", "127.0.0.1")) {
+            runCatching { targets.add(InetAddress.getByName(text)) }
+        }
+        if (targets.isEmpty()) return
         running = true
         thread = Thread {
             val active = try {
@@ -116,13 +135,13 @@ object LanDiscoveryAdvertiser {
             }
             socket = active
             while (running) {
-                for (target in listOf("255.255.255.255", "127.0.0.1")) {
+                for (target in targets) {
                     runCatching {
                         active.send(
                             DatagramPacket(
                                 bytes,
                                 bytes.size,
-                                InetAddress.getByName(target),
+                                target,
                                 LAN_DISCOVERY_PORT,
                             ),
                         )

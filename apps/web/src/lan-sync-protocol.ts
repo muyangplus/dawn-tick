@@ -70,7 +70,7 @@ export interface PeerAddress {
   port: number;
 }
 
-/** 是否局域网地址：10/8、172.16/12、192.168/16、169.254/16、127/8 与 localhost。 */
+/** 是否局域网地址：10/8、172.16/12、192.168/16、169.254/16、100.64/10、127/8 与 localhost。 */
 export function isLanAddress(host: string): boolean {
   const text = host.trim().toLowerCase();
   if (text === 'localhost') return true;
@@ -87,6 +87,8 @@ export function isLanAddress(host: string): boolean {
   if (first === 10 || first === 127) return true;
   if (first === 172 && second >= 16 && second <= 31) return true;
   if (first === 192 && second === 168) return true;
+  // 100.64.0.0/10（运营商级 NAT）：手机热点与部分校园网会出现，与 Rust / Kotlin 同口径
+  if (first === 100 && second >= 64 && second <= 127) return true;
   return first === 169 && second === 254;
 }
 

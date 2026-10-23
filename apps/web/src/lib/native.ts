@@ -59,6 +59,8 @@ export const NATIVE_COMMANDS = [
   'lan_sync_poll',
   'lan_sync_respond',
   'lan_discovery_scan',
+  'lan_network_list',
+  'lan_http_request',
   'set_pending_reminders',
   'clear_pending_reminder',
   'secret_encrypt',

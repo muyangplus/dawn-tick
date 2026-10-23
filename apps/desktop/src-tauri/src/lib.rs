@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 mod install_kind;
 mod lan_discovery;
+mod lan_http;
+mod lan_network;
 mod lan_sync;
 mod paths;
 mod portable_update;
@@ -14,6 +16,8 @@ mod widget_window;
 
 use install_kind::windows_install_kind;
 use lan_discovery::lan_discovery_scan;
+use lan_http::lan_http_request;
+use lan_network::lan_network_list;
 use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
 use portable_update::{exit_for_update, prepare_portable_update};
@@ -2729,6 +2733,8 @@ pub fn run() {
             lan_sync_poll,
             lan_sync_respond,
             lan_discovery_scan,
+            lan_network_list,
+            lan_http_request,
             set_pending_reminders,
             clear_pending_reminder,
             secret_encrypt,

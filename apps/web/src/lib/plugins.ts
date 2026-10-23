@@ -54,7 +54,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.widgetRefresh]: ['refresh'],
   [PLUGIN_NAMES.apkInstaller]: ['installApk'],
   [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
-  [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'poll', 'respond', 'scanDiscovery'],
+  [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'networks', 'poll', 'respond', 'scanDiscovery'],
   [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'requestPermissionInfo', 'pollActions'],
   [PLUGIN_NAMES.secretStore]: ['encrypt', 'decrypt', 'isAvailable'],
 } as const satisfies Record<PluginName, readonly string[]>;
@@ -138,10 +138,17 @@ export interface FileSharePlugin {
  * 插件不认识业务 JSON；协议见 `apps/mobile/docs/lan-sync.contract.md`。
  */
 export interface LanSyncPlugin {
-  /** 起监听；`port` 由系统分配，`host` 是本机局域网地址。 */
-  start(): Promise<{ host?: string; port?: number }>;
-  /** 关监听并让内存里的令牌全部失效。 */
+  /**
+   * 起监听；`port` 由系统分配。`host` 是用户在「切换网络」里选中的本机局域网地址，
+   * 缺省时原生层自动选首选局域网；绑定失败会 reject。
+   */
+  start(options?: { host?: string }): Promise<{ host?: string; port?: number }>;
+  /** 关监听并让内存里的令牌全部失效；幂等。 */
   stop(): Promise<void>;
+  /** 本机候选网络（地址 / 网卡名 / 分类 / 首选优先级），供「切换网络」下拉。 */
+  networks(): Promise<{
+    networks?: { name?: string; address?: string; isLan?: boolean; kind?: string; preferred?: number }[];
+  }>;
   /** 取一条待处理请求；队列空时无字段，调用方按 null 处理。 */
   poll(): Promise<LanSyncRequest | null>;
   /** 回应 `poll` 取到的请求；原生层写回 HTTP 响应。 */

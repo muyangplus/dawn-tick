@@ -3,6 +3,7 @@ import { invokeNative } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { logWarn } from './log.ts';
 import { isLanAddress } from './lan-sync-protocol.ts';
+import { readStoredLanHost } from './lan-sync-network.ts';
 
 /**
  * 局域网同步二期：UDP 广播自动发现。
@@ -158,7 +159,11 @@ export async function scanLanPeers(timeoutMs = LAN_DISCOVERY_TIMEOUT_MS): Promis
   try {
     let raw: unknown[] = [];
     if (isDesktopApp()) {
-      const peers = await invokeNative<unknown[]>('lan_discovery_scan', { timeoutMs });
+      // 多网卡时只收选中地址所属网段的广播（Rust 按子网掩码计算）
+      const host = readStoredLanHost();
+      const args: Record<string, unknown> = { timeoutMs };
+      if (host !== null) args.host = host;
+      const peers = await invokeNative<unknown[]>('lan_discovery_scan', args);
       raw = Array.isArray(peers) ? peers : [];
     } else {
       const plugin = await loadPlugin<LanSyncPlugin>('LanSync');
