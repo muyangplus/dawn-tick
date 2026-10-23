@@ -2,17 +2,21 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
+mod install_kind;
 mod lan_discovery;
 mod lan_sync;
 mod paths;
+mod portable_update;
 mod reminder_actions;
 mod secret_store;
 mod updater;
 mod widget_window;
 
+use install_kind::windows_install_kind;
 use lan_discovery::lan_discovery_scan;
 use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
+use portable_update::{exit_for_update, prepare_portable_update};
 use reminder_actions::{clear_pending_reminder, set_pending_reminders};
 use secret_store::{secret_decrypt, secret_encrypt};
 use updater::run_installer;
@@ -2712,6 +2716,9 @@ pub fn run() {
             widget_resize,
             reveal_path,
             run_installer,
+            windows_install_kind,
+            prepare_portable_update,
+            exit_for_update,
             tray_status,
             open_external_url,
             open_log_dir,

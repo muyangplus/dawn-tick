@@ -18,6 +18,8 @@ tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 便携版自动更新只需解压 deflate 压缩的 zip：默认特性会带上 bzip2/zstd/lzma 等无用后端。
+zip = { version = "4", default-features = false, features = ["deflate"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 # 关掉默认特性里的 cookies：插件的 cookie 存储要在 %LOCALAPPDATA% 下建目录并开文件，
 # 权限稍有问题就会以「拒绝访问」让整个应用起不来；WebDAV 用 Basic 认证，不需要 cookie。
