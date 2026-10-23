@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { LOG_LEVELS, type AppSettings, type LogLevel, type Storage } from '@dawn-tick/core';
-import { CHANNEL } from '../../channel.ts';
 import {
   BUILTIN_PRESET_VERSION,
   cacheSnapshotContent,
@@ -24,13 +23,11 @@ import { StatusLine, type StatusMessage } from '../../components/ui/status-line.
 import { toast } from '../../components/ui/toaster.tsx';
 import { exportLogs } from './file-export.ts';
 import { said } from './format.ts';
-import { UpdateActions } from './update-actions.tsx';
-import type { UpdateCheckApi } from './use-update-check.ts';
 
 /** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
 const PRESET_SOURCE_LABEL = '预设仓库（GitHub）';
 
-/** 日志级别说明（与维护卡片文案一致）。 */
+/** 日志级别说明（与诊断与维护卡文案一致）。 */
 const LOG_LEVEL_HINT: Record<LogLevel, string> = {
   error: '仅严重错误',
   warn: '错误 + 警告信息',
@@ -43,18 +40,15 @@ export interface MaintenanceCardProps {
   storage: Storage;
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
-  /** 版本检查与顶部快捷动作共用一份状态 */
-  update: UpdateCheckApi;
 }
 
 /**
- * 更新与维护卡：更新区（检查更新、渠道开关、忽略版本、回滚）、诊断日志与预设仓库。
+ * 诊断与维护卡：诊断日志开关/级别、导出日志、预设仓库与运行权限。
  *
- * 更新区拆到 `update-actions.tsx`，这里只负责挂载与保留维护类动作；
- * 自己持有预设更新与运行权限的进行中状态和结果；版本检查的状态由 `useUpdateCheck` 提供，
- * 让设备页顶部的「检查更新」与本卡显示同一份进度。
+ * 更新区（检查更新、渠道开关、忽略版本、回滚）已独立成「更新」卡；
+ * 本卡只保留维护类动作，并自己持有预设更新与运行权限的进行中状态和结果。
  */
-export function MaintenanceCard({ storage, settings, onPatch, update }: MaintenanceCardProps) {
+export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardProps) {
   const presetAction = useAction();
   const logAction = useAction();
   const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
@@ -142,17 +136,6 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
 
   return (
     <>
-      <UpdateActions storage={storage} settings={settings} onPatch={onPatch} update={update} />
-      {CHANNEL === 'dev' && (
-        <SwitchField
-          label="开发者特性"
-          description="关闭后按正式版运行"
-          checked={settings.devFeatures}
-          onCheckedChange={(checked) => void onPatch({ devFeatures: checked })}
-          ariaLabel="开发者特性"
-        />
-      )}
-
       {/* 应用诊断日志：开关控制 dawn-tick.log，级别决定门槛 */}
       <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="log-settings">
         <span className="text-sm font-medium text-ink">应用诊断日志</span>
@@ -240,7 +223,6 @@ export function MaintenanceCard({ storage, settings, onPatch, update }: Maintena
           </Button>
         </div>
       )}
-      <span className="text-xs text-muted">只在应用内检查版本</span>
     </>
   );
 }
