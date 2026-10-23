@@ -1,12 +1,12 @@
 # TODO
 
-> 当前版本 `v0.6.0`（2026-10-22 发布）。已完成任务的详细位置/证据/改法不再保留（查 git log 与 CHANGELOG.md）；本文件只留待验收清单、未完成方向、决策与边界。
+> 当前版本 `v0.6.1`（2026-10-23 发布）。已完成任务的详细位置/证据/改法不再保留（查 git log 与 CHANGELOG.md）；本文件只留待验收清单、未完成方向、决策与边界。
 > 历史事实索引（行号类快照）已随重构完成而移除；需要时按函数名 / `data-role` / 文案锚点检索。
 
 ## 0. 现状快照
 
-- **版本**：`0.6.0`（`versionCode 600`）。已发布 `v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.6.0`。
-- **验证**：`pnpm test`（core 276 / web 434 / tools 36）、`pnpm ui:smoke`（413 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项）、小组件契约检查。
+- **版本**：`0.6.1`（`versionCode 601`）。已发布 `v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.6.0`、`v0.6.1`。
+- **验证**：`pnpm test`（core 276 / web 459 / tools 36）、`pnpm ui:smoke`（419 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项）、小组件契约检查。
 - **CI**：四个 job——`node`（typecheck / test / 界面冒烟）、`schema`、`rust`、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
 - **本地安卓编译**（无需 CI 往返）：`JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6`、`ANDROID_HOME=E:\work\dsh\android-sdk`，在 `apps/mobile/android` 跑 `gradlew.bat :app:compileDebugKotlin --no-daemon`。
 - **结构**：`App.tsx` 449 行；`settings-view.tsx` 212 行 / `devices-view.tsx` 176 行，卡片在 `screens/settings/`；`data.ts` 732 行（`loadAppData` 70 行）；`app/` 拆启动编排、会话、课表动作、副作用、恢复；`screens/{import,timetable,settings}/` 均按职责拆分，单文件 ≤400 行。
@@ -91,6 +91,7 @@
 | `v0.4.1` | A 系列架构收口 + 两处修复 |
 | `v0.5.0` | 体验反馈 15 条（更新/渠道/悬浮窗/时区/导入/局域网一期/动效） |
 | `v0.6.0` | R 系列 11 项（导出、提醒动作、更新运营、局域网二期、加密、统计、诊断） |
+| `v0.6.1` | 更新下载后台化 + 并发 Range 分片 + 更新 UI 重排；发布校验回退单一 `SHA256SUMS.txt` |
 
 执行方式：每任务独立 `task/<id>` 分支 + worktree，按批次并行；每任务跑 typecheck + 相关测试，批次末跑全量测试与冒烟；跨任务冲突由 Lead 合并解决。
 
