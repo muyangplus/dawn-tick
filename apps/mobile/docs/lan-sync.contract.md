@@ -27,12 +27,24 @@
 
 ## 2. 地址与端口
 
-- HTTP 监听地址：本机**局域网 IPv4**（10/8、172.16/12、192.168/16、169.254/16、127/8），
+- HTTP 监听地址：本机**局域网 IPv4**（10/8、172.16/12、192.168/16、169.254/16、100.64/10、127/8），
   端口由系统分配（`bind(..., 0)`），`lan_sync_start` / `LanSync.start` 返回实际端口。
 - 客户端输入：`192.168.1.5:8765` 或 `http://192.168.1.5:8765`；只接受局域网地址，
   公网地址与域名一律拒绝（`parsePeerAddress`）。
-- 发现使用 **UDP 8766**（`LAN_DISCOVERY_PORT`）；广播目标是 `255.255.255.255:8766`,
-  同机自测额外发一份到 `127.0.0.1:8766`。
+- **多网络识别**：本机有多块网卡 / VPN 时，桌面 `lan_network_list()` 与 Android
+  `LanSync.networks()` 返回候选 `{name, address, isLan, kind, preferred}`；`kind` 只按网卡名
+  推断（`wifi` / `ethernet` / `vpn` / `other`）。排序规则三端一致：
+  **局域网地址优先 → 有线/无线优先于其它、VPN 降级到最后 → 192.168.\* > 10.\* >
+  172.16–31.\* > 100.64/10 > 169.254/16 → 地址数值**。
+- 设备页显示「网络：`<地址> · <分类>`」与「切换网络」下拉；选中的地址写入
+  `localStorage` 的 `dt.lan.host`（只存地址，不存凭据），下次开配对优先使用。
+  切换后必须**重启配对**（停止再开启），因为 HTTP 监听与 UDP 广播都绑定该地址。
+- `lan_sync_start({host})` / `LanSync.start({host})` 用选中地址监听；缺省时自动选首选局域网。
+  安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 另有 **8 秒超时**（超时文案
+  「开启配对超时：请确认已连接 Wi-Fi 后重试」，可直接重试）。
+- 发现使用 **UDP 8766**（`LAN_DISCOVERY_PORT`）；广播目标是选中地址**所属网段的广播地址**
+  （桌面按 `ipconfig` 的子网掩码计算，Android 取 `InterfaceAddress.broadcast`），
+  同时保留 `255.255.255.255:8766` 兜底，同机自测额外发一份到 `127.0.0.1:8766`。
 - 同一台机器自测也走局域网地址；服务端额外接受环回来源（127.0.0.1），其余一律 403。
 
 ## 3. UDP 自动发现（二期新增）
@@ -61,7 +73,9 @@
 ### 3.2 扫描
 
 - 客户端点击「发现设备」后，原生层绑定 UDP 8766，**短超时收集 1.5 秒**，按 `host:port`
-  去重、按设备名排序，最多 32 台返回给 TS。
+  去重、按设备名排序，最多 32 台返回给 TS。桌面把选中地址（`dt.lan.host`）传给
+  `lan_discovery_scan({timeoutMs, host})`，只保留该地址所属网段的广播（环回自测始终保留）；
+  多网卡时不会把别的网段设备混进来。
 - 列表每行显示「设备名 · IP:端口」；点击即把 `IP:端口` 填入「对方地址」。
 - 收到后 10 秒没有再广播的条目视为过期；本机自己的地址会被过滤。
 - Web 端没有原生 UDP：按钮禁用并提示手输地址；冒烟测试用固定扫描桩验证「发现 → 填入」。
@@ -125,6 +139,25 @@
 
 请求体：§6 的同步信封。成功 200：`{"imported":N,"skipped":N,"removed":N,"warnings":[]}`。
 失败 400（信封或范围不合法）/ 401（令牌无效）/ 413（体积超限）。
+
+### 5.4 客户端传输：桌面原生直连（绕过系统代理）
+
+Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理，连 `192.168.x.x` 也走代理，
+局域网同步直接失败。因此**桌面局域网 HTTP 一律走 Rust 原生命令**，不再用 `plugin-http`：
+
+| 项 | 规则 |
+|---|---|
+| 命令 | `lan_http_request({method, url, headers, body, timeoutMs})` → `{status, body}` |
+| 实现 | `apps/desktop/src-tauri/src/lan_http.rs`：`std::net::TcpStream` 手写 HTTP/1.1，**不经系统代理** |
+| 目标 | 只允许 `http://` + 局域网 IPv4（含 127/8；拒绝域名、https、公网地址） |
+| 方法 | `GET` / `POST` / `OPTIONS`；`Host` / `Content-Length` / `Connection: close` 由原生层补 |
+| 响应 | 支持 `Content-Length` 与 `chunked`；正文上限 **20MB**；只接受 UTF-8 |
+| 超时 | 默认 **15 秒**（服务端最多等 TS 10 秒，留余量），上限 30 秒 |
+| 失败回退 | 原生命令失败时 TS 记 `lan-sync` 日志并回退 `fetch`，保持旧路径可用 |
+
+- Android 不受桌面系统代理影响：`lanFetch` 走 **CapacitorHttp**（`capacitor.config.ts` 里也
+  全局接管了 `fetch`），失败时同样回退 `fetch` 并记日志。
+- 浏览器的局域网请求仍是普通 `fetch`（依赖服务端 CORS 头）。
 
 ## 6. 同步信封（schema 版本保持 1）
 
@@ -194,12 +227,16 @@
 
 | 动作 | Windows（Tauri 命令） | Android（Capacitor 插件 `LanSync`） |
 |---|---|---|
-| 开服务 | `lan_sync_start()` → `{host, port}` | `start()` → `{host, port}` |
+| 列网络 | `lan_network_list()` → `[{name, address, isLan, kind, preferred}]` | `networks()` → `{networks:[…]}` |
+| 开服务 | `lan_sync_start({host?})` → `{host, port}` | `start({host?})` → `{host, port}` |
 | 停服务 | `lan_sync_stop()` | `stop()` |
 | 取请求 | `lan_sync_poll()` → `{id, method, path, query, authorization, body, receivedAt}` 或 `null` | `poll()` → 同字段 |
 | 回响应 | `lan_sync_respond(id, status, body)` | `respond({id, status, body})` |
-| 扫描设备 | `lan_discovery_scan({timeoutMs})` → `[{name, host, port}]` | `scanDiscovery({timeoutMs})` → `{peers:[…]}` |
+| 扫描设备 | `lan_discovery_scan({timeoutMs, host?})` → `[{name, host, port}]` | `scanDiscovery({timeoutMs})` → `{peers:[…]}` |
+| 客户端请求 | `lan_http_request({method, url, headers, body, timeoutMs})` → `{status, body}` | CapacitorHttp（TS 直调，无独立插件方法） |
 
+- `lan_network_list` / `lan_discovery_scan` 的 `host` 都是**选中地址**：
+  前者只用于枚举；后者按该地址所属网段过滤扫描结果。
 - 队列上限 32 条，满了直接 503；每个连接线程等自己的响应，10 秒超时 504 并清掉队列项。
 - 原生层**不校验**配对码/令牌，`Authorization` 原样带给 TS；`/pair` 也照常入队。
 - 入队前已完成的拒绝：非局域网来源 403、路径不在上表 404、方法不符 405、请求头过大 431、
@@ -216,7 +253,8 @@
 | `apps/web/src/lan-sync-protocol.ts` | 范围、地址、配对码与会话令牌的纯函数 |
 | `apps/web/src/lan-sync-payload.ts` | 信封编解码、`importBackup` 应用与 `handleLanRequest`（服务端纯函数） |
 | `apps/web/src/lan-sync.ts` | 客户端 `fetch`、配对、拉取/推送、服务端生命周期、会话状态机 |
-| `apps/web/src/lan-sync-http.ts` | 原生/浏览器 fetch 分支与错误体归一 |
+| `apps/web/src/lan-sync-http.ts` | 桌面原生直连 / Android CapacitorHttp / 浏览器 fetch 分支与错误体归一 |
+| `apps/web/src/lan-sync-network.ts` | 候选排序、默认选择、地址文案与 `dt.lan.host` 读写（纯函数 + 原生桥） |
 | `apps/web/src/lan-sync-discovery.ts` | 发现包编解码、去重、TTL、扫描调用（纯函数 + 原生桥） |
 | `apps/web/src/lan-sync-preview.ts` | 预览统计、拉取信封、确认后合并 |
 | `apps/web/src/lan-sync-auto.ts` | 自动同步配置编解码、启动/30 分钟策略、失败重试一次 |
@@ -224,6 +262,9 @@
 | `apps/web/src/screens/settings/lan-sync-block.tsx` | 设备页卡片：服务端、二维码、发起方入口 |
 | `apps/web/src/screens/settings/lan-sync-client-panel.tsx` | 发现、配对、范围、自动同步、预览与拉取/推送 |
 | `apps/web/test/lan-sync.test.ts` | 配对码/范围/状态机/HTTP 处理/双端收发模拟 |
+| `apps/web/test/lan-sync-network.test.ts` | 网段优先级、候选排序与默认选择、切换地址、文案与 `dt.lan.host` |
+| `apps/web/test/lan-sync-start.test.ts` | 选中地址透传、8 秒超时文案、超时后可重试 |
+| `apps/web/test/lan-sync-http.test.ts` | 桌面走 `lan_http_request`、Android CapacitorHttp、失败回退 fetch |
 | `apps/web/test/lan-sync-discovery.test.ts` | 发现包编解码、去重、超时、Web 端不发现 |
 | `apps/web/test/lan-sync-preview.test.ts` | 预览统计口径、只读、确认后合并 |
 | `apps/web/test/lan-sync-auto.test.ts` | 启动/30 分钟策略、重试一次、配置往返 |
@@ -238,14 +279,20 @@
 - UDP 广播只含设备名 / 局域网地址 / HTTP 端口；**不含配对码与令牌**。
 - 二维码包含配对码，只在开配对期间展示；拍照/截屏风险由用户自行控制。
 - 只监听局域网地址，并逐请求校验来源地址；只接受局域网目标（客户端侧同样校验）。
+- 桌面局域网 HTTP 由原生 `TcpStream` 直连，**不读取系统代理设置**，也不跟随重定向、
+  不带 cookie：请求不会被代理或第三方看到；目标必须是局域网 IPv4。
 - 请求体 5MB / 响应体 20MB / 每请求 10 秒处理窗口 / 队列 32 条。
 - 只传业务数据；日志、快照、预设正文与任何账号密码都不进信封。
 - 传输为明文 HTTP、发现为明文 UDP，**只在信任的局域网使用**；不要在公共 Wi-Fi 开配对。
 
 ## 12. 未在本仓库验证
 
-Android 没有构建链：`LanSyncPlugin.kt` / `LanSyncServer.kt` / `LanDiscovery.kt` 未编译，
-UDP 广播在真机上的收发与防火墙行为也需在打包机（`pnpm android:dev`）上联调。
-Windows 的 UDP 8766 入站同样受系统防火墙影响，首次开配对时需允许应用访问专用网络。
-静态核对由 `apps/web/test/plugins.test.ts` 覆盖方法名、插件名与契约文档；
-Rust 侧 `lan_discovery` 的编解码、去重与回环广播由 `cargo test` 覆盖。
+- Android 构建在打包机（`pnpm android:dev`）上验证；本仓库本地用
+  `gradlew.bat :app:compileDebugKotlin --no-daemon` 做编译检查。
+- UDP 广播在真机上的收发、多网卡切换后的广播目标、Windows 防火墙入站规则需真机联调；
+  首次开配对时需允许应用访问专用网络。
+- 静态核对由 `apps/web/test/plugins.test.ts` 覆盖方法名、插件名与契约文档；
+  `apps/web/test/native-commands.test.ts` 覆盖 Tauri 命令注册。
+- Rust 侧 `lan_network` 的网段排序 / 网卡分类 / 广播地址、`lan_http` 的 URL / 头 /
+  Content-Length / chunked / 超限 / 非局域网拒绝、`lan_discovery` 的编解码与回环广播
+  都由 `cargo test` 覆盖（不依赖真实外网）。

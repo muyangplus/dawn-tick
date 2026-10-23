@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { Button } from '../../components/ui/button.tsx';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { fail } from '../../copy/zh.ts';
@@ -22,6 +28,16 @@ import {
   type Pairing,
   type SessionGrant,
 } from '../../lan-sync.ts';
+import {
+  defaultLanNetwork,
+  formatLanNetworkLabel,
+  formatLanNetworkLine,
+  listLanNetworks,
+  readStoredLanHost,
+  resolveLanHost,
+  saveStoredLanHost,
+  type LanNetwork,
+} from '../../lan-sync-network.ts';
 import { pairingQrText } from '../../lan-sync-qr.ts';
 import { LanSyncClientPanel } from './lan-sync-client-panel.tsx';
 import { LanSyncQrCode } from './lan-sync-qr-code.tsx';
@@ -49,9 +65,32 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [grant, setGrant] = useState<SessionGrant | null>(null);
   const [status, setStatus] = useState<StatusMessage | null>(null);
+  /** 本机候选网络与选中地址：多网卡 / VPN 时让用户切到真正的局域网。 */
+  const [networks, setNetworks] = useState<LanNetwork[]>([]);
+  const [selectedHost, setSelectedHost] = useState<string | null>(null);
   /** 服务端内存态：轮询回调里读，不触发重渲染 */
   const runtime = useRef<LanRuntime>({ pairing: null, session: null });
   const started = useRef(false);
+
+  // 进来先读候选网络：默认选首选局域网，用户上次选过的地址优先
+  useEffect(() => {
+    if (!canServeLanSync()) return;
+    let cancelled = false;
+    void (async () => {
+      const list = await listLanNetworks();
+      if (cancelled) return;
+      setNetworks(list);
+      setSelectedHost(resolveLanHost(list, readStoredLanHost()));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const lanCandidates = networks.filter((network) => network.isLan);
+  const selectedNetwork: LanNetwork | null =
+    networks.find((network) => selectedHost !== null && network.address === selectedHost) ??
+    defaultLanNetwork(networks);
 
   // 离开本页即停止配对：监听与令牌都不留在后台
   useEffect(() => {
@@ -98,7 +137,7 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
       label: '正在开启局域网配对…',
       fail: false,
       task: async () => {
-        const result = await startLanServer();
+        const result = await startLanServer({ host: selectedNetwork?.address });
         if (!result.ok || result.info === null) {
           const message = fail('开启局域网配对', result.error, '请确认本机已连上 Wi-Fi 或有线网络');
           setStatus(said(message));
@@ -106,6 +145,9 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
           return;
         }
         started.current = true;
+        // 切到自动选择时，把原生实际绑定的地址记下来，界面与下拉保持一致
+        setSelectedHost(result.info.host);
+        if (selectedNetwork === null) saveStoredLanHost(result.info.host);
         runtime.current = {
           pairing: { code: result.info.code, expiresAt: result.info.expiresAt },
           session: null,
@@ -130,6 +172,22 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
     setStatus(said('已停止局域网配对'));
   }
 
+  /** 切换网络：记住地址；已开配对时先停掉，提示用户用新地址重新开启。 */
+  async function changeNetwork(address: string): Promise<void> {
+    const network = networks.find((item) => item.address === address) ?? null;
+    if (network === null || address === selectedNetwork?.address) return;
+    setSelectedHost(address);
+    saveStoredLanHost(address);
+    if (server !== null) {
+      await stopPairing();
+      const message = `已切换网络：${formatLanNetworkLine(network)}；监听地址已变化，请重新开启配对`;
+      setStatus(said(message));
+      toast.success('已切换网络，请重新开启配对');
+      return;
+    }
+    setStatus(said(`已切换网络：${formatLanNetworkLine(network)}`));
+  }
+
   async function copyPairing(): Promise<void> {
     if (server === null || pairing === null) return;
     const ok = await copyText(pairingQrText(server.host, server.port, pairing.code));
@@ -149,6 +207,38 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
       </span>
       {canServeLanSync() ? (
         <div className="flex flex-col gap-1" data-role="lan-sync-server">
+          {selectedNetwork !== null && (
+            <div className="flex flex-col gap-1" data-role="lan-sync-network">
+              <span className="text-xs text-muted" data-role="lan-sync-network-line">
+                {formatLanNetworkLine(selectedNetwork)}
+              </span>
+              {lanCandidates.length > 1 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted">切换网络</span>
+                  <Select
+                    value={selectedNetwork.address}
+                    onValueChange={(value) => void changeNetwork(value)}
+                    disabled={action.busy}
+                  >
+                    <SelectTrigger
+                      aria-label="切换网络"
+                      data-role="lan-sync-network-select"
+                      className="max-w-60"
+                    >
+                      <span>{formatLanNetworkLabel(selectedNetwork)}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {lanCandidates.map((network) => (
+                        <SelectItem key={network.address} value={network.address}>
+                          {formatLanNetworkLabel(network)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"

@@ -61,26 +61,82 @@ export interface StartLanServerResult {
   error: string | null;
 }
 
-async function startNativeServer(): Promise<LanSyncListen | null> {
+/**
+ * 原生「开始监听」的超时：安卓绑定 Wi-Fi 与启动 UDP 广播都在后台线程，
+ * 个别机型会卡住不回调；超过 8 秒按失败处理，让界面回到可重试状态。
+ */
+export const LAN_SERVER_START_TIMEOUT_MS = 8_000;
+
+/** 超时文案：用户可据此检查 Wi-Fi 后重试（原生层也有一条 10 秒兜底）。 */
+export const LAN_SERVER_START_TIMEOUT_MESSAGE = '开启配对超时：请确认已连接 Wi-Fi 后重试';
+
+/** 给任意 Promise 加超时；超时后底层调用可能仍在进行，调用方按可重试处理。 */
+export function withTimeout<T>(task: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    task.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (cause: unknown) => {
+        clearTimeout(timer);
+        reject(cause);
+      },
+    );
+  });
+}
+
+/** 起监听的统一形状：桌面与安卓都归一到 `{host, port}`。 */
+export type LanServerStarter = (host?: string) => Promise<LanSyncListen | null>;
+
+/** 冒烟 / 单测注入：替代原生调用，验证超时与地址透传。 */
+let starterOverride: LanServerStarter | null = null;
+
+export function setLanServerStarterForTests(next: LanServerStarter | null): void {
+  starterOverride = next;
+}
+
+async function defaultLanServerStarter(host?: string): Promise<LanSyncListen | null> {
+  const selected = host === undefined || host.trim() === '' ? undefined : host.trim();
   if (isDesktopApp()) {
-    return (await invokeNative<LanSyncListen>('lan_sync_start')) ?? null;
+    return (
+      (await invokeNative<LanSyncListen>(
+        'lan_sync_start',
+        selected === undefined ? undefined : { host: selected },
+      )) ?? null
+    );
   }
   const plugin = await loadPlugin<LanSyncPlugin>('LanSync');
   if (plugin === null) return null;
-  const result = await plugin.start();
+  const result = await plugin.start(selected === undefined ? undefined : { host: selected });
   if (typeof result.host !== 'string' || result.host === '' || typeof result.port !== 'number') {
     return null;
   }
   return { host: result.host, port: result.port };
 }
 
+async function startNativeServer(host?: string, timeoutMs = LAN_SERVER_START_TIMEOUT_MS): Promise<LanSyncListen | null> {
+  const starter = starterOverride ?? defaultLanServerStarter;
+  return withTimeout(starter(host), timeoutMs, LAN_SERVER_START_TIMEOUT_MESSAGE);
+}
+
+export interface StartLanServerOptions {
+  /** 用户在「切换网络」里选中的本机地址；缺省自动选首选局域网。 */
+  host?: string | undefined;
+  now?: number;
+  /** 单测用：缩短超时，生产固定 8 秒。 */
+  timeoutMs?: number;
+}
+
 /** 开启配对：原生起监听，配对码与有效期由 TS 生成（鉴权单一事实来源）。 */
-export async function startLanServer(now = Date.now()): Promise<StartLanServerResult> {
+export async function startLanServer(options: StartLanServerOptions = {}): Promise<StartLanServerResult> {
+  const now = options.now ?? Date.now();
   if (!canServeLanSync()) {
     return { ok: false, info: null, error: '浏览器端不能开配对，请在桌面版或安卓版上操作' };
   }
   try {
-    const listen = await startNativeServer();
+    const listen = await startNativeServer(options.host, options.timeoutMs);
     if (listen === null) return { ok: false, info: null, error: '当前平台不支持开启局域网配对' };
     const pairing = createPairing(now);
     logInfo('lan-sync', '已开启局域网配对', { host: listen.host, port: listen.port });
