@@ -5,6 +5,7 @@ import { COUNT } from '../copy/zh.ts';
 import { notifyNextStep } from '../notify-state.ts';
 import type { ReminderView } from '../useReminders.ts';
 import { cn } from '../lib/cn.ts';
+import { useCardAccordion } from '../lib/use-card-accordion.ts';
 import { Button } from '../components/ui/button.tsx';
 import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
 import { Dialog, DialogContent } from '../components/ui/dialog.tsx';
@@ -17,6 +18,10 @@ import { ImportFlow } from './import-flow.tsx';
 import { AppearanceCard } from './settings/appearance-card.tsx';
 import { RemindersCard } from './settings/reminders-card.tsx';
 import { SemestersCard } from './settings/semesters-card.tsx';
+import { SlotsCard } from './settings/slots-card.tsx';
+import { TimeCard } from './settings/time-card.tsx';
+import { TimetableCard } from './settings/timetable-card.tsx';
+import { WidgetCard } from './settings/widget-card.tsx';
 import { useNotifyPermission } from './settings/use-notify-permission.ts';
 
 export interface SettingsViewProps {
@@ -38,7 +43,8 @@ export interface SettingsViewProps {
 /**
  * 设置页：只留布局、卡片注册表与页级弹窗外壳。
  *
- * 三张偏好卡片各自在 `screens/settings/` 下独立成组件，页面只负责按注册表把卡片放进主列/侧列；
+ * 七张偏好卡片各自在 `screens/settings/` 下独立成组件，页面只负责按注册表把卡片放进主列/侧列；
+ * 卡片按手风琴展开（同页只开一张，记住上次展开的那张，读不到时默认第一张），
  * 通知权限状态由页面持有，顶部提示条与提醒卡看同一份。
  */
 export function SettingsView({
@@ -93,11 +99,21 @@ export function SettingsView({
       />
     ),
 
+    slots: (
+      <SlotsCard storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
+    ),
+
     reminders: (
       <RemindersCard settings={settings} onPatch={onPatch} reminders={reminders} notify={notify} />
     ),
 
     appearance: <AppearanceCard settings={settings} onPatch={onPatch} />,
+
+    timetable: <TimetableCard settings={settings} onPatch={onPatch} />,
+
+    widget: <WidgetCard settings={settings} onPatch={onPatch} />,
+
+    time: <TimeCard settings={settings} onPatch={onPatch} />,
   };
 
   /** 设置页卡片：主列在上、侧列在右；侧列由顶部「卡片布局」切换，没有侧列时不占宽度。 */
@@ -105,6 +121,12 @@ export function SettingsView({
   const sideCards = cardsInZone('settings', layout, 'side');
   /** 两列只在主列与侧列都有卡片时生效：全部卡片都切到侧列时，侧列自己占满整行（P2-07） */
   const twoColumn = mainCards.length > 0 && sideCards.length > 0;
+  /** 手风琴按布局顺序展开：主列在前、侧列在后，默认第一张可见卡 */
+  const allCards = mainCards.concat(sideCards);
+  const { expandedId, toggle } = useCardAccordion(
+    'settings',
+    allCards.map((card) => card.def.id),
+  );
 
   const renderCard = (card: ResolvedCard): ReactNode => {
     const body = bodies[card.def.id];
@@ -120,6 +142,8 @@ export function SettingsView({
         {...(card.def.id === 'reminders' && notify.abnormal
           ? { badge: <span className="text-danger-strong" data-role="notify-card-badge">通知未授权</span> }
           : {})}
+        open={expandedId === card.def.id}
+        onOpenChange={(next) => toggle(card.def.id, next)}
       >
         {body}
       </CollapsibleCard>
