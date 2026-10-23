@@ -97,11 +97,11 @@ test('卡片布局入口全仓唯一：每页只在顶部留一个，卡内不�
     assert.equal(source.split('<CardLayoutDialog').length - 1, 1, `${name}只应挂一个卡片布局对话框`);
     assert.ok(!source.includes('打开卡片布局'), `${name}卡片内不应再有第二个入口`);
   }
-  // A-11：外观卡正文已拆到独立组件，断言跟着组件走
-  const appearance = readSource('screens/settings/appearance-card.tsx');
+  // 卡片拆分后，「卡片显隐在顶部『卡片布局』」这句提示随悬浮窗与小组件卡走
+  const widget = readSource('screens/settings/widget-card.tsx');
   assert.ok(
-    appearance.includes('卡片显隐在顶部「卡片布局」'),
-    '外观卡要写明「卡片显隐在顶部「卡片布局」」',
+    widget.includes('卡片显隐在顶部「卡片布局」'),
+    '悬浮窗与小组件卡要写明「卡片显隐在顶部「卡片布局」」',
   );
 });
 
