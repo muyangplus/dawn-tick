@@ -5,11 +5,9 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.Inet4Address
 import java.net.InetAddress
-import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
-import java.util.Collections
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
@@ -306,23 +304,27 @@ class LanSyncServer private constructor(
                 "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
                 "Cache-Control: no-store\r\n"
 
-        /** 绑定本机局域网 IPv4 与系统分配的端口；没有局域网地址时抛错。 */
-        fun start(): LanSyncServer {
-            val address = lanAddress() ?: throw IllegalStateException("没有找到局域网地址，请先连接 Wi-Fi")
-            val socket = ServerSocket(0, 8, address)
-            return LanSyncServer(address.hostAddress ?: "0.0.0.0", socket.localPort, socket)
-        }
-
-        private fun lanAddress(): Inet4Address? {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            for (network in Collections.list(interfaces)) {
-                if (!network.isUp || network.isLoopback) continue
-                val addresses = network.inetAddresses ?: continue
-                for (address in Collections.list(addresses)) {
-                    if (address is Inet4Address && isLanAddress(address)) return address
-                }
+        /**
+         * 绑定指定局域网 IPv4 与系统分配的端口；`host` 为空时自动选首选网络。
+         * 绑定失败会抛出带地址的可读错误，由插件 reject 给 TS。
+         */
+        fun start(host: String? = null): LanSyncServer {
+            val address = if (!host.isNullOrBlank()) {
+                LanNetworks.findAddress(host)
+                    ?: throw IllegalArgumentException("网络地址不在本机：${host.trim()}")
+            } else {
+                LanNetworks.preferredAddress()
+                    ?: throw IllegalStateException("没有找到局域网地址，请先连接 Wi-Fi")
             }
-            return null
+            val socket = try {
+                ServerSocket(0, 8, address)
+            } catch (error: Throwable) {
+                throw IllegalStateException(
+                    "监听 ${address.hostAddress} 失败：${error.message ?: error.javaClass.simpleName}",
+                    error,
+                )
+            }
+            return LanSyncServer(address.hostAddress ?: "0.0.0.0", socket.localPort, socket)
         }
 
         private fun isLanAddress(address: InetAddress): Boolean {
