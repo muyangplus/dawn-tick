@@ -9,8 +9,9 @@ import {
   type UpdateDownloadState,
   type UpdatePlan,
   type UpdatePlatform,
+  type WindowsInstallKind,
 } from './update-download.ts';
-import { createUpdateHost, updatePlatform } from './update-install.ts';
+import { createUpdateHost, detectWindowsInstallKind, updatePlatform } from './update-install.ts';
 
 /**
  * 后台更新任务：下载不再绑在弹窗上，关掉弹窗也不会中断，再次打开弹窗或到设备页看到的是同一份进度。
@@ -25,11 +26,13 @@ export type UpdateTaskStatus = 'idle' | 'downloading' | 'verifying' | 'ready' | 
 export interface UpdateTaskTarget {
   platform: UpdatePlatform;
   version: string;
+  /** 安装方式：安装版交给安装程序，便携版退出后覆盖 exe */
+  kind: 'installer' | 'portable';
   /** 安装包落盘名；Web 渠道没有安装包 */
   fileName: string | null;
   /** 已落盘路径（桌面绝对路径 / Android `file://` URI）；未写盘或 Web 为 null */
   path: string | null;
-  /** 交给谁：Windows 安装程序 / Android 安装器 / 刷新页面 */
+  /** 交给谁：Windows 安装程序 / Windows 便携替换 / Android 安装器 / 刷新页面 */
   installerLabel: string;
 }
 
@@ -67,10 +70,14 @@ export interface StartUpdateOptions {
   platform?: UpdatePlatform;
   host?: UpdateDownloadHost;
   fetchImpl?: typeof fetch;
+  /** Windows 运行形态：单测/冒烟显式注入，正常界面从原生命令检测 */
+  installKind?: WindowsInstallKind;
 }
 
 let task: UpdateTask = IDLE_UPDATE_TASK;
 let controller: AbortController | null = null;
+/** 安装动作互斥：解压/启动安装程序期间重复点击不重复触发。 */
+let installing = false;
 let host: UpdateDownloadHost | null = null;
 let lastManifest: UpdateManifest | null = null;
 let lastOptions: StartUpdateOptions = {};
@@ -107,13 +114,24 @@ export function subscribeUpdateTask(listener: () => void): () => void {
   return subscribe(listener);
 }
 
-function installerLabelOf(platform: UpdatePlatform): string {
-  return platform === 'windows' ? 'Windows 安装程序' : platform === 'android' ? 'Android 安装器' : '刷新页面';
+function installerLabelOf(platform: UpdatePlatform, kind: UpdateTaskTarget['kind']): string {
+  if (platform === 'windows') {
+    return kind === 'portable' ? 'Windows 便携包（退出后替换）' : 'Windows 安装程序';
+  }
+  return platform === 'android' ? 'Android 安装器' : '刷新页面';
 }
 
 function buildTarget(plan: UpdatePlan, platform: UpdatePlatform, version: string | null): UpdateTaskTarget {
   const fileName = plan.kind === 'download' ? plan.target.fileName : null;
-  return { platform, version: version ?? '', fileName, path: null, installerLabel: installerLabelOf(platform) };
+  const kind = plan.kind === 'download' ? plan.target.kind : 'installer';
+  return {
+    platform,
+    version: version ?? '',
+    kind,
+    fileName,
+    path: null,
+    installerLabel: installerLabelOf(platform, kind),
+  };
 }
 
 /** 下载状态 → 任务状态：`installing`（写盘）归到 verifying，界面上都是「准备安装包」。 */
@@ -169,7 +187,12 @@ export async function startBackgroundUpdate(
   lastOptions = options;
   const platform = options.platform ?? updatePlatform();
   const version = manifest?.version ?? null;
-  const plan = planUpdateDownload(manifest, platform);
+  // Windows 要先知道是便携版还是安装版，才能决定下 zip 还是 exe；检测失败按便携版。
+  const installKind =
+    platform === 'windows'
+      ? (options.installKind ?? (await detectWindowsInstallKind()))
+      : undefined;
+  const plan = planUpdateDownload(manifest, platform, installKind);
   const base: UpdateTask = {
     ...IDLE_UPDATE_TASK,
     version,
@@ -239,14 +262,17 @@ export function retryUpdateTask(): Promise<UpdateTask> {
 }
 
 /**
- * 安装已经就绪的更新：桌面交给 `run_installer`，Android 交给 `ApkInstaller`；
- * Web 没有安装包，动作是刷新页面（由界面按钮触发实际刷新）。
+ * 安装已经就绪的更新：
+ * - 安装版 → 交给 `run_installer`（exe/msi）或 Android `ApkInstaller`；
+ * - 便携版 → 先解压并准备替换脚本，再退出应用让脚本覆盖 exe 并重启；
+ * - Web 没有安装包，动作是刷新页面（由界面按钮触发实际刷新）。
  */
 export async function installUpdateTask(): Promise<void> {
   const current = task;
   // ready 是常规入口；授权类失败时安装包已落盘，授权后也允许再交给安装器
   const authorizedRetry = current.status === 'failed' && current.needsPermission;
   if ((current.status !== 'ready' && !authorizedRetry) || current.target === null || current.installed) return;
+  if (installing) return;
   if (current.target.platform === 'web') {
     setTask({ ...current, status: 'ready', installed: true, message: '刷新页面后生效', updatedAt: Date.now() });
     return;
@@ -257,7 +283,35 @@ export async function installUpdateTask(): Promise<void> {
     return;
   }
   const installer = host ?? createUpdateHost(target.platform === 'android' ? 'android' : 'windows');
+  installing = true;
   try {
+    if (target.kind === 'portable') {
+      if (installer.installPortable === undefined || installer.exitForUpdate === undefined) {
+        throw new Error('当前平台不支持便携版自动替换，请到发布页手动下载');
+      }
+      await installer.installPortable(target.path);
+      if (task !== current) return;
+      // 先置成已安装，界面立即禁用「安装」并显示退出提示；随后退出由替换脚本接手
+      setTask({
+        ...current,
+        status: 'ready',
+        installed: true,
+        message: '更新已准备，应用将退出并自动替换，随后重新启动',
+        updatedAt: Date.now(),
+      });
+      try {
+        await installer.exitForUpdate();
+      } catch (cause: unknown) {
+        setTask({
+          ...updateTaskSnapshot(),
+          status: 'failed',
+          installed: false,
+          error: `更新已准备，但自动退出失败（${errorMessage(cause)}），请手动退出应用以完成替换`,
+          updatedAt: Date.now(),
+        });
+      }
+      return;
+    }
     const outcome = await installer.install(target.path);
     if (task !== current) return;
     if (outcome.needsPermission) {
@@ -280,6 +334,8 @@ export async function installUpdateTask(): Promise<void> {
   } catch (cause: unknown) {
     if (task !== current) return;
     setTask({ ...current, status: 'failed', error: errorMessage(cause, '启动安装程序失败'), updatedAt: Date.now() });
+  } finally {
+    installing = false;
   }
 }
 

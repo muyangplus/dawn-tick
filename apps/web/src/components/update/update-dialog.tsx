@@ -14,7 +14,7 @@ import {
   useUpdateTask,
   type UpdateTask,
 } from '../../lib/update-task.ts';
-import { updatePlatform } from '../../lib/update-install.ts';
+import { updatePlatform, useDetectedWindowsInstallKind } from '../../lib/update-install.ts';
 import { copyText, openExternalUrl } from '../../system-actions.ts';
 import type { UpdatePrompt } from '../update-prompt.ts';
 import { Button } from '../ui/button.tsx';
@@ -23,6 +23,7 @@ import { Input } from '../ui/input.tsx';
 import { toast } from '../ui/toaster.tsx';
 import { RELEASES_URL } from './releases.ts';
 import { describeUpdateDialog } from './update-dialog-model.ts';
+import { UpdateInstallKindLine } from './update-install-kind.tsx';
 import { UpdateNotes } from './update-notes.tsx';
 import { UpdateProgress } from './update-progress.tsx';
 
@@ -63,7 +64,9 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   /** 渠道取发布本身的渠道：beta 预发布=测试版、正式版=正式版，不看接收开关 */
   const channel = status === null ? CHANNEL : releaseChannelOf(status);
   const platform = updatePlatform();
-  const plan = planUpdateDownload(status?.manifest ?? null, platform);
+  /** Windows 运行形态：便携版下 zip，安装版下安装包；检测中是 null（先按安装版渲染） */
+  const installKind = useDetectedWindowsInstallKind(platform);
+  const plan = planUpdateDownload(status?.manifest ?? null, platform, installKind ?? 'installed');
   const latest = status?.latest?.trim() ?? null;
   // 只认与这个版本匹配的任务：另一个版本的后台下载不该出现在本弹窗里
   const matchedTask = task.status !== 'idle' && latest !== null && task.version === latest ? task : null;
@@ -127,7 +130,10 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     }
     if (final.status === 'failed') {
       if (final.needsPermission) toast.info(final.error ?? '请允许安装未知应用后重试');
-      else toast.error(fail('启动安装程序', final.error, '请稍后重试'));
+      else {
+        const what = final.target?.kind === 'portable' ? '准备便携版更新' : '启动安装程序';
+        toast.error(fail(what, final.error, '请稍后重试'));
+      }
     }
   }
 
@@ -198,6 +204,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
           <span>{CHANNEL_LABEL[channel]}</span>
           <span aria-hidden>←</span>
           <span>当前 {appVersion()}</span>
+          <UpdateInstallKindLine platform={platform} />
         </div>
         {view.showProgress && <UpdateProgress progress={matchedTask?.progress ?? null} />}
         <UpdateNotes source={notes} />

@@ -9,6 +9,9 @@ import type { UpdateTask, UpdateTaskStatus } from '../../lib/update-task.ts';
 
 export type UpdatePrimaryKind = 'download' | 'cancel' | 'retry' | 'install' | 'refresh';
 
+/** 安装方式：便携版没有安装程序，文案要说明「退出后替换」。 */
+type InstallKind = 'installer' | 'portable';
+
 export interface UpdateDialogView {
   primaryKind: UpdatePrimaryKind;
   primaryLabel: string;
@@ -28,6 +31,18 @@ export const PRIMARY_LABEL: Record<UpdatePrimaryKind, string> = {
   install: '安装',
   refresh: '刷新页面',
 };
+
+/** 便携版的下载/安装文案：明确说出「退出后替换」，避免用户以为会弹出安装向导。 */
+export const PORTABLE_DOWNLOAD_LABEL = '下载并更新（退出后替换）';
+export const PORTABLE_INSTALL_LABEL = '更新并退出';
+
+function primaryLabelOf(kind: UpdatePrimaryKind, installKind: InstallKind | null): string {
+  if (installKind === 'portable') {
+    if (kind === 'download') return PORTABLE_DOWNLOAD_LABEL;
+    if (kind === 'install') return PORTABLE_INSTALL_LABEL;
+  }
+  return PRIMARY_LABEL[kind];
+}
 
 interface TaskRule {
   primaryKind: UpdatePrimaryKind;
@@ -95,8 +110,9 @@ function viewFromTask(task: UpdateTask): UpdateDialogView {
   const primaryKind = task.status === 'ready' && task.target?.platform === 'web' ? 'refresh' : rule.primaryKind;
   return {
     primaryKind,
-    primaryLabel: PRIMARY_LABEL[primaryKind],
-    primaryDisabled: false,
+    primaryLabel: primaryLabelOf(primaryKind, task.target?.kind ?? null),
+    // 已交给安装器/替换脚本后不再允许重复触发（便携版退出前也不该再点）
+    primaryDisabled: task.status === 'ready' && task.installed,
     showBackground: rule.showBackground,
     showLater: rule.showLater,
     showProgress: rule.showProgress,
@@ -129,6 +145,7 @@ export interface UpdateDialogInput {
  */
 export function describeUpdateDialog({ plan, task }: UpdateDialogInput): UpdateDialogView {
   if (task !== null && task.status !== 'idle') return viewFromTask(task);
+  const installKind = plan.kind === 'download' ? plan.target.kind : null;
   if (plan.kind === 'refresh') {
     return {
       ...IDLE_DOWNLOAD,
@@ -141,5 +158,5 @@ export function describeUpdateDialog({ plan, task }: UpdateDialogInput): UpdateD
     // 不可用的原因由正文的「自动更新失败…」提示承担，状态行不再重复
     return { ...IDLE_DOWNLOAD, primaryDisabled: true };
   }
-  return IDLE_DOWNLOAD;
+  return { ...IDLE_DOWNLOAD, primaryLabel: primaryLabelOf('download', installKind) };
 }

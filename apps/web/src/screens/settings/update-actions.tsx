@@ -7,6 +7,7 @@ import { canRollbackToStable } from '../../lib/update-preferences.ts';
 import { updatePlatform } from '../../lib/update-install.ts';
 import { resolveReceiveBeta } from '../../update.ts';
 import { useIgnoredUpdateVersion, unignoreUpdateVersion } from '../../components/update-prompt.ts';
+import { UpdateInstallKindLine } from '../../components/update/update-install-kind.tsx';
 import { UpdateTaskPanel } from '../../components/update/update-task-panel.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
@@ -80,6 +81,7 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
               {update.result.text}
             </StatusLine>
           )}
+          <UpdateInstallKindLine platform={platform} />
         </div>
         {CHANNEL !== 'dev' ? (
           <SwitchField

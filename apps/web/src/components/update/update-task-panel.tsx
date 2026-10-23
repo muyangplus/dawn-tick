@@ -7,6 +7,7 @@ import {
   retryUpdateTask,
   updateTaskSnapshot,
   useUpdateTask,
+  type UpdateTask,
   type UpdateTaskStatus,
 } from '../../lib/update-task.ts';
 import { Button } from '../ui/button.tsx';
@@ -32,7 +33,16 @@ const TASK_HINT: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = {
   cancelled: '已下载的部分作废，重试会从头开始',
 };
 
-/** 安装动作：桌面/Android 交给系统安装器，Web 渠道直接刷新页面。 */
+/** 便携版没有安装向导：按钮文案与提示都要说明「退出后替换」。 */
+const PORTABLE_HINT_READY = '点「更新并退出」后会先解压并准备替换脚本，应用退出时覆盖 exe 并自动重启';
+
+/** 状态提示：便携版就绪时换成「退出后替换」的说法。 */
+function taskHint(task: UpdateTask): string {
+  if (task.status === 'ready' && task.target?.kind === 'portable') return PORTABLE_HINT_READY;
+  return TASK_HINT[task.status as Exclude<UpdateTaskStatus, 'idle'>];
+}
+
+/** 安装动作：桌面/Android 交给系统安装器，便携版退出后替换，Web 渠道直接刷新页面。 */
 async function installTask(): Promise<void> {
   await installUpdateTask();
   const final = updateTaskSnapshot();
@@ -43,7 +53,7 @@ async function installTask(): Promise<void> {
   }
   if (final.status === 'failed') {
     if (final.needsPermission) toast.info(final.error ?? '请允许安装未知应用后重试');
-    else toast.error(fail('启动安装程序', final.error, '请稍后重试'));
+    else toast.error(fail(final.target?.kind === 'portable' ? '准备便携版更新' : '启动安装程序', final.error, '请稍后重试'));
   }
 }
 
@@ -65,7 +75,7 @@ export function UpdateTaskPanel() {
       : (task.message ?? TASK_LABEL[status]);
   const showProgress = task.progress !== null;
   return (
-    <Field label="后台下载" hint={TASK_HINT[status]}>
+    <Field label="后台下载" hint={taskHint(task)}>
       <div className="flex flex-col gap-2" data-role="update-task">
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-xs font-medium text-ink">版本 {task.version ?? '—'}</span>
@@ -95,7 +105,11 @@ export function UpdateTaskPanel() {
           )}
           {status === 'ready' && !task.installed && (
             <Button size="sm" variant="primary" data-role="update-task-install" onClick={() => void installTask()}>
-              {task.target?.platform === 'web' ? '刷新页面' : '安装'}
+              {task.target?.platform === 'web'
+                ? '刷新页面'
+                : task.target?.kind === 'portable'
+                  ? '更新并退出'
+                  : '安装'}
             </Button>
           )}
           {!busy && (

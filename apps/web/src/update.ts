@@ -52,7 +52,11 @@ export interface UpdateManifest {
   releasedAt?: number;
   commit?: string;
   notes?: string;
-  assets?: Partial<Record<'windows' | 'android' | 'web', UpdateAsset>>;
+  /**
+   * 各平台产物。`windows` 是当前安装方式的首选产物（有安装包时优先安装包），
+   * `windowsPortable` 单独保留便携 zip：便携版自动更新要用 zip 覆盖 exe，不能被安装包挤掉。
+   */
+  assets?: Partial<Record<'windows' | 'windowsPortable' | 'android' | 'web', UpdateAsset>>;
   /** 发布里 `SHA256SUMS.txt` 的地址（`sha256sum` 文本，一行一个产物） */
   checksumsUrl?: string;
 }
@@ -209,6 +213,7 @@ const CHECKSUMS_ASSET = 'sha256sums.txt';
 
 /**
  * 发布资产 → 下载项：windows 优先安装包、其次便携包；android 取 APK；web 取静态包。
+ * 便携 zip 另存在 `windowsPortable`：安装版与便携版各自选自己的产物。
  * 校验统一走发布里的 `SHA256SUMS.txt`（内含每个产物的摘要），自动更新下载后据此校验。
  */
 function assetsFromRelease(
@@ -236,10 +241,12 @@ function assetsFromRelease(
   };
 
   const assets: NonNullable<UpdateManifest['assets']> = {};
-  const windows = pick('-windows-x64-setup.exe') ?? pick('-windows-x64-portable.zip');
+  const windowsPortable = pick('-windows-x64-portable.zip');
+  const windows = pick('-windows-x64-setup.exe') ?? windowsPortable;
   const android = pick('-android.apk');
   const web = pick('-web.zip');
   if (windows !== undefined) assets.windows = windows;
+  if (windowsPortable !== undefined) assets.windowsPortable = windowsPortable;
   if (android !== undefined) assets.android = android;
   if (web !== undefined) assets.web = web;
   if (Object.keys(assets).length === 0) return undefined;

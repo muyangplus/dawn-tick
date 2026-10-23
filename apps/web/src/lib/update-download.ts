@@ -127,6 +127,11 @@ export function reduceUpdateState(state: UpdateDownloadState, event: UpdateEvent
 
 export interface UpdateDownloadTarget {
   platform: 'windows' | 'android';
+  /**
+   * 安装方式：`installer` 交给系统安装程序（exe/msi/apk）；
+   * `portable` 是 Windows 便携版 zip，退出应用后由原生脚本覆盖 exe。
+   */
+  kind: 'installer' | 'portable';
   url: string;
   /** 落盘文件名：固定名，重复下载覆盖旧安装包 */
   fileName: string;
@@ -145,60 +150,114 @@ export type UpdatePlan =
   | { kind: 'refresh' }
   | { kind: 'unavailable'; reason: string };
 
+/** Windows 运行形态：便携版用 zip 覆盖 exe，安装版交给安装程序。 */
+export type WindowsInstallKind = 'portable' | 'installed';
+
 const INSTALLER_SUFFIXES: Record<'windows' | 'android', readonly string[]> = {
   windows: ['.exe', '.msi'],
   android: ['.apk'],
 };
 
-/** 固定落盘名：从资产地址取出安装包扩展名，非安装包（如便携 zip）返回 null。 */
-export function installerFileName(platform: 'windows' | 'android', url: string): string | null {
+/** 资产地址的最后一段（去掉查询串）；相对地址与测试桩也能用。 */
+function baseNameFromUrl(url: string): string {
   let pathname = url;
   try {
     pathname = new URL(url).pathname;
   } catch {
     // 相对地址或测试桩：按原样取最后一段
   }
-  const base = (pathname.split('/').pop() ?? '').split('?')[0] ?? '';
-  const lower = base.toLowerCase();
+  return (pathname.split('/').pop() ?? '').split('?')[0] ?? '';
+}
+
+/** 固定落盘名：从资产地址取出安装包扩展名，非安装包（如便携 zip）返回 null。 */
+export function installerFileName(platform: 'windows' | 'android', url: string): string | null {
+  const lower = baseNameFromUrl(url).toLowerCase();
   const suffix = INSTALLER_SUFFIXES[platform].find((item) => lower.endsWith(item));
   if (suffix === undefined) return null;
   return platform === 'windows' ? `DawnTick-update${suffix}` : 'DawnTick-update.apk';
 }
 
+/** 便携包固定落盘名：只认 `.zip`，重复下载覆盖旧包。 */
+export function portableFileName(url: string): string | null {
+  return baseNameFromUrl(url).toLowerCase().endsWith('.zip') ? 'DawnTick-update.zip' : null;
+}
+
 /**
  * 渠道 → 该下哪个资产。
  *
- * Web 不下载（构建随渠道自动更新）；Windows 只接受 exe/msi 安装包（便携 zip 请走发布页）；
- * Android 只接受 apk。缺资产时给可读原因，由界面提示并保留「打开发布页」。
+ * Web 不下载（构建随渠道自动更新）；Windows 按运行形态选产物：安装版只接受 exe/msi，
+ * 便携版只接受便携 zip；Android 只接受 apk。缺资产时给可读原因，由界面提示并保留「打开发布页」。
  */
-export function planUpdateDownload(manifest: UpdateManifest | null, platform: UpdatePlatform): UpdatePlan {
+export function planUpdateDownload(
+  manifest: UpdateManifest | null,
+  platform: UpdatePlatform,
+  installKind: WindowsInstallKind = 'installed',
+): UpdatePlan {
   if (platform === 'web') return { kind: 'refresh' };
-  const asset: UpdateAsset | undefined = manifest?.assets?.[platform];
+  const assets = manifest?.assets;
+  if (platform === 'android') {
+    const asset: UpdateAsset | undefined = assets?.android;
+    if (asset === undefined || asset.url === '') {
+      return { kind: 'unavailable', reason: '这次发布没有提供 Android 安装包' };
+    }
+    const fileName = installerFileName('android', asset.url);
+    if (fileName === null) {
+      return { kind: 'unavailable', reason: '发布里的 Android 产物不是 APK' };
+    }
+    return {
+      kind: 'download',
+      target: downloadTarget('android', 'installer', asset, fileName, manifest),
+    };
+  }
+  // 便携版优先取单独保留的 zip；只有 zip 的老清单则退回 windows 本身
+  const portable = installKind === 'portable';
+  const asset = portable ? (assets?.windowsPortable ?? assets?.windows) : assets?.windows;
   if (asset === undefined || asset.url === '') {
     return {
       kind: 'unavailable',
-      reason: platform === 'windows' ? '这次发布没有提供 Windows 安装包' : '这次发布没有提供 Android 安装包',
+      reason: portable ? '这次发布没有提供 Windows 便携包' : '这次发布没有提供 Windows 安装包',
     };
   }
-  const fileName = installerFileName(platform, asset.url);
+  if (portable) {
+    const fileName = portableFileName(asset.url);
+    if (fileName === null) {
+      return { kind: 'unavailable', reason: '发布里的 Windows 便携包不是 zip，请到发布页下载' };
+    }
+    return {
+      kind: 'download',
+      target: downloadTarget('windows', 'portable', asset, fileName, manifest),
+    };
+  }
+  const fileName = installerFileName('windows', asset.url);
   if (fileName === null) {
     return {
       kind: 'unavailable',
-      reason:
-        platform === 'windows' ? '发布里的 Windows 产物不是安装包，请到发布页下载便携版' : '发布里的 Android 产物不是 APK',
+      reason: '发布里的 Windows 产物不是安装包，请到发布页下载便携版',
     };
   }
   return {
     kind: 'download',
-    target: {
-      platform,
-      url: asset.url,
-      fileName,
-      size: asset.size ?? null,
-      assetName: asset.name ?? fileNameFromUrl(asset.url),
-      checksumsUrl: manifest?.checksumsUrl ?? null,
-      sha256: asset.sha256 ?? null,
-    },
+    target: downloadTarget('windows', 'installer', asset, fileName, manifest),
+  };
+}
+
+/** 组装下载目标：渠道与安装方式之外的字段都从资产/清单里取。 */
+function downloadTarget(
+  platform: 'windows' | 'android',
+  kind: UpdateDownloadTarget['kind'],
+  asset: UpdateAsset,
+  fileName: string,
+  manifest: UpdateManifest | null,
+): UpdateDownloadTarget {
+  return {
+    platform,
+    kind,
+    url: asset.url,
+    fileName,
+    size: asset.size ?? null,
+    assetName: asset.name ?? fileNameFromUrl(asset.url),
+    checksumsUrl: manifest?.checksumsUrl ?? null,
+    sha256: asset.sha256 ?? null,
   };
 }
 
@@ -285,6 +344,13 @@ export interface UpdateDownloadHost {
   write: (fileName: string, bytes: Uint8Array) => Promise<string>;
   /** 交给系统安装器；`needsPermission` 表示已跳系统设置、授权后重试 */
   install: (path: string) => Promise<{ needsPermission: boolean }>;
+  /**
+   * 便携版：解压 zip 并准备「退出后覆盖 exe」的脚本，返回脚本路径。
+   * 只有 Windows 桌面提供；Android/Web 不实现。
+   */
+  installPortable?: (zipPath: string) => Promise<string>;
+  /** 便携版：退出应用让替换脚本接手（不能先重启，否则旧二进制会重新占用 exe）。 */
+  exitForUpdate?: () => Promise<void>;
   /** 读发布里的 `SHA256SUMS.txt`；没有该资产时返回 null */
   readChecksum: (url: string, signal?: AbortSignal) => Promise<string | null>;
 }
@@ -373,7 +439,27 @@ async function runUpdateFlow(
     }
     emit({ type: 'install' });
     const path = await host.write(plan.target.fileName, bytes);
-    if (mode === 'prepare') return emit({ type: 'done', path, message: '安装包已下载并通过校验，可以安装了' });
+    if (mode === 'prepare') {
+      return emit({
+        type: 'done',
+        path,
+        message:
+          plan.target.kind === 'portable'
+            ? '便携包已下载并通过校验，可以更新了'
+            : '安装包已下载并通过校验，可以安装了',
+      });
+    }
+    if (plan.target.kind === 'portable') {
+      if (host.installPortable === undefined) {
+        throw new Error('当前平台不支持便携版自动替换，请到发布页手动下载');
+      }
+      await host.installPortable(path);
+      return emit({
+        type: 'done',
+        path,
+        message: '更新已准备，应用将退出并自动替换，随后重新启动',
+      });
+    }
     const outcome = await host.install(path);
     if (outcome.needsPermission) {
       return emit({
