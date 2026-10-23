@@ -3,6 +3,8 @@ name: Publish
 on:
   push:
     tags: ['v*']
+    # dev 分支一推送就滚动发布 dev-latest；标签推送仍走 release/beta
+    branches: [dev]
   schedule:
     - cron: '0 1 * * *'
   workflow_dispatch:

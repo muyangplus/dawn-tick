@@ -77,6 +77,11 @@ def main() -> int:
             failures.append(f'{name} 缺少任务: {sorted(missing_jobs)}')
 
         if name == 'publish.yml':
+            # dev 分支推送即自动滚动发布：缺了这条，dev-latest 只能靠手动/定时
+            push_cfg = triggers.get('push') if isinstance(triggers, dict) else None
+            branches = (push_cfg or {}).get('branches') or []
+            if 'dev' not in branches and 'dev' not in [str(b) for b in branches]:
+                failures.append('publish.yml 缺少 push.branches: dev（dev 推送应自动滚动发布）')
             # 发布逻辑拆到 tools/release/publish.sh 后，约束在脚本里也要成立：两份文本合起来检查
             script = Path('tools/release/publish.sh')
             combined = text + (script.read_text(encoding='utf-8') if script.exists() else '')
