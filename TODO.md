@@ -6,7 +6,7 @@
 ## 0. 现状快照
 
 - **版本**：`0.6.2`（`versionCode 602`）。已发布 `v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.6.0`、`v0.6.1`、`v0.6.2`；`dev` 分支推送会自动滚动发布 `dev-latest`。
-- **验证**：`pnpm test`（core 276 / web 459 / tools 36）、`pnpm ui:smoke`（419 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项）、小组件契约检查。
+- **验证**：`pnpm test`（core 276 / web 487 / tools 36）、`pnpm ui:smoke`（430 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项）、小组件契约检查。
 - **CI**：四个 job——`node`（typecheck / test / 界面冒烟）、`schema`、`rust`、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
 - **本地安卓编译**（无需 CI 往返）：`JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6`、`ANDROID_HOME=E:\work\dsh\android-sdk`，在 `apps/mobile/android` 跑 `gradlew.bat :app:compileDebugKotlin --no-daemon`。
 - **结构**：`App.tsx` 449 行；`settings-view.tsx` 212 行 / `devices-view.tsx` 176 行，卡片在 `screens/settings/`；`data.ts` 732 行（`loadAppData` 70 行）；`app/` 拆启动编排、会话、课表动作、副作用、恢复；`screens/{import,timetable,settings}/` 均按职责拆分，单文件 ≤400 行。
