@@ -7,9 +7,7 @@
 //! - 编解码 / 去重是纯函数，网络收发只在 `start_local` / `scan`；
 //! - 协议见 `apps/mobile/docs/lan-sync.contract.md`。
 
-use std::net::{Ipv4Addr, UdpSocket};
-#[cfg(test)]
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -155,20 +153,39 @@ pub fn device_name() -> String {
 }
 
 /// 开始广播（幂等：已有广播线程先停掉再起）。
-pub fn start_local(host: &str, port: u16, name: &str) -> Result<(), String> {
+///
+/// `directed_broadcast` 是选中地址所属网段的广播地址（由 `lan_network` 计算）；
+/// 同时仍发一份受限广播与环回，覆盖掩码缺失和同机自测。
+pub fn start_local(
+    host: &str,
+    port: u16,
+    name: &str,
+    directed_broadcast: Option<Ipv4Addr>,
+) -> Result<(), String> {
     let packet = announce_packet(host, port, name)?;
     stop_local();
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|error| format!("创建发现广播 socket 失败：{error}"))?;
     socket
         .set_broadcast(true)
         .map_err(|error| format!("开启 UDP 广播失败：{error}"))?;
+    let mut targets: Vec<SocketAddr> = Vec::new();
+    if let Some(broadcast) = directed_broadcast {
+        if let Ok(target) = format!("{broadcast}:{DISCOVERY_PORT}").parse::<SocketAddr>() {
+            targets.push(target);
+        }
+    }
+    for text in ["255.255.255.255", "127.0.0.1"] {
+        if let Ok(target) = format!("{text}:{DISCOVERY_PORT}").parse::<SocketAddr>() {
+            targets.push(target);
+        }
+    }
     let running = Arc::new(AtomicBool::new(true));
     let thread_running = running.clone();
     let handle = std::thread::spawn(move || {
         while thread_running.load(Ordering::SeqCst) {
-            let _ = socket.send_to(packet.as_bytes(), ("255.255.255.255", DISCOVERY_PORT));
-            // 同机自测也走这条；正常局域网里两个目标不会重复命中
-            let _ = socket.send_to(packet.as_bytes(), ("127.0.0.1", DISCOVERY_PORT));
+            for target in &targets {
+                let _ = socket.send_to(packet.as_bytes(), target);
+            }
             for _ in 0..(ANNOUNCE_INTERVAL.as_millis() / 100) {
                 if !thread_running.load(Ordering::SeqCst) {
                     break;
@@ -199,8 +216,24 @@ fn peer_from_packet(packet: LanDiscoveryAnnounce) -> LanDiscoveryPeer {
     }
 }
 
+/// 扫描结果是否保留：给了子网时只留同子网来源与环回（同机自测）。
+pub fn peer_allowed(source: IpAddr, subnet: Option<(Ipv4Addr, Ipv4Addr)>) -> bool {
+    let IpAddr::V4(source) = source else {
+        return false;
+    };
+    if source.is_loopback() {
+        return true;
+    }
+    match subnet {
+        Some((network, netmask)) => crate::lan_network::same_subnet(source, network, netmask),
+        None => true,
+    }
+}
+
 /// 扫描一段时间，收集广播并按 host:port 去重；端口被占用或没有广播时返回空列表。
-pub fn scan(timeout_ms: u64) -> Vec<LanDiscoveryPeer> {
+///
+/// `subnet` 是选中网段的（地址, 掩码）：多网卡时只保留该网段的广播；`None` 表示不过滤。
+pub fn scan_matching(timeout_ms: u64, subnet: Option<(Ipv4Addr, Ipv4Addr)>) -> Vec<LanDiscoveryPeer> {
     let timeout = timeout_ms.clamp(100, MAX_SCAN_MS);
     let Ok(socket) = UdpSocket::bind(("0.0.0.0", DISCOVERY_PORT)) else {
         return Vec::new();
@@ -211,10 +244,12 @@ pub fn scan(timeout_ms: u64) -> Vec<LanDiscoveryPeer> {
     while Instant::now() < deadline {
         let mut buffer = [0u8; 1024];
         match socket.recv_from(&mut buffer) {
-            Ok((length, _source)) => {
+            Ok((length, source)) => {
                 if let Ok(text) = std::str::from_utf8(&buffer[..length]) {
                     if let Some(packet) = parse_announce(text) {
-                        peers.push(peer_from_packet(packet));
+                        if peer_allowed(source.ip(), subnet) {
+                            peers.push(peer_from_packet(packet));
+                        }
                     }
                 }
             }
@@ -227,10 +262,23 @@ pub fn scan(timeout_ms: u64) -> Vec<LanDiscoveryPeer> {
     merge_peers(peers)
 }
 
-/// Tauri 命令：扫描局域网设备；超时缺省 1.5 秒、最多 5 秒。
+/// 扫描全部网段的广播（测试与调试用；命令入口见 `lan_discovery_scan`）。
+#[cfg(test)]
+pub fn scan(timeout_ms: u64) -> Vec<LanDiscoveryPeer> {
+    scan_matching(timeout_ms, None)
+}
+
+/// Tauri 命令：扫描局域网设备；可选 `host` 只保留该地址所属网段的广播。
 #[tauri::command]
-pub fn lan_discovery_scan(timeout_ms: Option<u64>) -> Vec<LanDiscoveryPeer> {
-    scan(timeout_ms.unwrap_or(DEFAULT_SCAN_MS))
+pub fn lan_discovery_scan(timeout_ms: Option<u64>, host: Option<String>) -> Vec<LanDiscoveryPeer> {
+    let subnet = host
+        .as_deref()
+        .map(str::trim)
+        .and_then(|text| text.parse::<Ipv4Addr>().ok())
+        .and_then(|address| {
+            crate::lan_network::netmask_for(address).map(|netmask| (address, netmask))
+        });
+    scan_matching(timeout_ms.unwrap_or(DEFAULT_SCAN_MS), subnet)
 }
 
 /// 调试用：把广播目标地址暴露给测试，避免测试里再拼一份常量。
@@ -307,7 +355,7 @@ mod tests {
     #[test]
     fn scan_receives_local_announcement() {
         let _guard = NETWORK_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        start_local("127.0.0.1", 43210, "测试设备").expect("应能开始广播");
+        start_local("127.0.0.1", 43210, "测试设备", None).expect("应能开始广播");
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut peers = Vec::new();
         while Instant::now() < deadline && peers.is_empty() {
@@ -316,5 +364,18 @@ mod tests {
         stop_local();
         assert!(peers.iter().any(|peer| peer.name == "测试设备" && peer.host == "127.0.0.1" && peer.port == 43210));
         assert_eq!(broadcast_target("127.0.0.1").port(), DISCOVERY_PORT);
+        assert_eq!(broadcast_target("192.168.1.255").ip().to_string(), "192.168.1.255");
+    }
+
+    #[test]
+    fn peer_allowed_filters_by_subnet_but_keeps_loopback() {
+        let subnet = Some((Ipv4Addr::new(192, 168, 1, 23), Ipv4Addr::new(255, 255, 255, 0)));
+        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 8)), subnet));
+        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), subnet));
+        assert!(!peer_allowed(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 8)), subnet));
+        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), None));
+        assert!(!peer_allowed(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), subnet));
+        // 掩码缺失时不过滤
+        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), Some((Ipv4Addr::new(10, 0, 0, 8), Ipv4Addr::new(255, 0, 0, 0)))));
     }
 }

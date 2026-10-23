@@ -3,6 +3,8 @@ use std::io::Write;
 use std::path::PathBuf;
 
 mod lan_discovery;
+mod lan_http;
+mod lan_network;
 mod lan_sync;
 mod paths;
 mod reminder_actions;
@@ -11,6 +13,8 @@ mod updater;
 mod widget_window;
 
 use lan_discovery::lan_discovery_scan;
+use lan_http::lan_http_request;
+use lan_network::lan_network_list;
 use lan_sync::{lan_sync_poll, lan_sync_respond, lan_sync_start, lan_sync_stop};
 use paths::reveal_path;
 use reminder_actions::{clear_pending_reminder, set_pending_reminders};
@@ -2722,6 +2726,8 @@ pub fn run() {
             lan_sync_poll,
             lan_sync_respond,
             lan_discovery_scan,
+            lan_network_list,
+            lan_http_request,
             set_pending_reminders,
             clear_pending_reminder,
             secret_encrypt,

@@ -126,6 +126,11 @@ impl LanSyncServer {
         }
     }
 
+    /// 当前绑定的地址；切换网络时用来判断是否要重启监听。
+    fn bind_ip(&self) -> Option<Ipv4Addr> {
+        self.host.parse().ok()
+    }
+
     /// 取一条待处理请求；队列空时 None。
     fn poll(&self) -> Option<LanSyncRequest> {
         self.shared.lock_queue().pop_front()
@@ -463,7 +468,9 @@ pub(crate) fn is_lan_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 /// 找本机局域网 IPv4：借 UDP `connect` 让系统选路（不真正发包），再校验是私网地址。
-fn pick_lan_ipv4() -> Option<Ipv4Addr> {
+///
+/// 只在网卡枚举失败时兜底；优先用 `lan_network` 的候选排序。
+pub(crate) fn probe_lan_ipv4() -> Option<Ipv4Addr> {
     for target in ["192.168.255.255:9", "10.255.255.255:9", "8.8.8.8:80"] {
         let Ok(socket) = UdpSocket::bind("0.0.0.0:0") else {
             continue;
@@ -482,6 +489,27 @@ fn pick_lan_ipv4() -> Option<Ipv4Addr> {
     None
 }
 
+/// 校验调用方指定的监听地址；空串按「自动选择」处理。
+fn parse_listen_host(raw: Option<&str>) -> Result<Option<Ipv4Addr>, String> {
+    let Some(text) = raw.map(str::trim).filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+    let address: Ipv4Addr = text
+        .parse()
+        .map_err(|_| format!("网络地址不是合法 IPv4：{text}"))?;
+    if address.is_unspecified() || !is_lan_ipv4(address) {
+        return Err("只能监听局域网地址".to_string());
+    }
+    Ok(Some(address))
+}
+
+/// 自动选择：候选排序第一条局域网地址，失败时退回路由探测。
+fn auto_lan_ipv4() -> Option<Ipv4Addr> {
+    crate::lan_network::default_network(&crate::lan_network::list_networks())
+        .and_then(|network| network.address.parse().ok())
+        .or_else(probe_lan_ipv4)
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -497,24 +525,41 @@ fn lock_server() -> std::sync::MutexGuard<'static, Option<LanSyncServer>> {
 }
 
 /// 开启配对服务（幂等）：返回本机局域网地址与系统分配的端口。
+///
+/// `host` 是用户在「切换网络」里选中的地址；缺省时自动选首选局域网。
+/// 已在监听且地址相同直接返回；地址不同则先停旧监听再在新地址上重启。
 #[tauri::command]
-pub fn lan_sync_start() -> Result<LanSyncListen, String> {
+pub fn lan_sync_start(host: Option<String>) -> Result<LanSyncListen, String> {
+    let requested = parse_listen_host(host.as_deref())?;
     let mut guard = lock_server();
     if let Some(server) = guard.as_ref() {
-        return Ok(server.listen_info());
+        if requested.is_none() || requested == server.bind_ip() {
+            return Ok(server.listen_info());
+        }
+        if let Some(previous) = guard.take() {
+            crate::lan_discovery::stop_local();
+            previous.stop();
+        }
     }
-    let host = pick_lan_ipv4()
-        .ok_or_else(|| "没有找到局域网地址，请先连接 Wi-Fi 或有线网络".to_string())?;
-    let server = LanSyncServer::start_on(host)?;
+    let bind = match requested {
+        Some(address) => address,
+        None => auto_lan_ipv4()
+            .ok_or_else(|| "没有找到局域网地址，请先连接 Wi-Fi 或有线网络".to_string())?,
+    };
+    let server = LanSyncServer::start_on(bind)?;
     let info = server.listen_info();
-    // 二期发现：只在开配对期间广播设备名与 HTTP 端口，不含配对码
+    // 二期发现：广播目标用选中地址所属网段的广播地址（Rust 侧按子网掩码计算）
+    let directed_broadcast = crate::lan_network::netmask_for(bind)
+        .and_then(|netmask| crate::lan_network::broadcast_address(bind, netmask));
     let device_name = crate::lan_discovery::device_name();
-    if let Err(error) = crate::lan_discovery::start_local(&info.host, info.port, &device_name) {
+    if let Err(error) =
+        crate::lan_discovery::start_local(&info.host, info.port, &device_name, directed_broadcast)
+    {
         crate::append_log(&format!("局域网发现广播启动失败：{error}"));
     }
     crate::append_log(&format!(
-        "局域网同步已开启：{}:{}",
-        info.host, info.port
+        "局域网同步已开启：{}:{}（广播目标 {:?}）",
+        info.host, info.port, directed_broadcast
     ));
     *guard = Some(server);
     Ok(info)
@@ -569,6 +614,24 @@ mod tests {
 
     const IP_PUBLIC: IpAddr = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9));
     const IP_LOCAL: IpAddr = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2));
+
+    #[test]
+    fn listen_host_validation() {
+        assert_eq!(parse_listen_host(None).expect("缺省应允许"), None);
+        assert_eq!(parse_listen_host(Some("  ")).expect("空串按自动"), None);
+        assert_eq!(
+            parse_listen_host(Some("192.168.1.23")).expect("局域网应允许"),
+            Some(Ipv4Addr::new(192, 168, 1, 23))
+        );
+        assert_eq!(
+            parse_listen_host(Some("100.100.1.1")).expect("100.64/10 应允许"),
+            Some(Ipv4Addr::new(100, 100, 1, 1))
+        );
+        assert!(parse_listen_host(Some("8.8.8.8")).is_err());
+        assert!(parse_listen_host(Some("0.0.0.0")).is_err());
+        assert!(parse_listen_host(Some("::1")).is_err());
+        assert!(parse_listen_host(Some("not-an-ip")).is_err());
+    }
 
     #[test]
     fn head_parsing_extracts_query_and_auth() {
