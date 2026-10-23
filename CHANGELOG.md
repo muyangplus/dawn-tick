@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.6.3] - 2026-10-23
+
 ### 新增
 
 - Windows 自动更新区分便携版与安装版：便携版下载 zip 并在退出后自动替换重启，安装版仍下载安装程序；识别不到按便携版处理
@@ -232,7 +234,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.2...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.3...dev
+[0.6.3]: https://github.com/muyangplus/dawn-tick/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/muyangplus/dawn-tick/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/muyangplus/dawn-tick/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/muyangplus/dawn-tick/compare/v0.5.0...v0.6.0
