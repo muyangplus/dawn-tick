@@ -6,12 +6,15 @@ import { cn } from '../../lib/cn.ts';
 import { isCollapsed, rememberCollapsed } from '../../lib/collapse-store.ts';
 
 export interface CollapsibleCardProps {
-  /** 收起状态在本地按该标识记住 */
+  /** 收起状态在本地按该标识记住（受控模式下只做标识，不读写旧 store） */
   id: string;
   title: string;
   icon?: LucideIcon;
   badge?: ReactNode;
   children: ReactNode;
+  /** 受控展开状态：传了就完全由调用方管（手风琴），不再读写 `collapse-store` */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export interface SectionCardProps {
@@ -35,18 +38,30 @@ export function SectionCard({ title, icon: Icon, badge, children }: SectionCardP
   );
 }
 
-export function CollapsibleCard({ id, title, icon: Icon, badge, children }: CollapsibleCardProps) {
-  const [open, setOpen] = useState(() => !isCollapsed(id));
+export function CollapsibleCard({
+  id,
+  title,
+  icon: Icon,
+  badge,
+  children,
+  open: controlledOpen,
+  onOpenChange: controlledChange,
+}: CollapsibleCardProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(() => !isCollapsed(id));
+  const controlled = controlledOpen !== undefined;
+  const open = controlled ? controlledOpen : uncontrolledOpen;
+  const handleOpenChange = (next: boolean): void => {
+    if (controlled) {
+      controlledChange?.(next);
+      return;
+    }
+    setUncontrolledOpen(next);
+    rememberCollapsed(id, !next);
+  };
 
   return (
     <Card className="p-0">
-      <CollapsiblePrimitive.Root
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next);
-          rememberCollapsed(id, !next);
-        }}
-      >
+      <CollapsiblePrimitive.Root open={open} onOpenChange={handleOpenChange}>
         <CollapsiblePrimitive.Trigger
           aria-label={`${title}${open ? '：收起' : '：展开'}`}
           className="dt-nav-item flex min-h-tap w-full items-center gap-2 rounded-lg px-4 py-3 text-left hover:bg-surface-muted"
