@@ -282,7 +282,8 @@ async function seed(): Promise<SmokeSeed> {
 
 // 冒烟从「设置页默认只展开第一张」开始：清掉旧折叠记忆与手风琴记忆，避免影响断言
 globalThis.localStorage?.setItem('dt.settings.collapsed', '[]');
-globalThis.localStorage?.setItem('dt.cards.expanded', '{}');
+// 两页都从「默认只展开第一张」开始；记忆行为由后面的重进页面用例单独验证
+globalThis.localStorage?.removeItem('dt.cards.expanded');
 
 /** 切换 jsdom 的通知权限桩（实现在 tools/verify/smoke-ui.mjs 的 setupDom 里）。 */
 function setNotifyPermission(value: NotificationPermission): void {
@@ -908,6 +909,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     clickByText(view.container, '设备与同步');
     await flush(12);
   };
+  /** 手风琴：展开指定设备卡片（卡片标题就是触发按钮，收起状态在 aria-label 里） */
+  const expandDeviceCard = async (title: string): Promise<boolean> => {
+    const trigger = view.container.querySelector<HTMLElement>(`button[aria-label="${title}：展开"]`);
+    if (trigger === null) return false;
+    trigger.click();
+    await flush(12);
+    return true;
+  };
+  /** 当前展开的设备页卡片标题：手风琴同一时刻最多一张 */
+  const expandedDeviceCards = (): string[] =>
+    [...view.container.querySelectorAll<HTMLElement>('button[aria-label$="：收起"]')].map((node) =>
+      (node.getAttribute('aria-label') ?? '').replace(/：收起$/, ''),
+    );
   const gotoSettings = async (): Promise<void> => {
     clickByText(view.container, '设置');
     await flush(12);
@@ -2306,9 +2320,35 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // —— 预设版本与更新：内置兜底 + 运行时下载缓存 + 失败回退（全程用注入的假 fetch，不联网） ——
-  // 预设版本随「更新与维护」卡片迁到设备与同步页
+  // 预设版本在「诊断与维护」卡（设备与同步页）
   await gotoDevices();
   await flush(8);
+  // 手风琴：首次进入默认只展开第一张（本地存储）；点开第二张会自动收起第一张；重进页面记住上次展开的
+  check(
+    '设备页手风琴默认只展开第一张（本地存储）',
+    expandedDeviceCards().join(' / ') === '本地存储',
+    expandedDeviceCards().join(' / ') || '(无展开)',
+  );
+  const openedBackup = await expandDeviceCard('备份与恢复');
+  check(
+    '点开第二张卡后第一张自动收起',
+    openedBackup &&
+      expandedDeviceCards().join(' / ') === '备份与恢复' &&
+      view.container.querySelector('[data-role="backup-settings"]') !== null,
+    `${expandedDeviceCards().join(' / ') || '(无展开)'}；备份块=${
+      view.container.querySelector('[data-role="backup-settings"]') === null ? '无' : '有'
+    }`,
+  );
+  await gotoSettings();
+  await gotoDevices();
+  check(
+    '重进设备页仍展开上次那卡',
+    expandedDeviceCards().join(' / ') === '备份与恢复' &&
+      view.container.querySelector('[data-role="backup-settings"]') !== null,
+    expandedDeviceCards().join(' / ') || '(无展开)',
+  );
+  await expandDeviceCard('本地存储');
+  await expandDeviceCard('诊断与维护');
   const presetVersionLine = (): string =>
     (view.container.querySelector('[data-role="preset-version"]')?.textContent ?? '').trim();
   const presetResultLine = (): string =>
@@ -2559,10 +2599,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await gotoDevices();
   const devicesText = view.container.textContent ?? '';
   check(
-    '设备与同步页承载存储、更新与关于卡片，一级页面无「建设中」',
-    devicesText.includes('存储与同步') &&
-      devicesText.includes('更新与维护') &&
-      devicesText.includes('关于') &&
+    '设备与同步页承载七张配置卡片，一级页面无「建设中」',
+    ['本地存储', '备份与恢复', 'WebDAV 同步', '局域网同步', '更新', '诊断与维护', '关于'].every((title) =>
+      devicesText.includes(title),
+    ) &&
+      !devicesText.includes('存储与同步') &&
+      !devicesText.includes('更新与维护') &&
       !devicesText.includes('建设中'),
     devicesText.slice(0, 60),
   );
@@ -2874,10 +2916,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       slotsPanelText.includes('作息') ? '有作息' : '缺作息'
     }`,
   );
-  // 更新渠道与开发者特性在「更新与维护」卡片里（设备与同步页）
+  // 更新渠道与开发者特性在「更新」卡，诊断入口在「备份与恢复」卡的导出导入区（设备与同步页）
   await gotoDevices();
+  await expandDeviceCard('更新');
   check(
-    '维护卡带自动检查更新开关',
+    '更新卡带自动检查更新开关',
     view.container.querySelector('[aria-label="自动检查版本更新"]') !== null &&
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
@@ -2889,25 +2932,32 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     devSwitch !== null && devSwitch.getAttribute('aria-checked') === 'false',
     devSwitch === null ? '(无开关)' : String(devSwitch.getAttribute('aria-checked')),
   );
+  await expandDeviceCard('备份与恢复');
   check(
     '关着开发者特性时诊断入口隐藏',
     view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
       !(view.container.textContent ?? '').includes('导出日志'),
     '',
   );
-  if (devSwitch instanceof window.HTMLElement) devSwitch.click();
+  await expandDeviceCard('更新');
+  const devSwitchOn = view.container.querySelector('[aria-label="开发者特性"]');
+  if (devSwitchOn instanceof window.HTMLElement) devSwitchOn.click();
   await flush(12);
+  await expandDeviceCard('备份与恢复');
   check(
     '打开开发者特性后诊断入口出现',
     (view.container.textContent ?? '').includes('导出日志'),
-    '',
+    (view.container.textContent ?? '').includes('导出日志') ? '' : '(未出现导出日志)',
   );
+  await expandDeviceCard('更新');
   const devSwitchBack = view.container.querySelector('[aria-label="开发者特性"]');
   if (devSwitchBack instanceof window.HTMLElement) devSwitchBack.click();
   await flush(12);
+  await expandDeviceCard('备份与恢复');
   check(
     '再关掉开发者特性后诊断入口恢复隐藏',
-    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null,
+    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
+      !(view.container.textContent ?? '').includes('导出日志'),
     '',
   );
   await gotoSettings();
@@ -2960,8 +3010,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
-  // 应用诊断日志：开关 + 级别（dev 默认最详细）；日志区块随「更新与维护」在设备页
+  // 应用诊断日志：开关 + 级别（dev 默认最详细）；日志区块在「诊断与维护」卡
   await gotoDevices();
+  await expandDeviceCard('WebDAV 同步');
   // I-08：WebDAV 地址旁的「?」与其它说明共用同一个浮层：限宽 + 断词，长 URL 不会横向溢出
   const davHelp = view.container.querySelector<HTMLElement>('[aria-label="说明：WebDAV 地址"]');
   davHelp?.click();
@@ -2978,6 +3029,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+  await expandDeviceCard('诊断与维护');
   const logBlock = view.container.querySelector('[data-role="log-settings"]');
   const logLevelTrigger = view.container.querySelector('[aria-label="日志级别"]');
   if (logLevelTrigger instanceof window.HTMLElement) logLevelTrigger.click();
@@ -3441,7 +3493,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (view.container.textContent ?? '').includes('外观与动效'),
     '',
   );
-  // 「更新与维护」「关于」「存储与同步」三张卡片都在设备与同步页
+  // 设备与同步页承载七张配置卡；手风琴下次进入仍只展开上次那一张
   await gotoDevices();
   // P2-07：设备与同步页同样只有顶部一个入口，侧列切换同样生效
   const devicesEntries = layoutEntryButtons();
@@ -3455,6 +3507,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const aboutToSide = clickByLabel(document.body, '卡片区域：关于：侧列');
   await flush(16);
   if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
+  await expandDeviceCard('关于');
   const devicesSide = view.container.querySelector<HTMLElement>('[data-role="devices-side"]');
   const devicesGrid = view.container.querySelector<HTMLElement>('[data-role="devices-grid"]');
   check(
@@ -3476,23 +3529,25 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByLabel(view.container, '卡片布局')) await flush(12);
   if (clickByLabel(document.body, '卡片区域：关于：主列')) await flush(16);
   if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
-  // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
+  // 诊断与维护卡：预设版本与仓库；更新卡：检查更新与发布页入口
+  await expandDeviceCard('诊断与维护');
   const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
   const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';
   const presetRepoOpensOutside =
     presetRepoLink instanceof window.HTMLAnchorElement &&
     presetRepoLink.target === '_blank' &&
     /\bnoopener\b/.test(presetRepoLink.rel);
-  const releaseLink = view.container.querySelector('[data-role="release-page-link"]');
   check(
-    '更新与维护卡片：预设仓库外部链接与预设版本并列',
+    '诊断与维护卡：预设仓库外部链接与预设版本并列',
     presetRepoHref.includes('muyangplus/dawn-tick-presets') &&
       presetRepoOpensOutside &&
       presetRepoLink.parentElement?.querySelector('[data-role="preset-version"]') !== null,
     `${presetRepoHref} target=${presetRepoLink?.getAttribute('target') ?? '(无)'} rel=${presetRepoLink?.getAttribute('rel') ?? '(无)'}`,
   );
+  await expandDeviceCard('更新');
+  const releaseLink = view.container.querySelector('[data-role="release-page-link"]');
   check(
-    '更新与维护卡片：检查更新与发布页入口',
+    '更新卡：检查更新与发布页入口',
     view.container.querySelector('button[aria-label="检查更新"]') !== null &&
       releaseLink instanceof window.HTMLAnchorElement &&
       releaseLink.href.includes('muyangplus/dawn-tick/releases'),
@@ -3777,6 +3832,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
+  await expandDeviceCard('关于');
   const helpBlock = view.container.querySelector('[data-role="about-help"]');
   const appBlock = view.container.querySelector('[data-role="about-app"]');
   const creditsBlock = view.container.querySelector('[data-role="about-credits"]');
@@ -3805,6 +3861,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
   );
 
+  await expandDeviceCard('本地存储');
   check(
     '浏览器端不显示存储位置与日志模式开关',
     view.container.querySelector('[data-role="storage-location"]') === null &&
@@ -3812,6 +3869,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (view.container.textContent ?? '').includes('本地存储：'),
     '',
   );
+  await expandDeviceCard('备份与恢复');
   check(
     '数据页有自动快照开关、保留份数与快照列表',
     view.container.querySelector('[data-role="backup-settings"]') !== null &&
@@ -3842,6 +3900,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (document.body.textContent ?? '').slice(-120),
   );
 
+  await expandDeviceCard('WebDAV 同步');
   check(
     '数据页有 WebDAV 地址、账号密码与上传下载入口',
     view.container.querySelector('[data-role="webdav-settings"]') !== null &&
@@ -3874,6 +3933,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `状态=${passwordStateLine?.textContent?.trim() ?? '(无)'} 落库=${storedPassword.slice(0, 20)}`,
   );
 
+  await expandDeviceCard('局域网同步');
   check(
     '设备页有局域网同步：对方地址、配对码与范围勾选',
     view.container.querySelector('[data-role="lan-sync"]') !== null &&
@@ -4205,6 +4265,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // 导入备份：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
+  await expandDeviceCard('备份与恢复');
   if (clickByLabel(view.container, '导入备份')) await flush(10);
   check(
     '导入备份合并文件与粘贴两种方式',
@@ -4227,6 +4288,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
 
   // —— 导入加密备份：先要口令，输错可重试，对口令后照常进入模块选择 ——
+  await expandDeviceCard('备份与恢复');
   if (clickByLabel(view.container, '导入备份')) await flush(10);
   const encryptedImportBox = document.querySelector<HTMLTextAreaElement>('[data-role="import-text"]');
   if (encryptedImportBox !== null) setInputValue(encryptedImportBox, encryptedText);
@@ -5514,6 +5576,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
     clickByText(fallbackApp.container, '设备与同步');
     await flush(14);
+    // 手风琴可能仍停在上一张卡：先展开「本地存储」再断言存储类型
+    fallbackApp.container.querySelector<HTMLElement>('button[aria-label="本地存储：展开"]')?.click();
+    await flush(12);
     check(
       'P1-07 设备页存储类型标「临时回退」',
       (fallbackApp.container.textContent ?? '').includes('本地存储：浏览器 IndexedDB · 临时回退'),

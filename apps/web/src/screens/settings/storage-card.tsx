@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, Storage } from '@dawn-tick/core';
-import { canUseWidget, hasMobileWidgets, isWebApp } from '../../lib/capabilities.ts';
+import type { AppSettings } from '@dawn-tick/core';
+import { hasMobileWidgets, isWebApp } from '../../lib/capabilities.ts';
 import { detectPlatform } from '../../platform-detect.ts';
 import {
   canConfigureStorage,
@@ -18,52 +18,29 @@ import { Field, Input } from '../../components/ui/input.tsx';
 import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { BackupBlock } from './backup-block.tsx';
-import { LanSyncBlock } from './lan-sync-block.tsx';
-import { TransferBlock } from './transfer-block.tsx';
-import { WebdavBlock } from './webdav-block.tsx';
-import { useSnapshots } from './use-snapshots.ts';
 import { said } from './format.ts';
 
-export interface DataCardProps {
-  storage: Storage;
+export interface StorageCardProps {
   settings: AppSettings;
   /** 浏览器持久化权限：已申请 / 已授权 / 未授权 */
   persistent: boolean | null;
   /** 存储类型的可读文案，如 IndexedDB / SQLite */
   storageKind: string;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
-  onChanged: () => void;
-  /** 从库外写入设置后（如 WebDAV 只应用设置）重新读取设置并热加载 */
-  onSettingsReplaced: () => Promise<void>;
-  /** 导出/导入对话框挂在设备页（顶部快捷动作也要打开导出） */
-  onOpenExport: () => void;
-  onOpenImport: () => void;
 }
 
 /**
- * 存储与同步卡：本地存储位置与 WAL，下面挂备份、WebDAV、导出导入三块。
+ * 本地存储卡：存储类型与位置、自定义路径、WAL 日志模式与浏览器持久化状态。
  *
- * 存储信息与快照列表是卡内共享状态（WebDAV 下载前会建快照，备份块要能刷新），
- * 其余每个子块只消费 settings/onPatch 与自己的动作接口。
+ * 从原「存储与同步」卡的本地存储部分拆出，动作与提示保持原样；
+ * 快照、WebDAV、局域网同步与导出导入已各自独立成卡。
  */
-export function DataCard({
-  storage,
-  settings,
-  persistent,
-  storageKind,
-  onPatch,
-  onChanged,
-  onSettingsReplaced,
-  onOpenExport,
-  onOpenImport,
-}: DataCardProps) {
+export function StorageCard({ settings, persistent, storageKind, onPatch }: StorageCardProps) {
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [storagePathInput, setStoragePathInput] = useState('');
   const [storageMessage, setStorageMessage] = useState<StatusMessage | null>(null);
   const [storageError, setStorageError] = useState<string | null>(null);
   const storageAction = useAction();
-  const snapshots = useSnapshots(storage);
   const platform = detectPlatform();
   const portableStorage = storageInfo?.portable === true;
   const walDefaultOn = walEnabledByDefault(portableStorage, platform);
@@ -209,20 +186,6 @@ export function DataCard({
           </span>
         </div>
       )}
-      <span className="text-xs text-muted">
-        跨设备迁移用导出导入
-      </span>
-      <BackupBlock storage={storage} settings={settings} onPatch={onPatch} snapshots={snapshots} onChanged={onChanged} />
-      <WebdavBlock
-        storage={storage}
-        settings={settings}
-        onPatch={onPatch}
-        onChanged={onChanged}
-        onSettingsReplaced={onSettingsReplaced}
-        onSnapshotsChanged={snapshots.refresh}
-      />
-      <LanSyncBlock storage={storage} onSettingsReplaced={onSettingsReplaced} onChanged={onChanged} />
-      <TransferBlock settings={settings} onOpenExport={onOpenExport} onOpenImport={onOpenImport} />
     </>
   );
 }
