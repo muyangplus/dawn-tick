@@ -291,9 +291,9 @@ async function seed(): Promise<SmokeSeed> {
   };
 }
 
-// 冒烟从「设置页默认只展开第一张」开始：清掉旧折叠记忆与手风琴记忆，避免影响断言
+// 冒烟从「设备页默认只展开第一张」开始：清掉旧折叠记忆与手风琴记忆，避免影响断言
 globalThis.localStorage?.setItem('dt.settings.collapsed', '[]');
-// 两页都从「默认只展开第一张」开始；记忆行为由后面的重进页面用例单独验证
+// 设备页的卡片手风琴从默认展开第一张开始；记忆行为由后面的重进页面用例单独验证
 globalThis.localStorage?.removeItem('dt.cards.expanded');
 
 /** 切换 jsdom 的通知权限桩（实现在 tools/verify/smoke-ui.mjs 的 setupDom 里）。 */
@@ -350,31 +350,79 @@ function clickByLabel(container: HTMLElement, prefix: string): boolean {
   return true;
 }
 
+/** 设置页分组清单容器（无障碍名称固定为「设置分组」）。 */
+function settingsNav(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>('nav[aria-label="设置分组"]');
+}
+
+/** 导入预览等分组内容里的「返回」：分组导航自己的「返回列表」按钮带 aria-label，要避开。 */
+function clickContentBack(container: HTMLElement): boolean {
+  const button = [...container.querySelectorAll('button')].find(
+    (item) =>
+      (item.textContent ?? '').trim() === '返回' && (item.getAttribute('aria-label') ?? '') === '',
+  );
+  if (button === undefined) return false;
+  button.click();
+  return true;
+}
+
+/** 分组清单里的全部入口。 */
+function settingsNavItems(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('[data-role="settings-nav-item"]')];
+}
+
+/** 按标题找分组入口：清单行同时带标题与摘要，用包含匹配足够稳。 */
+function settingsNavItem(container: HTMLElement, title: string): HTMLElement | null {
+  return (
+    settingsNavItems(container).find((item) => (item.textContent ?? '').includes(title)) ?? null
+  );
+}
+
+/** 分组内容区：与分组清单同级、排在 nav 后面的 section。 */
+function settingsPanel(container: HTMLElement): HTMLElement | null {
+  return settingsNav(container)?.parentElement?.querySelector('section') ?? null;
+}
+
+/** 移动端清单态：清单可见、内容区隐藏（桌面由 desktop: 前缀覆盖为两栏）。 */
+function settingsNavIsListOnly(container: HTMLElement): boolean {
+  const nav = settingsNav(container);
+  const panel = settingsPanel(container);
+  return (
+    nav !== null &&
+    !nav.classList.contains('hidden') &&
+    panel !== null &&
+    panel.classList.contains('hidden') &&
+    panel.classList.contains('desktop:block')
+  );
+}
+
+/** 移动端子页态：清单隐藏、内容区可见。 */
+function settingsSubpageOpen(container: HTMLElement): boolean {
+  const nav = settingsNav(container);
+  const panel = settingsPanel(container);
+  return (
+    nav !== null &&
+    nav.classList.contains('hidden') &&
+    panel !== null &&
+    !panel.classList.contains('hidden')
+  );
+}
+
 /**
- * 设置页是手风琴：同页只展开一张卡。按卡标题点开目标卡；
- * 已经展开时直接返回 true，测试里可在每次进入设置页后无脑调用。
+ * 设置页是「分组导航 + 下钻」：点分组清单里的目标组，右侧/子页只挂载这一组内容。
+ * 等清单渲染出来再点，避免与异步数据竞态；同一组再点时直接成功。
  */
-async function openSettingsCard(container: HTMLElement, title: string): Promise<boolean> {
-  // 设置页的布局配置是异步读的：等卡片渲染出来再点，避免竞态
+async function openSettingsGroup(container: HTMLElement, title: string): Promise<boolean> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const grid = container.querySelector<HTMLElement>('[data-role="settings-grid"]');
-    if (grid !== null) {
-      const trigger = grid.querySelector<HTMLElement>(`button[aria-label="${title}：展开"]`);
-      if (trigger !== null) {
-        trigger.click();
-        await flush(12);
-        return true;
-      }
-      if (grid.querySelector(`button[aria-label="${title}：收起"]`) !== null) return true;
+    const item = settingsNavItem(container, title);
+    if (item !== null) {
+      item.click();
+      await flush(12);
+      return true;
     }
     await flush(1);
   }
   return false;
-}
-
-/** 设置页某张卡当前是否展开（折叠卡标题按钮的 aria-label 带「：收起」）。 */
-function settingsCardOpen(container: HTMLElement, title: string): boolean {
-  return container.querySelector(`[data-role="settings-grid"] button[aria-label="${title}：收起"]`) !== null;
 }
 
 /** 点顶部的「周 / 日」页签：Radix Tabs 在 mousedown 时切页，光 click 不生效。 */
@@ -390,13 +438,6 @@ function clickTab(container: HTMLElement, label: string): boolean {
 
 function hasLabel(container: HTMLElement, prefix: string): boolean {
   return container.querySelector(`button[aria-label^="${prefix}"]`) !== null;
-}
-
-function clickByAriaPrefix(container: HTMLElement, prefix: string): boolean {
-  const element = container.querySelector(`button[aria-label^="${prefix}"]`);
-  if (!(element instanceof HTMLElement)) return false;
-  element.click();
-  return true;
 }
 
 /** 打开顶部「＋」或「⋯」下拉后，点其中的菜单项 */
@@ -951,27 +992,72 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
   clickByText(view.container, '设置');
   await flush(12);
-  const settingsCardTitles = ['学期设置', '提醒设置', '外观与动效', '课表显示', '作息与选校', '悬浮窗与小组件', '时间与日程'];
-  await waitFor(() => settingsCardOpen(view.container, '学期设置'), 20);
-  const openSettingsTitles = (): string[] =>
-    settingsCardTitles.filter((title) => settingsCardOpen(view.container, title));
+  const settingsGroupTitles = ['学期设置', '提醒设置', '外观与动效', '课表显示', '作息与选校', '悬浮窗与小组件', '时间与日程'];
+  await waitFor(() => settingsNavItems(view.container).length === settingsGroupTitles.length, 20);
+  const listedGroupTitles = (): string[] =>
+    settingsGroupTitles.filter((title) => settingsNavItem(view.container, title) !== null);
   check(
-    '设置卡片默认只展开第一张',
-    settingsCardOpen(view.container, '学期设置') &&
-      settingsCardTitles.slice(1).every((title) => !settingsCardOpen(view.container, title)),
-    `展开=${openSettingsTitles().join(' / ') || '(无)'}`,
+    '设置页改为分组导航：七组清单一次列全',
+    settingsNavItems(view.container).length === settingsGroupTitles.length &&
+      listedGroupTitles().length === settingsGroupTitles.length,
+    `分组=${listedGroupTitles().join(' / ') || '(无)'}`,
   );
-  const openedReminders = await openSettingsCard(view.container, '提醒设置');
+  /** 每行摘要都来自 summarizeSettings：按分组取行文本，缺哪条一眼能看出来 */
+  const summaryChecks = [
+    ['提醒设置', '课前 20 分钟'],
+    ['外观与动效', '青春活力 · 跟随系统'],
+    ['课表显示', '7 天 · 隐藏周末'],
+    ['悬浮窗与小组件', '条形 · 浅色'],
+    ['时间与日程', 'Asia/Shanghai · 按开始时间'],
+  ] as const;
+  const missingSummaries = summaryChecks.filter(
+    ([title, summary]) => !(settingsNavItem(view.container, title)?.textContent ?? '').includes(summary),
+  );
   check(
-    '点开第二张后第一张自动收起',
-    openedReminders &&
-      settingsCardOpen(view.container, '提醒设置') &&
-      !settingsCardOpen(view.container, '学期设置') &&
-      openSettingsTitles().length === 1,
-    `展开=${openSettingsTitles().join(' / ') || '(无)'}`,
+    '分组清单每行带当前设置摘要',
+    missingSummaries.length === 0,
+    missingSummaries.length === 0
+      ? ''
+      : `缺：${missingSummaries.map(([title, summary]) => `${title}→${summary}`).join(' / ')}`,
   );
-  // 下面的视图开关在「课表显示」卡里：先按标题展开它（手风琴会收起提醒卡）
-  await openSettingsCard(view.container, '课表显示');
+  check(
+    '移动端默认只显示分组清单',
+    settingsNavIsListOnly(view.container),
+    `nav=${settingsNav(view.container)?.className ?? '(无)'} / panel=${settingsPanel(view.container)?.className ?? '(无)'}`,
+  );
+  const enteredTimetableGroup = await openSettingsGroup(view.container, '课表显示');
+  const groupPanelText = (): string => settingsPanel(view.container)?.textContent ?? '';
+  check(
+    '点分组进入子页：只挂载当前分组内容',
+    enteredTimetableGroup &&
+      settingsSubpageOpen(view.container) &&
+      groupPanelText().includes('周视图天数') &&
+      !groupPanelText().includes('课程管理'),
+    `内容=${groupPanelText().slice(0, 40) || '(空)'}`,
+  );
+  check(
+    '子页顶部有返回设置列表',
+    view.container.querySelector('[data-role="settings-nav-back"]') !== null,
+    '',
+  );
+  if (clickByLabel(view.container, '返回设置列表')) await flush(10);
+  check(
+    '返回后回到分组清单',
+    settingsNavIsListOnly(view.container),
+    `nav=${settingsNav(view.container)?.className ?? '(无)'}`,
+  );
+  // 桌面（≥1024px）左列常驻：点哪组只换右侧内容，非当前组不挂载
+  const switchedToAppearance = await openSettingsGroup(view.container, '外观与动效');
+  const switchedBackToTimetable = await openSettingsGroup(view.container, '课表显示');
+  check(
+    '桌面左列切换分组：右侧只渲染当前组内容',
+    switchedToAppearance &&
+      switchedBackToTimetable &&
+      settingsSubpageOpen(view.container) &&
+      groupPanelText().includes('周视图天数') &&
+      !groupPanelText().includes('主题风格'),
+    `内容=${groupPanelText().slice(0, 40) || '(空)'}`,
+  );
   const switchByAria = (label: string): HTMLElement | null =>
     view.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`);
   check(
@@ -2255,25 +2341,28 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   setNotifyPermission('granted');
   const switchedToSettings = clickByText(view.container, '设置');
   await flush(10);
+  await waitFor(() => settingsNavItems(view.container).length === settingsGroupTitles.length, 20);
   const settingsText = view.container.textContent ?? '';
   check(
-    '重进设置页记住上次展开的卡片',
-    settingsCardOpen(view.container, '课表显示') && !settingsCardOpen(view.container, '学期设置'),
-    `展开=${settingsCardTitles.filter((title) => settingsCardOpen(view.container, title)).join(' / ') || '(无)'}`,
+    '重进设置页回到分组清单（不记忆上次分组）',
+    switchedToSettings &&
+      settingsNavIsListOnly(view.container) &&
+      settingsGroupTitles.every((title) => settingsText.includes(title)),
+    `nav=${settingsNav(view.container)?.className ?? '(无)'}`,
   );
-  await openSettingsCard(view.container, '悬浮窗与小组件');
+  await openSettingsGroup(view.container, '悬浮窗与小组件');
   const widgetSettingsText = view.container.textContent ?? '';
   check(
     '切到设置页',
     switchedToSettings &&
-      settingsCardTitles.every((title) => settingsText.includes(title)) &&
+      settingsGroupTitles.every((title) => settingsText.includes(title)) &&
       widgetSettingsText.includes('小组件背景') &&
       !widgetSettingsText.includes('导出日志'),
     settingsText.slice(0, 60),
   );
 
-  // 「?」说明入口：设置项正文只留短句，补充说明点开可见（说明在「课表显示」卡里）
-  await openSettingsCard(view.container, '课表显示');
+  // 「?」说明入口：设置项正文只留短句，补充说明点开可见（说明在「课表显示」分组里）
+  await openSettingsGroup(view.container, '课表显示');
   const helpButton = view.container.querySelector<HTMLElement>('[aria-label="说明：周视图天数"]');
   helpButton?.click();
   await flush(10);
@@ -2294,8 +2383,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
 
   // —— P1-11 通知权限：删除 PERMISSION_LABEL 后全平台共用六态，非 Android 按能取到的三态显示 ——
-  // 权限状态行在「提醒设置」卡里：先展开它（后面的切页往返会记住这张）
-  await openSettingsCard(view.container, '提醒设置');
+  // 权限状态行在「提醒设置」分组里：分组内容按需挂载，每次重进设置页都要先点进该组
+  await openSettingsGroup(view.container, '提醒设置');
   const notifyLine = (): HTMLElement | null =>
     view.container.querySelector<HTMLElement>('[data-role="notify-permission"]');
   check(
@@ -2311,11 +2400,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   clickByText(view.container, '设置');
   await flush(12);
+  await openSettingsGroup(view.container, '提醒设置');
   check(
     '已拒绝：同一行改词并出现提醒横幅',
     (notifyLine()?.textContent ?? '').includes('通知权限：已拒绝') &&
-      view.container.querySelector('[data-role="notify-banner"]') !== null &&
-      view.container.querySelector('[data-role="notify-card-badge"]') !== null,
+      view.container.querySelector('[data-role="notify-banner"]') !== null,
     notifyLine()?.textContent?.trim() ?? '(无)',
   );
   setNotifyPermission('default');
@@ -2323,6 +2412,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   clickByText(view.container, '设置');
   await flush(12);
+  await openSettingsGroup(view.container, '提醒设置');
   check(
     '未申请：文案对齐六态且不误报横幅',
     (notifyLine()?.textContent ?? '').includes('通知权限：未申请') &&
@@ -2564,11 +2654,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   if (clickByLabel(view.container, '回到今天')) await flush(24);
 
-  // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理卡片里能展开
+  // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理分组里能展开
   clickByText(view.container, '设置');
   await flush(12);
-  // 课程管理在「学期设置」卡里：手风琴先展开它
-  await openSettingsCard(view.container, '学期设置');
+  // 课程管理在「学期设置」分组里：先点进该组
+  await openSettingsGroup(view.container, '学期设置');
   const settingsActions = view.container.querySelector<HTMLElement>('[data-role="settings-actions"]');
   check(
     '设置页顶部只留导入课表（数据类动作迁到设备页）',
@@ -2631,8 +2721,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (devicesActions?.textContent ?? '(无)').trim(),
   );
   await gotoSettings();
-  // 导入流程挂在「学期设置」卡的课程管理里：手风琴默认只开一张，先展开它
-  await openSettingsCard(view.container, '学期设置');
+  // 导入流程挂在「学期设置」分组的课程管理里：先点进该组
+  await openSettingsGroup(view.container, '学期设置');
 
   // 渠道 ②：教务系统内嵌窗口承载选校与入口（Web 上明确给出「改用粘贴」的下一步）
   if (clickByTextStart(view.container, '教务系统内嵌窗口')) await flush(10);
@@ -2861,7 +2951,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('网页识别进入预览', (view.container.textContent ?? '').includes('解析到'), '');
 
   // 手动校正映射：换成星期表头样例，指定表头行与星期列
-  if (clickByText(view.container, '返回')) await flush(10);
+  if (clickContentBack(view.container)) await flush(10);
   const pasteBoxSecond = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBoxSecond instanceof window.HTMLTextAreaElement) {
     setInputValue(pasteBoxSecond, PAGE_WEEKDAY_SAMPLE);
@@ -2891,8 +2981,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   clickByText(view.container, '设置');
   await flush(10);
-  // 手风琴默认只展开第一张；课程管理在「学期设置」卡里，先按标题展开
-  await openSettingsCard(view.container, '学期设置');
+  // 课程管理在「学期设置」分组里：先点进该组
+  await openSettingsGroup(view.container, '学期设置');
 
   const startInputs = (root: HTMLElement): HTMLInputElement[] =>
     [...root.querySelectorAll('input[aria-label$="节开始时间"]')].filter(
@@ -2915,7 +3005,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   // 节次时间表在「作息与选校」卡里：展开后与学期卡的内容合并成一条断言
-  const openedSlotsCard = await openSettingsCard(view.container, '作息与选校');
+  const openedSlotsCard = await openSettingsGroup(view.container, '作息与选校');
   const slotsPanelText = view.container.textContent ?? '';
   check(
     '时间表与课程管理渲染',
@@ -2972,8 +3062,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   await gotoSettings();
-  // 时区与待办排序在「时间与日程」卡里：手风琴先展开它
-  await openSettingsCard(view.container, '时间与日程');
+  // 时区与待办排序在「时间与日程」分组里：先点进该组
+  await openSettingsGroup(view.container, '时间与日程');
   // I-06：时区改为可搜索列表，常用候选带 UTC 偏移，输入即筛选全部 IANA 时区
   const zoneTrigger = view.container.querySelector<HTMLInputElement>('[aria-label="时区"]');
   zoneTrigger?.focus();
@@ -3059,10 +3149,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
   await gotoSettings();
-  await openSettingsCard(view.container, '学期设置');
+  await openSettingsGroup(view.container, '学期设置');
   check('课程管理提供复制课程', view.container.querySelector('[aria-label^="复制课程"]') !== null, '');
-  // 周视图天数在「课表显示」卡里：展开它（手风琴会收起学期卡）
-  await openSettingsCard(view.container, '课表显示');
+  // 周视图天数在「课表显示」分组里：先点进该组
+  await openSettingsGroup(view.container, '课表显示');
   // 周视图天数：1–7 天都可选
   const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();
   await flush(10);
@@ -3101,7 +3191,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   clickByText(view.container, '设置');
   await flush(16);
-  await openSettingsCard(view.container, '课表显示');
+  await openSettingsGroup(view.container, '课表显示');
   check(
     '回到设置页可见两个视图开关',
     switchOf('始终不显示周末') !== null && switchOf('今天为第一天') !== null,
@@ -3131,7 +3221,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   clickByText(view.container, '设置');
   await flush(16);
-  await openSettingsCard(view.container, '课表显示');
+  await openSettingsGroup(view.container, '课表显示');
   switchOf('今天为第一天')?.click();
   await flush(16);
   clickByText(view.container, '课表');
@@ -3255,7 +3345,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   clickByText(view.container, '设置');
   await flush(16);
   // 节次时间表在「作息与选校」卡里：先展开它
-  await openSettingsCard(view.container, '作息与选校');
+  await openSettingsGroup(view.container, '作息与选校');
   check(
     '节次时间可逐节编辑',
     view.container.querySelector('input[aria-label="第 1 节开始时间"]') !== null &&
@@ -3344,23 +3434,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `第 3 节 ${periodClock(3, '开始')}–${periodClock(3, '结束')}，共 ${startInputs(view.container).length} 节，${presetSummary}`,
   );
 
-  // 外观与动效卡：先展开，再验证手风琴下点标题可收起、再展开
-  await openSettingsCard(view.container, '外观与动效');
-  const hadAppearance = (view.container.textContent ?? '').includes('主题风格');
-  if (clickByAriaPrefix(view.container, '外观')) await flush(8);
-  const collapsedAppearance = !(view.container.textContent ?? '').includes('主题风格');
-  check('设置项可收起', hadAppearance && collapsedAppearance, '');
-  if (clickByAriaPrefix(view.container, '外观')) await flush(8);
-  check('设置项可再展开', (view.container.textContent ?? '').includes('主题风格'), '');
+  // 外观与动效分组：点进后只挂载本组内容，切到别组后上一组卸载
+  await openSettingsGroup(view.container, '外观与动效');
+  const hadAppearance = groupPanelText().includes('主题风格');
+  await openSettingsGroup(view.container, '提醒设置');
+  check(
+    '切换分组后上一组内容卸载（按需挂载）',
+    hadAppearance && !groupPanelText().includes('主题风格'),
+    `外观=${hadAppearance ? '有' : '无'} / 切到提醒后=${groupPanelText().includes('主题风格') ? '仍挂载' : '已卸载'}`,
+  );
+  await openSettingsGroup(view.container, '外观与动效');
+  check('再点回外观分组仍能看到主题风格', groupPanelText().includes('主题风格'), '');
   // 课表显示卡：非本周课程开关
-  await openSettingsCard(view.container, '课表显示');
+  await openSettingsGroup(view.container, '课表显示');
   check(
     '非本周课程开关存在',
     view.container.querySelector('[aria-label="周视图显示非本周课程"]') !== null,
     '',
   );
   // 提醒设置卡：课前提醒默认值
-  await openSettingsCard(view.container, '提醒设置');
+  await openSettingsGroup(view.container, '提醒设置');
   check(
     '课前提醒默认提前 20 分钟',
     view.container.querySelector('[aria-label="课前提醒"]') !== null &&
@@ -3368,7 +3461,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
   // 悬浮窗与小组件卡：倒计时开关、悬浮窗样式与安卓小组件清单
-  await openSettingsCard(view.container, '悬浮窗与小组件');
+  await openSettingsGroup(view.container, '悬浮窗与小组件');
   check(
     '倒计时可开关',
     view.container.querySelector('[aria-label="开学倒计时"]') !== null &&
@@ -3399,109 +3492,34 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     desktopPin.status === 'unsupported',
     desktopPin.status,
   );
-  // 卡片布局入口固定在设置页顶部，面板在对话框里：隐藏卡片后仍能改回来
-  const layoutOpened = clickByLabel(view.container, '卡片布局');
-  await flush(12);
-  const layoutTitles = [
-    ...document.querySelectorAll('[data-role="dialog-body"] span'),
-  ].map((item) => (item.textContent ?? '').trim());
-  check(
-    '卡片布局独立成对话框，可显隐排序并一键全部显示',
-    layoutOpened &&
-      document.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&
-      document.querySelector('[aria-label="上移卡片：倒计时"]') !== null &&
-      document.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
-      document.querySelector('[aria-label="恢复默认布局"]') !== null &&
-      document.querySelector('[aria-label="全部显示卡片"]') !== null &&
-      layoutTitles.filter((title) => title.includes('倒计时')).length === 1 &&
-      !layoutTitles.includes('日期与倒计时'),
-    `倒计时相关卡片 ${layoutTitles.filter((title) => title.includes('倒计时')).length} 张`,
-  );
-  if (clickByLabel(document.body, '关闭卡片布局')) await flush(8);
-  // P2-07：设置页「卡片布局」入口只剩顶部一处，外观卡内不再有第二个入口
+  // 设置页改成分组导航后不再有卡片布局入口：显隐 / 排序 / 主侧列属于仍用卡片注册表的页面
   const layoutEntryButtons = (): HTMLElement[] =>
     [...view.container.querySelectorAll<HTMLElement>('button')].filter((item) =>
       (item.getAttribute('aria-label') ?? '').includes('卡片布局'),
     );
   const settingsEntries = layoutEntryButtons();
   check(
-    '设置页卡片布局入口只有顶部一处',
-    settingsEntries.length === 1 &&
-      settingsEntries[0]?.closest('[data-role="settings-toolbar"]') !== null,
+    '设置页不再提供卡片布局入口',
+    settingsEntries.length === 0,
     `${settingsEntries.length} 处：${settingsEntries.map((item) => item.getAttribute('aria-label')).join(' / ') || '(无)'}`,
   );
-  await openSettingsCard(view.container, '悬浮窗与小组件');
+  await openSettingsGroup(view.container, '悬浮窗与小组件');
   check(
-    '小组件卡写明卡片显隐在顶部「卡片布局」',
-    (view.container.textContent ?? '').includes('卡片显隐在顶部「卡片布局」'),
+    '小组件分组不再提示设置页卡片显隐',
+    !(view.container.textContent ?? '').includes('卡片显隐'),
     '',
   );
-  // P2-07：外观卡切到侧列后真的进右栏（宽屏 desktop 两列 2fr/1fr），不再是无效控件
-  // 先把外观卡展开，移动后内容才随卡一起进侧栏
-  await openSettingsCard(view.container, '外观与动效');
-  if (clickByLabel(view.container, '卡片布局')) await flush(12);
-  const appearanceToSide = clickByLabel(document.body, '卡片区域：外观与动效：侧列');
-  await flush(16);
-  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
-  const settingsGrid = view.container.querySelector<HTMLElement>('[data-role="settings-grid"]');
-  const settingsSide = view.container.querySelector<HTMLElement>('[data-role="settings-side"]');
-  const settingsMain = view.container.querySelector<HTMLElement>('[data-role="settings-main"]');
+  // I-15：分组内容仍走 Card 外壳（dt-card-motion）；手风琴的折叠内容不再出现在设置页
+  const settingsPanelElement = settingsPanel(view.container);
   check(
-    '设置页侧列生效：外观卡进入右栏并变成两列',
-    appearanceToSide &&
-      settingsSide !== null &&
-      (settingsSide.textContent ?? '').includes('主题风格') &&
-      !(settingsMain?.textContent ?? '').includes('主题风格') &&
-      (settingsGrid?.className ?? '').includes('desktop:grid-cols-[2fr_1fr]'),
-    `侧栏=${settingsSide === null ? '无' : (settingsSide.textContent ?? '').slice(0, 24)}`,
-  );
-  // I-15：设置页卡片列表带依次淡入类，卡片本身带 hover / 折叠动效类
-  check(
-    '设置页卡片列表带依次淡入与卡片动效类',
-    (settingsMain?.className ?? '').includes('dt-stagger') &&
-      settingsMain?.firstElementChild?.classList.contains('dt-card-motion') === true,
-    `main=${settingsMain?.className ?? '(无)'} 首卡=${settingsMain?.firstElementChild?.className ?? '(无)'}`,
+    '分组内容沿用卡片外壳动效',
+    settingsPanelElement?.querySelector('.dt-card-motion') !== null,
+    `panel=${settingsPanelElement?.className ?? '(无)'}`,
   );
   check(
-    '折叠卡内容挂展开动效类',
-    view.container.querySelector('.dt-collapse') !== null,
-    '',
-  );
-  if (clickByLabel(view.container, '卡片布局')) await flush(12);
-  if (clickByLabel(document.body, '卡片区域：外观与动效：主列')) await flush(16);
-  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
-  check(
-    '设置页外观卡可切回主列',
-    (view.container.querySelector('[data-role="settings-main"]')?.textContent ?? '').includes('主题风格') &&
-      !(view.container.querySelector('[data-role="settings-side"]')?.textContent ?? '').includes('主题风格'),
-    '',
-  );
-  // P2-07 验收：隐藏外观卡（入口所在卡片）后，顶部入口仍在
-  if (clickByLabel(view.container, '卡片布局')) await flush(12);
-  const appearanceCheckbox = document.querySelector<HTMLInputElement>('input[aria-label="显示卡片：外观与动效"]');
-  if (appearanceCheckbox !== null) {
-    appearanceCheckbox.click();
-    await flush(16);
-  }
-  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
-  const appearanceHidden = !(view.container.textContent ?? '').includes('外观与动效');
-  const entryAfterHide = layoutEntryButtons().length === 1;
-  if (entryAfterHide) clickByLabel(view.container, '卡片布局');
-  await flush(12);
-  check(
-    '隐藏外观卡后仍可进入卡片布局',
-    appearanceHidden && entryAfterHide && document.querySelector('[aria-label="显示卡片：外观与动效"]') !== null,
-    `外观卡=${appearanceHidden ? '已隐藏' : '仍显示'} / 入口=${entryAfterHide ? '可点' : '找不到'}`,
-  );
-  const restoreAppearance = document.querySelector<HTMLInputElement>('input[aria-label="显示卡片：外观与动效"]');
-  if (restoreAppearance !== null && !restoreAppearance.checked) {
-    restoreAppearance.click();
-    await flush(16);
-  }
-  if (clickByLabel(document.body, '关闭卡片布局')) await flush(10);
-  check(
-    '外观卡恢复显示',
-    (view.container.textContent ?? '').includes('外观与动效'),
+    '设置页不再渲染折叠卡内容',
+    settingsPanelElement?.querySelector('.dt-collapse') === null &&
+      view.container.querySelector('.dt-collapse') === null,
     '',
   );
   // 设备与同步页承载七张配置卡；手风琴下次进入仍只展开上次那一张
@@ -4497,7 +4515,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   await gotoSettings();
   // 节次时间表在「作息与选校」卡里：先展开它
-  await openSettingsCard(view.container, '作息与选校');
+  await openSettingsGroup(view.container, '作息与选校');
   const beforePeriods = startInputs(view.container).length;
   if (clickByText(view.container, '自动生成节次')) await flush(26);
   const generated = startInputs(view.container);
@@ -4764,7 +4782,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const remounted = mount(<App />);
   await flush(20);
   if (clickByText(remounted.container, '设置')) await flush(14);
-  await openSettingsCard(remounted.container, '作息与选校');
+  await openSettingsGroup(remounted.container, '作息与选校');
   const remountEnd = document.querySelector<HTMLInputElement>('input[aria-label="第 2 节结束时间"]');
   if (remountEnd !== null) setInputValue(remountEnd, '10:55');
   await flush(10);
@@ -4849,7 +4867,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(10);
 
-  await openSettingsCard(remounted.container, '学期设置');
+  await openSettingsGroup(remounted.container, '学期设置');
   check('学期设置显示编辑与删除入口', clickByLabel(remounted.container, '编辑学期'), '');
   await flush(6);
   const editDialogText = document.body.textContent ?? '';
@@ -4996,7 +5014,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   // 删掉这个默认学期，后面的「选校建学期」用例仍从引导页开始
   if (clickByText(remounted.container, '设置')) await flush(16);
-  await openSettingsCard(remounted.container, '学期设置');
+  await openSettingsGroup(remounted.container, '学期设置');
   clickByLabel(remounted.container, '删除学期');
   await flush(10);
   if (clickByText(document.body, '确认删除')) await flush(24);
@@ -5100,7 +5118,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(remounted.container, '创建并开始')) await flush(30);
   if (clickByText(remounted.container, '设置')) await flush(16);
-  await openSettingsCard(remounted.container, '作息与选校');
+  await openSettingsGroup(remounted.container, '作息与选校');
   const onboardClock = (period: number, field: '开始' | '结束'): string =>
     remounted.container.querySelector<HTMLInputElement>(`input[aria-label="第 ${period} 节${field}时间"]`)?.value ?? '';
   check(
@@ -5270,7 +5288,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(12);
     clickByText(importApp.container, '设置');
     await flush(12);
-    await openSettingsCard(importApp.container, '学期设置');
+    await openSettingsGroup(importApp.container, '学期设置');
     const importSummary = importApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]');
     importSummary?.click();
     await flush(10);
@@ -5422,7 +5440,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     }
 
     // 识别成功：诊断入口收在取材步骤底部，回到第 2 步时才展开
-    if (clickByText(importApp.container, '返回')) await flush(12);
+    if (clickContentBack(importApp.container)) await flush(12);
     const successToggle = importApp.container.querySelector<HTMLElement>(
       '[data-role="import-diagnostics-toggle"]',
     );
@@ -5501,7 +5519,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(12);
     clickByText(conflictApp.container, '设置');
     await flush(12);
-    await openSettingsCard(conflictApp.container, '学期设置');
+    await openSettingsGroup(conflictApp.container, '学期设置');
     conflictApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]')?.click();
     await flush(10);
     if (clickByTextStart(conflictApp.container, '粘贴文本')) await flush(10);
@@ -5594,7 +5612,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     );
 
     // 没有冲突项：筛选打开后列表为空，并给一句提示
-    if (clickByText(conflictApp.container, '返回')) await flush(8);
+    if (clickContentBack(conflictApp.container)) await flush(8);
     const pasteAgain = conflictApp.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="粘贴课表页面内容"]',
     );
