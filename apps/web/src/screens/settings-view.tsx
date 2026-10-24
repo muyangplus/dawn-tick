@@ -1,19 +1,21 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { LayoutGrid } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  BadgeCheck,
+  Bell,
+  CalendarClock,
+  CalendarDays,
+  Clock,
+  MonitorSmartphone,
+  Palette,
+} from 'lucide-react';
 import type { AppSettings, SemesterRow, Storage, TimeSlotRow } from '@dawn-tick/core';
-import { COUNT } from '../copy/zh.ts';
 import { notifyNextStep } from '../notify-state.ts';
 import type { ReminderView } from '../useReminders.ts';
-import { cn } from '../lib/cn.ts';
-import { useCardAccordion } from '../lib/use-card-accordion.ts';
 import { Button } from '../components/ui/button.tsx';
-import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
+import { Card } from '../components/ui/card.tsx';
 import { Dialog, DialogContent } from '../components/ui/dialog.tsx';
+import { GroupedSettings, type SettingsGroup } from '../components/grouped-settings.tsx';
 import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
-import { CardLayoutDialog } from './cards/layout-panel.tsx';
-import { readLayout } from './cards/layout-store.ts';
-import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/registry.ts';
-import { settingsSection } from './cards/settings-cards.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { AppearanceCard } from './settings/appearance-card.tsx';
 import { RemindersCard } from './settings/reminders-card.tsx';
@@ -22,6 +24,7 @@ import { SlotsCard } from './settings/slots-card.tsx';
 import { TimeCard } from './settings/time-card.tsx';
 import { TimetableCard } from './settings/timetable-card.tsx';
 import { WidgetCard } from './settings/widget-card.tsx';
+import { summarizeSettings } from './settings-group-summaries.ts';
 import { useNotifyPermission } from './settings/use-notify-permission.ts';
 
 export interface SettingsViewProps {
@@ -41,11 +44,12 @@ export interface SettingsViewProps {
 }
 
 /**
- * 设置页：只留布局、卡片注册表与页级弹窗外壳。
+ * 设置页：分组导航 + 下钻。
  *
- * 七张偏好卡片各自在 `screens/settings/` 下独立成组件，页面只负责按注册表把卡片放进主列/侧列；
- * 卡片按手风琴展开（同页只开一张，记住上次展开的那张，读不到时默认第一张），
- * 通知权限状态由页面持有，顶部提示条与提醒卡看同一份。
+ * 七组偏好各自在 `screens/settings/` 下独立成组件，页面只负责把「标题 / 摘要 / 图标 / 内容」
+ * 交给 `GroupedSettings`：桌面左列常驻、右列只挂载当前分组；移动端先清单、点进子页再返回。
+ * 摘要由纯函数 `summarizeSettings` 统一生成，避免在 JSX 里堆三元。
+ * 通知权限状态仍由页面持有，顶部提示条与提醒分组看同一份。
  */
 export function SettingsView({
   storage,
@@ -63,96 +67,108 @@ export function SettingsView({
 }: SettingsViewProps) {
   /** 顶部快捷动作打开的导入抽屉 */
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
-  const [layout, setLayout] = useState<LayoutConfig>({});
-  const [layoutOpen, setLayoutOpen] = useState(false);
 
   useEffect(() => {
     if (importSignal > 0) setImportDrawerOpen(true);
   }, [importSignal]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const stored = await readLayout(storage);
-      if (!cancelled) setLayout(stored);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [storage]);
-
-  /** 通知权限：顶部提示条、提醒卡角标与卡内状态行共用同一份 */
+  /** 通知权限：顶部提示条与提醒分组共用同一份 */
   const notify = useNotifyPermission(storage, reminders.request);
+  const summaries = summarizeSettings({ settings, semesters, activeSemesterId, slots });
 
-  const bodies: Record<string, ReactNode> = {
-    semesters: (
-      <SemestersCard
-        storage={storage}
-        userId={userId}
-        settings={settings}
-        semesters={semesters}
-        activeSemesterId={activeSemesterId}
-        activeStartDate={activeStartDate}
-        totalWeeks={totalWeeks}
-        slots={slots}
-        onChanged={onChanged}
-      />
-    ),
-
-    slots: (
-      <SlotsCard storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
-    ),
-
-    reminders: (
-      <RemindersCard settings={settings} onPatch={onPatch} reminders={reminders} notify={notify} />
-    ),
-
-    appearance: <AppearanceCard settings={settings} onPatch={onPatch} />,
-
-    timetable: <TimetableCard settings={settings} onPatch={onPatch} />,
-
-    widget: <WidgetCard settings={settings} onPatch={onPatch} />,
-
-    time: <TimeCard settings={settings} onPatch={onPatch} />,
-  };
-
-  /** 设置页卡片：主列在上、侧列在右；侧列由顶部「卡片布局」切换，没有侧列时不占宽度。 */
-  const mainCards = cardsInZone('settings', layout, 'main');
-  const sideCards = cardsInZone('settings', layout, 'side');
-  /** 两列只在主列与侧列都有卡片时生效：全部卡片都切到侧列时，侧列自己占满整行（P2-07） */
-  const twoColumn = mainCards.length > 0 && sideCards.length > 0;
-  /** 手风琴按布局顺序展开：主列在前、侧列在后，默认第一张可见卡 */
-  const allCards = mainCards.concat(sideCards);
-  const { expandedId, toggle } = useCardAccordion(
-    'settings',
-    allCards.map((card) => card.def.id),
-  );
-
-  const renderCard = (card: ResolvedCard): ReactNode => {
-    const body = bodies[card.def.id];
-    if (body === undefined) return null;
-    const section = settingsSection(card.def.id);
-    return (
-      <CollapsibleCard
-        key={card.def.id}
-        id={card.def.id}
-        title={card.def.title}
-        {...(section === undefined ? {} : { icon: section.icon })}
-        {...(card.def.id === 'semesters' ? { badge: COUNT('semester', semesters.length) } : {})}
-        {...(card.def.id === 'reminders' && notify.abnormal
-          ? { badge: <span className="text-danger-strong" data-role="notify-card-badge">通知未授权</span> }
-          : {})}
-        open={expandedId === card.def.id}
-        onOpenChange={(next) => toggle(card.def.id, next)}
-      >
-        {body}
-      </CollapsibleCard>
-    );
-  };
+  const groups: SettingsGroup[] = [
+    {
+      id: 'semesters',
+      title: '学期设置',
+      summary: summaries.semesters,
+      icon: BadgeCheck,
+      content: (
+        <Card className="p-4">
+          <SemestersCard
+            storage={storage}
+            userId={userId}
+            settings={settings}
+            semesters={semesters}
+            activeSemesterId={activeSemesterId}
+            activeStartDate={activeStartDate}
+            totalWeeks={totalWeeks}
+            slots={slots}
+            onChanged={onChanged}
+          />
+        </Card>
+      ),
+    },
+    {
+      id: 'reminders',
+      title: '提醒设置',
+      summary: summaries.reminders,
+      icon: Bell,
+      content: (
+        <Card className="p-4">
+          <RemindersCard settings={settings} onPatch={onPatch} reminders={reminders} notify={notify} />
+        </Card>
+      ),
+    },
+    {
+      id: 'appearance',
+      title: '外观与动效',
+      summary: summaries.appearance,
+      icon: Palette,
+      content: (
+        <Card className="p-4">
+          <AppearanceCard settings={settings} onPatch={onPatch} />
+        </Card>
+      ),
+    },
+    {
+      id: 'timetable',
+      title: '课表显示',
+      summary: summaries.timetable,
+      icon: CalendarDays,
+      content: (
+        <Card className="p-4">
+          <TimetableCard settings={settings} onPatch={onPatch} />
+        </Card>
+      ),
+    },
+    {
+      id: 'slots',
+      title: '作息与选校',
+      summary: summaries.slots,
+      icon: CalendarClock,
+      content: (
+        <Card className="p-4">
+          <SlotsCard storage={storage} semesterId={activeSemesterId ?? ''} onChanged={onChanged} />
+        </Card>
+      ),
+    },
+    {
+      id: 'widget',
+      title: '悬浮窗与小组件',
+      summary: summaries.widget,
+      icon: MonitorSmartphone,
+      content: (
+        <Card className="p-4">
+          <WidgetCard settings={settings} onPatch={onPatch} />
+        </Card>
+      ),
+    },
+    {
+      id: 'time',
+      title: '时间与日程',
+      summary: summaries.time,
+      icon: Clock,
+      content: (
+        <Card className="p-4">
+          <TimeCard settings={settings} onPatch={onPatch} />
+        </Card>
+      ),
+    },
+  ];
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 待重启与通知权限异常都只在设置页顶部呈现一次，各卡片不再重复 */}
+      {/* 待重启与通知权限异常都只在设置页顶部呈现一次，各分组不再重复 */}
       <PendingRestartBar />
       {notify.abnormal && (
         <div
@@ -177,37 +193,7 @@ export function SettingsView({
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2" data-role="settings-toolbar">
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label="卡片布局"
-          onClick={() => setLayoutOpen(true)}
-        >
-          <LayoutGrid className="size-4" aria-hidden />
-          卡片布局
-        </Button>
-        <span className="text-xs text-muted">显示 / 隐藏卡片、调顺序与主侧列</span>
-      </div>
-
-      {/* P2-07：侧列只在有卡片时生效（desktop 两列 2fr/1fr），否则主列占满整行 */}
-      <div
-        className={cn('grid items-start gap-3', twoColumn && 'desktop:grid-cols-[2fr_1fr]')}
-        data-role="settings-grid"
-      >
-        <div className="dt-stagger flex min-w-0 flex-col gap-3" data-role="settings-main">
-          {mainCards.map(renderCard)}
-        </div>
-        {sideCards.length > 0 && (
-          <aside
-            className="dt-stagger flex min-w-0 flex-col gap-3"
-            data-role="settings-side"
-            aria-label="设置侧栏"
-          >
-            {sideCards.map(renderCard)}
-          </aside>
-        )}
-      </div>
+      <GroupedSettings pageTitle="设置" ariaLabel="设置分组" groups={groups} />
 
       <Dialog open={importDrawerOpen} onOpenChange={setImportDrawerOpen}>
         <DialogContent title="导入课表" description="网页课表 / 教务窗口 / ICS / CSV / Excel">
@@ -223,14 +209,6 @@ export function SettingsView({
           />
         </DialogContent>
       </Dialog>
-
-      <CardLayoutDialog
-        open={layoutOpen}
-        onOpenChange={setLayoutOpen}
-        layout={layout}
-        onChange={setLayout}
-        storage={storage}
-      />
     </div>
   );
 }

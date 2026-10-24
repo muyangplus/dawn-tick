@@ -15,14 +15,13 @@ export interface CardLayoutPanelProps {
 
 const SCOPE_LABEL: Record<CardScope, string> = {
   schedule: '日程页',
-  settings: '设置页',
   devices: '设备与同步页',
 };
 
-/** 有卡片的页面：布局面板按这个顺序分组 */
-const SCOPES = ['schedule', 'settings', 'devices'] as const;
+/** 有卡片的页面：布局面板按这个顺序分组（设置页已改成分组导航，不再参与） */
+const SCOPES = ['schedule', 'devices'] as const;
 
-/** 卡片布局对话框：设置页与设备与同步页共用同一份面板与关闭入口。 */
+/** 卡片布局对话框：日程页与设备与同步页共用同一份面板与关闭入口。 */
 export function CardLayoutDialog({
   open,
   onOpenChange,

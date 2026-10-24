@@ -68,7 +68,7 @@ test('新增动效只用合成属性，折叠高度用 Radix 变量', () => {
   }
 });
 
-test('设置 / 设备页卡片按序淡入，延迟只覆盖前 6 项且不超过 120ms', () => {
+test('设备与同步页卡片按序淡入，延迟只覆盖前 6 项且不超过 120ms', () => {
   const block = motionBlock();
   assert.match(block, /\.dt-stagger\s*>\s*\*\s*\{[^}]*animation:/, '缺少 .dt-stagger 子项动画');
   assert.match(block, /\.dt-stagger\s*>\s*\*\s*\{[^}]*backwards/, 'stagger 不能用 forwards/both，否则会压住卡片 hover');

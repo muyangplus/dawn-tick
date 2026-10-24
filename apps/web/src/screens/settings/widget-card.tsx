@@ -217,7 +217,6 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
           </Field>
         </>
       )}
-      <span className="text-xs text-muted">卡片显隐在顶部「卡片布局」</span>
       {canUseWidget() && (
         <StatusLine dataRole="tray-status">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</StatusLine>
       )}

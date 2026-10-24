@@ -4,8 +4,8 @@ import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import type { ScheduleActions } from './use-schedule-actions.ts';
 
-/** 卡片所在页面 */
-export type CardScope = 'schedule' | 'settings' | 'devices';
+/** 卡片所在页面：设置页已改成分组导航，不再走卡片注册表 */
+export type CardScope = 'schedule' | 'devices';
 /** 卡片所在区域：主列 / 侧列 */
 export type CardZone = 'main' | 'side';
 
@@ -49,13 +49,6 @@ export interface ScheduleCardContext {
   tomorrowPreview: boolean;
 }
 
-/** 设置页卡片的渲染上下文 */
-export interface SettingsCardContext {
-  scope: 'settings';
-  layout: LayoutConfig;
-  onLayoutChange: (layout: LayoutConfig) => void;
-}
-
 /** 设备与同步页卡片的渲染上下文：同样只由布局注册表驱动 */
 export interface DevicesCardContext {
   scope: 'devices';
@@ -63,7 +56,7 @@ export interface DevicesCardContext {
   onLayoutChange: (layout: LayoutConfig) => void;
 }
 
-export type CardContext = ScheduleCardContext | SettingsCardContext | DevicesCardContext;
+export type CardContext = ScheduleCardContext | DevicesCardContext;
 
 /** 某页面自己的上下文类型 */
 export type CardContextOf<S extends CardScope> = Extract<CardContext, { scope: S }>;
