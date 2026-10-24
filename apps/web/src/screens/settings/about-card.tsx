@@ -1,6 +1,7 @@
 import { ExternalLink } from '../../components/ui/external-link.tsx';
 import { HelpHint } from '../../components/ui/help-hint.tsx';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
+import { RecentUpdatesDialog } from './recent-updates-dialog.tsx';
 /** 关于卡片列出的运行时依赖与许可证：由 tools/legal/collect-licenses.mjs 生成。 */
 import { RUNTIME_CREDITS } from '../../legal/credits.generated.ts';
 
@@ -71,6 +72,17 @@ export function AboutCard() {
         >
           https://github.com/muyangplus/dawn-tick
         </ExternalLink>
+        <span className="flex flex-wrap items-center gap-2">
+          <RecentUpdatesDialog />
+          <ExternalLink
+            dataRole="release-notes-link"
+            className="text-xs text-primary-strong underline"
+            href="https://github.com/muyangplus/dawn-tick/releases"
+            ariaLabel="打开发布页查看完整更新日志（GitHub）"
+          >
+            完整更新日志
+          </ExternalLink>
+        </span>
       </div>
 
       <div className="flex flex-col gap-1" data-role="about-credits">

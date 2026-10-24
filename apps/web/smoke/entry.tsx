@@ -4010,6 +4010,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (creditsBlock.querySelector('summary')?.textContent ?? '').includes('展开依赖与许可证'),
     `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
   );
+  // 近期更新：CHANGELOG 构建时内联，弹窗按版本倒序列出，离线也能看
+  view.container.querySelector<HTMLElement>('[data-role="recent-updates-open"]')?.click();
+  await flush(8);
+  const recentDialog = document.querySelector<HTMLElement>('[data-role="recent-updates-dialog"]');
+  const recentItems = [...(recentDialog?.querySelectorAll('[data-role="recent-update-item"]') ?? [])];
+  check(
+    '关于：近期更新弹窗列出最近几个版本的变更',
+    recentDialog !== null &&
+      recentItems.length >= 2 &&
+      /v\d+\.\d+\.\d+/.test(recentItems[0]?.textContent ?? '') &&
+      recentItems.some((item) => (item.textContent ?? '').includes('0.6.3')),
+    `版本 ${recentItems.map((item) => item.textContent?.slice(0, 12)).join(' / ')}`,
+  );
+  if (clickByText(document.body, '知道了')) await flush(6);
+  check('近期更新弹窗可以关闭', document.querySelector('[data-role="recent-updates-dialog"]') === null, '');
 
   await openDeviceGroup('本地存储');
   check(
