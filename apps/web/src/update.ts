@@ -293,7 +293,9 @@ export function pickBetaCandidate(
     const record = asRecord(raw);
     if (record === null || record['draft'] === true) continue;
     const tag = typeof record['tag_name'] === 'string' ? record['tag_name'].trim() : '';
-    const isBeta = BETA_RELEASE_TAG.test(tag) && record['prerelease'] === true;
+    // beta 预发布允许两种标签：`-beta.<n>`，或者不带序号的纯版本号（发布时选择 plain）
+    const isBeta =
+      record['prerelease'] === true && (BETA_RELEASE_TAG.test(tag) || STABLE_RELEASE_TAG.test(tag));
     const isStable = STABLE_RELEASE_TAG.test(tag) && record['prerelease'] !== true;
     if (!isBeta && !isStable) continue;
     const version = versionFromTag(tag);

@@ -15,6 +15,11 @@ on:
         required: true
         default: dev
         options: [dev, beta, release]
+      beta_suffix:
+        description: beta 版本后缀（默认 1 → vX.Y.Z-beta.1；填 plain 表示不带序号；选 dev/release 时忽略）
+        type: string
+        required: false
+        default: '1'
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -50,6 +55,7 @@ jobs:
       - id: compute
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_BETA_SUFFIX: ${{ inputs.beta_suffix }}
         run: |
           TAGS=$(git tag --list 'v*-beta.*' | tr '\n' ',')
           node tools/release/plan.mjs \
@@ -57,6 +63,7 @@ jobs:
             --event="$GITHUB_EVENT_NAME" \
             --run="$GITHUB_RUN_NUMBER" \
             --channel="$INPUT_CHANNEL" \
+            --beta-suffix="${INPUT_BETA_SUFFIX:-1}" \
             --existing-tags="$TAGS" \
             --github-output >> "$GITHUB_OUTPUT"
       - name: 判断是否需要构建

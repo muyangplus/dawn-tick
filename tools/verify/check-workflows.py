@@ -41,7 +41,7 @@ PUBLISH_VERSION_JSON_REQUIRED = [
 ]
 
 
-def check_publish_notes(text: str) -> list[str]:
+def check_publish_notes(text: str) -> list:
     problems = [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少 Full Changelog 链接: {item}' for item in PUBLISH_FULL_CHANGELOG_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]

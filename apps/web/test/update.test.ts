@@ -294,7 +294,7 @@ test('beta 列表里正式版更高时，测试版用户更新到正式版', asy
   assert.equal(same.available, true, '0.2.0 高于 0.2.0-beta.1');
 });
 
-test('beta 候选只认 beta 预发布与正式版：草稿 / rc / 滚动标签都跳过', () => {
+test('beta 候选认 beta 预发布与纯版本号预发布：草稿 / rc / 滚动标签都跳过', () => {
   assert.equal(pickBetaCandidate([]), null);
   assert.equal(pickBetaCandidate([{ tag_name: 'dev-latest', prerelease: true }]), null);
   assert.equal(
@@ -303,6 +303,9 @@ test('beta 候选只认 beta 预发布与正式版：草稿 / rc / 滚动标签�
     '非 beta 的预发布不算候选',
   );
   assert.equal(pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', draft: true })]), null, '草稿不算候选');
+  const plainBeta = pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', prerelease: true })]);
+  assert.equal(plainBeta?.channel, 'beta', '不带序号的预发布版本号也算测试版候选');
+  assert.equal(plainBeta?.record['tag_name'], 'v0.3.0');
 
   const picked = pickBetaCandidate([
     releaseBody({ tag_name: 'v0.1.0-beta.2', prerelease: true }),

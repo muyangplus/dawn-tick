@@ -20,16 +20,20 @@ test('定时任务发 dev 渠道', () => {
   assert.equal(plan.buildRef, 'dev');
 });
 
-test('beta 渠道在 main 上发版，标签按既有标签续号', () => {
-  const plan = planRelease({
-    ref: 'refs/heads/main',
-    version: V,
-    dispatchChannel: 'beta',
-    existingTags: ['v0.1.0-beta.1', 'v0.1.0-beta.3', 'v0.0.9-beta.7'],
-  });
-  assert.equal(plan.tag, 'v0.1.0-beta.4');
-  assert.equal(plan.buildRef, 'main');
-  assert.equal(plan.rolling, false);
+test('beta 渠道默认序号 1，可在发布时指定序号', () => {
+  const fallback = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta' });
+  assert.equal(fallback.tag, 'v0.1.0-beta.1');
+  assert.equal(fallback.buildRef, 'main');
+  assert.equal(fallback.prerelease, true);
+
+  const explicit = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: '3' });
+  assert.equal(explicit.tag, 'v0.1.0-beta.3');
+});
+
+test('beta 渠道可以不带序号，直接用纯版本号发预发布', () => {
+  const plan = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: 'plain' });
+  assert.equal(plan.channel, 'beta');
+  assert.equal(plan.tag, 'v0.1.0');
   assert.equal(plan.prerelease, true);
 });
 

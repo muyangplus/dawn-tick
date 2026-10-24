@@ -1,6 +1,6 @@
 {
   "name": "dawn-tick",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "license": "Apache-2.0",
   "description": "晓刻 DawnTick：课表与日程提醒工具",
