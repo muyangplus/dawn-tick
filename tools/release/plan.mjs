@@ -18,8 +18,8 @@ export function nextBetaNumber(existingTags, version) {
 /**
  * 渠道与标签规则：
  * - dev：固定标签 dev-latest，滚动覆盖；由手动触发或定时任务发布，构建自 dev 分支
- * - beta：手动触发时指定 beta 版本号（默认 1 → `v<version>-beta.1`；可指定任意序号，
- *   也可选「不带序号」→ 直接用 `v<version>` 发预发布）；构建自 main，保留历史
+ * - beta：手动触发时默认用纯版本号 `v<version>` 发预发布；也可指定序号拼 `-beta.<n>`；
+ *   构建自 main，保留历史
  * - release：标签 v<version>；构建自 main，打标签触发自动发布
  * beta 与 release 都从 main 发版：改动在 dev 上做，经 PR 合入 main 后再打标签。
  */
@@ -29,8 +29,8 @@ export function planRelease({
   runNumber = 0,
   version,
   dispatchChannel = '',
-  /** beta 渠道的版本后缀：默认 '1' → `-beta.1`；'plain' 表示不带序号 */
-  betaSuffix = '1',
+  /** beta 渠道的版本后缀：默认 'plain' 不带序号（`v<version>`）；可填序号拼 `-beta.<n>` */
+  betaSuffix = 'plain',
   existingTags = [],
 }) {
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -109,7 +109,7 @@ if (invokedDirectly) {
     runNumber: Number(args.get('run') ?? process.env.GITHUB_RUN_NUMBER ?? 0),
     version: args.get('version') ?? currentVersion(),
     dispatchChannel: args.get('channel') ?? '',
-    betaSuffix: args.get('beta-suffix') ?? '1',
+    betaSuffix: args.get('beta-suffix') ?? 'plain',
     existingTags: (args.get('existing-tags') ?? '').split(',').filter((item) => item.trim().length > 0),
   });
 
