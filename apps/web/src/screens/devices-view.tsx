@@ -1,14 +1,21 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { LayoutGrid } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  Archive,
+  Cloud,
+  Database,
+  Info,
+  RefreshCw,
+  Wifi,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react';
 import type { AppSettings, Storage } from '@dawn-tick/core';
+import { CHANNEL, CHANNEL_LABEL, appVersion } from '../channel.ts';
 import { Button } from '../components/ui/button.tsx';
-import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
-import { cn } from '../lib/cn.ts';
-import { useCardAccordion } from '../lib/use-card-accordion.ts';
-import { CardLayoutDialog } from './cards/layout-panel.tsx';
-import { readLayout } from './cards/layout-store.ts';
-import { cardsInZone, type LayoutConfig, type ResolvedCard } from './cards/registry.ts';
-import { devicesSection } from './cards/devices-cards.tsx';
+import { Card } from '../components/ui/card.tsx';
+import { GroupedSettings, type SettingsGroup } from '../components/grouped-settings.tsx';
+import { canConfigureStorage, readStorageInfo } from '../storage-config.ts';
+import { davConfigured } from '../webdav.ts';
 import { AboutCard } from './settings/about-card.tsx';
 import { BackupCard } from './settings/backup-card.tsx';
 import { LanSyncBlock } from './settings/lan-sync-block.tsx';
@@ -17,8 +24,13 @@ import { StorageCard } from './settings/storage-card.tsx';
 import { TimetableExportActions } from './settings/export-actions.tsx';
 import { ExportDialog, IcsExportDialog, ImportDialog } from './settings/transfer-dialogs.tsx';
 import { UpdateCard } from './settings/update-card.tsx';
+import { useSnapshots } from './settings/use-snapshots.ts';
 import { useUpdateCheck } from './settings/use-update-check.ts';
 import { WebdavBlock } from './settings/webdav-block.tsx';
+import {
+  deviceGroupSummaries,
+  type StorageLocationKind,
+} from './devices-group-summaries.ts';
 
 export interface DevicesViewProps {
   storage: Storage;
@@ -33,12 +45,24 @@ export interface DevicesViewProps {
   onSettingsReplaced: () => Promise<void>;
 }
 
+/** 七个分组的固定顺序与图标：与原来的卡片顺序、图标一一对应，方便老用户找得到。 */
+const GROUP_META: ReadonlyArray<{ id: string; title: string; icon: LucideIcon }> = [
+  { id: 'storage', title: '本地存储', icon: Database },
+  { id: 'backup', title: '备份与恢复', icon: Archive },
+  { id: 'update', title: '更新', icon: RefreshCw },
+  { id: 'webdav', title: 'WebDAV 同步', icon: Cloud },
+  { id: 'lan', title: '局域网同步', icon: Wifi },
+  { id: 'maintenance', title: '诊断与维护', icon: Wrench },
+  { id: 'about', title: '关于', icon: Info },
+];
+
 /**
- * 设备与同步页：只留布局、卡片注册表与页级弹窗外壳。
+ * 设备与同步页：分组导航 + 下钻，页面只持有跨分组共享的状态。
  *
- * 七张配置卡片（本地存储 / 备份与恢复 / 更新 / WebDAV / 局域网 / 诊断与维护 / 关于）
- * 各自独立成组件；本页负责手风琴展开状态、顶部快捷动作与共享的版本检查状态。
- * 同一页只展开一张卡片，点开一张会自动收起其余，并记住上次展开的那张。
+ * 页面级状态（导出 / 导入 / ICS 对话框、版本检查、快照版本号、数据目录）留在这里，
+ * 各分组内容由原有组件挂载：一次只显示一组，切组即卸载上一组，页面高度不随展开跳动。
+ * 顶部快捷动作仍与分组内容联动：检查更新复用同一份 `useUpdateCheck`，
+ * WebDAV 下载前建快照会递增版本号让备份组重读列表。
  */
 export function DevicesView({
   storage,
@@ -49,31 +73,55 @@ export function DevicesView({
   onChanged,
   onSettingsReplaced,
 }: DevicesViewProps) {
-  /** 版本检查：顶部快捷动作与更新卡共用同一份进行中状态 */
+  /** 版本检查：顶部快捷动作与「更新」组共用同一份进行中状态 */
   const update = useUpdateCheck(settings);
-  const [layout, setLayout] = useState<LayoutConfig>({});
-  const [layoutOpen, setLayoutOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [icsOpen, setIcsOpen] = useState(false);
-  /** WebDAV 下载前会建快照：递增版本号让备份卡重读列表（两张卡不共享组件状态） */
+  /** WebDAV 下载前会建快照：递增版本号让备份组重读列表 */
   const [snapshotsRevision, setSnapshotsRevision] = useState(0);
   const refreshSnapshots = useCallback(async (): Promise<void> => {
     setSnapshotsRevision((value) => value + 1);
   }, []);
+  /** 清单摘要里的快照份数；分组内容里的备份卡另有自己的列表状态 */
+  const snapshots = useSnapshots(storage, snapshotsRevision);
+  /** 原生端数据目录类型；浏览器 / 安卓读不到时保持 null */
+  const [storageLocation, setStorageLocation] = useState<StorageLocationKind>(null);
 
   useEffect(() => {
+    if (!canConfigureStorage()) return;
     let cancelled = false;
     void (async () => {
-      const stored = await readLayout(storage);
-      if (!cancelled) setLayout(stored);
+      const info = await readStorageInfo();
+      if (cancelled || info === null) return;
+      setStorageLocation(info.customPath === '' ? 'default' : 'custom');
     })();
     return () => {
       cancelled = true;
     };
   }, [storage]);
 
-  const bodies: Record<string, ReactNode> = {
+  const summaries = deviceGroupSummaries({
+    storageKind,
+    storageLocation,
+    persistent,
+    snapshotCount: snapshots.snapshots.length,
+    version: appVersion(),
+    channelLabel: CHANNEL_LABEL[CHANNEL],
+    webdavConfigured: davConfigured(settings),
+    logLevel: settings.logLevel,
+    logEnabled: settings.logEnabled,
+  });
+
+  /** 分组清单由 GroupedSettings 自己持有选中项；顶部快捷动作按它公开的 data 契约跳组。 */
+  const shellRef = useRef<HTMLDivElement>(null);
+  const openGroup = useCallback((id: string): void => {
+    shellRef.current
+      ?.querySelector<HTMLElement>(`[data-role="settings-nav-item"][data-group="${id}"]`)
+      ?.click();
+  }, []);
+
+  const contents: Record<string, ReactNode> = {
     storage: (
       <StorageCard
         settings={settings}
@@ -115,34 +163,13 @@ export function DevicesView({
     about: <AboutCard />,
   };
 
-  /** 设备与同步页卡片：主列在上、侧列在右；侧列由顶部「卡片布局」切换，没有侧列时不占宽度。 */
-  const mainCards = cardsInZone('devices', layout, 'main');
-  const sideCards = cardsInZone('devices', layout, 'side');
-  /** 两列只在主列与侧列都有卡片时生效：全部卡片都切到侧列时，侧列自己占满整行（P2-07） */
-  const twoColumn = mainCards.length > 0 && sideCards.length > 0;
-  /** 手风琴按可见卡片的渲染顺序排：默认展开第一张，点开一张自动收起其余 */
-  const accordion = useCardAccordion(
-    'devices',
-    mainCards.concat(sideCards).map((card) => card.def.id),
-  );
-
-  const renderCard = (card: ResolvedCard): ReactNode => {
-    const body = bodies[card.def.id];
-    if (body === undefined) return null;
-    const section = devicesSection(card.def.id);
-    return (
-      <CollapsibleCard
-        key={card.def.id}
-        id={card.def.id}
-        title={card.def.title}
-        {...(section === undefined ? {} : { icon: section.icon })}
-        open={accordion.expandedId === card.def.id}
-        onOpenChange={(next) => accordion.toggle(card.def.id, next)}
-      >
-        {body}
-      </CollapsibleCard>
-    );
-  };
+  const groups: SettingsGroup[] = GROUP_META.map((meta) => ({
+    id: meta.id,
+    title: meta.title,
+    icon: meta.icon,
+    summary: summaries[meta.id as keyof typeof summaries],
+    content: <Card className="p-4">{contents[meta.id]}</Card>,
+  }));
 
   return (
     <div className="flex flex-col gap-3" data-role="devices-view" aria-label="设备与同步">
@@ -155,7 +182,8 @@ export function DevicesView({
           导出课表（ICS）
         </Button>
         <TimetableExportActions storage={storage} settings={settings} />
-        <Button size="sm" variant="secondary" onClick={() => accordion.toggle('backup', true)}>
+        {/* 恢复快照沿用旧行为：直接落到「备份与恢复」分组看快照列表 */}
+        <Button size="sm" variant="secondary" onClick={() => openGroup('backup')}>
           恢复快照
         </Button>
         <Button size="sm" variant="secondary" loading={update.busy} onClick={() => void update.run()}>
@@ -163,45 +191,9 @@ export function DevicesView({
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2" data-role="devices-toolbar">
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label="卡片布局"
-          onClick={() => setLayoutOpen(true)}
-        >
-          <LayoutGrid className="size-4" aria-hidden />
-          卡片布局
-        </Button>
-        <span className="text-xs text-muted">显示 / 隐藏卡片、调顺序与主侧列</span>
+      <div ref={shellRef}>
+        <GroupedSettings pageTitle="设备与同步" ariaLabel="设备与同步分组" groups={groups} />
       </div>
-
-      {/* P2-07：侧列只在有卡片时生效（desktop 两列 2fr/1fr），否则主列占满整行 */}
-      <div
-        className={cn('grid items-start gap-3', twoColumn && 'desktop:grid-cols-[2fr_1fr]')}
-        data-role="devices-grid"
-      >
-        <div className="dt-stagger flex min-w-0 flex-col gap-3" data-role="devices-main">
-          {mainCards.map(renderCard)}
-        </div>
-        {sideCards.length > 0 && (
-          <aside
-            className="dt-stagger flex min-w-0 flex-col gap-3"
-            data-role="devices-side"
-            aria-label="设备与同步侧栏"
-          >
-            {sideCards.map(renderCard)}
-          </aside>
-        )}
-      </div>
-
-      <CardLayoutDialog
-        open={layoutOpen}
-        onOpenChange={setLayoutOpen}
-        layout={layout}
-        onChange={setLayout}
-        storage={storage}
-      />
 
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} storage={storage} />
       <IcsExportDialog open={icsOpen} onOpenChange={setIcsOpen} storage={storage} />
