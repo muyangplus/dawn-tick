@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  LAN_SERVER_START_ERROR_PREFIX,
   LAN_SERVER_START_TIMEOUT_MESSAGE,
   LAN_SERVER_START_TIMEOUT_MS,
   setLanServerStarterForTests,
   startLanServer,
+  startLanServerError,
   withTimeout,
 } from '../src/lan-sync.ts';
 
@@ -20,9 +22,18 @@ function installTauriPlatform(): () => void {
   };
 }
 
-test('生产超时是 8 秒，文案可直接展示', () => {
+test('生产超时是 8 秒，失败文案带统一前缀', () => {
   assert.equal(LAN_SERVER_START_TIMEOUT_MS, 8_000);
-  assert.equal(LAN_SERVER_START_TIMEOUT_MESSAGE, '开启配对超时：请确认已连接 Wi-Fi 后重试');
+  assert.equal(LAN_SERVER_START_ERROR_PREFIX, '开启配对失败：');
+  assert.equal(
+    LAN_SERVER_START_TIMEOUT_MESSAGE,
+    '原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+  );
+  assert.equal(
+    startLanServerError(LAN_SERVER_START_TIMEOUT_MESSAGE),
+    '开启配对失败：原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+  );
+  assert.equal(startLanServerError('开启配对失败：原因'), '开启配对失败：原因');
 });
 
 test('withTimeout：按时返回或抛可读超时错误', async () => {
@@ -85,10 +96,26 @@ test('start 超时：返回可读错误、不抛异常，且允许立即重试',
     const first = await startLanServer({ host: '192.168.1.23', now: NOW, timeoutMs: 20 });
     assert.equal(first.ok, false);
     assert.equal(first.info, null);
-    assert.equal(first.error, LAN_SERVER_START_TIMEOUT_MESSAGE);
+    assert.equal(first.error, `开启配对失败：${LAN_SERVER_START_TIMEOUT_MESSAGE}`);
+    assert.match(first.error ?? '', /开启配对失败：/);
     const second = await startLanServer({ host: '192.168.1.23', now: NOW, timeoutMs: 20 });
     assert.equal(second.ok, true);
     assert.equal(second.info?.address, '192.168.1.23:8765');
+  } finally {
+    setLanServerStarterForTests(null);
+    restorePlatform();
+  }
+});
+
+test('原生失败：原始异常 message 透传并加上「开启配对失败：」前缀', async () => {
+  const restorePlatform = installTauriPlatform();
+  setLanServerStarterForTests(async () => {
+    throw new Error('监听端口失败：Address already in use');
+  });
+  try {
+    const result = await startLanServer({ host: '192.168.1.23', now: NOW });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, '开启配对失败：监听端口失败：Address already in use');
   } finally {
     setLanServerStarterForTests(null);
     restorePlatform();

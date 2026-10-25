@@ -14,14 +14,19 @@ import {
   LAN_SYNC_PROTOCOL_VERSION,
   MAX_REQUEST_BYTES,
   MAX_RESPONSE_BYTES,
-  grantSession,
+  findTrustedToken,
+  issueTrustedToken,
   parseScope,
+  pruneTrustedTokens,
+  revokeTrustedToken,
+  rotateTrustedToken,
   scopeModules,
-  sessionValid,
+  touchTrustedToken,
   verifyPairCode,
   type LanScope,
   type Pairing,
-  type SessionGrant,
+  type TokenCheck,
+  type TrustedToken,
 } from './lan-sync-protocol.ts';
 
 /**
@@ -30,6 +35,8 @@ import {
  * 边界：
  * - 信封复用 `exportBackup` / `importBackup`（与 WebDAV 整包同一套格式与冲突规则）；
  * - 这里是服务端鉴权的唯一实现：原生层只转发，请求处理是纯函数 + Storage，可直接单测；
+ * - 可信令牌只保存 SHA-256 哈希；明文令牌仅在 `POST /pair` / `POST /pair/refresh`
+ *   的响应里出现一次，由客户端自行持久化；
  * - 与两端对照见 `apps/mobile/docs/lan-sync.contract.md`。
  */
 
@@ -123,18 +130,18 @@ export interface LanHttpRequest {
 export interface LanHttpReply {
   status: number;
   body: string;
-  /** `/pair` 成功时的新会话：调用方要保存，后续请求靠它鉴权 */
-  session?: SessionGrant;
   /** `/pair` 成功即消耗配对码：调用方要把配对码置空 */
   consumePairing?: boolean;
+  /** 本次请求改变了可信令牌列表：调用方要把整份快照写入 `app_meta` */
+  tokens?: TrustedToken[];
 }
 
 export interface LanServerContext {
   storage: Storage;
   /** 当前配对码；已用掉或未开启时为 null */
   pairing: Pairing | null;
-  /** 当前已授权的会话；未配对时为 null */
-  session: SessionGrant | null;
+  /** 已授权的长期令牌（只含哈希）；没有配对时为空数组 */
+  tokens: readonly TrustedToken[];
   now?: number;
 }
 
@@ -142,18 +149,30 @@ function utf8Bytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-function errorReply(status: number, code: string, message: string): LanHttpReply {
-  return { status, body: JSON.stringify({ error: { code, message } }) };
+function errorReply(
+  status: number,
+  code: string,
+  message: string,
+  tokens?: TrustedToken[],
+): LanHttpReply {
+  const reply: LanHttpReply = { status, body: JSON.stringify({ error: { code, message } }) };
+  return tokens === undefined ? reply : { ...reply, tokens };
 }
 
-function jsonReply(status: number, payload: unknown): LanHttpReply {
-  return { status, body: JSON.stringify(payload) };
+function jsonReply(
+  status: number,
+  payload: unknown,
+  options: { tokens?: TrustedToken[] } = {},
+): LanHttpReply {
+  const reply: LanHttpReply = { status, body: JSON.stringify(payload) };
+  return options.tokens === undefined ? reply : { ...reply, tokens: options.tokens };
 }
 
 /**
  * 处理一个转发请求。纯函数 + Storage，原生层轮询到请求后调用它，再用结果回应。
  *
  * 校验顺序固定：体积 → 路径/方法 → 鉴权 → 业务；错误体统一。
+ * 令牌相关的响应会带 `tokens` 快照，调用方负责写入 `app_meta`。
  */
 export async function handleLanRequest(
   context: LanServerContext,
@@ -170,18 +189,43 @@ export async function handleLanRequest(
     if (method !== 'POST') return errorReply(405, 'method_not_allowed', '配对只接受 POST');
     return handlePair(context, request, now);
   }
+  if (request.path === '/pair/refresh') {
+    if (method !== 'POST') return errorReply(405, 'method_not_allowed', '刷新令牌只接受 POST');
+    return handleRefresh(context, request, now);
+  }
+  if (request.path === '/pair/revoke') {
+    if (method !== 'POST') return errorReply(405, 'method_not_allowed', '吊销令牌只接受 POST');
+    return handleRevoke(context, request, now);
+  }
   if (request.path === '/export' || request.path === '/import') {
-    if (!sessionValid(context.session, request.authorization, now)) {
-      return errorReply(401, 'unauthorized', '未配对或会话令牌已过期，请重新配对');
+    const auth = findTrustedToken(context.tokens, request.authorization, now);
+    if (!auth.ok || auth.record === null) {
+      return errorReply(401, 'unauthorized', auth.error ?? '未配对或配对令牌已失效，请重新配对');
     }
     if (request.path === '/export') {
-      if (method !== 'GET') return errorReply(405, 'method_not_allowed', '导出只接受 GET');
-      return handleExport(context, request, now);
+      if (method !== 'GET') {
+        return errorReply(405, 'method_not_allowed', '导出只接受 GET', touched(context, auth, now));
+      }
+      const reply = await handleExport(context, request, now);
+      return withTokens(reply, touched(context, auth, now));
     }
-    if (method !== 'POST') return errorReply(405, 'method_not_allowed', '导入只接受 POST');
-    return handleImport(context, request, now);
+    if (method !== 'POST') {
+      return errorReply(405, 'method_not_allowed', '导入只接受 POST', touched(context, auth, now));
+    }
+    const reply = await handleImport(context, request, now);
+    return withTokens(reply, touched(context, auth, now));
   }
   return errorReply(404, 'not_found', '没有该接口');
+}
+
+/** 鉴权成功后的令牌快照：`lastUsedAt` 记为本次请求时间。 */
+function touched(context: LanServerContext, auth: TokenCheck, now: number): TrustedToken[] {
+  return auth.record === null ? [...context.tokens] : touchTrustedToken(context.tokens, auth.record.tokenHash, now);
+}
+
+/** 响应成功才带上新令牌快照；错误回复保持原样。 */
+function withTokens(reply: LanHttpReply, tokens: TrustedToken[]): LanHttpReply {
+  return reply.status >= 400 ? reply : { ...reply, tokens };
 }
 
 async function handlePair(
@@ -189,25 +233,65 @@ async function handlePair(
   request: LanHttpRequest,
   now: number,
 ): Promise<LanHttpReply> {
-  if (context.session !== null && !(now >= context.session.expiresAt)) {
-    return errorReply(409, 'conflict', '已有设备配对，请先停止再重新开启配对');
-  }
-  let code = '';
+  let body: { code?: unknown; name?: unknown };
   try {
-    const body = JSON.parse(request.body) as { code?: unknown };
-    code = typeof body.code === 'string' ? body.code : '';
+    body = JSON.parse(request.body) as { code?: unknown; name?: unknown };
   } catch {
     return errorReply(400, 'bad_request', '配对请求不是合法 JSON');
   }
+  const code = typeof body.code === 'string' ? body.code : '';
   const check = verifyPairCode(context.pairing, code, now);
   if (!check.ok) return errorReply(401, 'unauthorized', check.error ?? '配对码不正确');
-  const session = grantSession(now);
+  // 长期令牌：每次成功配对都新增一条可信设备，不再限制「同时只有一台」
+  const issued = issueTrustedToken(typeof body.name === 'string' ? body.name : '未知设备', now);
+  const tokens = [...pruneTrustedTokens(context.tokens, now), issued.record];
   return {
     status: 200,
-    body: JSON.stringify({ token: session.token, expiresAt: session.expiresAt, schemaVersion: LAN_SYNC_PROTOCOL_VERSION }),
-    session,
+    body: JSON.stringify({
+      token: issued.token,
+      expiresAt: issued.record.expiresAt,
+      schemaVersion: LAN_SYNC_PROTOCOL_VERSION,
+    }),
     consumePairing: true,
+    tokens,
   };
+}
+
+/** 用现有令牌换新令牌：旧哈希立即作废，有效期从本次刷新起重新计算。 */
+function handleRefresh(
+  context: LanServerContext,
+  request: LanHttpRequest,
+  now: number,
+): LanHttpReply {
+  const auth = findTrustedToken(context.tokens, request.authorization, now);
+  if (!auth.ok || auth.record === null) {
+    return errorReply(401, 'unauthorized', auth.error ?? '配对已失效，请重新配对');
+  }
+  const rotated = rotateTrustedToken(context.tokens, auth.record, now);
+  return {
+    status: 200,
+    body: JSON.stringify({
+      token: rotated.token,
+      expiresAt: rotated.record.expiresAt,
+      schemaVersion: LAN_SYNC_PROTOCOL_VERSION,
+    }),
+    tokens: rotated.tokens,
+  };
+}
+
+/** 吊销令牌：移除后该设备的后续请求一律 401；客户端失败时也删除本地记录。 */
+function handleRevoke(
+  context: LanServerContext,
+  request: LanHttpRequest,
+  now: number,
+): LanHttpReply {
+  const auth = findTrustedToken(context.tokens, request.authorization, now);
+  if (!auth.ok || auth.record === null) {
+    return errorReply(401, 'unauthorized', auth.error ?? '配对已失效，请重新配对');
+  }
+  return jsonReply(200, { revoked: true, schemaVersion: LAN_SYNC_PROTOCOL_VERSION }, {
+    tokens: revokeTrustedToken(context.tokens, auth.record.tokenHash),
+  });
 }
 
 async function handleExport(

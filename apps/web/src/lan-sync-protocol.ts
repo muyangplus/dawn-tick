@@ -1,14 +1,17 @@
-import type { BackupModule } from '@dawn-tick/core';
+import { sha256HexSync, type BackupModule } from '@dawn-tick/core';
+import { LAN_TRUSTED_TOKENS_META_KEY } from './lib/meta-keys.ts';
 
 /**
- * 局域网同步（I-14）的协议层：范围、地址、配对码与会话令牌。
+ * 局域网同步（I-14）的协议层：范围、地址、配对码与长期配对令牌。
  *
  * 边界：
  * - 纯函数，不碰 `fetch`、Storage 与原生桥；信封与服务端请求处理在
- *   `lan-sync-payload.ts`，客户端与服务端生命周期在 `lan-sync.ts`；
+ *   `lan-sync-payload.ts`，客户端与服务端生命周期在 `lan-sync.ts` / `lan-sync-client.ts`；
  * - 两端对照见 `apps/mobile/docs/lan-sync.contract.md`；
- * - 鉴权只在这里与载荷层：原生层（Rust / Kotlin）只做传输与限额，配对码、令牌与过期判定
- *   都能被 `apps/web/test/lan-sync.test.ts` 直接覆盖。
+ * - 鉴权只在这里与载荷层：原生层（Rust / Kotlin）只做传输与限额，配对码、令牌哈希与过期
+ *   判定都能被 `apps/web/test/lan-sync.test.ts` 直接覆盖；
+ * - 服务端只保存令牌的 SHA-256 哈希（`TrustedToken.tokenHash`），明文令牌只在
+ *   `POST /pair` 的响应里出现一次。
  */
 
 /** 信封协议版本：不认识就 400，不做猜测兼容。 */
@@ -19,8 +22,12 @@ export const LAN_SYNC_KIND = 'dawn-tick-lan-sync';
 export const LAN_SYNC_PORT = 8765;
 /** 配对码有效期：5 分钟。 */
 export const PAIR_CODE_TTL_MS = 5 * 60_000;
-/** 一次性会话令牌有效期：10 分钟。 */
-export const SESSION_TTL_MS = 10 * 60_000;
+/** 长期配对令牌有效期：180 天；`/pair/refresh` 每次换新令牌并顺延。 */
+export const LAN_PAIRING_TTL_MS = 180 * 24 * 60 * 60_000;
+/** 服务端 `app_meta` 里的可信令牌列表键（登记见 `lib/meta-keys.ts`）。 */
+export { LAN_TRUSTED_TOKENS_META_KEY };
+/** 令牌名称（设备名）上限：与 UDP 广播的设备名同口径。 */
+export const TRUSTED_TOKEN_NAME_MAX = 48;
 /** 请求体上限 5MB（原生层同样在入队前拦截）。 */
 export const MAX_REQUEST_BYTES = 5 * 1024 * 1024;
 /** 响应体上限 20MB（课表很大时导出会超过请求上限）。 */
@@ -125,10 +132,173 @@ export interface Pairing {
   expiresAt: number;
 }
 
-/** 一次已授权的会话（服务端视角与客户端视角用同一个结构）。 */
-export interface SessionGrant {
-  token: string;
+/**
+ * 服务端保存的一条可信令牌：**只存哈希**，明文令牌在配对响应里返回一次。
+ *
+ * `createdAt` 是首次配对时间（刷新令牌不重置），`lastUsedAt` 由每次鉴权请求刷新，
+ * `expiresAt` 是当前令牌的到期时间（刷新即顺延）。
+ */
+export interface TrustedToken {
+  tokenHash: string;
+  name: string;
+  createdAt: number;
+  lastUsedAt: number;
   expiresAt: number;
+}
+
+/** 新签发的令牌：明文给客户端，`record` 落服务端 `app_meta`。 */
+export interface IssuedToken {
+  token: string;
+  record: TrustedToken;
+}
+
+/** 令牌哈希口径：SHA-256 小写 hex（纯 TS 实现，三端同判）。 */
+export function hashToken(token: string): string {
+  return sha256HexSync(token);
+}
+
+/** 设备名归一：空白、超长与非字符串一律退回「未知设备」。 */
+export function normalizeTokenName(raw: unknown): string {
+  if (typeof raw !== 'string') return '未知设备';
+  const text = raw.trim();
+  if (text === '') return '未知设备';
+  return [...text].slice(0, TRUSTED_TOKEN_NAME_MAX).join('');
+}
+
+/** 令牌是否已到期。 */
+export function tokenExpired(record: TrustedToken, now = Date.now()): boolean {
+  return now >= record.expiresAt;
+}
+
+/** 签发长期令牌：默认 180 天，返回明文与可落盘记录。 */
+export function issueTrustedToken(
+  name: string,
+  now = Date.now(),
+  token = randomSessionToken(),
+): IssuedToken {
+  const record: TrustedToken = {
+    tokenHash: hashToken(token),
+    name: normalizeTokenName(name),
+    createdAt: now,
+    lastUsedAt: now,
+    expiresAt: now + LAN_PAIRING_TTL_MS,
+  };
+  return { token, record };
+}
+
+export interface TokenCheck {
+  ok: boolean;
+  record: TrustedToken | null;
+  error: string | null;
+}
+
+/** 校验 `Authorization: Bearer …`：先找哈希，再判到期；错误文案可直接展示。 */
+export function findTrustedToken(
+  tokens: readonly TrustedToken[],
+  authorization: string | null,
+  now = Date.now(),
+): TokenCheck {
+  const token = bearerToken(authorization);
+  if (token === null) return { ok: false, record: null, error: '缺少配对令牌，请重新配对' };
+  const tokenHash = hashToken(token);
+  const record = tokens.find((item) => item.tokenHash === tokenHash) ?? null;
+  if (record === null) return { ok: false, record: null, error: '配对已失效，请重新配对' };
+  if (tokenExpired(record, now)) {
+    return { ok: false, record: null, error: '配对已过期，请重新配对' };
+  }
+  return { ok: true, record, error: null };
+}
+
+/** 鉴权通过后刷新最后使用时间；没变化时返回原数组，避免无意义落盘。 */
+export function touchTrustedToken(
+  tokens: readonly TrustedToken[],
+  tokenHash: string,
+  now = Date.now(),
+): TrustedToken[] {
+  let changed = false;
+  const next = tokens.map((item) => {
+    if (item.tokenHash !== tokenHash) return item;
+    changed = true;
+    return { ...item, lastUsedAt: now };
+  });
+  return changed ? next : [...tokens];
+}
+
+/**
+ * 刷新令牌：旧哈希作废、换发新明文，到期时间顺延 180 天；
+ * `createdAt` 与设备名保留，`lastUsedAt` 记为本次刷新时间。
+ */
+export function rotateTrustedToken(
+  tokens: readonly TrustedToken[],
+  record: TrustedToken,
+  now = Date.now(),
+  token = randomSessionToken(),
+): IssuedToken & { tokens: TrustedToken[] } {
+  const next: TrustedToken = {
+    ...record,
+    tokenHash: hashToken(token),
+    lastUsedAt: now,
+    expiresAt: now + LAN_PAIRING_TTL_MS,
+  };
+  return {
+    token,
+    record: next,
+    tokens: tokens.map((item) => (item.tokenHash === record.tokenHash ? next : item)),
+  };
+}
+
+/** 吊销一条令牌（幂等）：列表里没有它时原样返回。 */
+export function revokeTrustedToken(
+  tokens: readonly TrustedToken[],
+  tokenHash: string,
+): TrustedToken[] {
+  return tokens.filter((item) => item.tokenHash !== tokenHash);
+}
+
+/** 丢掉已到期令牌；新配对与刷新后顺手清理，列表不会无限增长。 */
+export function pruneTrustedTokens(
+  tokens: readonly TrustedToken[],
+  now = Date.now(),
+): TrustedToken[] {
+  return tokens.filter((item) => !tokenExpired(item, now));
+}
+
+function isFiniteTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function isRecord(value: unknown): value is TrustedToken {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Partial<TrustedToken>;
+  return (
+    typeof record.tokenHash === 'string' &&
+    /^[0-9a-f]{64}$/.test(record.tokenHash) &&
+    typeof record.name === 'string' &&
+    record.name.trim() !== '' &&
+    record.name.length <= TRUSTED_TOKEN_NAME_MAX &&
+    isFiniteTime(record.createdAt) &&
+    isFiniteTime(record.lastUsedAt) &&
+    isFiniteTime(record.expiresAt)
+  );
+}
+
+/** 反序列化 `app_meta` 里的令牌列表：任一条结构不合法返回 null（调用方回退空列表）。 */
+export function parseTrustedTokens(value: unknown): TrustedToken[] | null {
+  if (!Array.isArray(value)) return null;
+  const seen = new Set<string>();
+  const parsed: TrustedToken[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) return null;
+    if (seen.has(item.tokenHash)) continue;
+    seen.add(item.tokenHash);
+    parsed.push({ ...item, name: normalizeTokenName(item.name) });
+  }
+  return parsed;
+}
+
+/** 序列化给 `app_meta`：数组形态，字段即 `TrustedToken`。 */
+export function trustedTokensValue(tokens: readonly TrustedToken[]): TrustedToken[] {
+  return tokens.map((item) => ({ ...item }));
 }
 
 function randomInt(bound: number): number {
@@ -167,10 +337,6 @@ export function pairingExpired(pairing: Pairing, now = Date.now()): boolean {
   return now >= pairing.expiresAt;
 }
 
-export function grantSession(now = Date.now(), token = randomSessionToken()): SessionGrant {
-  return { token, expiresAt: now + SESSION_TTL_MS };
-}
-
 export interface PairCheck {
   ok: boolean;
   error: string | null;
@@ -189,15 +355,4 @@ export function bearerToken(authorization: string | null): string | null {
   if (authorization === null) return null;
   const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
   return match === null ? null : (match[1] ?? null);
-}
-
-export function sessionValid(
-  session: SessionGrant | null,
-  authorization: string | null,
-  now = Date.now(),
-): boolean {
-  if (session === null) return false;
-  if (now >= session.expiresAt) return false;
-  const token = bearerToken(authorization);
-  return token !== null && token === session.token;
 }

@@ -48,6 +48,10 @@ export const WIDGET_SNAPSHOT_META_KEY = 'widget_snapshot';
 export const WEBDAV_LAST_UPLOAD_META_KEY = 'webdav_last_upload';
 export const WEBDAV_LAST_SYNC_META_KEY = 'webdav_last_sync';
 
+/** 局域网同步：客户端已配对设备（含长期令牌）与服务端可信令牌（只含哈希）。 */
+export const LAN_PAIRINGS_META_KEY = 'lan_pairings_v1';
+export const LAN_TRUSTED_TOKENS_META_KEY = 'lan_trusted_tokens_v1';
+
 /** 库内 JSON 快照：正文键为 `backup:<createdAt>`，列表索引见下。 */
 export const SNAPSHOT_META_PREFIX = 'backup:';
 /** 快照列表的轻量索引 `{ id, createdAt, bytes }[]`：列表只读它，不再读快照正文。 */
@@ -79,6 +83,8 @@ export const APP_META_KEYS: readonly string[] = [
     WIDGET_SNAPSHOT_META_KEY,
     WEBDAV_LAST_UPLOAD_META_KEY,
     WEBDAV_LAST_SYNC_META_KEY,
+    LAN_PAIRINGS_META_KEY,
+    LAN_TRUSTED_TOKENS_META_KEY,
     SNAPSHOT_INDEX_META_KEY,
   ]),
 ];

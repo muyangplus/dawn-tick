@@ -5,37 +5,25 @@ import { invokeNative, type LanSyncListen, type LanSyncRequest } from './lib/nat
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { logInfo, logWarn } from './log.ts';
 import {
-  LAN_SYNC_PROTOCOL_VERSION,
-  MAX_REQUEST_BYTES,
-  SESSION_TTL_MS,
   createPairing,
-  formatScope,
-  peerBaseUrl,
-  type LanScope,
   type Pairing,
-  type PeerAddress,
-  type SessionGrant,
+  type TrustedToken,
 } from './lan-sync-protocol.ts';
-import {
-  applyLanEnvelope,
-  buildLanEnvelope,
-  parseLanEnvelope,
-  type LanHttpReply,
-} from './lan-sync-payload.ts';
-import { lanFetch, lanResponseError, lanUtf8Length } from './lan-sync-http.ts';
+import type { LanHttpReply } from './lan-sync-payload.ts';
 
 export * from './lan-sync-protocol.ts';
 export * from './lan-sync-payload.ts';
+export * from './lan-sync-client.ts';
 
 /**
- * 局域网同步（I-14）的客户端与服务端生命周期。
+ * 局域网同步（I-14）的**服务端生命周期**：开/停监听、轮询原生队列、回写响应。
  *
  * 边界：
- * - 协议、范围与配对码在 `lan-sync-protocol.ts`，信封与服务端请求处理在
- *   `lan-sync-payload.ts`，这里只做 `fetch` / 原生桥 / 状态机；
- *   两端对照见 `apps/mobile/docs/lan-sync.contract.md`；
- * - 浏览器只做发起方；桌面与安卓既能开配对也能连对方；
- * - 原生层只转发，鉴权与数据处理都在 TS：轮询到的请求交给 `handleLanRequest`。
+ * - 协议、地址、配对码与令牌在 `lan-sync-protocol.ts`，信封与请求处理在
+ *   `lan-sync-payload.ts`，客户端配对/传输/状态机在 `lan-sync-client.ts`；
+ * - 原生层（Rust / Kotlin）只做传输与限额；本模块只做 `invoke` / 插件调用与运行时状态；
+ * - 原生监听绑定通配地址（0.0.0.0），对外广播的是选中网卡地址；
+ * - 两边对照见 `apps/mobile/docs/lan-sync.contract.md`。
  */
 
 /** 轮询原生请求队列的间隔。 */
@@ -46,7 +34,7 @@ export function canServeLanSync(): boolean {
   return isDesktopApp() || isAndroidApp();
 }
 
-/** 本机配对信息：监听地址、配对码与到期时间。 */
+/** 本机配对信息：对外展示的地址、配对码与到期时间。 */
 export interface LanServerInfo {
   host: string;
   port: number;
@@ -62,13 +50,24 @@ export interface StartLanServerResult {
 }
 
 /**
- * 原生「开始监听」的超时：安卓绑定 Wi-Fi 与启动 UDP 广播都在后台线程，
+ * 原生「开始监听」的超时：安卓绑定 socket 与启动 UDP 广播都在后台线程，
  * 个别机型会卡住不回调；超过 8 秒按失败处理，让界面回到可重试状态。
  */
 export const LAN_SERVER_START_TIMEOUT_MS = 8_000;
 
-/** 超时文案：用户可据此检查 Wi-Fi 后重试（原生层也有一条 10 秒兜底）。 */
-export const LAN_SERVER_START_TIMEOUT_MESSAGE = '开启配对超时：请确认已连接 Wi-Fi 后重试';
+/** 超时原因：由 `startLanServer` 统一加上「开启配对失败：」前缀后展示。 */
+export const LAN_SERVER_START_TIMEOUT_MESSAGE = '原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试';
+
+/** 失败文案统一前缀：超时与原生异常都拼在冒号后面，界面直接展示。 */
+export const LAN_SERVER_START_ERROR_PREFIX = '开启配对失败：';
+
+/** 把原因拼成可直接展示的一行；已带前缀时不重复。 */
+export function startLanServerError(reason: string | null | undefined): string {
+  const text = (reason ?? '').trim();
+  if (text === '') return `${LAN_SERVER_START_ERROR_PREFIX}请稍后重试`;
+  if (text.startsWith(LAN_SERVER_START_ERROR_PREFIX)) return text;
+  return `${LAN_SERVER_START_ERROR_PREFIX}${text}`;
+}
 
 /** 给任意 Promise 加超时；超时后底层调用可能仍在进行，调用方按可重试处理。 */
 export function withTimeout<T>(task: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -111,12 +110,18 @@ async function defaultLanServerStarter(host?: string): Promise<LanSyncListen | n
   if (plugin === null) return null;
   const result = await plugin.start(selected === undefined ? undefined : { host: selected });
   if (typeof result.host !== 'string' || result.host === '' || typeof result.port !== 'number') {
-    return null;
+    throw new Error('原生层没有返回监听地址与端口');
+  }
+  if (result.listening === false) {
+    throw new Error('原生层报告监听没有开启');
   }
   return { host: result.host, port: result.port };
 }
 
-async function startNativeServer(host?: string, timeoutMs = LAN_SERVER_START_TIMEOUT_MS): Promise<LanSyncListen | null> {
+async function startNativeServer(
+  host?: string,
+  timeoutMs = LAN_SERVER_START_TIMEOUT_MS,
+): Promise<LanSyncListen | null> {
   const starter = starterOverride ?? defaultLanServerStarter;
   return withTimeout(starter(host), timeoutMs, LAN_SERVER_START_TIMEOUT_MESSAGE);
 }
@@ -133,11 +138,13 @@ export interface StartLanServerOptions {
 export async function startLanServer(options: StartLanServerOptions = {}): Promise<StartLanServerResult> {
   const now = options.now ?? Date.now();
   if (!canServeLanSync()) {
-    return { ok: false, info: null, error: '浏览器端不能开配对，请在桌面版或安卓版上操作' };
+    return { ok: false, info: null, error: startLanServerError('浏览器端不能开配对，请在桌面版或安卓版上操作') };
   }
   try {
     const listen = await startNativeServer(options.host, options.timeoutMs);
-    if (listen === null) return { ok: false, info: null, error: '当前平台不支持开启局域网配对' };
+    if (listen === null) {
+      return { ok: false, info: null, error: startLanServerError('当前平台不支持开启局域网配对') };
+    }
     const pairing = createPairing(now);
     logInfo('lan-sync', '已开启局域网配对', { host: listen.host, port: listen.port });
     return {
@@ -152,12 +159,13 @@ export async function startLanServer(options: StartLanServerOptions = {}): Promi
       error: null,
     };
   } catch (cause: unknown) {
-    logWarn('lan-sync', '开启局域网配对失败', { message: errorMessage(cause) });
-    return { ok: false, info: null, error: errorMessage(cause) };
+    const reason = errorMessage(cause);
+    logWarn('lan-sync', '开启局域网配对失败', { message: reason });
+    return { ok: false, info: null, error: startLanServerError(reason) };
   }
 }
 
-/** 停止配对：原生关监听，内存里的令牌随之失效。 */
+/** 停止配对：原生关监听；已持久化到对方设备上的长期令牌由对方 `/pair/revoke` 移除。 */
 export async function stopLanServer(): Promise<void> {
   try {
     if (isDesktopApp()) {
@@ -214,188 +222,28 @@ export async function respondLanServer(id: number, status: number, body: string)
   }
 }
 
-/** 服务端内存状态：当前配对码与已授权会话。 */
+/** 服务端运行时状态：当前配对码与可信令牌列表（只含哈希）。 */
 export interface LanRuntime {
   pairing: Pairing | null;
-  session: SessionGrant | null;
+  tokens: readonly TrustedToken[];
 }
 
-/** `/pair` 成功后消耗配对码、保存新会话；纯函数，便于单测。 */
+/** `/pair` 成功后消耗配对码；响应带令牌快照时整体替换（刷新/吊销/新增设备）。 */
 export function applyLanReply(runtime: LanRuntime, reply: LanHttpReply): LanRuntime {
+  const tokens = reply.tokens ?? runtime.tokens;
   return {
     pairing: reply.consumePairing === true ? null : runtime.pairing,
-    session: reply.session ?? runtime.session,
+    tokens,
   };
 }
 
-/** 已配对的对方：地址 + 一次性会话令牌。 */
-export interface LanSession {
-  peer: PeerAddress;
-  token: string;
-  expiresAt: number;
-}
-
-export function sessionExpired(session: LanSession, now = Date.now()): boolean {
-  return now >= session.expiresAt;
-}
-
-export interface PairPeerResult {
-  ok: boolean;
-  session: LanSession | null;
-  error: string | null;
-}
-
-/** 客户端配对：`POST /pair` 换令牌。 */
-export async function pairWithPeer(
-  peer: PeerAddress,
-  code: string,
-  now = Date.now(),
-): Promise<PairPeerResult> {
-  if (!/^\d{6}$/.test(code.trim())) {
-    return { ok: false, session: null, error: '配对码应为 6 位数字' };
-  }
-  try {
-    const response = await lanFetch(`${peerBaseUrl(peer)}/pair`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code.trim(), schemaVersion: LAN_SYNC_PROTOCOL_VERSION }),
-    });
-    const text = await response.text();
-    if (!response.ok) return { ok: false, session: null, error: lanResponseError(response.status, text, '配对') };
-    const body = JSON.parse(text) as { token?: unknown; expiresAt?: unknown };
-    if (typeof body.token !== 'string' || body.token === '') {
-      return { ok: false, session: null, error: '配对响应缺少会话令牌' };
-    }
-    const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : now + SESSION_TTL_MS;
-    logInfo('lan-sync', '已与对方配对', { peer: `${peer.host}:${peer.port}` });
-    return { ok: true, session: { peer, token: body.token, expiresAt }, error: null };
-  } catch (cause: unknown) {
-    const error = errorMessage(cause);
-    logWarn('lan-sync', '配对失败', { peer: `${peer.host}:${peer.port}`, error });
-    return { ok: false, session: null, error };
-  }
-}
-
-export interface LanTransferResult {
-  ok: boolean;
-  imported: number;
-  skipped: number;
-  warnings: string[];
-  error: string | null;
-  bytes: number;
-}
-
-function transferFailure(error: string): LanTransferResult {
-  return { ok: false, imported: 0, skipped: 0, warnings: [], error, bytes: 0 };
-}
-
-/** 拉取：`GET /export` → 按 merge 规则合并进本机；设置项由调用方热加载。 */
-export async function pullFromPeer(
+/** 服务端请求处理上下文：与 `LanServerContext` 对齐，界面只传 storage 与运行时状态。 */
+export function lanServerContext(
   storage: Storage,
-  session: LanSession,
-  scopes: readonly LanScope[],
-  now = Date.now(),
-): Promise<LanTransferResult> {
-  if (scopes.length === 0) return transferFailure('请至少勾选一个同步范围');
-  if (sessionExpired(session, now)) return transferFailure('配对已过期，请重新配对');
-  try {
-    const response = await lanFetch(`${peerBaseUrl(session.peer)}/export?scope=${formatScope(scopes)}`, {
-      headers: { Authorization: `Bearer ${session.token}` },
-    });
-    const text = await response.text();
-    if (!response.ok) return transferFailure(lanResponseError(response.status, text, '拉取'));
-    const envelope = parseLanEnvelope(text);
-    const result = await applyLanEnvelope(storage, envelope, { scopes, mode: 'merge', now });
-    logInfo('lan-sync', '已从对方拉取', { imported: result.imported, skipped: result.skipped });
-    return {
-      ok: true,
-      imported: result.imported,
-      skipped: result.skipped,
-      warnings: result.warnings,
-      error: null,
-      bytes: lanUtf8Length(text),
-    };
-  } catch (cause: unknown) {
-    const error = errorMessage(cause);
-    logWarn('lan-sync', '拉取失败', { error });
-    return transferFailure(error);
-  }
-}
-
-/** 推送：`POST /import?mode=merge`；冲突按 updated_at 由接收端裁决。 */
-export async function pushToPeer(
-  storage: Storage,
-  session: LanSession,
-  scopes: readonly LanScope[],
-  now = Date.now(),
-): Promise<LanTransferResult> {
-  if (scopes.length === 0) return transferFailure('请至少勾选一个同步范围');
-  if (sessionExpired(session, now)) return transferFailure('配对已过期，请重新配对');
-  try {
-    const envelope = await buildLanEnvelope(storage, scopes, now);
-    const body = JSON.stringify(envelope);
-    const bytes = lanUtf8Length(body);
-    if (bytes > MAX_REQUEST_BYTES) return transferFailure('要推送的数据超过 5MB，请缩小同步范围');
-    const response = await lanFetch(
-      `${peerBaseUrl(session.peer)}/import?scope=${formatScope(scopes)}&mode=merge`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
-        body,
-      },
-    );
-    const text = await response.text();
-    if (!response.ok) return transferFailure(lanResponseError(response.status, text, '推送'));
-    const parsed = JSON.parse(text) as { imported?: unknown; skipped?: unknown; warnings?: unknown };
-    const warnings = Array.isArray(parsed.warnings)
-      ? parsed.warnings.filter((item): item is string => typeof item === 'string')
-      : [];
-    logInfo('lan-sync', '已推送到对方', { imported: parsed.imported ?? 0 });
-    return {
-      ok: true,
-      imported: typeof parsed.imported === 'number' ? parsed.imported : 0,
-      skipped: typeof parsed.skipped === 'number' ? parsed.skipped : 0,
-      warnings,
-      error: null,
-      bytes,
-    };
-  } catch (cause: unknown) {
-    const error = errorMessage(cause);
-    logWarn('lan-sync', '推送失败', { error });
-    return transferFailure(error);
-  }
-}
-
-/** 客户端状态机：空闲 → 配对中 → 已配对 / 失败，超时自动退回空闲。 */
-export type LanClientPhase = 'idle' | 'pairing' | 'paired' | 'failed';
-
-export interface LanClientState {
-  phase: LanClientPhase;
-  session: LanSession | null;
-  error: string | null;
-}
-
-export const LAN_CLIENT_IDLE: LanClientState = { phase: 'idle', session: null, error: null };
-
-export type LanClientEvent =
-  | { type: 'pairing' }
-  | { type: 'paired'; session: LanSession }
-  | { type: 'failed'; error: string }
-  | { type: 'reset' }
-  | { type: 'expire'; now: number };
-
-export function reduceLanClient(state: LanClientState, event: LanClientEvent): LanClientState {
-  switch (event.type) {
-    case 'pairing':
-      return { phase: 'pairing', session: null, error: null };
-    case 'paired':
-      return { phase: 'paired', session: event.session, error: null };
-    case 'failed':
-      return { phase: 'failed', session: null, error: event.error };
-    case 'reset':
-      return LAN_CLIENT_IDLE;
-    case 'expire':
-      if (state.session === null || event.now < state.session.expiresAt) return state;
-      return { phase: 'idle', session: null, error: '配对已过期，请重新配对' };
-  }
+  runtime: LanRuntime,
+  now?: number,
+): { storage: Storage; pairing: Pairing | null; tokens: readonly TrustedToken[]; now?: number } {
+  return now === undefined
+    ? { storage, pairing: runtime.pairing, tokens: runtime.tokens }
+    : { storage, pairing: runtime.pairing, tokens: runtime.tokens, now };
 }

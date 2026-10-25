@@ -140,9 +140,10 @@ export interface FileSharePlugin {
 export interface LanSyncPlugin {
   /**
    * 起监听；`port` 由系统分配。`host` 是用户在「切换网络」里选中的本机局域网地址，
-   * 缺省时原生层自动选首选局域网；绑定失败会 reject。
+   * 缺省时原生层自动选首选局域网；socket 绑定通配地址，`listening === true` 表示已 bind。
+   * 绑定失败会 reject，`message` 原样透传给 TS。
    */
-  start(options?: { host?: string }): Promise<{ host?: string; port?: number }>;
+  start(options?: { host?: string }): Promise<{ host?: string; port?: number; listening?: boolean }>;
   /** 关监听并让内存里的令牌全部失效；幂等。 */
   stop(): Promise<void>;
   /** 本机候选网络（地址 / 网卡名 / 分类 / 首选优先级），供「切换网络」下拉。 */
