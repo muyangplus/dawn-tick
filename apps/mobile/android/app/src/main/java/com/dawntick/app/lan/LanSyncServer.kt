@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicLong
  * 局域网同步（I-14）的 Android 传输层：只做监听、排队、取请求与回响应。
  *
  * 边界：
- * - 只绑定本机局域网 IPv4 与系统分配的端口，只接受局域网来源；
+ * - socket 绑定**通配地址**（`ServerSocket(0)`，不指定网卡），对外广播/展示的是选中网卡的
+ *   局域网 IPv4；逐请求仍校验来源必须是局域网地址（安全边界不在绑定地址上）；
  * - 配对码、令牌、范围与数据导出导入全在 TS（apps/web/src/lan-sync*.ts），
  *   这里不读数据库、不解释业务 JSON，只把请求编号入队，等 TS 的 poll/respond；
  * - 协议与两端对照见 apps/mobile/docs/lan-sync.contract.md。
@@ -230,7 +231,7 @@ class LanSyncServer private constructor(
     }
 
     private fun expectedMethod(path: String): String? = when (path) {
-        "/pair" -> "POST"
+        "/pair", "/pair/refresh", "/pair/revoke" -> "POST"
         "/export" -> "GET"
         "/import" -> "POST"
         else -> null
@@ -305,11 +306,13 @@ class LanSyncServer private constructor(
                 "Cache-Control: no-store\r\n"
 
         /**
-         * 绑定指定局域网 IPv4 与系统分配的端口；`host` 为空时自动选首选网络。
-         * 绑定失败会抛出带地址的可读错误，由插件 reject 给 TS。
+         * 绑定通配地址与系统分配的端口，并确认 socket 已 bind；`host` 只决定对外展示的地址。
+         *
+         * 绑定通配地址（不指定网卡）能避开部分机型「指定地址绑定失败」的问题；
+         * 安全性由逐请求的局域网来源校验保证。绑定失败抛出带原始异常信息的可读错误。
          */
         fun start(host: String? = null): LanSyncServer {
-            val address = if (!host.isNullOrBlank()) {
+            val advertised = if (!host.isNullOrBlank()) {
                 LanNetworks.findAddress(host)
                     ?: throw IllegalArgumentException("网络地址不在本机：${host.trim()}")
             } else {
@@ -317,14 +320,22 @@ class LanSyncServer private constructor(
                     ?: throw IllegalStateException("没有找到局域网地址，请先连接 Wi-Fi")
             }
             val socket = try {
-                ServerSocket(0, 8, address)
+                ServerSocket(0, 8)
             } catch (error: Throwable) {
                 throw IllegalStateException(
-                    "监听 ${address.hostAddress} 失败：${error.message ?: error.javaClass.simpleName}",
+                    "监听端口失败：${error.message ?: error.javaClass.simpleName}",
                     error,
                 )
             }
-            return LanSyncServer(address.hostAddress ?: "0.0.0.0", socket.localPort, socket)
+            if (!socket.isBound || socket.localPort !in 1..65535) {
+                runCatching { socket.close() }
+                throw IllegalStateException("监听端口失败：socket 没有成功绑定")
+            }
+            return LanSyncServer(
+                advertised.hostAddress ?: throw IllegalStateException("没有找到局域网地址，请先连接 Wi-Fi"),
+                socket.localPort,
+                socket,
+            )
         }
 
         private fun isLanAddress(address: InetAddress): Boolean {

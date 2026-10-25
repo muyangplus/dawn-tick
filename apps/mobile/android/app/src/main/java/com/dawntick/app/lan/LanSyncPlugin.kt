@@ -15,7 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 边界：
  * - 只做监听与请求转发：配对码、令牌、范围与业务数据全在 TS；
  * - 方法名与字段名逐字对应 apps/web/src/lib/plugins.ts 的 `LanSyncPlugin` 与
- *   apps/mobile/docs/plugins.contract.md，协议见 apps/mobile/docs/lan-sync.contract.md。
+ *   apps/mobile/docs/plugins.contract.md，协议见 apps/mobile/docs/lan-sync.contract.md；
+ * - `start` 用通配地址监听，resolve 前确认 socket 已 bind，返回 `{host, port, listening:true}`；
+ *   失败时把原始异常 message 原样交给 TS（界面拼「开启配对失败：<原因>」）。
  *
  * 卡住的兜底：
  * - `start` 的网络操作在后台线程，另起一个 10 秒看门狗，超时就 reject 一句可照做的文案；
@@ -72,12 +74,13 @@ class LanSyncPlugin : Plugin() {
                     Log.w(TAG, "局域网发现广播启动失败：${error.message ?: error.javaClass.simpleName}")
                 }
                 if (settled.compareAndSet(false, true)) {
-                    call.resolve(JSObject().put("host", active.host).put("port", active.port))
+                    call.resolve(JSObject().put("host", active.host).put("port", active.port).put("listening", true))
                 }
             } catch (error: Throwable) {
-                Log.w(TAG, "开启局域网配对失败：${error.message ?: error.javaClass.simpleName}")
+                val reason = describe(error)
+                Log.w(TAG, "开启局域网配对失败：$reason")
                 if (settled.compareAndSet(false, true)) {
-                    reject(call, error.message ?: "开启局域网配对失败", error)
+                    reject(call, reason, error)
                 }
             } finally {
                 watchdog.interrupt()
@@ -183,6 +186,12 @@ class LanSyncPlugin : Plugin() {
 
     private fun reject(call: PluginCall, message: String, error: Throwable?) {
         if (error is Exception) call.reject(message, error) else call.reject(message)
+    }
+
+    /** 原始异常 message 优先；没有 message 时退回异常类名，保证 TS 拿到可读原因。 */
+    private fun describe(error: Throwable): String {
+        val message = error.message?.trim()
+        return if (message.isNullOrEmpty()) error.javaClass.simpleName else message
     }
 
     companion object {

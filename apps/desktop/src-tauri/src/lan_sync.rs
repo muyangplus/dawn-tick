@@ -1,8 +1,11 @@
 //! 局域网同步（I-14）的最小 HTTP 服务：只做传输，不解释业务数据。
 //!
 //! 边界：
-//! - 原生层负责：仅绑定本机局域网 IPv4、只接受局域网来源、最小 HTTP/1.1 解析、
-//!   请求体 5MB / 响应体 20MB 上限、请求排队与 10 秒处理窗口；
+//! - 原生层负责：监听**通配地址** `0.0.0.0`（对外广播/展示的是选中网卡的局域网 IPv4）、
+//!   只接受局域网来源、最小 HTTP/1.1 解析、请求体 5MB / 响应体 20MB 上限、请求排队与
+//!   10 秒处理窗口；
+//! - 绑定通配地址是为了避开「指定网卡绑定失败 / 切换网络后端口不可用」导致的启动失败；
+//!   安全性由逐请求的来源地址校验保证，而不是靠绑定地址；
 //! - 配对码、令牌、范围与数据导出导入全部在 TS（`apps/web/src/lan-sync*.ts`）：
 //!   收到允许的请求后编号入队，前端 `lan_sync_poll` 取走，`lan_sync_respond` 回写；
 //! - 协议与两端对照见 `apps/mobile/docs/lan-sync.contract.md`。
@@ -31,10 +34,14 @@ const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const ACCEPT_POLL: Duration = Duration::from_millis(50);
 
 /// 监听地址，返回给 TS 拼配对码与提示文案。
+///
+/// `host` 是**对外广播的选中网卡地址**，不是 socket 实际绑定的通配地址；
+/// `listening` 只在 socket 已 bind 且 accept 线程已启动后为 true。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LanSyncListen {
     pub host: String,
     pub port: u16,
+    pub listening: bool,
 }
 
 /// 一条转发给 TS 的请求。字段与 `apps/web/src/lib/native.ts` 的 `LanSyncRequest`
@@ -94,13 +101,16 @@ pub struct LanSyncServer {
 }
 
 impl LanSyncServer {
-    /// 绑定 `bind` 的随机端口并开始接受连接；`bind` 必须是局域网地址。
-    fn start_on(bind: Ipv4Addr) -> Result<Self, String> {
-        if !is_lan_ipv4(bind) {
-            return Err("局域网同步只监听局域网地址".to_string());
+    /// 绑定通配地址 `0.0.0.0` 的随机端口并开始接受连接；`advertise` 是对外展示的网卡地址。
+    ///
+    /// 绑定通配地址而不是具体网卡：某些系统/网卡组合下指定地址绑定会失败，
+    /// 切换网络（VPN、热点）后也可能不可用；来源安全仍由 `handle_connection` 逐请求校验。
+    fn start_on(advertise: Ipv4Addr) -> Result<Self, String> {
+        if !is_lan_ipv4(advertise) {
+            return Err("局域网同步只对外展示局域网地址".to_string());
         }
-        let listener =
-            TcpListener::bind((bind, 0)).map_err(|error| format!("监听局域网端口失败：{error}"))?;
+        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
+            .map_err(|error| format!("监听局域网端口失败：{error}"))?;
         let port = listener
             .local_addr()
             .map_err(|error| format!("读取监听端口失败：{error}"))?
@@ -112,7 +122,7 @@ impl LanSyncServer {
         let accept_shared = shared.clone();
         let accept = std::thread::spawn(move || accept_loop(listener, accept_shared));
         Ok(Self {
-            host: bind.to_string(),
+            host: advertise.to_string(),
             port,
             shared,
             accept: Some(accept),
@@ -123,11 +133,12 @@ impl LanSyncServer {
         LanSyncListen {
             host: self.host.clone(),
             port: self.port,
+            listening: true,
         }
     }
 
-    /// 当前绑定的地址；切换网络时用来判断是否要重启监听。
-    fn bind_ip(&self) -> Option<Ipv4Addr> {
+    /// 对外展示的网卡地址；切换网络时用来判断是否要重启监听。
+    fn advertise_ip(&self) -> Option<Ipv4Addr> {
         self.host.parse().ok()
     }
 
@@ -257,6 +268,8 @@ enum Endpoint {
 fn endpoint(method: &str, path: &str) -> Endpoint {
     let expected = match path {
         "/pair" => "POST",
+        "/pair/refresh" => "POST",
+        "/pair/revoke" => "POST",
         "/export" => "GET",
         "/import" => "POST",
         _ => return Endpoint::Unknown,
@@ -498,7 +511,7 @@ fn parse_listen_host(raw: Option<&str>) -> Result<Option<Ipv4Addr>, String> {
         .parse()
         .map_err(|_| format!("网络地址不是合法 IPv4：{text}"))?;
     if address.is_unspecified() || !is_lan_ipv4(address) {
-        return Err("只能监听局域网地址".to_string());
+        return Err("只能选择局域网地址".to_string());
     }
     Ok(Some(address))
 }
@@ -524,16 +537,17 @@ fn lock_server() -> std::sync::MutexGuard<'static, Option<LanSyncServer>> {
     LAN_SYNC.lock().unwrap_or_else(|error| error.into_inner())
 }
 
-/// 开启配对服务（幂等）：返回本机局域网地址与系统分配的端口。
+/// 开启配对服务（幂等）：返回选中网卡地址与系统分配的端口。
 ///
-/// `host` 是用户在「切换网络」里选中的地址；缺省时自动选首选局域网。
-/// 已在监听且地址相同直接返回；地址不同则先停旧监听再在新地址上重启。
+/// `host` 是用户在「切换网络」里选中的本机地址；缺省时自动选首选局域网。
+/// socket 始终绑定通配地址，`host` 决定对外广播与展示的地址：
+/// 已在监听且地址相同直接返回；地址不同则先停旧监听再按新地址重启。
 #[tauri::command]
 pub fn lan_sync_start(host: Option<String>) -> Result<LanSyncListen, String> {
     let requested = parse_listen_host(host.as_deref())?;
     let mut guard = lock_server();
     if let Some(server) = guard.as_ref() {
-        if requested.is_none() || requested == server.bind_ip() {
+        if requested.is_none() || requested == server.advertise_ip() {
             return Ok(server.listen_info());
         }
         if let Some(previous) = guard.take() {
@@ -667,9 +681,13 @@ mod tests {
     #[test]
     fn endpoint_allowlist() {
         assert!(matches!(endpoint("POST", "/pair"), Endpoint::Match));
+        assert!(matches!(endpoint("POST", "/pair/refresh"), Endpoint::Match));
+        assert!(matches!(endpoint("POST", "/pair/revoke"), Endpoint::Match));
         assert!(matches!(endpoint("GET", "/export"), Endpoint::Match));
         assert!(matches!(endpoint("POST", "/import"), Endpoint::Match));
         assert!(matches!(endpoint("GET", "/pair"), Endpoint::MethodNotAllowed));
+        assert!(matches!(endpoint("GET", "/pair/refresh"), Endpoint::MethodNotAllowed));
+        assert!(matches!(endpoint("GET", "/pair/revoke"), Endpoint::MethodNotAllowed));
         assert!(matches!(endpoint("POST", "/export"), Endpoint::MethodNotAllowed));
         assert!(matches!(endpoint("GET", "/health"), Endpoint::Unknown));
     }
@@ -698,6 +716,7 @@ mod tests {
     #[test]
     fn pair_roundtrip_over_loopback() {
         let server = LanSyncServer::start_on(Ipv4Addr::LOCALHOST).expect("应能监听环回地址");
+        assert!(server.listen_info().listening, "bind 成功后必须报告 listening=true");
         let address = server.address();
         let client = std::thread::spawn(move || {
             send(
