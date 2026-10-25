@@ -181,6 +181,9 @@ importers:
       '@capacitor-community/sqlite':
         specifier: ^8.1.1
         version: 8.1.1(@capacitor/core@8.5.3)
+      '@capacitor-mlkit/barcode-scanning':
+        specifier: ^8.2.1
+        version: 8.2.1(@capacitor/core@8.5.3)
       '@capacitor/android':
         specifier: ^8.5.3
         version: 8.5.3(@capacitor/core@8.5.3)
@@ -206,6 +209,9 @@ importers:
       '@capacitor-community/sqlite':
         specifier: ^8.1.1
         version: 8.1.1(@capacitor/core@8.5.3)
+      '@capacitor-mlkit/barcode-scanning':
+        specifier: ^8.2.1
+        version: 8.2.1(@capacitor/core@8.5.3)
       '@capacitor/core':
         specifier: ^8.5.3
         version: 8.5.3
@@ -342,6 +348,11 @@ packages:
   '@capacitor-community/sqlite@8.1.1':
     resolution: {integrity: sha512-wsqscMOMveDeIvB9WHLm38jkUV2317LmuWvvbhvmOB1REdr8GH6weFZpAiKmLimbpP2CQ2eVs8nmRcrTqbd9ng==}
     engines: {node: '>=16.0.0'}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
+
+  '@capacitor-mlkit/barcode-scanning@8.2.1':
+    resolution: {integrity: sha512-UdjIOK2dJwJ7c3Y+lRuRqIaP0VfHJeLvPNyE5kHrFU20MY++4uoAVm7JTWSklVVrjN4siIK/xmXL3QsYbthWSQ==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
 
@@ -2786,6 +2797,10 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.5.3
       jeep-sqlite: 2.8.0
+
+  '@capacitor-mlkit/barcode-scanning@8.2.1(@capacitor/core@8.5.3)':
+    dependencies:
+      '@capacitor/core': 8.5.3
 
   '@capacitor/android@8.5.3(@capacitor/core@8.5.3)':
     dependencies:
