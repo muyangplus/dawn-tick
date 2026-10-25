@@ -20,21 +20,19 @@ test('定时任务发 dev 渠道', () => {
   assert.equal(plan.buildRef, 'dev');
 });
 
-test('beta 渠道默认带 -beta 但不带序号', () => {
+test('beta 渠道默认不带 -beta，用纯版本号发预发布', () => {
   const fallback = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta' });
   assert.equal(fallback.channel, 'beta');
-  assert.equal(fallback.tag, 'v0.1.0-beta');
+  assert.equal(fallback.tag, 'v0.1.0');
   assert.equal(fallback.buildRef, 'main');
   assert.equal(fallback.prerelease, true);
 });
 
-test('beta 渠道可在发布时指定序号或纯版本号', () => {
-  const explicit = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: '3' });
-  assert.equal(explicit.tag, 'v0.1.0-beta.3');
-  const first = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: '1' });
-  assert.equal(first.tag, 'v0.1.0-beta.1');
-  const plain = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: 'plain' });
-  assert.equal(plain.tag, 'v0.1.0');
+test('beta 渠道可在发布时指定 -beta / 序号', () => {
+  const bare = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: 'bare' });
+  assert.equal(bare.tag, 'v0.1.0-beta');
+  const numbered = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: '3' });
+  assert.equal(numbered.tag, 'v0.1.0-beta.3');
 });
 
 test('beta 分支已移除：dev 之外的普通分支按 dev 处理', () => {
