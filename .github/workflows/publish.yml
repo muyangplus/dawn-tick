@@ -16,10 +16,10 @@ on:
         default: dev
         options: [dev, beta, release]
       beta_suffix:
-        description: beta 版本后缀（默认 plain → 不带序号 vX.Y.Z；也可填 1、2… 拼 -beta.N；选 dev/release 时忽略）
+        description: beta 版本后缀（默认 bare → vX.Y.Z-beta；填 1、2… → vX.Y.Z-beta.N；填 plain → 纯版本号；选 dev/release 时忽略）
         type: string
         required: false
-        default: plain
+        default: bare
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -63,7 +63,7 @@ jobs:
             --event="$GITHUB_EVENT_NAME" \
             --run="$GITHUB_RUN_NUMBER" \
             --channel="$INPUT_CHANNEL" \
-            --beta-suffix="${INPUT_BETA_SUFFIX:-plain}" \
+            --beta-suffix="${INPUT_BETA_SUFFIX:-bare}" \
             --existing-tags="$TAGS" \
             --github-output >> "$GITHUB_OUTPUT"
       - name: 判断是否需要构建
