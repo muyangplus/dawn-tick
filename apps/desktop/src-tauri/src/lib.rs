@@ -3,12 +3,14 @@ use std::io::Write;
 use std::path::PathBuf;
 
 mod install_kind;
+mod instance_lock;
 mod lan_discovery;
 mod lan_http;
 mod lan_network;
 mod lan_sync;
 mod paths;
 mod portable_update;
+mod recover;
 mod reminder_actions;
 mod secret_store;
 mod updater;
@@ -365,7 +367,7 @@ struct PendingRestore {
 }
 
 /// 本地时间戳 yyyyMMdd-HHmmss；快照名与损坏留存名共用。
-fn local_stamp(unix_ms: i64) -> String {
+pub(crate) fn local_stamp(unix_ms: i64) -> String {
     let offset = local_offset_minutes();
     let shifted = unix_ms + i64::from(offset) * 60_000;
     let days = shifted.div_euclid(86_400_000);
@@ -382,7 +384,7 @@ fn backup_name(unix_ms: i64) -> String {
     format!("dawn-tick-{}.db", local_stamp(unix_ms))
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_millis() as i64)
@@ -570,7 +572,7 @@ fn is_corrupt_message(message: &str) -> bool {
 
 /// 自检：`quick_check` 返回的行全是 ok 才算健康；打不开或锁冲突按健康处理，避免误判。
 /// 只读打开：判定损坏的文件不能被顺手 checkpoint 或改写。
-async fn database_healthy_async(file: &std::path::Path) -> bool {
+pub(crate) async fn database_healthy_async(file: &std::path::Path) -> bool {
     if !file.is_file() {
         return true;
     }
@@ -599,7 +601,7 @@ fn database_healthy(file: &std::path::Path) -> bool {
 
 /// 损坏文件改名留存：主库搬走后再搬 -wal / -shm / -journal。
 /// Windows 上句柄释放有延迟，改名重试约 2 秒；仍失败则退化为复制后删除。
-fn move_corrupt_aside(dir: &std::path::Path, stamp: &str) -> Result<String, String> {
+pub(crate) fn move_corrupt_aside(dir: &std::path::Path, stamp: &str) -> Result<String, String> {
     let db = dir.join(DATABASE_FILE_NAME);
     let saved = format!("{DATABASE_FILE_NAME}.corrupt-{stamp}");
     let target = dir.join(&saved);
@@ -698,6 +700,20 @@ fn set_recovery_notice(text: String) {
 #[tauri::command]
 fn recovery_notice() -> Option<String> {
     RECOVERY_NOTICE.lock().ok().and_then(|mut slot| slot.take())
+}
+
+/// 运行中数据库自愈：损坏主库改名留存，用最新一份通过自检的快照顶上。
+///
+/// 不动运行中的 sqlx 连接（它已经不可用）；前端拿到 `recovered: true` 后重启应用，
+/// 让插件在新进程里打开恢复后的库。命令本身在数据目录里完成，不依赖任何连接。
+#[tauri::command]
+async fn recover_database() -> recover::RecoverOutcome {
+    let outcome = recover::recover(&data_dir(), false).await;
+    append_log(&format!(
+        "运行中数据库恢复: recovered={} snapshot={:?} reason={:?}",
+        outcome.recovered, outcome.snapshot, outcome.reason
+    ));
+    outcome
 }
 
 
@@ -1478,13 +1494,23 @@ fn open_log_dir() -> Result<String, String> {
 
 /// 再次启动时的处置方式。
 #[cfg(windows)]
-#[derive(Debug, PartialEq, Eq)]
 enum InstanceRole {
-    /// 本进程成为唯一实例
-    Owner,
-    /// 已有同版本或更新版本实例，唤回它的窗口后退出
+    /// 本进程持有数据目录实例锁：可以打开数据库
+    Owner(instance_lock::InstanceLock),
+    /// 已有同版本或更新版本实例：唤回窗口后退出，不打开数据库
     FocusExisting,
+    /// 数据目录被拒绝访问：先申请管理员权限，提权实例拿到锁后才打开数据库
+    NeedsElevation(String),
+    /// 没有可用锁且不能提权：只提示并退出，绝不打开数据库
+    Blocked(String),
 }
+
+/// 提权交接：等旧实例退出并释放实例锁的上限。
+#[cfg(windows)]
+const INSTANCE_HANDOFF_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+/// 版本接管：请求老版本退出后，等它释放实例锁的上限。
+#[cfg(windows)]
+const INSTANCE_TAKEOVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 #[cfg(windows)]
 fn instance_state_path() -> Option<PathBuf> {
@@ -1509,7 +1535,7 @@ fn process_alive(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn focus_main_window() {
+fn focus_main_window() -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE,
     };
@@ -1517,81 +1543,141 @@ fn focus_main_window() {
     let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
     if hwnd == 0 {
         append_log("未找到已有主窗口，无法唤到前台");
-        return;
+        return false;
     }
     unsafe {
         ShowWindow(hwnd, SW_RESTORE);
         SetForegroundWindow(hwnd);
     }
+    true
 }
 
-/// 独占标记：同名互斥体存在即表示已有实例在运行。
+/// 本进程是否就是「提权后重新启动」的实例。
 #[cfg(windows)]
-fn hold_instance_mutex() -> bool {
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
-    use windows_sys::Win32::System::Threading::CreateMutexW;
-    let name: Vec<u16> = "Local\\DawnTick-SingleInstance"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
-    if handle == 0 {
-        append_log("创建单实例互斥体失败，按独占处理");
-        return true;
-    }
-    // 句柄随进程生命周期保留，进程退出时系统自动释放
-    let _ = handle;
-    (unsafe { GetLastError() }) != ERROR_ALREADY_EXISTS
+fn launch_has_elevate_marker() -> bool {
+    std::env::args().any(|arg| arg == ELEVATE_MARKER)
 }
 
-/// 探测已有实例并按版本决定：新版顶掉老版本，同版本或更老则唤回主窗口。
+/// 数据目录/锁文件相关的「拒绝访问」判定；提权与锁失败共用一套字样。
+#[cfg(windows)]
+fn looks_like_access_denied(text: &str) -> bool {
+    text.contains("拒绝访问") || text.contains("os error 5")
+}
+
+/// 用数据目录下的 `instance.lock` 判断本进程能否成为唯一写入者。
+///
+/// 关键约束：**拿不到锁就绝不打开数据库**。已有实例时只唤回窗口或提示关闭；
+/// 提权实例则轮询等旧实例把锁交出来，等不到就给可读错误并退出。
 #[cfg(windows)]
 fn decide_instance() -> InstanceRole {
-    if hold_instance_mutex() {
-        return InstanceRole::Owner;
-    }
-
-    let running: Option<InstanceStateFile> = instance_state_path().and_then(|path| read_json(&path));
-    let Some(state) = running else {
-        append_log("已有实例但缺少状态文件，按同版本处理");
-        return InstanceRole::FocusExisting;
-    };
-    if !process_alive(state.pid) {
-        append_log(&format!("状态文件中的进程 {} 已退出，本次接管", state.pid));
-        return InstanceRole::Owner;
-    }
-    if !version_is_newer(APP_VERSION, &state.version) {
-        append_log(&format!(
-            "已有实例 v{}（本进程 v{APP_VERSION}），唤回主窗口",
-            state.version
-        ));
-        return InstanceRole::FocusExisting;
-    }
-
-    append_log(&format!(
-        "本进程 v{APP_VERSION} 新于运行中的 v{}，请求老版本退出",
-        state.version
-    ));
-    if let Some(path) = quit_request_path() {
-        write_json(
-            &path,
-            &QuitRequest {
-                pid: std::process::id(),
-                version: APP_VERSION.to_string(),
-                at: now_seconds(),
-            },
-        );
-    }
-    for _ in 0..80 {
-        if !process_alive(state.pid) {
-            break;
+    let dir = data_dir();
+    let elevated = launch_has_elevate_marker();
+    match instance_lock::acquire(&dir) {
+        instance_lock::Gate::Owner(lock) => {
+            append_log(&format!("已取得实例锁: {}", lock.path().display()));
+            InstanceRole::Owner(lock)
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        instance_lock::Gate::Unavailable { lock, reason } => {
+            append_log(&format!(
+                "创建实例锁失败（{reason}），未按独占继续写库: {}",
+                lock.display()
+            ));
+            if looks_like_access_denied(&reason) {
+                ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
+                if !elevated {
+                    return InstanceRole::NeedsElevation(format!(
+                        "数据目录不可写，无法建立实例锁（{reason}）"
+                    ));
+                }
+            }
+            InstanceRole::Blocked(format!(
+                "无法在数据目录建立实例锁：{reason}\n\n\
+                 为避免两个实例同时写坏数据库，本次启动已停止，不会打开数据库。\n\
+                 请把程序移到可写目录，或以管理员身份运行后重试。\n\n\
+                 锁文件：{}",
+                lock.display()
+            ))
+        }
+        instance_lock::Gate::Busy { lock, reason } => {
+            append_log(&format!("实例锁被占用（{reason}）: {}", lock.display()));
+            if elevated {
+                append_log("提权实例等待旧实例退出并释放实例锁…");
+                return match instance_lock::acquire_waiting(&dir, INSTANCE_HANDOFF_TIMEOUT) {
+                    instance_lock::Gate::Owner(lock) => {
+                        append_log("提权实例已取得实例锁，开始打开数据库");
+                        InstanceRole::Owner(lock)
+                    }
+                    instance_lock::Gate::Busy { .. } => InstanceRole::Blocked(format!(
+                        "等待旧实例退出超时（{} 秒），本次未打开数据库。\n\
+                         请关闭所有晓刻窗口（可在任务管理器结束 DawnTick.exe）后重试。\n\n\
+                         锁文件：{}",
+                        INSTANCE_HANDOFF_TIMEOUT.as_secs(),
+                        lock.display()
+                    )),
+                    instance_lock::Gate::Unavailable { reason, .. } => InstanceRole::Blocked(format!(
+                        "等待旧实例退出后仍无法建立实例锁（{reason}），本次未打开数据库。"
+                    )),
+                };
+            }
+
+            let running: Option<InstanceStateFile> = instance_state_path().and_then(|path| read_json(&path));
+            let Some(state) = running else {
+                append_log("已有实例占用数据目录，但缺少状态文件，按同版本处理");
+                return InstanceRole::FocusExisting;
+            };
+            if !process_alive(state.pid) {
+                append_log(&format!("状态文件中的进程 {} 已退出，尝试接管实例锁", state.pid));
+                return match instance_lock::acquire_waiting(&dir, std::time::Duration::from_secs(2)) {
+                    instance_lock::Gate::Owner(lock) => {
+                        append_log("已接管实例锁");
+                        InstanceRole::Owner(lock)
+                    }
+                    instance_lock::Gate::Busy { .. } => {
+                        append_log("状态文件中的进程已退出，但实例锁仍被占用，按已有实例处理");
+                        InstanceRole::FocusExisting
+                    }
+                    instance_lock::Gate::Unavailable { reason, .. } => {
+                        InstanceRole::Blocked(format!("接管实例锁失败（{reason}），本次未打开数据库。"))
+                    }
+                };
+            }
+            if !version_is_newer(APP_VERSION, &state.version) {
+                append_log(&format!(
+                    "已有实例 v{}（本进程 v{APP_VERSION}），唤回主窗口",
+                    state.version
+                ));
+                return InstanceRole::FocusExisting;
+            }
+
+            append_log(&format!(
+                "本进程 v{APP_VERSION} 新于运行中的 v{}，请求老版本退出",
+                state.version
+            ));
+            if let Some(path) = quit_request_path() {
+                write_json(
+                    &path,
+                    &QuitRequest {
+                        pid: std::process::id(),
+                        version: APP_VERSION.to_string(),
+                        at: now_seconds(),
+                    },
+                );
+            }
+            match instance_lock::acquire_waiting(&dir, INSTANCE_TAKEOVER_TIMEOUT) {
+                instance_lock::Gate::Owner(lock) => {
+                    append_log("老版本已释放实例锁，本次接管");
+                    InstanceRole::Owner(lock)
+                }
+                instance_lock::Gate::Busy { .. } => {
+                    append_log("老版本未在 8 秒内释放实例锁，改为唤回已有窗口，不并发写库");
+                    InstanceRole::FocusExisting
+                }
+                instance_lock::Gate::Unavailable { reason, .. } => {
+                    InstanceRole::Blocked(format!("接管实例锁失败（{reason}），本次未打开数据库。"))
+                }
+            }
+        }
     }
-    if process_alive(state.pid) {
-        append_log("老版本未在 8 秒内退出，仍然继续启动");
-    }
-    InstanceRole::Owner
 }
 
 #[cfg(windows)]
@@ -2053,7 +2139,7 @@ static ACCESS_DENIED_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::At
 
 #[cfg(windows)]
 fn note_access_denied(context: &str, detail: &str) {
-    if detail.contains("拒绝访问") || detail.contains("os error 5") {
+    if looks_like_access_denied(detail) {
         ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
         append_log(&format!("{context}: 拒绝访问（已记录，稍后按需提权）"));
     }
@@ -2629,16 +2715,68 @@ pub fn run() {
     install_panic_logger();
     append_log(&format!("应用启动 v{APP_VERSION}"));
 
-    // 先判单实例：已有实例时直接唤回它的窗口并退出，不触碰 WebView2 目录
+    // 先判单实例：拿不到数据目录锁就绝不打开数据库（唤回旧窗口或提示关闭）
     #[cfg(windows)]
-    match decide_instance() {
+    let _instance_lock = match decide_instance() {
+        InstanceRole::Owner(lock) => {
+            write_instance_state();
+            lock
+        }
+        InstanceRole::NeedsElevation(reason) => {
+            append_log(&format!("{reason}：先申请管理员权限，未取得实例锁前不打开数据库"));
+            match request_elevation_restart() {
+                Ok(()) => {
+                    append_log("已启动管理员实例，等待它接管实例锁…");
+                    // 旧实例不写库，只等提权实例拿到锁之前保持进程存活，随后退出让出锁
+                    std::thread::spawn(|| {
+                        std::thread::sleep(std::time::Duration::from_millis(800));
+                        std::process::exit(0);
+                    });
+                    return;
+                }
+                Err(error) => {
+                    let message = format!(
+                        "{reason}。\n申请管理员权限失败（{error}）。\n\n\
+                         为避免两个实例同时写坏数据库，本次启动已停止，未打开数据库。"
+                    );
+                    append_log(&message);
+                    show_error_box("晓刻 DawnTick 无法启动", &message);
+                    return;
+                }
+            }
+        }
         InstanceRole::FocusExisting => {
-            focus_main_window();
-            append_log("本次启动退出");
+            let focused = focus_main_window();
+            if !focused {
+                append_log("已有实例在运行且无法唤回窗口，提示用户先关闭它");
+                show_error_box(
+                    "晓刻 DawnTick 已在运行",
+                    "已有实例在运行，请先关闭它。\n\n\
+                     若看不到窗口，可在任务管理器里结束 DawnTick.exe 后重试。",
+                );
+            }
+            append_log("本次启动退出（未打开数据库）");
             return;
         }
-        InstanceRole::Owner => write_instance_state(),
-    }
+        InstanceRole::Blocked(reason) => {
+            append_log(&format!("本次启动停止（未打开数据库）：{reason}"));
+            show_error_box("晓刻 DawnTick 无法启动", &reason);
+            return;
+        }
+    };
+
+    #[cfg(not(windows))]
+    let _instance_lock = match instance_lock::acquire(&data_dir()) {
+        instance_lock::Gate::Owner(lock) => lock,
+        instance_lock::Gate::Busy { lock, reason } => {
+            append_log(&format!("已有实例占用 {}（{reason}），本次启动退出", lock.display()));
+            return;
+        }
+        instance_lock::Gate::Unavailable { lock, reason } => {
+            append_log(&format!("无法建立实例锁 {}（{reason}），本次启动退出", lock.display()));
+            return;
+        }
+    };
 
     // 先套用排队的恢复请求：必须在打开数据库之前完成
     apply_pending_restore();
@@ -2664,6 +2802,20 @@ pub fn run() {
 
     #[cfg(windows)]
     log_database_status();
+
+    // 提权实例拿到锁之后，还要等旧实例把数据库文件句柄放掉；等不到就给可读错误，不硬开库
+    #[cfg(windows)]
+    if launch_has_elevate_marker() && !database_writable() {
+        append_log("提权实例已取得实例锁，等待数据库文件可写…");
+        if !instance_lock::wait_until(std::time::Duration::from_secs(10), database_writable) {
+            let message = "已取得实例锁，但数据库文件仍不可写（可能被其它程序占用）。\n\n\
+                           请关闭占用数据库的程序后重试；本次启动未打开数据库。";
+            append_log(message);
+            show_error_box("晓刻 DawnTick 无法打开数据库", message);
+            return;
+        }
+        append_log("数据库文件已可写，继续启动");
+    }
 
     // 数据库不可写（拒绝访问）时自动申请管理员权限并重启
     #[cfg(windows)]
@@ -2710,6 +2862,7 @@ pub fn run() {
             prune_backups,
             restore_backup,
             recovery_notice,
+            recover_database,
             open_import_window,
             close_import_window,
             submit_page_import,

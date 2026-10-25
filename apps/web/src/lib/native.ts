@@ -36,6 +36,7 @@ export const NATIVE_COMMANDS = [
   'prune_backups',
   'restore_backup',
   'recovery_notice',
+  'recover_database',
   'open_import_window',
   'close_import_window',
   'submit_page_import',
