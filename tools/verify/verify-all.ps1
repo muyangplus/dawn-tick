@@ -55,6 +55,14 @@ Run-Check 'web 测试' {
     if ([int]$failCount -ne 0) { throw "fail=$failCount" }
     "tests=$tests pass=$pass fail=$failCount"
 }
+Run-Check '数据库修复工具自检（tmp 内 dry-run）' {
+    # 需要 Node 24 的 node:sqlite 造库；旧 Node 上测试内部自动 skip，不会让 CI 挂
+    $out = node --test tools/repair/repair-db.test.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    $pass = ([regex]::Match($out, 'pass (\d+)')).Groups[1].Value
+    $skipped = ([regex]::Match($out, 'skipped (\d+)')).Groups[1].Value
+    "pass=$pass skipped=$skipped"
+}
 
 Section '3. 类型检查'
 Run-Check 'workspace typecheck' {

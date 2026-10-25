@@ -44,6 +44,8 @@ import { toastSaved } from '../src/screens/settings/file-export.ts';
 import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
+import { isCorruptLocked, reportCorrupt, resetCorruptGuardForTests } from '../src/db/corrupt-guard.ts';
+import { DatabaseCorruptDialog } from '../src/components/database-corrupt-dialog.tsx';
 import { setStorageOpenerForTests } from '../src/db/platform.ts';
 import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
 import {
@@ -5835,6 +5837,67 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     );
     failedApp.root.unmount();
     setStorageOpenerForTests(null);
+  }
+
+  // 运行中数据库损坏：恢复对话框只弹一次、三个动作齐全，恢复失败给可读原因
+  {
+    resetCorruptGuardForTests();
+    const corruptDialog = mount(<DatabaseCorruptDialog />);
+    await flush(4);
+    check(
+      '损坏恢复对话框初始不显示',
+      document.querySelector('[data-role="corrupt-dialog"]') === null,
+      '',
+    );
+
+    reportCorrupt(
+      new Error('error returned from database: (code: 11) database disk image is malformed'),
+    );
+    await flush(8);
+    const dialog = document.querySelector('[data-role="corrupt-dialog"]');
+    const dialogButtons = [...(dialog?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      '运行中损坏弹出恢复对话框（含三个动作）',
+      dialog !== null &&
+        isCorruptLocked() &&
+        (dialog.textContent ?? '').includes('数据库文件损坏') &&
+        (dialog.textContent ?? '').includes('已停止写入') &&
+        dialogButtons.includes('立即恢复并重启') &&
+        dialogButtons.includes('打开数据目录') &&
+        dialogButtons.includes('稍后'),
+      dialog?.textContent?.trim().slice(0, 80) ?? '(无对话框)',
+    );
+
+    // 「稍后」只关闭对话框；同一会话再报损坏不会重弹
+    if (clickByText(document.body, '稍后')) await flush(8);
+    check(
+      '损坏对话框「稍后」关闭后不再自动重弹',
+      document.querySelector('[data-role="corrupt-dialog"]') === null,
+      '',
+    );
+    reportCorrupt(new Error('(code: 26) file is not a database'));
+    await flush(8);
+    check(
+      '同一会话只触发一次恢复对话框',
+      document.querySelector('[data-role="corrupt-dialog"]') === null,
+      '',
+    );
+    corruptDialog.root.unmount();
+
+    // 重新挂载会立即拿到已损坏状态；冒烟环境没有原生桥，恢复失败必须给可读原因
+    const retryDialog = mount(<DatabaseCorruptDialog />);
+    await flush(8);
+    if (clickByText(document.body, '立即恢复并重启')) await flush(12);
+    const failure = document.querySelector('[data-role="corrupt-dialog-failure"]');
+    check(
+      '恢复失败在对话框里给出可读原因',
+      failure !== null && (failure.textContent ?? '').includes('当前平台不支持自动恢复'),
+      failure?.textContent?.trim().slice(0, 80) ?? '(无失败提示)',
+    );
+    retryDialog.root.unmount();
+    resetCorruptGuardForTests();
   }
 
   // P1-09：加载页 3 秒后追加进度文案
