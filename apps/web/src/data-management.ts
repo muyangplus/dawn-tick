@@ -23,6 +23,7 @@ import {
   isEncryptedBackupBytes,
 } from './lib/backup-crypto.ts';
 import { errorMessage } from './lib/errors.ts';
+import { EXPORT_CORRUPT_MESSAGE, reportCorrupt } from './db/corrupt-guard.ts';
 import { dayStampUtc } from './lib/dates.ts';
 import { saveBinaryFile, saveTextFile } from './system-actions.ts';
 import {
@@ -65,6 +66,8 @@ export interface ExportOutcome {
   cancelled: boolean;
   path: string | null;
   error: string | null;
+  /** 失败原因是数据库损坏：界面换文案并引导到恢复对话框，不再展示 sqlx 原文 */
+  corrupt: boolean;
   /** Base64 格式给界面文本框用的内容 */
   text: string | null;
   /** 实际写出或生成的字节数 */
@@ -110,6 +113,7 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
     cancelled: false,
     path: null,
     error: null,
+    corrupt: false,
     text: null,
     bytes: 0,
     name,
@@ -188,6 +192,15 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
     return outcome;
   } catch (cause: unknown) {
     const error = errorMessage(cause);
+    // 损坏：日志保留原始 sqlx 文案，用户可见文案换成恢复引导（对话框由守卫统一弹出）
+    if (reportCorrupt(cause, 'backup')) {
+      logWarn('backup', encrypted ? '加密导出失败' : '导出备份失败', {
+        format: request.format,
+        error,
+        corrupt: true,
+      });
+      return { ...base, error: EXPORT_CORRUPT_MESSAGE, corrupt: true };
+    }
     logWarn('backup', encrypted ? '加密导出失败' : '导出备份失败', {
       format: request.format,
       error,

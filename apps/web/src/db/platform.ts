@@ -21,6 +21,7 @@ import { errorMessage } from '../lib/errors.ts';
 import { readStorageInfo, type StorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
 import { isCorruptDatabase, isMissingSqlxMigrations } from './health.ts';
+import { guardStorage } from './corrupt-guard.ts';
 import { setActiveSqlDriver } from './active-driver.ts';
 import { openIndexedDbStorage } from './idb-storage.ts';
 import { isFallbackStorage, markStorageFallback } from './fallback.ts';
@@ -102,7 +103,8 @@ export function setStorageOpenerForTests(opener: StorageOpener | null): void {
 
 /** 各端使用各自最合适的底层存储：Windows/Android 用 SQLite，Web 用 IndexedDB。 */
 export async function openStorage(): Promise<Storage> {
-  const storage = await openStorageInner();
+  // 运行中损坏守卫包在最外层：任何一次存储访问都能识别 malformed/corrupt 并锁死写入
+  const storage = guardStorage(await openStorageInner());
   // 临时回退是按 Q5 只读的：不做回填这类写入，等原生库恢复后再说
   if (isFallbackStorage(storage)) return storage;
   // 历史手工排课只写了 weeks_mask：开库时补一次 weeks_raw，之后再开库直接跳过

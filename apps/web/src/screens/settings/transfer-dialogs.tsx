@@ -81,7 +81,10 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           return;
         }
         if (!outcome.ok) {
-          toast.error(fail('导出', outcome.error, '请重试或换一个保存位置'));
+          // 损坏时 outcome.error 已是恢复引导文案；「换保存位置」提示保持不变
+          toast.error(
+            fail('导出', outcome.error, outcome.corrupt ? '也可换一个保存位置后重试' : '请重试或换一个保存位置'),
+          );
           return;
         }
         const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、');

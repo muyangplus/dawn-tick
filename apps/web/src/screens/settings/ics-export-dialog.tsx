@@ -10,6 +10,8 @@ import {
 import { buildIcsExport, type IcsExportInput } from '../../lib/ics-export.ts';
 import { useAction } from '../../lib/action.ts';
 import { errorMessage } from '../../lib/errors.ts';
+import { isCorruptDatabase } from '../../db/health.ts';
+import { DATABASE_CORRUPT_MESSAGE } from '../../db/corrupt-guard.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
@@ -61,7 +63,8 @@ export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialog
         }
       } catch (cause: unknown) {
         if (!cancelled) {
-          setLoadError(errorMessage(cause));
+          // 损坏不再展示原始 sqlx 文案：统一换成恢复引导（对话框由守卫弹出）
+          setLoadError(isCorruptDatabase(cause) ? DATABASE_CORRUPT_MESSAGE : errorMessage(cause));
           setLoading(false);
         }
       }

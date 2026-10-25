@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { AppSettings, Storage } from '@dawn-tick/core';
 import { loadAppData } from '../../data.ts';
 import { errorMessage } from '../../lib/errors.ts';
+import { isCorruptDatabase } from '../../db/health.ts';
+import { DATABASE_CORRUPT_MESSAGE } from '../../db/corrupt-guard.ts';
 import { buildPdfFromPng } from '../../lib/pdf.ts';
 import {
   buildTimetableImageModel,
@@ -85,7 +87,14 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
     } catch (cause: unknown) {
       const message = errorMessage(cause);
       logWarn('export', `${what}失败`, { message });
-      toast.error(fail(what, message, '请重试；仍失败可先导出备份再反馈'));
+      const corrupt = isCorruptDatabase(cause);
+      toast.error(
+        fail(
+          what,
+          corrupt ? DATABASE_CORRUPT_MESSAGE : message,
+          corrupt ? '可从最近快照恢复并重启后重试' : '请重试；仍失败可先导出备份再反馈',
+        ),
+      );
     } finally {
       setBusy(null);
     }

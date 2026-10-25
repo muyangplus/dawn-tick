@@ -4,6 +4,12 @@ import { createSnapshot, pruneSnapshots } from '../backup.ts';
 import { downloadAndApply, type ApplyMode } from '../webdav.ts';
 import { defaultWindowStart, loadAppData, type AppData } from '../data.ts';
 import { STORAGE_READ_ONLY_MESSAGE, isFallbackStorage, readOnlyStorage } from '../db/fallback.ts';
+import {
+  DATABASE_CORRUPT_WRITE_BLOCKED,
+  corruptReadOnlyStorage,
+  isCorruptLocked,
+  subscribeCorrupt,
+} from '../db/corrupt-guard.ts';
 import { clampDayDate, clampWindowStart, dayRangeOf, defaultDayDate, stepDay, stepWindow } from '../lib/day-nav.ts';
 import { fail } from '../lib/fail.ts';
 import { logInfo, logWarn } from '../log.ts';
@@ -37,6 +43,8 @@ export interface AppSession {
   persistent: boolean | null;
   /** 临时回退（原生库打不开）：界面一律只读 */
   fallback: boolean;
+  /** 运行中数据库损坏：写入已锁死，界面提示只读 */
+  corrupt: boolean;
   /** 各屏拿到的存储：回退时是只读包装 */
   uiStorage: Storage | null;
   /** 写入口统一提示：返回 false 表示这次操作被拦下 */
@@ -87,22 +95,35 @@ export function useAppSession(): AppSession {
   const [dayDate, setDayDate] = useState<string | null>(null);
   /** 远端备份比本机新：启动或每日同步发现，下载前先给本机做快照 */
   const [remoteNewer, setRemoteNewer] = useState<RemoteBackupInfo | null>(null);
+  /** 运行中数据库损坏：同一会话只由守卫通知一次，之后界面保持只读 */
+  const [corrupt, setCorrupt] = useState(false);
+
+  useEffect(() => {
+    if (isCorruptLocked()) setCorrupt(true);
+    return subscribeCorrupt(() => setCorrupt(true));
+  }, []);
 
   /** 临时回退（原生库打不开）：主壳常驻警告条，界面一律只读 */
   const fallback = storage !== null && isFallbackStorage(storage);
-  const uiStorage = useMemo(
-    () => (storage === null ? null : fallback ? readOnlyStorage(storage) : storage),
-    [storage, fallback],
-  );
+  const uiStorage = useMemo(() => {
+    if (storage === null) return null;
+    if (corrupt) return corruptReadOnlyStorage(storage);
+    return fallback ? readOnlyStorage(storage) : storage;
+  }, [storage, fallback, corrupt]);
   /** 写入口统一提示：返回 false 表示这次操作被拦下 */
   const guardWrite = useCallback(
     (action: string): boolean => {
+      if (corrupt) {
+        logWarn('storage', '数据库损坏后拦截写操作', { action });
+        toast.error(DATABASE_CORRUPT_WRITE_BLOCKED);
+        return false;
+      }
       if (!fallback) return true;
       logWarn('storage', '临时回退期间拦截写操作', { action });
       toast.error(STORAGE_READ_ONLY_MESSAGE);
       return false;
     },
-    [fallback],
+    [fallback, corrupt],
   );
   const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
     enabled: settings.classReminderEnabled,
@@ -314,6 +335,7 @@ export function useAppSession(): AppSession {
     error,
     persistent,
     fallback,
+    corrupt,
     uiStorage,
     guardWrite,
     mode,

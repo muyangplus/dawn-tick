@@ -11,6 +11,7 @@ import { BusyOverlay } from './components/ui/busy-overlay.tsx';
 import { PendingRestartBar } from './components/pending-restart-bar.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
 import { ConfirmDialogHost } from './components/ui/confirm-dialog.tsx';
+import { DatabaseCorruptDialog } from './components/database-corrupt-dialog.tsx';
 import { Sheet, type FormContainer } from './components/ui/sheet.tsx';
 import { Toaster } from './components/ui/toaster.tsx';
 import { clampDayDate, dayRangeOf, defaultDayDate, stepDay, stepWindow } from './lib/day-nav.ts';
@@ -130,19 +131,27 @@ export function App() {
 
   if (session.error !== null) {
     return (
-      <ErrorScreen
-        kind={session.error.kind}
-        failure={session.error.failure}
-        onRetry={session.retryBoot}
-        onRestore={() => void recovery.restoreFromBackup()}
-        onOpenBackupDir={() => void recovery.openBackupDirectory()}
-        onOpenLogs={() => void recovery.exportDiagnosticLogs()}
-      />
+      <>
+        <ErrorScreen
+          kind={session.error.kind}
+          failure={session.error.failure}
+          onRetry={session.retryBoot}
+          onRestore={() => void recovery.restoreFromBackup()}
+          onOpenBackupDir={() => void recovery.openBackupDirectory()}
+          onOpenLogs={() => void recovery.exportDiagnosticLogs()}
+        />
+        <DatabaseCorruptDialog />
+      </>
     );
   }
 
   if (storage === null || data === null) {
-    return <LoadingScreen />;
+    return (
+      <>
+        <LoadingScreen />
+        <DatabaseCorruptDialog />
+      </>
+    );
   }
 
   /** 存储就绪后各屏共用：回退时是只读包装，写操作会统一被拒绝 */
@@ -174,6 +183,7 @@ export function App() {
         <ExternalLinkConfirm />
         <ConfirmDialogHost />
         <BusyOverlay />
+        <DatabaseCorruptDialog />
       </>
     );
   }
@@ -444,6 +454,7 @@ export function App() {
       <ExternalLinkConfirm />
       <ConfirmDialogHost />
       <BusyOverlay />
+      <DatabaseCorruptDialog />
     </div>
   );
 }
