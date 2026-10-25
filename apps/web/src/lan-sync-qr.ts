@@ -1,15 +1,15 @@
 /**
- * 局域网同步二期：配对信息二维码。
+ * 局域网同步：配对信息二维码。
  *
  * 边界：
  * - 只做「生成矩阵」，不引相机 / 扫码 / 第三方二维码依赖；界面用 SVG 渲染；
- * - 字节模式、纠错等级 M、版本 1–4（最多 62 字节）。配对文本是
- *   `IP:端口 配对码`，远小于上限；
+ * - 字节模式、纠错等级 M、版本 1–6（最多 106 字节，足够标准配对链接）；
+ * - 版本 7+ 需要版本信息区，本实现不画；配对链接超长时给出可读错误，界面仍显示人类可读文本；
  * - 纯函数，`apps/web/test/lan-sync-qr.test.ts` 覆盖尺寸、定位图案、确定性与超长报错。
  */
 
 const EC_LEVEL_M = 0;
-const MAX_VERSION = 4;
+const MAX_VERSION = 6;
 
 interface QrVersion {
   size: number;
@@ -19,12 +19,14 @@ interface QrVersion {
   align: number[];
 }
 
-/** 版本表：只收 M 级、1–4；数字来自 QR 规范 Table 9。 */
+/** 版本表：只收 M 级、1–6；数字来自 QR 规范 Table 9（v1–6 的 RS 分块长度一致）。 */
 const VERSIONS: Record<number, QrVersion> = {
   1: { size: 21, dataPerBlock: 16, eccPerBlock: 10, blocks: 1, align: [] },
   2: { size: 25, dataPerBlock: 28, eccPerBlock: 16, blocks: 1, align: [6, 18] },
   3: { size: 29, dataPerBlock: 44, eccPerBlock: 26, blocks: 1, align: [6, 22] },
   4: { size: 33, dataPerBlock: 32, eccPerBlock: 18, blocks: 2, align: [6, 26] },
+  5: { size: 37, dataPerBlock: 43, eccPerBlock: 24, blocks: 2, align: [6, 30] },
+  6: { size: 41, dataPerBlock: 27, eccPerBlock: 16, blocks: 4, align: [6, 34] },
 };
 
 /** 字节模式在版本 1–9 的字符计数位宽。 */
@@ -97,7 +99,8 @@ function chooseVersion(length: number): { version: number; info: QrVersion } {
     const info = VERSIONS[version]!;
     if (length <= byteCapacity(info)) return { version, info };
   }
-  throw new Error(`二维码内容过长（${length} 字节，最多 62 字节）`);
+  const limit = byteCapacity(VERSIONS[MAX_VERSION]!);
+  throw new Error(`二维码内容过长（${length} 字节，最多 ${limit} 字节）`);
 }
 
 function utf8Bytes(text: string): number[] {
