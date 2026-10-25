@@ -1,25 +1,23 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { Button } from '../../components/ui/button.tsx';
-import { Field, Input } from '../../components/ui/input.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { fail } from '../../copy/zh.ts';
-import { errorMessage } from '../../lib/errors.ts';
 import { useAction } from '../../lib/action.ts';
-import { logInfo, logWarn } from '../../log.ts';
 import {
   LAN_CLIENT_IDLE,
   LAN_SCOPES,
   LAN_SCOPE_LABEL,
+  defaultDeviceName,
   formatPeerAddress,
   pairWithPeer,
   parsePeerAddress,
-  pullFromPeer,
   pushToPeer,
   reduceLanClient,
   sessionExpired,
   type LanScope,
+  type LanSession,
 } from '../../lan-sync.ts';
 import {
   dedupeDiscoveryPeers,
@@ -28,11 +26,8 @@ import {
   type LanDiscoveryPeer,
 } from '../../lan-sync-discovery.ts';
 import {
-  LAN_AUTO_INTERVAL_MS,
   loadAutoConfig,
-  runAutoWithRetry,
   saveAutoConfig,
-  shouldAutoSync,
   type LanAutoConfig,
   type LanAutoMode,
 } from '../../lan-sync-auto.ts';
@@ -41,9 +36,18 @@ import {
   previewPullFromPeer,
   type LanPreviewResult,
 } from '../../lan-sync-preview.ts';
+import {
+  createLanPairingStore,
+  createLanPairing,
+  markLanPairingSynced,
+  upsertLanPairing,
+} from '../../lan-pairings.ts';
 import { LanAutoPanel } from './lan-sync-auto-panel.tsx';
 import { LanDiscoveryPanel } from './lan-sync-discovery-panel.tsx';
+import { LanSyncDevicesPanel } from './lan-sync-devices-panel.tsx';
+import { LanSyncPairPanel } from './lan-sync-pair-panel.tsx';
 import { LanPreviewPanel, lanPreviewText } from './lan-sync-preview-panel.tsx';
+import { useLanAutoSync } from './use-lan-auto-sync.ts';
 import { said } from './format.ts';
 
 export interface LanSyncClientPanelProps {
@@ -54,14 +58,12 @@ export interface LanSyncClientPanelProps {
   onChanged: () => void;
 }
 
-function autoResultText(imported: number, skipped: number): string {
-  return `自动同步完成：写入 ${imported} 条，跳过 ${skipped} 条`;
-}
-
 /**
- * 局域网同步的发起方：发现设备 / 手输地址配对 / 范围 / 预览后拉取 / 推送 / 自动同步。
+ * 局域网同步的发起方：发现设备 / 扫码或手输配对 / 范围 / 预览后拉取 / 推送 / 自动同步 /
+ * 已配对设备与自动重连。
  *
- * 服务端与二维码在父组件；这里只在需要时用本机内存里的配对会话。
+ * 服务端与二维码在父组件；配对成功后长期令牌写入 `app_meta`（Web 用 localStorage），
+ * 由 `lan-pairings.ts` 负责持久化与 30 秒探测，本组件只管界面状态。
  */
 export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChanged }: LanSyncClientPanelProps) {
   const action = useAction();
@@ -77,59 +79,39 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
   const [preview, setPreview] = useState<{ result: LanPreviewResult; scopes: LanScope[] } | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [autoNote, setAutoNote] = useState<string | null>(null);
+  const [pairingsRevision, setPairingsRevision] = useState(0);
   const autoRef = useRef(auto);
-  const launchAt = useRef(Date.now());
+  const pairingStore = useMemo(() => createLanPairingStore(storage), [storage]);
 
   useEffect(() => {
     autoRef.current = auto;
   }, [auto]);
 
+  const note = useCallback((text: string): void => {
+    setStatus(said(text));
+  }, []);
+
+  const applyAuto = useCallback((next: LanAutoConfig): void => {
+    autoRef.current = next;
+    setAuto(next);
+  }, []);
+
+  const expireSession = useCallback((): void => {
+    dispatch({ type: 'expire', now: Date.now() });
+  }, []);
+
   // 后台自动同步：只在已配对且令牌有效时跑；失败静默重试一次，仍失败只记日志
-  useEffect(() => {
-    if (client.phase !== 'paired' || client.session === null || auto.mode === 'off') return;
-    const session = client.session;
-    let cancelled = false;
-    let timer: number | undefined;
-    const run = async (): Promise<void> => {
-      if (cancelled) return;
-      const config = autoRef.current;
-      if (!shouldAutoSync(config, Date.now(), launchAt.current)) return;
-      if (sessionExpired(session)) {
-        dispatch({ type: 'expire', now: Date.now() });
-        setAutoNote('自动同步已暂停：配对过期，请重新配对');
-        return;
-      }
-      const result = await runAutoWithRetry(
-        () => pullFromPeer(storage, session, config.scopes),
-        (value) => value.ok,
-        1000,
-      );
-      if (cancelled) return;
-      const next = { ...config, lastRunAt: Date.now() };
-      autoRef.current = next;
-      setAuto(next);
-      saveAutoConfig(next);
-      if (!result.ok) {
-        logWarn('lan-sync', '自动同步失败（已重试一次）', { error: result.error });
-        setAutoNote('自动同步失败，已静默重试一次');
-        return;
-      }
-      const imported = result.value?.imported ?? 0;
-      const skipped = result.value?.skipped ?? 0;
-      logInfo('lan-sync', '自动同步完成', { imported, skipped });
-      setAutoNote(autoResultText(imported, skipped));
-      if (config.scopes.includes('settings')) await onSettingsReplaced();
-      if (imported > 0) onChanged();
-    };
-    void run();
-    if (auto.mode === 'interval30') {
-      timer = window.setInterval(() => void run(), LAN_AUTO_INTERVAL_MS);
-    }
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearInterval(timer);
-    };
-  }, [client.phase, client.session, auto.mode, storage, onChanged, onSettingsReplaced]);
+  useLanAutoSync({
+    storage,
+    session: client.session,
+    mode: auto.mode,
+    config: auto,
+    onConfig: applyAuto,
+    onNote: setAutoNote,
+    onExpired: expireSession,
+    onSettingsReplaced,
+    onChanged,
+  });
 
   function changeAuto(mode: LanAutoMode): void {
     const next = { ...autoRef.current, mode };
@@ -151,13 +133,35 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
 
   function choosePeer(peer: LanDiscoveryPeer): void {
     setPeerInput(formatPeerAddress({ host: peer.host, port: peer.port }));
-    setStatus(said(`已填入 ${peer.name} 的地址，请填对方显示的配对码`));
+    setStatus(said(`已填入 ${peer.name} 的地址，请扫码或填对方显示的配对码`));
   }
 
-  async function pairPeer(): Promise<void> {
-    const peer = parsePeerAddress(peerInput);
+  /** 配对成功：写入 `app_meta`（Web 为 localStorage），列表随之刷新。 */
+  async function rememberPairing(session: LanSession, name?: string): Promise<void> {
+    const pairing = createLanPairing({
+      peer: session.peer,
+      token: session.token,
+      name: name ?? '对方设备',
+      now: Date.now(),
+    });
+    const existing = await pairingStore.load();
+    await pairingStore.save(upsertLanPairing(existing, pairing));
+    setPairingsRevision((value) => value + 1);
+  }
+
+  /** 拉取/推送成功后更新「上次同步时间」；不是本机保存的配对时忽略。 */
+  async function rememberSynced(session: LanSession): Promise<void> {
+    const id = `${session.peer.host}:${session.peer.port}`;
+    const existing = await pairingStore.load();
+    if (!existing.some((item) => item.id === id)) return;
+    await pairingStore.save(markLanPairingSynced(existing, id));
+    setPairingsRevision((value) => value + 1);
+  }
+
+  async function pairPeer(peerText: string, codeText: string, name?: string): Promise<void> {
+    const peer = parsePeerAddress(peerText);
     if (peer === null) {
-      setStatus(said('对方地址应为局域网 IP 与端口，例如 192.168.1.5:8765'));
+      note('对方地址应为局域网 IP 与端口，例如 192.168.1.5:8765');
       return;
     }
     dispatch({ type: 'pairing' });
@@ -167,7 +171,8 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
       label: '正在配对…',
       fail: false,
       task: async () => {
-        const result = await pairWithPeer(peer, codeInput);
+        // 提交给服务端的设备名是本机名；扫码/粘贴里的 name 是「对方」的展示名，只用于本地记录
+        const result = await pairWithPeer(peer, codeText, Date.now(), defaultDeviceName());
         if (!result.ok || result.session === null) {
           const error = result.error ?? '配对失败';
           dispatch({ type: 'failed', error });
@@ -175,7 +180,8 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
           return;
         }
         dispatch({ type: 'paired', session: result.session });
-        setStatus(said(`已与 ${formatPeerAddress(peer)} 建立配对，可以预览后拉取或推送`));
+        await rememberPairing(result.session, name);
+        note(`已与 ${formatPeerAddress(peer)} 建立配对，可以预览后拉取或推送`);
         toast.success('已配对');
       },
     });
@@ -207,7 +213,7 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
     }
     const selected = selectedScopes();
     if (selected.length === 0) {
-      setStatus(said('请至少勾选一个同步范围'));
+      note('请至少勾选一个同步范围');
       return;
     }
     setPreviewing(true);
@@ -246,6 +252,7 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
         const message = `合并完成：写入 ${result.imported} 条，跳过 ${result.skipped} 条`;
         setStatus(said(message));
         toast.success(message);
+        if (client.session !== null) await rememberSynced(client.session);
         if (selected.includes('settings')) await onSettingsReplaced();
         if (result.imported > 0) onChanged();
       },
@@ -261,7 +268,7 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
     }
     const selected = selectedScopes();
     if (selected.length === 0) {
-      setStatus(said('请至少勾选一个同步范围'));
+      note('请至少勾选一个同步范围');
       return;
     }
     setProgress('正在推送到对方…');
@@ -281,6 +288,7 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
         const message = `推送完成：写入 ${result.imported} 条，跳过 ${result.skipped} 条`;
         setStatus(said(message));
         toast.success(message);
+        await rememberSynced(session);
       },
     });
   }
@@ -288,47 +296,43 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
   return (
     <>
       <LanDiscoveryPanel peers={peers} discovering={discovering} onDiscover={() => void discover()} onChoose={choosePeer} />
-      <Field label="对方地址" hint="与本机在同一局域网" help="填对方的局域网 IP 与端口，例如 192.168.1.5:8765">
-        <Input
-          data-role="lan-sync-peer"
-          aria-label="对方地址"
-          value={peerInput}
-          placeholder="192.168.1.5:8765"
-          onChange={(event) => setPeerInput(event.target.value)}
-        />
-      </Field>
-      <Field label="配对码" hint="对方「开启配对」后显示的 6 位数字">
-        <Input
-          data-role="lan-sync-pair-code"
-          aria-label="配对码"
-          inputMode="numeric"
-          maxLength={6}
-          value={codeInput}
-          onChange={(event) => setCodeInput(event.target.value)}
-        />
-      </Field>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label="配对"
-          loading={action.busy}
-          disabled={client.phase === 'pairing'}
-          onClick={() => void pairPeer()}
-        >
-          {client.phase === 'paired' ? '重新配对' : '配对'}
-        </Button>
-        {client.session !== null && (
-          <span className="text-xs text-muted" data-role="lan-sync-session">
-            已连接 {formatPeerAddress(client.session.peer)}
-          </span>
-        )}
-      </div>
+      <LanSyncPairPanel
+        busy={action.busy}
+        paired={client.phase === 'paired'}
+        peer={peerInput}
+        code={codeInput}
+        onPeerChange={setPeerInput}
+        onCodeChange={setCodeInput}
+        onPair={(peer, code, name) => void pairPeer(peer, code, name)}
+        onNote={note}
+      />
+      {client.session !== null && (
+        <span className="text-xs text-muted" data-role="lan-sync-session">
+          已连接 {formatPeerAddress(client.session.peer)}
+        </span>
+      )}
       {client.phase === 'failed' && client.error !== null && (
         <StatusLine dataRole="lan-sync-error" tone="danger">
           {client.error}
         </StatusLine>
       )}
+      <LanSyncDevicesPanel
+        storage={storage}
+        revision={pairingsRevision}
+        onSettingsReplaced={onSettingsReplaced}
+        onChanged={onChanged}
+        onNote={note}
+        onTokenRefreshed={(id, token, expiresAt) => {
+          const current = client.session;
+          if (current === null) return;
+          if (`${current.peer.host}:${current.peer.port}` !== id) return;
+          dispatch({
+            type: 'refresh',
+            token,
+            expiresAt: expiresAt > 0 ? expiresAt : current.expiresAt,
+          });
+        }}
+      />
       <span className="text-xs font-medium text-muted">同步范围</span>
       <div className="flex flex-wrap items-center gap-3" data-role="lan-sync-scopes">
         {LAN_SCOPES.map((scope) => (

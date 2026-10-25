@@ -48,6 +48,9 @@ import { isCorruptLocked, reportCorrupt, resetCorruptGuardForTests } from '../sr
 import { DatabaseCorruptDialog } from '../src/components/database-corrupt-dialog.tsx';
 import { setStorageOpenerForTests } from '../src/db/platform.ts';
 import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
+import { formatPairPayload } from '../src/lan-pair-payload.ts';
+import { setPairScannerForTests } from '../src/lan-pair-scan.ts';
+import { LanSyncBlock } from '../src/screens/settings/lan-sync-block.tsx';
 import {
   defaultLanNetwork,
   formatLanNetworkLine,
@@ -4199,6 +4202,95 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+
+  // —— 局域网同步三期：安卓扫码桩 → 自动填入并配对 → 已配对列表 → 移除 ——
+  const lanScanText = formatPairPayload({
+    host: '192.168.1.5',
+    port: 8765,
+    code: '123456',
+    name: '书房电脑',
+  });
+  setPairScannerForTests({ scan: async () => lanScanText, available: true });
+  const originalLanFetch = globalThis.fetch;
+  const pairingToken = 'a'.repeat(32);
+  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = new URL(typeof input === 'string' ? input : String(input));
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (url.pathname === '/pair' && method === 'POST') {
+      return new Response(
+        JSON.stringify({ token: pairingToken, expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    if (url.pathname === '/pair/refresh') {
+      return new Response(
+        JSON.stringify({ token: 'b'.repeat(32), expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    if (url.pathname === '/pair/revoke') {
+      return new Response(JSON.stringify({ revoked: true, schemaVersion: 1 }), { status: 200 });
+    }
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  const lanStorage = validatedStorage(await openIndexedDbStorage());
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：不影响断言
+  }
+  const lanView = mount(
+    <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
+  );
+  await flush(10);
+  const scanButton = lanView.container.querySelector<HTMLElement>('button[aria-label="扫码配对"]');
+  check(
+    '安卓扫码桩：配对区出现「扫码配对」按钮',
+    scanButton !== null,
+    scanButton?.textContent?.trim() ?? '(无按钮)',
+  );
+  scanButton?.click();
+  const pairedShown = await waitFor(
+    () => lanView.container.querySelector('[data-role="lan-paired-item"]') !== null,
+    60,
+  );
+  const pairedItem = lanView.container.querySelector<HTMLElement>('[data-role="lan-paired-item"]');
+  const lanPeerField = lanView.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+  const lanCodeField = lanView.container.querySelector<HTMLInputElement>('[data-role="lan-sync-pair-code"]');
+  const storedPairings = window.localStorage.getItem('dt.lan.pairings.v1') ?? '';
+  check(
+    '扫码后自动填入地址与配对码并发起配对，已配对列表出现设备',
+    pairedShown &&
+      lanPeerField?.value === '192.168.1.5:8765' &&
+      lanCodeField?.value === '123456' &&
+      (pairedItem?.textContent ?? '').includes('书房电脑') &&
+      storedPairings.includes('192.168.1.5') &&
+      storedPairings.includes('书房电脑'),
+    `列表=${(pairedItem?.textContent ?? '(无)').slice(0, 60)}`,
+  );
+  const removePairing = [...lanView.container.querySelectorAll<HTMLElement>('button')].find((item) =>
+    (item.getAttribute('aria-label') ?? '').startsWith('移除配对'),
+  );
+  removePairing?.click();
+  const pairingRemoved = await waitFor(
+    () =>
+      lanView.container.querySelector('[data-role="lan-paired-item"]') === null &&
+      lanView.container.querySelector('[data-role="lan-paired-empty"]') !== null,
+    60,
+  );
+  check(
+    '已配对设备可移除，移除后列表回到空状态',
+    pairingRemoved && !(window.localStorage.getItem('dt.lan.pairings.v1') ?? '').includes('192.168.1.5'),
+    removePairing?.getAttribute('aria-label') ?? '(无移除按钮)',
+  );
+  lanView.root.unmount();
+  globalThis.fetch = originalLanFetch;
+  setPairScannerForTests(null);
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：无需清理
+  }
 
   check(
     '主区底部留白按底部栏与悬浮按钮高度计算',

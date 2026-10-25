@@ -110,7 +110,9 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 ## 7. LanSync
 
 局域网同步（I-14）的 Android 服务端。插件只做监听、排队、取请求与回响应；
-配对码、令牌、范围与数据导出导入全在 TS，协议见 `apps/mobile/docs/lan-sync.contract.md`。
+配对码、长期令牌（只落哈希）、范围与数据导出导入全在 TS，协议见
+`apps/mobile/docs/lan-sync.contract.md`。socket **绑定通配地址**（`ServerSocket(0)` 不指定网卡），
+对外广播/展示的是选中网卡的局域网 IPv4；每个请求仍校验来源必须是局域网地址。
 
 | 项 | 内容 |
 |---|---|
@@ -120,12 +122,28 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 
 | 方法 | 参数 | 返回字段 | 说明 |
 |---|---|---|---|
-| `start` | `host?: string` | `host?: string`、`port?: number` | 绑定选中/首选的局域网 IPv4 与系统分配端口；`host` 不在本机网卡上或绑定失败时 reject。成功后开始 UDP 广播（不含配对码）；广播失败只记日志，不影响 resolve。后台线程另有 **10 秒看门狗**，超时 reject「开启配对超时：请确认已连接 Wi-Fi 后重试」 |
+| `start` | `host?: string` | `host?: string`、`port?: number`、`listening?: boolean` | 用通配地址 + 系统分配端口监听，`host` 只决定对外展示/广播地址；resolve 前确认 socket 已 bind，返回 `listening:true`。`host` 不在本机网卡上或绑定失败时 reject，**原始异常 message 原样透传**（界面显示 `开启配对失败：<原因>`）。成功后开始 UDP 广播（不含配对码）；广播失败只记日志，不影响 resolve。后台线程另有 **10 秒看门狗** |
 | `stop` | 无 | 无（resolve 空） | 关监听、停广播并清空队列、等待中的响应；**幂等**，重复调用仍 resolve |
 | `networks` | 无 | `networks?: { name?: string; address?: string; isLan?: boolean; kind?: string; preferred?: number }[]` | 枚举本机 IPv4：排除回环，`kind` 取 `wifi` / `ethernet` / `vpn` / `other`；VPN 与虚拟网卡降级排序（`preferred` 越小越优先：192.168 > 10 > 172.16–31 > 100.64 > 169.254） |
 | `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
 | `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
 | `scanDiscovery` | `timeoutMs?: number` | `peers?: { name?: string; host?: string; port?: number }[]` | UDP 短超时扫描同网设备；只返回设备名 / 地址 / 端口，按 host:port 去重 |
+
+HTTP 路径白名单（原生层只放行这些，其余 404/405）：`/pair`、`/pair/refresh`、
+`/pair/revoke`、`/export`、`/import`，另有 `OPTIONS` 预检。
+
+### 7.1 相机扫码依赖与权限
+
+应用内扫码不是自研插件，而是第三方 Capacitor 插件；方法名与字段以该包自身契约为准，
+本仓库只在 `apps/web/src/lan-pair-scan.ts` 里动态加载：
+
+| 项 | 内容 |
+|---|---|
+| 依赖 | `@capacitor-mlkit/barcode-scanning@^8.2.1`（`apps/mobile/package.json` 与 `apps/web/package.json` 都声明） |
+| Android 插件类 | `io.capawesome.capacitorjs.plugins.mlkit.barcodescanning.BarcodeScannerPlugin`（`cap sync android` 后写入 `capacitor.plugins.json`） |
+| 权限 | `AndroidManifest.xml`：`android.permission.CAMERA`；`<uses-feature android:name="android.hardware.camera" android:required="false"/>` |
+| 使用的方法 | `isSupported` / `requestPermissions` / `startScan` / `stopScan` / `addListener('barcodesScanned')` / `addListener('scanError')` |
+| 为什么不用 `scan()` | `scan()` 依赖 Google Play 服务的条码模块，无 GMS / 国产 ROM 会直接失败；`startScan()` 用打包进 APK 的 ML Kit 模型 |
 
 ## 8. ReminderActions
 
