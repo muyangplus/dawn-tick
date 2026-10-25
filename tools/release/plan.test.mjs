@@ -55,11 +55,16 @@ test('打标签触发正式发布', () => {
   assert.equal(plan.title, '晓刻 v0.2.0');
 });
 
-test('打 beta 标签沿用该标签', () => {
-  const plan = planRelease({ ref: 'refs/tags/v0.2.0-beta.1', version: '0.2.0' });
-  assert.equal(plan.channel, 'beta');
-  assert.equal(plan.tag, 'v0.2.0-beta.1');
-  assert.equal(plan.prerelease, true);
+test('打 beta 标签沿用该标签（可带序号或不带）', () => {
+  const numbered = planRelease({ ref: 'refs/tags/v0.2.0-beta.1', version: '0.2.0' });
+  assert.equal(numbered.channel, 'beta');
+  assert.equal(numbered.tag, 'v0.2.0-beta.1');
+  assert.equal(numbered.prerelease, true);
+
+  const plain = planRelease({ ref: 'refs/tags/v0.2.0-beta', version: '0.2.0' });
+  assert.equal(plain.channel, 'beta');
+  assert.equal(plain.tag, 'v0.2.0-beta');
+  assert.equal(plain.prerelease, true);
 });
 
 test('手动触发 release 渠道使用 main', () => {

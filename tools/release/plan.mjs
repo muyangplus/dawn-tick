@@ -44,7 +44,8 @@ export function planRelease({
     channel = 'dev';
   } else if (isTagPush) {
     const name = ref.slice('refs/tags/'.length);
-    if (/-beta\./.test(name)) channel = 'beta';
+    // 测试版标签允许不带序号（`vX.Y.Z-beta`）或带序号（`vX.Y.Z-beta.N`）
+    if (/-beta(\.|$)/.test(name)) channel = 'beta';
     else if (/-dev\./.test(name)) channel = 'dev';
     else channel = 'release';
   } else if (typeof dispatchChannel === 'string' && dispatchChannel.length > 0) {

@@ -29,7 +29,7 @@ export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
 };
 
 /** beta 预发布标签与正式版标签。 */
-const BETA_RELEASE_TAG = /^v?\d+\.\d+\.\d+-beta\.\d+$/;
+const BETA_RELEASE_TAG = /^v?\d+\.\d+\.\d+-beta(?:\.\d+)?$/;
 const STABLE_RELEASE_TAG = /^v?\d+\.\d+\.\d+$/;
 
 /** GitHub 接口的 accept：只读公开仓库，不带任何凭据。 */
