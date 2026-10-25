@@ -10,6 +10,7 @@
 - **CI**：四个 job——`node`（typecheck / test / 界面冒烟）、`schema`、`rust`、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
 - **本地安卓编译**（无需 CI 往返）：`JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6`、`ANDROID_HOME=E:\work\dsh\android-sdk`，在 `apps/mobile/android` 跑 `gradlew.bat :app:compileDebugKotlin --no-daemon`。
 - **结构**：`App.tsx` 449 行；`settings-view.tsx` 212 行 / `devices-view.tsx` 176 行，卡片在 `screens/settings/`；`data.ts` 732 行（`loadAppData` 70 行）；`app/` 拆启动编排、会话、课表动作、副作用、恢复；`screens/{import,timetable,settings}/` 均按职责拆分，单文件 ≤400 行。
+- **运维工具**：`tools/repair/repair-db.mjs --dir=<数据目录> [--dry-run] [--stage=<快照>]` 检查/恢复损坏数据库；正常启动也会自检并从最新健康快照恢复。
 - **单点**：文案 `copy/zh.ts`；节次范围 `lib/format.ts`；课程色 `core/colors.ts`；原生桥 `lib/native.ts`（命令与 Rust 一一对应）；插件契约 `lib/plugins.ts` + `apps/mobile/docs/plugins.contract.md`；`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`；局域网协议 `apps/mobile/docs/lan-sync.contract.md`。
 
 ## 1. 已交付（截至 0.6.0，均已通过 CI）
@@ -78,6 +79,7 @@
 7. Rust `lib.rs` 拆模块；「管理员权限注册开机启动」写 HKLM 需 UAC 链路。
 8. `core/sync.ts` 行级同步接线、局域网后台常驻。
 9. 学校名录双数据源合并——依赖仓库外生成链。
+10. 便携版数据目录 ACL/WebView2 写权限问题——现阶段靠提权与「已有实例」提示兜底。
 10. 冒烟拆 `bootstrap` + `cases/*`、i18n 全量 `t()`、状态管理库、卡片注册表插件化。
 
 ## 6. 发版与批次记录
@@ -114,6 +116,10 @@ cd apps/mobile/android
 set JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6
 set ANDROID_HOME=E:\work\dsh\android-sdk
 gradlew.bat :app:compileDebugKotlin --no-daemon
+# 数据库修复（只读预演 / 从快照恢复 / 下次启动恢复）
+node tools/repair/repair-db.mjs --dir=out-local --dry-run
+node tools/repair/repair-db.mjs --dir=out-local
+node tools/repair/repair-db.mjs --dir=out-local --stage=dawn-tick-20261025-204530.db
 # 发版：改版本号 → 切 CHANGELOG 段 → 推 dev 与标签
 node tools/release/version.mjs 0.6.1
 git tag v0.6.1 && git push origin dev v0.6.1
