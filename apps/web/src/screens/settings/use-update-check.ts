@@ -4,14 +4,15 @@ import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { fail } from '../../copy/zh.ts';
 import { useAction } from '../../lib/action.ts';
+import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
-  DOWNLOAD_SOURCE_LABEL,
   describeSourceLine,
   manualResolution,
-  probeAllSources,
   resolveDownloadSource,
   type DownloadSourceResolution,
-} from '../../lib/download-source.ts';
+} from '../../lib/download-selection.ts';
+import { probeAllSources } from '../../lib/download-probe.ts';
+import { updateFetch } from '../../lib/update-fetch.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';
 import { checkForUpdate, releaseChannelOf, resolveReceiveBeta, verifyHint } from '../../update.ts';
 import { currentIgnoredVersion, requestUpdatePrompt } from '../../components/update-prompt.ts';
@@ -59,7 +60,8 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
   }, [preference]);
 
   async function resolveNow(fresh: boolean): Promise<DownloadSourceResolution | null> {
-    const doFetch = globalThis.fetch;
+    // 探测与取源都走原生 HTTP：桌面 Tauri，Android 由 CapacitorHttp 接管
+    const doFetch = updateFetch();
     if (typeof doFetch !== 'function') return null;
     setSourceBusy(true);
     try {
@@ -101,8 +103,9 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
           channel: CHANNEL,
           receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
           currentVersion: appVersion(),
+          fetchImpl: updateFetch(),
           ...(resolved === null ? {} : { source: resolved.source }),
-          // 选中的源失败时自动回退另一个源：Gitee 还没有 Releases 时也能更新
+          // 选中的源失败时自动回退另一个源：Gitee 镜像还没同步时也能更新
           fallback: true,
         });
         if (status.error !== null) {

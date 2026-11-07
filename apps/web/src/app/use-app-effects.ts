@@ -9,7 +9,8 @@ import { ensureStartupPermissions } from '../permissions.ts';
 import { markNotifyAsked } from '../notify.ts';
 import { isFallbackStorage } from '../db/fallback.ts';
 import { checkForUpdate, resolveReceiveBeta } from '../update.ts';
-import { resolveDownloadSource } from '../lib/download-source.ts';
+import { resolveDownloadSource } from '../lib/download-selection.ts';
+import { updateFetch } from '../lib/update-fetch.ts';
 import { CHANNEL, appVersion } from '../channel.ts';
 import type { AppData } from '../data.ts';
 import type { NoticeDismissOptions } from '../components/app-dialogs.tsx';
@@ -133,7 +134,8 @@ export function useAppEffects(input: {
     let cancelled = false;
     void (async () => {
       // 与手动检查共用下载源解析：自动模式探测一次（会话缓存），手动指定直接用它
-      const doFetch = globalThis.fetch;
+      // 探测与取源都走原生 HTTP（桌面 Tauri / Android CapacitorHttp）：Gitee raw 无 CORS
+      const doFetch = updateFetch();
       const resolved =
         typeof doFetch === 'function'
           ? await resolveDownloadSource(settings.downloadSource, doFetch)
@@ -143,8 +145,9 @@ export function useAppEffects(input: {
         channel: CHANNEL,
         receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
         currentVersion: appVersion(),
+        fetchImpl: doFetch,
         ...(resolved === null ? {} : { source: resolved.source }),
-        // 选中的源失败时回退另一个源：Gitee 暂无 Releases 时也能拿到更新
+        // 选中的源失败时回退另一个源：Gitee 镜像还没同步时也能拿到更新
         fallback: true,
       });
       if (cancelled || !status.available) return;

@@ -12,7 +12,13 @@ import {
   resolveFeed,
   resolveReceiveBeta,
 } from '../src/update.ts';
+import { assetsMirrorUrl } from '../src/lib/download-source.ts';
 import { CHANNEL_LABEL } from '../src/channel.ts';
+
+const MIRROR_RELEASE = assetsMirrorUrl('github', 'release');
+const MIRROR_BETA = assetsMirrorUrl('github', 'beta');
+const MIRROR_DEV = assetsMirrorUrl('github', 'dev');
+const GITEE_MIRROR_RELEASE = assetsMirrorUrl('gitee', 'release');
 
 function manifestResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -22,7 +28,34 @@ function manifestResponse(body: unknown, ok = true, status = 200): Response {
   } as unknown as Response;
 }
 
-/** GitHub 发布接口的响应体：资产名与发布流程一致（`DawnTick-<版本>-<渠道>-…`）。 */
+function fileSuffix(suffix: string, version: string, channel: string, size: number, sha: string): Record<string, unknown> {
+  return { name: `DawnTick-${version}-${channel}${suffix}`, size, sha256: sha };
+}
+
+/** mirror.json：与发布脚本 `tools/release/publish-assets.mjs` 的产物一致。 */
+function mirrorBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const version = typeof overrides['version'] === 'string' ? overrides['version'] : '0.2.0';
+  const channel = typeof overrides['channel'] === 'string' ? overrides['channel'] : 'release';
+  return {
+    schema: 1,
+    channel,
+    version,
+    tag: `v${version}`,
+    commit: '4f2a1cd',
+    releasedAt: 1_760_000_000_000,
+    notes: '渠道 release · 来源 main · 提交 4f2a1cd',
+    files: {
+      windowsSetup: fileSuffix('-windows-x64-setup.exe', version, channel, 120, 'a'.repeat(64)),
+      windowsPortable: fileSuffix('-windows-x64-portable.zip', version, channel, 90, 'b'.repeat(64)),
+      android: fileSuffix('-android.apk', version, channel, 60, 'c'.repeat(64)),
+      web: fileSuffix('-web.zip', version, channel, 30, 'd'.repeat(64)),
+    },
+    checksums: 'SHA256SUMS.txt',
+    ...overrides,
+  };
+}
+
+/** 旧 GitHub Release 响应：仅作为 mirror.json 不可达时的兼容兜底。 */
 function releaseBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tag_name: 'v0.2.0',
@@ -101,21 +134,75 @@ test('release 与 beta 按开关决定源，beta 默认开', () => {
   assert.equal(resolveReceiveBeta(false, 'beta'), false, '显式关闭优先于默认值');
 });
 
-test('发现新版本时返回清单与下载信息', async () => {
+// —— mirror.json 取源（首选） ——
+
+test('缺省下载源仍是 GitHub：请求 release 分支的 mirror.json 并标明来源', async () => {
+  const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.1.0',
-    fetchImpl: async () => manifestResponse(releaseBody()),
+    fetchImpl: async (input) => {
+      seen.push(String(input));
+      return manifestResponse(mirrorBody());
+    },
   });
-  assert.equal(status.feed, 'release');
+  assert.deepEqual(seen, [MIRROR_RELEASE]);
+  assert.equal(status.source, 'github');
+  assert.equal(status.fallbackFrom, undefined);
+  assert.equal(status.error, null);
+});
+
+test('发现新版本：版本 / 渠道 / 说明 / 时间来自清单，下载地址是同源 raw 绝对 URL', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async () => manifestResponse(mirrorBody()),
+  });
   assert.equal(status.available, true);
   assert.equal(status.latest, '0.2.0');
-  assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe');
-  assert.equal(status.manifest?.assets?.android?.url, 'https://example.com/app.apk');
-  assert.equal(status.manifest?.assets?.web?.url, 'https://example.com/web.zip');
   assert.equal(status.manifest?.channel, 'release');
-  assert.equal(status.error, null);
+  assert.equal(status.manifest?.commit, '4f2a1cd');
+  assert.equal(status.manifest?.releasedAt, 1_760_000_000_000);
+  assert.match(String(status.manifest?.notes), /渠道 release/);
+  assert.equal(
+    status.manifest?.assets?.windows?.url,
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-windows-x64-setup.exe',
+    'windows 默认给安装包',
+  );
+  assert.equal(
+    status.manifest?.assets?.windowsPortable?.url,
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-windows-x64-portable.zip',
+  );
+  assert.equal(
+    status.manifest?.assets?.android?.url,
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-android.apk',
+  );
+  assert.equal(
+    status.manifest?.assets?.web?.url,
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-web.zip',
+  );
+  assert.equal(
+    status.manifest?.checksumsUrl,
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/SHA256SUMS.txt',
+    '校验文件与产物同源同分支',
+  );
+  assert.equal(status.manifest?.assets?.windows?.sha256, 'a'.repeat(64), '清单直接带摘要');
+});
+
+test('只有便携包时 windows 退回便携 zip，windowsPortable 仍单独保留', async () => {
+  const files = {
+    windowsPortable: fileSuffix('-windows-x64-portable.zip', '0.2.0', 'release', 90, 'b'.repeat(64)),
+  };
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async () => manifestResponse(mirrorBody({ files })),
+  });
+  assert.match(String(status.manifest?.assets?.windows?.url), /-windows-x64-portable\.zip$/);
+  assert.equal(status.manifest?.assets?.windowsPortable?.url, status.manifest?.assets?.windows?.url);
 });
 
 test('同版本或更旧版本不算更新', async () => {
@@ -123,7 +210,7 @@ test('同版本或更旧版本不算更新', async () => {
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.2.0',
-    fetchImpl: async () => manifestResponse(releaseBody({ assets: [] })),
+    fetchImpl: async () => manifestResponse(mirrorBody({ version: '0.2.0' })),
   });
   assert.equal(same.available, false);
 
@@ -131,7 +218,7 @@ test('同版本或更旧版本不算更新', async () => {
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.3.0',
-    fetchImpl: async () => manifestResponse(releaseBody({ assets: [] })),
+    fetchImpl: async () => manifestResponse(mirrorBody({ version: '0.2.0' })),
   });
   assert.equal(older.available, false, '不允许降级');
 });
@@ -149,180 +236,84 @@ test('判定：只有远端版本严格大于当前版本才提示', async () =>
       channel: 'release',
       receiveBeta: false,
       currentVersion: current,
-      fetchImpl: async () => manifestResponse(releaseBody({ tag_name: `v${latest}`, assets: [] })),
+      fetchImpl: async () => manifestResponse(mirrorBody({ version: latest })),
     });
     assert.equal(status.available, expected, `当前 ${current}、远端 ${latest} 应${expected ? '' : '不'}提示`);
   }
 });
 
-test('提示渠道取发布本身的渠道，不取接收测试版开关', async () => {
-  // 正式版用户打开「接收测试版」后，查到更高的正式版：仍然显示正式版
-  const stable = await checkForUpdate({
-    channel: 'release',
-    receiveBeta: true,
-    currentVersion: '0.1.0',
-    fetchImpl: async () =>
-      manifestResponse([releaseBody({ tag_name: 'v0.2.0', prerelease: false, assets: [] })]),
-  });
-  assert.equal(stable.feed, 'beta', '查询源是发布列表');
-  assert.equal(stable.manifest?.channel, 'release', '发布本身是正式版');
-  assert.equal(releaseChannelOf(stable), 'release');
-  assert.equal(CHANNEL_LABEL[releaseChannelOf(stable)], '正式版');
-
-  // 测试版用户查到 beta 预发布：显示测试版
+test('提示渠道取清单里的渠道：beta 分支显示测试版', async () => {
   const beta = await checkForUpdate({
     channel: 'beta',
     receiveBeta: true,
     currentVersion: '0.1.0-beta.1',
-    fetchImpl: async () =>
-      manifestResponse([
-        releaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true, assets: [] }),
-      ]),
+    fetchImpl: async (input) => {
+      assert.equal(String(input), MIRROR_BETA, '接收测试版时读 beta 分支');
+      return manifestResponse(mirrorBody({ channel: 'beta', version: '0.2.0-beta.1' }));
+    },
   });
+  assert.equal(beta.feed, 'beta');
   assert.equal(beta.manifest?.channel, 'beta');
   assert.equal(releaseChannelOf(beta), 'beta');
   assert.equal(CHANNEL_LABEL[releaseChannelOf(beta)], '测试版');
 
-  // 没有清单时退回本次查询的源
+  // 没勾「接收测试版」时只读 release 分支
+  const stable = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async (input) => {
+      assert.equal(String(input), MIRROR_RELEASE);
+      return manifestResponse(mirrorBody());
+    },
+  });
+  assert.equal(stable.manifest?.channel, 'release');
+  assert.equal(releaseChannelOf(stable), 'release');
   assert.equal(releaseChannelOf({ feed: 'dev', manifest: null }), 'dev');
 });
 
-test('渠道不一致的清单被忽略', async () => {
+test('清单渠道与查询渠道不一致时忽略，不跨渠道兜底', async () => {
+  const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.1.0',
-    // 回退源（version.json）给出的是别的渠道的清单
     fetchImpl: async (input) => {
-      if (isGitHubApi(input)) throw new Error('fetch failed');
-      return manifestResponse({ channel: 'dev', version: '9.9.9' });
+      seen.push(String(input));
+      return manifestResponse(mirrorBody({ channel: 'dev' }));
     },
   });
   assert.equal(status.available, false);
+  assert.equal(status.latest, null);
   assert.match(String(status.error), /渠道/);
+  assert.deepEqual(seen, [MIRROR_RELEASE], '渠道不一致是配置问题，不再回退旧 Releases');
 });
 
-test('打开接收测试版后 release 用户能看到 beta 版', async () => {
+test('dev 渠道读 dev 分支：滚动标签没有语义化版本，版本从清单拿', async () => {
   const status = await checkForUpdate({
-    channel: 'release',
-    receiveBeta: true,
+    channel: 'dev',
+    receiveBeta: false,
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
-      assert.equal(String(input), UPDATE_RELEASES_API, '开关打开后查的是发布列表');
-      return manifestResponse([
-        releaseBody({
-          tag_name: 'v0.1.0',
-          body: '正式版',
-          prerelease: false,
-          assets: [
-            {
-              name: 'DawnTick-0.1.0-release-windows-x64-setup.exe',
-              size: 90,
-              browser_download_url: 'https://example.com/stable.exe',
-            },
-          ],
+      assert.equal(String(input), MIRROR_DEV);
+      return manifestResponse(
+        mirrorBody({
+          channel: 'dev',
+          version: '0.1.1',
+          tag: 'dev-latest',
+          commit: 'b7e140a',
+          notes: '渠道 dev · 来源 dev · 提交 b7e140a',
         }),
-        releaseBody({
-          tag_name: 'v0.2.0-beta.1',
-          body: '渠道 beta · 来源 beta · 提交 9c1de44',
-          prerelease: true,
-          assets: [
-            {
-              name: 'DawnTick-0.2.0-beta.1-beta-windows-x64-setup.exe',
-              size: 120,
-              browser_download_url: 'https://example.com/beta.exe',
-            },
-          ],
-        }),
-      ]);
+      );
     },
   });
-  assert.equal(status.feed, 'beta');
-  assert.equal(status.available, true);
-  assert.equal(status.latest, '0.2.0-beta.1');
-  assert.equal(status.manifest?.channel, 'beta');
+  assert.equal(status.feed, 'dev');
+  assert.equal(status.latest, '0.1.1');
+  assert.equal(status.manifest?.channel, 'dev');
+  assert.equal(status.manifest?.commit, 'b7e140a');
 });
 
-test('beta 列表里正式版更高时，测试版用户更新到正式版', async () => {
-  const list = [
-    releaseBody({
-      tag_name: 'v0.2.0-beta.1',
-      body: '渠道 beta · 来源 beta · 提交 1aac20a',
-      prerelease: true,
-      assets: [
-        {
-          name: 'DawnTick-0.2.0-beta.1-beta-android.apk',
-          size: 100,
-          browser_download_url: 'https://example.com/beta.apk',
-        },
-      ],
-    }),
-    releaseBody({
-      tag_name: 'v0.3.0',
-      body: '渠道 release · 来源 main · 提交 aaaaaaa',
-      prerelease: false,
-      assets: [
-        {
-          name: 'DawnTick-0.3.0-release-android.apk',
-          size: 110,
-          browser_download_url: 'https://example.com/stable.apk',
-        },
-      ],
-    }),
-  ];
-  const status = await checkForUpdate({
-    channel: 'beta',
-    receiveBeta: true,
-    currentVersion: '0.2.0-beta.1',
-    fetchImpl: async () => manifestResponse(list),
-  });
-  assert.equal(status.feed, 'beta');
-  assert.equal(status.latest, '0.3.0', '正式版版本更高时按正式版算');
-  assert.equal(status.manifest?.channel, 'release', '清单渠道跟随实际来源');
-  assert.equal(status.manifest?.assets?.android?.url, 'https://example.com/stable.apk');
-  assert.equal(status.available, true);
-
-  // 同号正式版高于预发布：测试版用户应当更到正式版
-  const same = await checkForUpdate({
-    channel: 'beta',
-    receiveBeta: true,
-    currentVersion: '0.2.0-beta.1',
-    fetchImpl: async () => manifestResponse([releaseBody({ tag_name: 'v0.2.0', prerelease: false })]),
-  });
-  assert.equal(same.latest, '0.2.0');
-  assert.equal(same.manifest?.channel, 'release');
-  assert.equal(same.available, true, '0.2.0 高于 0.2.0-beta.1');
-});
-
-test('beta 候选认 beta 预发布与纯版本号预发布：草稿 / rc / 滚动标签都跳过', () => {
-  assert.equal(pickBetaCandidate([]), null);
-  assert.equal(pickBetaCandidate([{ tag_name: 'dev-latest', prerelease: true }]), null);
-  assert.equal(
-    pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0-rc.1', prerelease: true })]),
-    null,
-    '非 beta 的预发布不算候选',
-  );
-  assert.equal(pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', draft: true })]), null, '草稿不算候选');
-  const plainBeta = pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', prerelease: true })]);
-  assert.equal(plainBeta?.channel, 'beta', '不带序号的预发布版本号也算测试版候选');
-  assert.equal(plainBeta?.record['tag_name'], 'v0.3.0');
-
-  const picked = pickBetaCandidate([
-    releaseBody({ tag_name: 'v0.1.0-beta.2', prerelease: true }),
-    releaseBody({ tag_name: 'v0.1.0', prerelease: false }),
-    releaseBody({ tag_name: 'v0.0.9-beta.9', prerelease: true }),
-  ]);
-  assert.equal(picked?.channel, 'release', '同号正式版高于预发布');
-  assert.equal(picked?.record['tag_name'], 'v0.1.0');
-
-  const newerBeta = pickBetaCandidate([
-    releaseBody({ tag_name: 'v0.1.0-beta.2', prerelease: true }),
-    releaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true }),
-    releaseBody({ tag_name: 'v0.1.9', prerelease: false }),
-  ]);
-  assert.equal(newerBeta?.channel, 'beta', 'beta 版本更高时按 beta 算');
-  assert.equal(newerBeta?.record['tag_name'], 'v0.2.0-beta.1');
-});
+// —— 网络异常 / 旧 Releases 兼容兜底（仅 GitHub） ——
 
 test('网络与格式异常都有可读原因', async () => {
   const failure = await checkForUpdate({
@@ -354,210 +345,27 @@ test('网络与格式异常都有可读原因', async () => {
   assert.equal(httpError.error, '该渠道还没有发布记录');
 });
 
-test('各渠道更新源各自独立：beta 只查发布列表', () => {
-  assert.match(UPDATE_FEEDS.dev ?? '', /dev-latest/);
-  assert.equal(UPDATE_FEEDS.beta, undefined, 'beta 标签带版本号，没有固定直连源');
-  assert.match(UPDATE_FEEDS.release ?? '', /releases\/latest\/download/);
-  assert.equal(
-    Object.values(UPDATE_FEEDS).filter((url) => url !== undefined).length,
-    2,
-    '只有 dev 与 release 有直连兜底',
-  );
-
-  assert.equal(
-    UPDATE_API_FEEDS.dev,
-    'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest',
-  );
-  assert.equal(UPDATE_API_FEEDS.beta, UPDATE_RELEASES_API, 'beta 首选取发布列表');
-  assert.equal(UPDATE_API_FEEDS.release, 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest');
-  assert.equal(new Set(Object.values(UPDATE_API_FEEDS)).size, 3);
-});
-
-// —— GitHub 发布接口取源（首选） ——
-
-test('dev 从资产名取版本：滚动 tag（dev-latest）读不出语义化版本', async () => {
-  const seen: string[] = [];
-  const status = await checkForUpdate({
-    channel: 'dev',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    fetchImpl: async (input, init) => {
-      seen.push(String(input));
-      assert.equal(
-        (init?.headers as Record<string, string> | undefined)?.['accept'],
-        'application/vnd.github+json',
-        'API 请求头口径',
-      );
-      return manifestResponse({
-        tag_name: 'dev-latest',
-        name: 'dev-latest',
-        body: '  渠道 dev · 来源 dev · 提交 b7e140a  ',
-        published_at: '2026-05-01T12:00:00Z',
-        prerelease: true,
-        draft: false,
-        assets: [
-          {
-            name: 'DawnTick-0.1.1-dev-windows-x64-portable.zip',
-            size: 90,
-            browser_download_url: 'https://example.com/portable.zip',
-          },
-          {
-            name: 'DawnTick-0.1.1-dev-windows-x64-setup.exe',
-            size: 120,
-            browser_download_url: 'https://example.com/setup.exe',
-          },
-          {
-            name: 'SHA256SUMS.txt',
-            size: 128,
-            browser_download_url: 'https://example.com/SHA256SUMS.txt',
-          },
-          {
-            name: 'DawnTick-0.1.1-dev-android.apk',
-            size: 60,
-            browser_download_url: 'https://example.com/app.apk',
-          },
-          {
-            name: 'DawnTick-0.1.1-dev-web.zip',
-            size: 30,
-            browser_download_url: 'https://example.com/web.zip',
-          },
-
-        ],
-      });
-    },
-  });
-
-  assert.deepEqual(seen, [UPDATE_API_FEEDS.dev], '首选命中时只发一次请求，不回退 version.json');
-  assert.equal(status.error, null);
-  assert.equal(status.feed, 'dev');
-  assert.equal(status.latest, '0.1.1');
-  assert.equal(status.available, true);
-  assert.equal(status.manifest?.channel, 'dev');
-  assert.equal(status.manifest?.notes, '渠道 dev · 来源 dev · 提交 b7e140a', 'notes 去掉首尾空白');
-  assert.equal(status.manifest?.commit, 'b7e140a');
-  assert.equal(status.manifest?.releasedAt, Date.parse('2026-05-01T12:00:00Z'));
-  assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe', 'windows 优先安装包');
-  assert.equal(status.manifest?.assets?.windows?.size, 120);
-  assert.equal(
-    status.manifest?.checksumsUrl,
-    'https://example.com/SHA256SUMS.txt',
-    '合并校验文件挂到 checksumsUrl，供下载后校验',
-  );
-  assert.equal(
-    status.manifest?.assets?.windows?.name,
-    'DawnTick-0.1.1-dev-windows-x64-setup.exe',
-    '保留发布时的原始文件名，用于在 SHA256SUMS.txt 里定位摘要',
-  );
-  assert.equal(status.manifest?.assets?.android?.size, 60);
-  assert.equal(status.manifest?.assets?.web?.url, 'https://example.com/web.zip', 'SHA256SUMS.txt 不算静态包');
-});
-
-test('windows 只有便携包时退回 portable.zip', async () => {
-  const status = await checkForUpdate({
-    channel: 'dev',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    fetchImpl: async () =>
-      manifestResponse({
-        tag_name: 'dev-latest',
-        assets: [
-          {
-            name: 'DawnTick-0.1.1-dev-windows-x64-portable.zip',
-            size: 90,
-            browser_download_url: 'https://example.com/portable.zip',
-          },
-        ],
-      }),
-  });
-  assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/portable.zip');
-});
-
-test('release 从 tag 取版本；/releases/latest 给到预发布或草稿时按无更新处理', async () => {
+test('GitHub 的 mirror.json 不可达时退回旧 Releases 接口（兼容兜底）', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
-      seen.push(String(input));
-      return manifestResponse(releaseBody({ assets: [] }));
+      const url = String(input);
+      seen.push(url);
+      if (url === MIRROR_RELEASE) throw new Error('fetch failed');
+      return manifestResponse(releaseBody());
     },
   });
-  assert.deepEqual(seen, ['https://api.github.com/repos/muyangplus/dawn-tick/releases/latest']);
+  assert.deepEqual(seen, [MIRROR_RELEASE, UPDATE_API_FEEDS.release], '先 mirror.json，网络异常再回退发布接口');
+  assert.equal(status.error, null);
   assert.equal(status.latest, '0.2.0');
-  assert.equal(status.available, true);
-  assert.equal(status.manifest?.channel, 'release');
+  assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe');
   assert.equal(status.manifest?.commit, '4f2a1cd');
-
-  for (const flag of ['prerelease', 'draft'] as const) {
-    const skipped = await checkForUpdate({
-      channel: 'release',
-      receiveBeta: false,
-      currentVersion: '0.1.0',
-      fetchImpl: async () => manifestResponse(releaseBody({ [flag]: true })),
-    });
-    assert.equal(skipped.error, null, `${flag} 不算失败`);
-    assert.equal(skipped.available, false, `${flag} 视为无可用更新`);
-    assert.equal(skipped.latest, null);
-    assert.equal(skipped.manifest, null);
-  }
 });
 
-test('API 状态错误各自给文案，且不回退 version.json', async () => {
-  const cases: Array<[number, RegExp]> = [
-    [404, /该渠道还没有发布记录/],
-    [403, /GitHub 接口限流/],
-    [429, /GitHub 接口限流/],
-    [500, /更新源返回 500/],
-  ];
-  for (const [status, pattern] of cases) {
-    const seen: string[] = [];
-    const result = await checkForUpdate({
-      channel: 'dev',
-      receiveBeta: false,
-      currentVersion: '0.1.0',
-      fetchImpl: async (input) => {
-        seen.push(String(input));
-        return manifestResponse({}, false, status);
-      },
-    });
-    assert.match(String(result.error), pattern, `状态 ${status} 的文案`);
-    assert.equal(result.available, false);
-    assert.equal(result.latest, null);
-    assert.equal(seen.length, 1, `状态 ${status} 不回退 version.json`);
-    assert.equal(seen[0], UPDATE_API_FEEDS.dev);
-  }
-});
-
-test('API 返回的 JSON 无法解析或结构不符都给格式文案', async () => {
-  const unparsable = await checkForUpdate({
-    channel: 'dev',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    fetchImpl: async () =>
-      ({
-        ok: true,
-        status: 200,
-        json: async () => {
-          throw new Error('Unexpected token <');
-        },
-      }) as unknown as Response,
-  });
-  assert.equal(unparsable.error, '更新清单格式不正确');
-
-  const shapeless = await checkForUpdate({
-    channel: 'dev',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    fetchImpl: async () =>
-      manifestResponse({ tag_name: 'dev-latest', assets: [{ name: 'README.txt', browser_download_url: 'x' }] }),
-  });
-  assert.equal(shapeless.error, '更新清单格式不正确');
-});
-
-// —— 网络异常才回退 version.json 直连 ——
-
-test('API 网络异常时回退 version.json 直连', async () => {
+test('旧 Releases 接口也异常时再回退同源 version.json 直连', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'dev',
@@ -566,15 +374,14 @@ test('API 网络异常时回退 version.json 直连', async () => {
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
+      if (url === MIRROR_DEV) throw new Error('fetch failed');
       if (isGitHubApi(url)) throw new Error('fetch failed');
       return manifestResponse({ channel: 'dev', version: '0.2.0', notes: '回退清单' });
     },
   });
-
-  assert.deepEqual(seen, [UPDATE_API_FEEDS.dev, UPDATE_FEEDS.dev], '先 API，再回退直连');
+  assert.deepEqual(seen, [MIRROR_DEV, UPDATE_API_FEEDS.dev, UPDATE_FEEDS.dev], 'mirror → 发布接口 → 直连清单');
   assert.equal(status.error, null);
   assert.equal(status.latest, '0.2.0');
-  assert.equal(status.available, true);
   assert.equal(status.manifest?.notes, '回退清单');
 });
 
@@ -587,6 +394,7 @@ test('release 网络异常时回退发布内的 version.json，额外字段不�
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
+      if (url === MIRROR_RELEASE) throw new Error('fetch failed');
       if (isGitHubApi(url)) throw new Error('fetch failed');
       return manifestResponse({
         channel: 'release',
@@ -597,177 +405,36 @@ test('release 网络异常时回退发布内的 version.json，额外字段不�
       });
     },
   });
-  assert.deepEqual(seen, [UPDATE_API_FEEDS.release, UPDATE_FEEDS.release], '先 API，再回退 releases/latest 直连');
-  assert.equal(status.error, null);
+  assert.deepEqual(seen, [MIRROR_RELEASE, UPDATE_API_FEEDS.release, UPDATE_FEEDS.release]);
   assert.equal(status.latest, '0.2.0');
-  assert.equal(status.available, true);
   assert.equal(status.manifest?.channel, 'release');
 });
 
-test('beta 没有固定直连兜底：只查发布列表，网络异常时交回原始错误', async () => {
+test('beta 的 mirror.json 网络异常：只回退旧 beta 发布列表，不碰滚动标签', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'beta',
     receiveBeta: true,
-    currentVersion: '0.2.0-beta.1',
+    currentVersion: '0.1.0-beta.1',
     fetchImpl: async (input) => {
-      seen.push(String(input));
-      throw new Error('fetch failed: api.github.com');
+      const url = String(input);
+      seen.push(url);
+      if (url === MIRROR_BETA) throw new Error('fetch failed');
+      if (url === UPDATE_RELEASES_API) {
+        return manifestResponse([
+          releaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true }),
+          releaseBody({ tag_name: 'v0.3.0', prerelease: false }),
+        ]);
+      }
+      throw new Error('unexpected');
     },
   });
-  assert.deepEqual(seen, [UPDATE_RELEASES_API], 'beta 只查发布列表，不再回退到不存在的滚动标签');
-  assert.equal(status.available, false);
-  assert.equal(status.latest, null);
-  assert.equal(status.manifest, null);
-  assert.match(String(status.error), /fetch failed: api\.github\.com/);
-});
-
-test('回退源也失败时把 API 的原始网络错误交出去', async () => {
-  const seen: string[] = [];
-  const status = await checkForUpdate({
-    channel: 'dev',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    fetchImpl: async (input) => {
-      seen.push(String(input));
-      throw new Error('fetch failed: api.github.com');
-    },
-  });
-  assert.equal(seen.length, 2, '两个地址都试过');
-  assert.equal(status.available, false);
-  assert.equal(status.latest, null);
-  assert.match(String(status.error), /fetch failed: api\.github\.com/);
-});
-
-// —— 双下载源：Gitee / GitHub ——
-
-const GITEE_API = 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases';
-const GITEE_VERSION_JSON_ASSET =
-  'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/version.json';
-
-/** Gitee 发布响应：字段形状与 GitHub 类似，下载地址是 Gitee 自己的（可执行文件可能不以 .exe 结尾）。 */
-function giteeReleaseBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    tag_name: 'v0.2.0',
-    name: 'DawnTick 0.2.0',
-    body: '渠道 release · 来源 main · 提交 4f2a1cd',
-    published_at: '2026-05-02T00:00:00Z',
-    prerelease: false,
-    draft: false,
-    assets: [
-      {
-        name: 'DawnTick-0.2.0-release-windows-x64-setup.exe',
-        size: 120,
-        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/asset-1',
-      },
-      {
-        name: 'DawnTick-0.2.0-release-android.apk',
-        size: 60,
-        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/asset-2',
-      },
-      {
-        name: 'version.json',
-        size: 8,
-        browser_download_url: GITEE_VERSION_JSON_ASSET,
-      },
-    ],
-    ...overrides,
-  };
-}
-
-test('缺省下载源仍是 GitHub：请求 api.github.com 并标明来源', async () => {
-  const status = await checkForUpdate({
-    channel: 'release',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    fetchImpl: async (input) => {
-      assert.equal(String(input), 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest');
-      return manifestResponse(releaseBody());
-    },
-  });
-  assert.equal(status.source, 'github');
-  assert.equal(status.fallbackFrom, undefined);
-});
-
-test('选中 Gitee 时查 Gitee API，清单与下载地址都来自 Gitee', async () => {
-  const seen: string[] = [];
-  const status = await checkForUpdate({
-    channel: 'release',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    source: 'gitee',
-    fetchImpl: async (input, init) => {
-      seen.push(String(input));
-      assert.equal(
-        (init?.headers as Record<string, string> | undefined)?.['accept'],
-        'application/json',
-        'Gitee v5 用普通 JSON accept',
-      );
-      return manifestResponse(giteeReleaseBody());
-    },
-  });
-  assert.deepEqual(seen, [`${GITEE_API}/latest`]);
-  assert.equal(status.error, null);
-  assert.equal(status.source, 'gitee');
-  assert.equal(status.available, true);
-  assert.equal(status.latest, '0.2.0');
-  assert.equal(
-    status.manifest?.assets?.windows?.url,
-    'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/asset-1',
-    '下载地址来自 Gitee 资产，不以 .exe 结尾也算安装包',
-  );
-  assert.equal(status.manifest?.assets?.windows?.name, 'DawnTick-0.2.0-release-windows-x64-setup.exe');
-});
-
-test('Gitee dev 用滚动标签，版本从资产名读出', async () => {
-  const seen: string[] = [];
-  const status = await checkForUpdate({
-    channel: 'dev',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    source: 'gitee',
-    fetchImpl: async (input) => {
-      seen.push(String(input));
-      return manifestResponse(
-        giteeReleaseBody({
-          tag_name: 'dev-latest',
-          body: '渠道 dev · 来源 dev · 提交 b7e140a',
-          assets: [
-            {
-              name: 'DawnTick-0.1.1-dev-windows-x64-setup.exe',
-              browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/dev-latest/asset-9',
-            },
-          ],
-        }),
-      );
-    },
-  });
-  assert.deepEqual(seen, [`${GITEE_API}/tags/dev-latest`]);
-  assert.equal(status.latest, '0.1.1');
-  assert.equal(status.manifest?.channel, 'dev');
-  assert.equal(status.source, 'gitee');
-});
-
-test('Gitee beta 用发布列表并沿用 pickBetaCandidate 语义', async () => {
-  const status = await checkForUpdate({
-    channel: 'beta',
-    receiveBeta: true,
-    currentVersion: '0.2.0-beta.1',
-    source: 'gitee',
-    fetchImpl: async (input) => {
-      assert.match(String(input), /\?per_page=30$/);
-      return manifestResponse([
-        giteeReleaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true }),
-        giteeReleaseBody({ tag_name: 'v0.3.0', prerelease: false }),
-      ]);
-    },
-  });
-  assert.equal(status.source, 'gitee');
-  assert.equal(status.latest, '0.3.0', '正式版更高时按正式版算');
+  assert.deepEqual(seen, [MIRROR_BETA, UPDATE_RELEASES_API]);
+  assert.equal(status.latest, '0.3.0', '旧兜底仍保留 beta 列表「取较高者」的语义');
   assert.equal(status.manifest?.channel, 'release');
 });
 
-test('Gitee API 网络异常时从同源发布资产里取 version.json 兜底', async () => {
+test('Gitee 只读 assets 仓库的 mirror.json：不回退 Gitee Releases', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
@@ -777,18 +444,45 @@ test('Gitee API 网络异常时从同源发布资产里取 version.json 兜底',
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
-      if (url === `${GITEE_API}/latest` && seen.length === 1) throw new Error('fetch failed: gitee');
-      if (url === GITEE_VERSION_JSON_ASSET) {
-        return manifestResponse({ channel: 'release', version: '0.2.0', notes: 'Gitee 兜底清单' });
-      }
-      return manifestResponse(giteeReleaseBody());
+      if (url === GITEE_MIRROR_RELEASE) return manifestResponse({ message: '404 Not Found' }, false, 404);
+      return manifestResponse({}, false, 404);
     },
   });
-  assert.deepEqual(seen, [`${GITEE_API}/latest`, `${GITEE_API}/latest`, GITEE_VERSION_JSON_ASSET]);
+  assert.deepEqual(seen, [GITEE_MIRROR_RELEASE]);
+  assert.equal(status.source, 'gitee');
+  assert.equal(status.available, false);
+  assert.equal(status.error, '该渠道还没有发布记录');
+});
+
+test('选中 Gitee 时清单与下载地址都来自 Gitee 的 assets raw', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fetchImpl: async (input, init) => {
+      assert.equal(String(input), GITEE_MIRROR_RELEASE);
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.['accept'],
+        'application/json',
+        'mirror.json 用普通 JSON accept',
+      );
+      return manifestResponse(mirrorBody());
+    },
+  });
   assert.equal(status.error, null);
   assert.equal(status.source, 'gitee');
+  assert.equal(status.available, true);
   assert.equal(status.latest, '0.2.0');
-  assert.equal(status.manifest?.notes, 'Gitee 兜底清单');
+  assert.equal(
+    status.manifest?.assets?.windows?.url,
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/DawnTick-0.2.0-release-windows-x64-setup.exe',
+    '下载地址走 Gitee 的 assets raw',
+  );
+  assert.equal(
+    status.manifest?.checksumsUrl,
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/SHA256SUMS.txt',
+  );
 });
 
 test('首选源失败时自动回退另一个源，并在结果里标明实际源', async () => {
@@ -803,15 +497,15 @@ test('首选源失败时自动回退另一个源，并在结果里标明实际�
       const url = String(input);
       seen.push(url);
       if (url.startsWith('https://gitee.com/')) return manifestResponse({ message: '404 Not Found' }, false, 404);
-      return manifestResponse(releaseBody());
+      return manifestResponse(mirrorBody());
     },
   });
-  assert.deepEqual(seen, [`${GITEE_API}/latest`, 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest']);
+  assert.deepEqual(seen, [GITEE_MIRROR_RELEASE, MIRROR_RELEASE], 'Gitee 失败后回退 GitHub 的 mirror.json');
   assert.equal(status.error, null);
   assert.equal(status.source, 'github', '回退后标明实际源');
   assert.equal(status.fallbackFrom, 'gitee');
   assert.equal(status.available, true);
-  assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe');
+  assert.match(String(status.manifest?.assets?.windows?.url), /^https:\/\/raw\.githubusercontent\.com\/muyangplus\/dawn-tick-assets\/release\//);
 });
 
 test('反向回退：GitHub 失败时选 Gitee', async () => {
@@ -823,8 +517,8 @@ test('反向回退：GitHub 失败时选 Gitee', async () => {
     fallback: true,
     fetchImpl: async (input) => {
       const url = String(input);
-      if (url.startsWith('https://api.github.com/')) return manifestResponse({}, false, 503);
-      return manifestResponse(giteeReleaseBody());
+      if (url.startsWith('https://gitee.com/')) return manifestResponse(mirrorBody());
+      return manifestResponse({}, false, 503);
     },
   });
   assert.equal(status.source, 'gitee');
@@ -852,16 +546,43 @@ test('两个源都失败时把两侧原因都交出去', async () => {
   assert.match(String(status.error), /GitHub：更新源返回 500/);
 });
 
-test('Gitee 的 latest 拿到预发布或草稿时按无更新处理', async () => {
-  const skipped = await checkForUpdate({
-    channel: 'release',
-    receiveBeta: false,
-    currentVersion: '0.1.0',
-    source: 'gitee',
-    fetchImpl: async () => manifestResponse(giteeReleaseBody({ prerelease: true })),
-  });
-  assert.equal(skipped.error, null);
-  assert.equal(skipped.available, false);
-  assert.equal(skipped.manifest, null);
-  assert.equal(skipped.source, 'gitee');
+test('旧渠道常量保留给 GitHub 兼容兜底：dev 滚动标签 / release latest / beta 列表', () => {
+  assert.match(UPDATE_FEEDS.dev ?? '', /dev-latest/);
+  assert.equal(UPDATE_FEEDS.beta, undefined, 'beta 标签带版本号，没有固定直连源');
+  assert.match(UPDATE_FEEDS.release ?? '', /releases\/latest\/download/);
+  assert.equal(
+    Object.values(UPDATE_FEEDS).filter((url) => url !== undefined).length,
+    2,
+    '只有 dev 与 release 有直连兜底',
+  );
+
+  assert.equal(
+    UPDATE_API_FEEDS.dev,
+    'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest',
+  );
+  assert.equal(UPDATE_API_FEEDS.beta, UPDATE_RELEASES_API, 'beta 兜底取发布列表');
+  assert.equal(UPDATE_API_FEEDS.release, 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest');
+  assert.equal(new Set(Object.values(UPDATE_API_FEEDS)).size, 3);
+});
+
+test('beta 候选认 beta 预发布与纯版本号预发布：草稿 / rc / 滚动标签都跳过', () => {
+  assert.equal(pickBetaCandidate([]), null);
+  assert.equal(pickBetaCandidate([{ tag_name: 'dev-latest', prerelease: true }]), null);
+  assert.equal(
+    pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0-rc.1', prerelease: true })]),
+    null,
+    '非 beta 的预发布不算候选',
+  );
+  assert.equal(pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', draft: true })]), null, '草稿不算候选');
+  const plainBeta = pickBetaCandidate([releaseBody({ tag_name: 'v0.3.0', prerelease: true })]);
+  assert.equal(plainBeta?.channel, 'beta', '不带序号的预发布版本号也算测试版候选');
+  assert.equal(plainBeta?.record['tag_name'], 'v0.3.0');
+
+  const picked = pickBetaCandidate([
+    releaseBody({ tag_name: 'v0.1.0-beta.2', prerelease: true }),
+    releaseBody({ tag_name: 'v0.1.0', prerelease: false }),
+    releaseBody({ tag_name: 'v0.0.9-beta.9', prerelease: true }),
+  ]);
+  assert.equal(picked?.channel, 'release', '同号正式版高于预发布');
+  assert.equal(picked?.record['tag_name'], 'v0.1.0');
 });

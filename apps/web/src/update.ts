@@ -1,13 +1,14 @@
 /** 更新检查只判断「有没有新版」，下载与安装由界面触发。 */
-/** 首选选中源的发布接口：网络异常时同源 version.json 兜底，仍失败且允许时跨源回退。 */
+/** 首选读 assets 仓库对应渠道分支的 mirror.json；GitHub 另保留旧 Releases 解析作为兼容兜底。 */
 
-import { errorMessage } from './lib/errors.ts';
 import {
   DOWNLOAD_SOURCE_LABEL,
+  assetsMirrorUrl,
   releaseApiUrl,
-  versionJsonAssetUrl,
   type DownloadSource,
 } from './lib/download-source.ts';
+import { manifestFromAssetsMirror, parseAssetsMirror } from './lib/assets-mirror.ts';
+import { errorMessage } from './lib/errors.ts';
 import {
   compareVersions,
   isPrereleaseOrDraft,
@@ -32,12 +33,11 @@ export type UpdateSource = DownloadSource;
 const OWNER = 'muyangplus';
 const REPO = 'dawn-tick';
 
-/** beta 渠道查发布列表：取最新 beta 预发布与最新正式版里较高者。 */
-/** 正式版发布后，beta 用户直接更到正式版。 */
+/** beta 渠道查发布列表（旧 Releases 兜底）：取最新 beta 预发布与最新正式版里较高者。 */
 export const UPDATE_RELEASES_API = `https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=30`;
 
 /**
- * 各渠道的 version.json 直连地址（发布标签由发布流程维护），仅发布接口不可达时兜底。
+ * 各渠道的 version.json 直连地址（旧 GitHub Releases 兜底，只在 mirror.json 不可达时用）。
  * beta 的标签带版本号（vX.Y.Z-beta.N），没有可静态取到的固定地址，因此不做直连兜底。
  */
 export const UPDATE_FEEDS: Partial<Record<UpdateChannel, string>> = {
@@ -45,7 +45,7 @@ export const UPDATE_FEEDS: Partial<Record<UpdateChannel, string>> = {
   release: `https://github.com/${OWNER}/${REPO}/releases/latest/download/version.json`,
 };
 
-/** 各渠道的 GitHub 发布接口地址（首选取源）：dev 用滚动标签，beta 查发布列表，release 用 /releases/latest。 */
+/** 各渠道的 GitHub 发布接口（旧 Releases 兜底，仅 GitHub 源使用）。 */
 export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
   dev: `https://api.github.com/repos/${OWNER}/${REPO}/releases/tags/dev-latest`,
   beta: UPDATE_RELEASES_API,
@@ -62,7 +62,7 @@ export interface UpdateAsset {
   size?: number;
   /** 该平台自带签名的校验值：Windows 为 minisign 签名，Android 为 APK 签名摘要 */
   signature?: string;
-  /** 清单里直接给出的摘要（version.json 等直连清单用） */
+  /** 清单里直接给出的摘要（version.json / mirror.json 用） */
   sha256?: string;
 }
 
@@ -139,11 +139,6 @@ function describeApiStatus(source: UpdateSource, status: number): string {
   return `更新源返回 ${status}`;
 }
 
-/** 各源的请求 accept：GitHub 要 v3 媒体类型，Gitee v5 用普通 JSON。 */
-function acceptOf(source: UpdateSource): string {
-  return source === 'github' ? GITHUB_API_ACCEPT : 'application/json';
-}
-
 function emptyStatus(feed: UpdateChannel, current: string, source: UpdateSource): UpdateStatus {
   return { available: false, error: null, feed, current, latest: null, manifest: null, source };
 }
@@ -157,25 +152,49 @@ function manifestStatus(status: UpdateStatus, manifest: UpdateManifest, currentV
   };
 }
 
-/** 同源的 version.json 兜底地址：GitHub 是静态直连；Gitee 没有 latest 别名，从同渠道发布的资产里取。 */
-async function versionJsonUrlOf(
+/** 首选：assets 仓库对应渠道分支的 mirror.json。 */
+interface MirrorAttempt {
+  manifest: UpdateManifest | null;
+  error: string | null;
+  /** 网络/HTTP 失败可退回旧 Releases；清单结构或渠道不对属于配置问题，不兜底 */
+  canFallback: boolean;
+}
+
+async function queryMirror(
   feed: UpdateChannel,
   source: UpdateSource,
   doFetch: typeof fetch,
-): Promise<string | null> {
-  if (source === 'github') return UPDATE_FEEDS[feed] ?? null;
+): Promise<MirrorAttempt> {
+  const url = assetsMirrorUrl(source, feed);
+  let response: Response;
   try {
-    const response = await doFetch(releaseApiUrl(source, feed), { headers: { accept: acceptOf(source) } });
-    if (!response.ok) return null;
-    const parsed: unknown = await response.json();
-    if (feed === 'beta') {
-      const candidate = pickBetaCandidate(parsed);
-      return candidate === null ? null : versionJsonAssetUrl(candidate.record);
-    }
-    return versionJsonAssetUrl(parsed);
-  } catch {
-    return null;
+    response = await doFetch(url, { headers: { accept: 'application/json' } });
+  } catch (cause: unknown) {
+    return { manifest: null, error: errorMessage(cause), canFallback: true };
   }
+  if (!response.ok) return { manifest: null, error: describeApiStatus(source, response.status), canFallback: true };
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch {
+    return { manifest: null, error: '更新清单格式不正确', canFallback: false };
+  }
+  const result = parseAssetsMirror(parsed);
+  if (!result.ok) return { manifest: null, error: `更新清单格式不正确（${result.error}）`, canFallback: false };
+  if (result.mirror.channel !== feed) {
+    return {
+      manifest: null,
+      error: `清单渠道 ${result.mirror.channel} 与查询渠道 ${feed} 不一致，已忽略`,
+      canFallback: false,
+    };
+  }
+  return { manifest: manifestFromAssetsMirror(result.mirror, source), error: null, canFallback: false };
+}
+
+/** 旧 GitHub Releases 的 version.json 直连兜底；Gitee 不再提供这条链路。 */
+function versionJsonUrlOf(feed: UpdateChannel, source: UpdateSource): string | null {
+  if (source !== 'github') return null;
+  return UPDATE_FEEDS[feed] ?? null;
 }
 
 interface SourceAttempt {
@@ -185,8 +204,8 @@ interface SourceAttempt {
   error: string | null;
 }
 
-/** 只查一个源：发布 API → 同源 version.json 兜底；跨源回退由 `checkForUpdate` 负责。 */
-async function querySource(
+/** 旧 GitHub Releases 兼容兜底：发布接口 → 同源 version.json。 */
+async function queryLegacyGitHub(
   feed: UpdateChannel,
   source: UpdateSource,
   currentVersion: string,
@@ -195,7 +214,7 @@ async function querySource(
   const base = emptyStatus(feed, currentVersion, source);
   let networkError: string | null = null;
   try {
-    const response = await doFetch(releaseApiUrl(source, feed), { headers: { accept: acceptOf(source) } });
+    const response = await doFetch(releaseApiUrl(source, feed), { headers: { accept: GITHUB_API_ACCEPT } });
     if (!response.ok) return { status: null, error: describeApiStatus(source, response.status) };
     let parsed: unknown;
     try {
@@ -219,7 +238,7 @@ async function querySource(
     networkError = errorMessage(cause);
   }
 
-  const fallbackUrl = await versionJsonUrlOf(feed, source, doFetch);
+  const fallbackUrl = versionJsonUrlOf(feed, source);
   if (fallbackUrl === null) return { status: null, error: networkError };
   try {
     const response = await doFetch(fallbackUrl, { headers: { accept: 'application/json' } });
@@ -243,6 +262,22 @@ async function querySource(
   }
 }
 
+/** 只查一个源：mirror.json 优先；GitHub 在它不可达时退回旧 Releases。跨源回退由 `checkForUpdate` 负责。 */
+async function querySource(
+  feed: UpdateChannel,
+  source: UpdateSource,
+  currentVersion: string,
+  doFetch: typeof fetch,
+): Promise<SourceAttempt> {
+  const base = emptyStatus(feed, currentVersion, source);
+  const mirror = await queryMirror(feed, source, doFetch);
+  if (mirror.manifest !== null) {
+    return { status: manifestStatus(base, mirror.manifest, currentVersion), error: null };
+  }
+  if (source !== 'github' || !mirror.canFallback) return { status: null, error: mirror.error };
+  return queryLegacyGitHub(feed, source, currentVersion, doFetch);
+}
+
 /** 两个源都失败时把两边原因都交出去，用户能看出是哪一侧不可用。 */
 function summarizeFailure(
   requested: UpdateSource,
@@ -256,7 +291,7 @@ function summarizeFailure(
 }
 
 /**
- * 检查更新：按选中的下载源查询，失败时（`fallback`）自动回退另一个源，并在结果里标明实际源。
+ * 检查更新：按选中的下载源查 mirror.json，失败时（`fallback`）自动回退另一个源，并在结果里标明实际源。
  * 跨渠道或降级的清单一律视为无更新（防串版）；两个源都失败时给出两侧原因。
  */
 export async function checkForUpdate(options: CheckUpdateOptions): Promise<UpdateStatus> {

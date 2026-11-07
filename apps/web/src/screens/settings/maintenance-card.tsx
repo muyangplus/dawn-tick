@@ -9,7 +9,9 @@ import {
   writeCachedSnapshot,
   type PresetSource,
 } from '../../preset-update.ts';
-import { DOWNLOAD_SOURCE_LABEL, MIRRORS, resolveDownloadSource, type DownloadSource } from '../../lib/download-source.ts';
+import { DOWNLOAD_SOURCE_LABEL, MIRRORS, type DownloadSource } from '../../lib/download-source.ts';
+import { resolveDownloadSource } from '../../lib/download-selection.ts';
+import { updateFetch } from '../../lib/update-fetch.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { canUseWidget } from '../../lib/capabilities.ts';
 import { readElevationStatus, requestElevation } from '../../autostart.ts';
@@ -105,8 +107,8 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
       fail: { what: '检查预设更新', next: '请稍后再试' },
       task: async () => {
         const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
-        // 预设与更新共用同一个下载源：自动模式按探测结果选，手动指定优先；跨源回退只在自动模式开启
-        const doFetch = globalThis.fetch;
+        // 预设与更新共用同一个下载源：auto 按探测结果选，手动指定优先；跨源回退只在自动模式开启
+        const doFetch = updateFetch();
         const resolved =
           typeof doFetch === 'function'
             ? await resolveDownloadSource(settings.downloadSource, doFetch)

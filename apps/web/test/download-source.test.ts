@@ -1,39 +1,66 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ASSETS_REPO,
   DOWNLOAD_SOURCE_LABEL,
   MIRRORS,
-  PROBE_TIMEOUT_MS,
-  describeProbe,
-  describeSourceLine,
+  assetsFileUrl,
+  assetsMirrorUrl,
   latestVersionJsonUrl,
-  manualResolution,
   presetContentsUrl,
   presetSnapshotUrl,
   presetVersionUrl,
-  pickProbeAssetUrl,
-  probeAssetChunk,
-  probeSource,
   releaseApiUrl,
   releasePageUrl,
   releasesApiUrl,
-  resetDownloadSourceCache,
-  resolveDownloadSource,
   versionJsonAssetUrl,
 } from '../src/lib/download-source.ts';
+import {
+  describeProbe,
+  describeSourceLine,
+  manualResolution,
+  resetDownloadSourceCache,
+  resolveDownloadSource,
+} from '../src/lib/download-selection.ts';
+import {
+  PROBE_ASSET_BYTES,
+  PROBE_TIMEOUT_MS,
+  pickProbeFile,
+  probeAssetChunk,
+  probeSource,
+} from '../src/lib/download-probe.ts';
 
 const GITEE_VERSION_JSON = 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/version.json';
 const GITHUB_VERSION_JSON = latestVersionJsonUrl('github');
-const GITEE_API_LATEST = releaseApiUrl('gitee', 'release');
+const GITEE_MIRROR = assetsMirrorUrl('gitee', 'release');
+const GITHUB_MIRROR = assetsMirrorUrl('github', 'release');
+const PORTABLE = 'DawnTick-0.6.5-release-windows-x64-portable.zip';
+const GITEE_PORTABLE = assetsFileUrl('gitee', 'release', PORTABLE);
+const GITHUB_PORTABLE = assetsFileUrl('github', 'release', PORTABLE);
 
 function response(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as unknown as Response;
 }
 
-function releaseWithVersionJson(url = GITEE_VERSION_JSON): Record<string, unknown> {
+/** mirror.json：只放便携包，探测用它做 256KB 测速。 */
+function mirrorJson(channel: 'dev' | 'beta' | 'release', version = '0.6.5'): Record<string, unknown> {
   return {
-    tag_name: 'v0.6.5',
-    assets: [{ name: 'version.json', browser_download_url: url }],
+    schema: 1,
+    channel,
+    version,
+    tag: `v${version}`,
+    commit: 'abcdef1',
+    releasedAt: 1_760_000_000_000,
+    notes: `渠道 ${channel} · 提交 abcdef1`,
+    files: {
+      windowsSetup: {
+        name: `DawnTick-${version}-${channel}-windows-x64-setup.exe`,
+        size: 100,
+        sha256: 'a'.repeat(64),
+      },
+      windowsPortable: { name: `DawnTick-${version}-${channel}-windows-x64-portable.zip`, size: 90, sha256: 'b'.repeat(64) },
+    },
+    checksums: 'SHA256SUMS.txt',
   };
 }
 
@@ -64,11 +91,21 @@ function stubFetch(options: StubOptions): { fetchImpl: typeof fetch; calls: stri
   return { fetchImpl: impl as unknown as typeof fetch, calls };
 }
 
-test('镜像地址表：GitHub 与 Gitee 的仓库 / raw / API / 发布页各就各位', () => {
+/** 两个源都返回 mirror.json + 便携包（供需要「探测成功」的用例复用）。 */
+function healthyResponses(url: string): Response | 'throw' {
+  if (url === GITEE_MIRROR || url === GITHUB_MIRROR) return response(mirrorJson('release'));
+  if (url === GITEE_PORTABLE || url === GITHUB_PORTABLE) return streamResponse(512 * 1024);
+  return response({}, false, 404);
+}
+
+test('镜像地址表：主仓库 / 预设仓库 / 独立 assets 仓库各就各位', () => {
   assert.equal(MIRRORS.github.repo, 'muyangplus/dawn-tick');
   assert.equal(MIRRORS.gitee.repo, 'muyangplus/dawn-tick');
   assert.equal(MIRRORS.github.presets, 'muyangplus/dawn-tick-presets');
   assert.equal(MIRRORS.gitee.presets, 'muyangplus/dawn-tick-presets');
+  assert.equal(MIRRORS.github.assets, ASSETS_REPO, '产物放独立 assets 仓库');
+  assert.equal(MIRRORS.gitee.assets, ASSETS_REPO);
+  assert.equal(ASSETS_REPO, 'muyangplus/dawn-tick-assets');
   assert.equal(
     releasesApiUrl('github'),
     'https://api.github.com/repos/muyangplus/dawn-tick/releases?per_page=30',
@@ -79,7 +116,7 @@ test('镜像地址表：GitHub 与 Gitee 的仓库 / raw / API / 发布页各就
   );
   assert.equal(releaseApiUrl('github', 'dev'), 'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest');
   assert.equal(releaseApiUrl('gitee', 'dev'), 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/tags/dev-latest');
-  assert.equal(releaseApiUrl('gitee', 'release'), GITEE_API_LATEST);
+  assert.equal(releaseApiUrl('gitee', 'release'), 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/latest');
   assert.equal(releaseApiUrl('gitee', 'beta'), releasesApiUrl('gitee'));
   assert.equal(releasePageUrl('gitee'), 'https://gitee.com/muyangplus/dawn-tick/releases');
   assert.equal(GITHUB_VERSION_JSON, 'https://github.com/muyangplus/dawn-tick/releases/latest/download/version.json');
@@ -96,8 +133,32 @@ test('镜像地址表：GitHub 与 Gitee 的仓库 / raw / API / 发布页各就
   );
 });
 
-test('从发布资产里取 version.json 的下载地址，缺资产返回 null', () => {
-  assert.equal(versionJsonAssetUrl(releaseWithVersionJson()), GITEE_VERSION_JSON);
+test('assets 地址拼接：渠道分支 + raw 基地址，文件名按 URL 编码', () => {
+  assert.equal(
+    assetsMirrorUrl('github', 'beta'),
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/beta/mirror.json',
+  );
+  assert.equal(
+    assetsMirrorUrl('gitee', 'release'),
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/mirror.json',
+  );
+  assert.equal(
+    assetsFileUrl('gitee', 'dev', 'DawnTick-0.6.6-dev-android.apk'),
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-0.6.6-dev-android.apk',
+  );
+  assert.equal(
+    assetsFileUrl('github', 'release', 'SHA256SUMS.txt'),
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/SHA256SUMS.txt',
+  );
+  assert.throws(() => assetsFileUrl('github', 'release', '  '), /文件名为空/);
+  // 三个渠道各一条分支：dev→dev、beta→beta、release→release
+  for (const feed of ['dev', 'beta', 'release'] as const) {
+    assert.match(assetsMirrorUrl('github', feed), new RegExp(`/dawn-tick-assets/${feed}/mirror\\.json$`));
+  }
+});
+
+test('从旧发布资产里取 version.json 的下载地址（GitHub 兼容兜底），缺资产返回 null', () => {
+  assert.equal(versionJsonAssetUrl({ assets: [{ name: 'version.json', browser_download_url: GITEE_VERSION_JSON }] }), GITEE_VERSION_JSON);
   assert.equal(versionJsonAssetUrl({ assets: [{ name: 'Version.JSON', browser_download_url: 'u' }] }), 'u');
   assert.equal(versionJsonAssetUrl({ assets: [{ name: 'OTHER.txt', browser_download_url: 'u' }] }), null);
   assert.equal(versionJsonAssetUrl({ assets: [] }), null);
@@ -109,26 +170,25 @@ test('两边都可达时选完成耗时更低的源（Gitee 快、GitHub 快各�
   resetDownloadSourceCache();
   const bothReachable = (giteeDelay: number, githubDelay: number): ReturnType<typeof stubFetch> =>
     stubFetch({
-      delay: (url) => (url.startsWith('https://gitee.com/') ? giteeDelay : url === GITHUB_VERSION_JSON ? githubDelay : 0),
-      respond: (url) => {
-        if (url === GITEE_API_LATEST) return response(releaseWithVersionJson());
-        if (url === GITEE_VERSION_JSON || url === GITHUB_VERSION_JSON) return response({ version: '0.6.5' });
-        return response({}, false, 404);
-      },
+      delay: (url) => (url.startsWith('https://gitee.com/') ? giteeDelay : url.startsWith('https://raw.githubusercontent.com/') ? githubDelay : 0),
+      respond: healthyResponses,
     });
 
   // 延迟差拉大，避免并行测试文件时定时器抖动影响「谁更快」的判定
-  const giteeFast = bothReachable(10, 200);
+  const giteeFast = bothReachable(10, 150);
   const resolved = await resolveDownloadSource('auto', giteeFast.fetchImpl);
   assert.equal(resolved.source, 'gitee');
   assert.equal(resolved.reason, 'latency');
   assert.equal(resolved.probes.length, 2);
+  assert.ok(giteeFast.calls.includes(GITEE_MIRROR), '先读 Gitee 的 mirror.json');
+  assert.ok(giteeFast.calls.includes(GITEE_PORTABLE), '再用便携包 256KB 测速');
   const gitee = resolved.probes.find((probe) => probe.source === 'gitee');
   const github = resolved.probes.find((probe) => probe.source === 'github');
   assert.equal(gitee?.ok, true);
   assert.equal(gitee?.degraded, false);
+  assert.equal(gitee?.kind, 'asset');
 
-  const githubFast = bothReachable(200, 10);
+  const githubFast = bothReachable(150, 10);
   const resolvedAgain = await resolveDownloadSource('auto', githubFast.fetchImpl, { fresh: true });
   assert.equal(resolvedAgain.source, 'github');
   assert.equal(resolvedAgain.reason, 'latency');
@@ -139,8 +199,7 @@ test('Gitee 不可达时选 GitHub；GitHub 不可达时选 Gitee', async () => 
   const giteeDown = stubFetch({
     respond: (url) => {
       if (url.startsWith('https://gitee.com/')) return 'throw';
-      if (url === GITHUB_VERSION_JSON) return response({ version: '0.6.5' });
-      return response({}, false, 404);
+      return healthyResponses(url);
     },
   });
   const withoutGitee = await resolveDownloadSource('auto', giteeDown.fetchImpl);
@@ -154,9 +213,7 @@ test('Gitee 不可达时选 GitHub；GitHub 不可达时选 Gitee', async () => 
       if (url.startsWith('https://github.com/') || url.startsWith('https://raw.githubusercontent.com/') || url.startsWith('https://api.github.com/')) {
         return 'throw';
       }
-      if (url === GITEE_API_LATEST) return response(releaseWithVersionJson());
-      if (url === GITEE_VERSION_JSON) return response({ version: '0.6.5' });
-      return response({}, false, 404);
+      return healthyResponses(url);
     },
   });
   const withoutGithub = await resolveDownloadSource('auto', githubDown.fetchImpl);
@@ -191,11 +248,11 @@ test('探测超时按不可达处理，不会一直等', async () => {
   assert.ok(PROBE_TIMEOUT_MS >= 1000, '默认超时留够慢网络的时间');
 });
 
-test('Gitee 暂无 Releases：退化成仓库可达探测并标记 degraded', async () => {
+test('Gitee 镜像未同步：mirror.json 404 后退化成仓库可达并标记 degraded', async () => {
   resetDownloadSourceCache();
   const stub = stubFetch({
     respond: (url) => {
-      if (url === GITEE_API_LATEST) return response({ message: '404 Not Found' }, false, 404);
+      if (url === GITEE_MIRROR) return response({ message: '404 Not Found' }, false, 404);
       if (url === 'https://gitee.com/muyangplus/dawn-tick/raw/main/package.json') return response({ name: 'dawn-tick' });
       return response({}, false, 404);
     },
@@ -203,23 +260,35 @@ test('Gitee 暂无 Releases：退化成仓库可达探测并标记 degraded', as
   const probe = await probeSource('gitee', stub.fetchImpl);
   assert.equal(probe.ok, true);
   assert.equal(probe.degraded, true);
+  assert.equal(probe.kind, 'reachability');
   assert.equal(
     stub.calls.includes('https://gitee.com/muyangplus/dawn-tick/raw/main/package.json'),
     true,
-    '回退探测走 raw package.json',
+    '回退探测走主仓库 raw package.json',
   );
+});
+
+test('Gitee 镜像未同步（降级）时自动选健康的 GitHub', async () => {
+  resetDownloadSourceCache();
+  // Gitee 镜像 404 但仓库可达（degraded）；GitHub 健康但更慢
+  const stub = stubFetch({
+    delay: (url) => (url.startsWith('https://gitee.com/') ? 5 : 80),
+    respond: (url) => {
+      if (url === GITEE_MIRROR) return response({}, false, 404);
+      if (url === 'https://gitee.com/muyangplus/dawn-tick/raw/main/package.json') return response({ name: 'dawn-tick' });
+      return healthyResponses(url);
+    },
+  });
+  const resolved = await resolveDownloadSource('auto', stub.fetchImpl);
+  assert.equal(resolved.source, 'github', '降级源不能提供完整更新，回退健康的 GitHub');
+  assert.equal(resolved.probes.find((probe) => probe.source === 'gitee')?.degraded, true);
+  assert.equal(resolved.probes.find((probe) => probe.source === 'github')?.degraded, false);
 });
 
 test('自动探测结果按会话缓存 10 分钟，fresh 强制刷新', async () => {
   resetDownloadSourceCache();
   let clock = 0;
-  const stub = stubFetch({
-    respond: (url) => {
-      if (url === GITEE_API_LATEST) return response(releaseWithVersionJson());
-      if (url === GITEE_VERSION_JSON || url === GITHUB_VERSION_JSON) return response({ version: '0.6.5' });
-      return response({}, false, 404);
-    },
-  });
+  const stub = stubFetch({ respond: healthyResponses });
   const first = await resolveDownloadSource('auto', stub.fetchImpl, { now: () => clock });
   assert.equal(first.cached, false);
   const requestsAfterFirst = stub.calls.length;
@@ -257,14 +326,14 @@ test('手动指定优先于探测：不发明细请求', async () => {
 
 test('状态行文案：自动列出两个源的耗时，降级源给出回退说明', () => {
   const probes = [
-    { source: 'gitee' as const, ok: true, latencyMs: 120, degraded: false, error: null, url: 'x' },
-    { source: 'github' as const, ok: true, latencyMs: 480, degraded: false, error: null, url: 'y' },
+    { source: 'gitee' as const, ok: true, latencyMs: 120, degraded: false, error: null, url: 'x', kind: 'asset' as const, bytes: PROBE_ASSET_BYTES },
+    { source: 'github' as const, ok: true, latencyMs: 480, degraded: false, error: null, url: 'y', kind: 'asset' as const, bytes: PROBE_ASSET_BYTES },
   ];
   assert.equal(
     describeSourceLine({ preference: 'auto', source: 'gitee', reason: 'latency', probes, cached: false }),
-    '自动：Gitee（120ms） · GitHub（480ms）',
+    '自动：Gitee（120ms / 256KB） · GitHub（480ms / 256KB）',
   );
-  assert.equal(describeProbe(probes[1]!), 'GitHub（480ms）');
+  assert.equal(describeProbe(probes[1]!), 'GitHub（480ms / 256KB）');
   assert.equal(
     describeSourceLine({
       preference: 'auto',
@@ -276,7 +345,7 @@ test('状态行文案：自动列出两个源的耗时，降级源给出回退�
       ],
       cached: false,
     }),
-    '自动：Gitee（90ms，暂无 Releases） · GitHub（不可用）；该源暂无 Releases，下载时自动回退另一个源',
+    '自动：Gitee（90ms，镜像未同步） · GitHub（不可用）；该源镜像未同步，下载时自动回退另一个源',
   );
   assert.equal(
     describeSourceLine(manualResolution('github', [])),
@@ -284,13 +353,13 @@ test('状态行文案：自动列出两个源的耗时，降级源给出回退�
   );
   assert.equal(
     describeSourceLine(manualResolution('gitee', [probes[0]!])),
-    '手动：Gitee（探测：Gitee（120ms））',
+    '手动：Gitee（探测：Gitee（120ms / 256KB））',
   );
   assert.equal(describeSourceLine(null), '正在探测下载源…');
   assert.equal(DOWNLOAD_SOURCE_LABEL.gitee, 'Gitee');
 });
 
-// —— 256KB 资产分块探测（version.json 太小，改用真实安装包） ——
+// —— 256KB 资产分块探测（mirror.json 太小，改用真实便携包） ——
 
 function streamResponse(totalBytes: number, chunkBytes = 32 * 1024): Response {
   let sent = 0;
@@ -308,19 +377,18 @@ function streamResponse(totalBytes: number, chunkBytes = 32 * 1024): Response {
   return { ok: true, status: 200, body } as unknown as Response;
 }
 
-test('pickProbeAssetUrl：优先 portable zip，其次 apk / web / setup', () => {
-  const release = {
-    assets: [
-      { name: 'DawnTick-0.6.5-beta-windows-x64-setup.exe', browser_download_url: 'setup' },
-      { name: 'DawnTick-0.6.5-beta-android.apk', browser_download_url: 'apk' },
-      { name: 'DawnTick-0.6.5-beta-windows-x64-portable.zip', browser_download_url: 'portable' },
-      { name: 'SHA256SUMS.txt', browser_download_url: 'sums' },
-    ],
+test('pickProbeFile：优先便携 zip，其次 apk / web / 安装程序', () => {
+  const files = {
+    windowsSetup: { name: 'setup.exe', size: 1, sha256: 'a'.repeat(64) },
+    android: { name: 'app.apk', size: 1, sha256: 'b'.repeat(64) },
+    windowsPortable: { name: 'portable.zip', size: 1, sha256: 'c'.repeat(64) },
+    web: { name: 'web.zip', size: 1, sha256: 'd'.repeat(64) },
   };
-  assert.equal(pickProbeAssetUrl(release), 'portable');
-  assert.equal(pickProbeAssetUrl({ assets: [{ name: 'x.apk', browser_download_url: 'apk' }] }), 'apk');
-  assert.equal(pickProbeAssetUrl({ assets: [] }), null);
-  assert.equal(pickProbeAssetUrl(null), null);
+  assert.equal(pickProbeFile(files)?.name, 'portable.zip');
+  assert.equal(pickProbeFile({ android: files.android })?.name, 'app.apk');
+  assert.equal(pickProbeFile({ web: files.web })?.name, 'web.zip');
+  assert.equal(pickProbeFile({ windowsSetup: files.windowsSetup })?.name, 'setup.exe');
+  assert.equal(pickProbeFile({}), null);
 });
 
 test('probeAssetChunk：读满 256KB 即停止并计时', async () => {
@@ -345,28 +413,13 @@ test('probeAssetChunk：请求超时给出可读原因', async () => {
   assert.equal(result.error, '探测超时');
 });
 
-test('probeSource：有发布资产时用 256KB 分块探测并标记 asset', async () => {
+test('probeSource：读 mirror.json 后用便携包 256KB 分块探测并标记 asset', async () => {
   resetDownloadSourceCache();
-  const portable = 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/portable.zip';
-  const stub = stubFetch({
-    respond: (url) => {
-      if (url === releaseApiUrl('gitee', 'release')) {
-        return response({
-          tag_name: 'v0.6.5',
-          assets: [
-            { name: 'DawnTick-0.6.5-beta-windows-x64-portable.zip', browser_download_url: portable },
-            { name: 'version.json', browser_download_url: GITEE_VERSION_JSON },
-          ],
-        });
-      }
-      if (url === portable) return streamResponse(512 * 1024);
-      return response({}, false, 404);
-    },
-  });
+  const stub = stubFetch({ respond: healthyResponses });
   const probe = await probeSource('gitee', stub.fetchImpl, { timeoutMs: 2000 });
   assert.equal(probe.ok, true);
   assert.equal(probe.degraded, false);
   assert.equal(probe.kind, 'asset');
   assert.equal(probe.bytes, 256 * 1024);
-  assert.ok(stub.calls.includes(portable), '应该请求真实资产地址');
+  assert.deepEqual(stub.calls.slice(0, 2), [GITEE_MIRROR, GITEE_PORTABLE], '先清单、再真实资产');
 });

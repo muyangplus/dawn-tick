@@ -4,6 +4,7 @@ import { isAndroidApp, isDesktopApp } from './capabilities.ts';
 import { invokeNative } from './native.ts';
 import { PLUGIN_NAMES, loadPlugin, type ApkInstallerPlugin } from './plugins.ts';
 import type { UpdateDownloadHost, UpdatePlatform, WindowsInstallKind } from './update-download.ts';
+import { desktopHttpFetch } from './update-fetch.ts';
 
 /**
  * 自动更新（I-03）的平台出口：按渠道把下载好的安装包写盘并交给系统安装器/便携替换脚本。
@@ -174,11 +175,6 @@ async function installOnAndroid(path: string): Promise<{ needsPermission: boolea
   if (result?.needsPermission === true) return { needsPermission: true };
   if (result?.opened !== true) throw new Error('系统安装器没有启动');
   return { needsPermission: false };
-}
-
-/** 桌面用原生 HTTP 下载：绕过 WebView 的 CORS，仍支持流式进度与取消（与 webdav 同口径）。 */
-function desktopHttpFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return import('@tauri-apps/plugin-http').then(({ fetch: nativeFetch }) => nativeFetch(input, init));
 }
 
 /** 按渠道创建默认出口：桌面写数据目录并调 `run_installer`，Android 写 Cache 并调 `ApkInstaller`。 */

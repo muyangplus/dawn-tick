@@ -132,6 +132,7 @@ export interface UpdateDownloadTarget {
    * `portable` 是 Windows 便携版 zip，退出应用后由原生脚本覆盖 exe。
    */
   kind: 'installer' | 'portable';
+  /** 清单里的绝对地址：mirror.json 的文件名由客户端拼成同源 assets raw URL */
   url: string;
   /** 落盘文件名：固定名，重复下载覆盖旧安装包 */
   fileName: string;
@@ -419,6 +420,8 @@ async function runUpdateFlow(
   if (plan.kind === 'unavailable') return emit({ type: 'fail', error: plan.reason });
 
   emit({ type: 'start' });
+  // 资产探测与下载都走注入的 fetch（桌面为 Tauri plugin-http、Android 为 CapacitorHttp）：
+  // Gitee raw 不带 CORS 头，WebView 的 fetch 会被浏览器拦掉
   const fetchImpl = options.fetchImpl ?? host.fetchImpl;
   try {
     const bytes = await downloadBytes({
