@@ -9,6 +9,7 @@ import {
   writeCachedSnapshot,
   type PresetSource,
 } from '../../preset-update.ts';
+import { DOWNLOAD_SOURCE_LABEL, MIRRORS, resolveDownloadSource, type DownloadSource } from '../../lib/download-source.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { canUseWidget } from '../../lib/capabilities.ts';
 import { readElevationStatus, requestElevation } from '../../autostart.ts';
@@ -25,7 +26,14 @@ import { exportLogs } from './file-export.ts';
 import { said } from './format.ts';
 
 /** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
-const PRESET_SOURCE_LABEL = '预设仓库（GitHub）';
+function presetSourceLabel(source: DownloadSource): string {
+  return `预设仓库（${DOWNLOAD_SOURCE_LABEL[source]}）`;
+}
+
+/** 未检查前的来源文案：自动检测还没结果时说明会探测两个源。 */
+function presetSourceHint(source: AppSettings['downloadSource']): string {
+  return source === 'auto' ? '自动检测（Gitee / GitHub 择快）' : DOWNLOAD_SOURCE_LABEL[source];
+}
 
 /** 日志级别说明（与诊断与维护卡文案一致）。 */
 const LOG_LEVEL_HINT: Record<LogLevel, string> = {
@@ -53,6 +61,8 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
   const logAction = useAction();
   const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
   const [presetResult, setPresetResult] = useState<StatusMessage | null>(null);
+  /** 最近一次预设检查实际用的下载源：null 表示还没检查过 */
+  const [presetRemote, setPresetRemote] = useState<DownloadSource | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -95,22 +105,42 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
       fail: { what: '检查预设更新', next: '请稍后再试' },
       task: async () => {
         const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
-        const status = await checkPresetUpdate({ cachedVersion: currentVersion });
+        // 预设与更新共用同一个下载源：自动模式按探测结果选，手动指定优先；跨源回退只在自动模式开启
+        const doFetch = globalThis.fetch;
+        const resolved =
+          typeof doFetch === 'function'
+            ? await resolveDownloadSource(settings.downloadSource, doFetch)
+            : null;
+        const source: DownloadSource = resolved?.source ?? 'github';
+        const fallback = settings.downloadSource === 'auto';
+        const status = await checkPresetUpdate({
+          cachedVersion: currentVersion,
+          source,
+          fallback,
+        });
         if (status.error !== null) {
           const message = fail('检查预设更新', status.error, '请稍后再试');
           setPresetResult(said(message));
           toast.error(message);
-          logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion });
+          logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion, source });
           return;
         }
+        setPresetRemote(status.downloadSource ?? source);
         if (!status.available || status.version === null) {
-          const message = `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${PRESET_SOURCE_LABEL}`}`;
+          const message = `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${presetSourceLabel(status.downloadSource ?? source)}`}`;
           setPresetResult(said(message));
           toast.success(message);
-          logInfo('preset', '预设已是最新', { current: currentVersion, latest: status.version, source: status.source });
+          logInfo('preset', '预设已是最新', {
+            current: currentVersion,
+            latest: status.version,
+            source: status.source,
+            downloadSource: status.downloadSource ?? source,
+          });
           return;
         }
-        const snapshot = await fetchSnapshot(status.version);
+        // 取快照优先用实际取到版本清单的源，避免再从刚失败的源重试一遍
+        const snapshotSource = status.downloadSource ?? source;
+        const snapshot = await fetchSnapshot(status.version, undefined, { source: snapshotSource, fallback });
         await writeCachedSnapshot(storage, snapshot);
         // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
         const content = await cacheSnapshotContent(storage, snapshot);
@@ -121,12 +151,16 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           });
         }
         setPresetSource(await resolvePresetSource(storage));
-        const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统），下次启动生效`;
+        const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统，来源 ${presetSourceLabel(status.downloadSource ?? source)}），下次启动生效`;
         setPresetResult(said(message));
         toast.success(message);
         // 预设要下次启动才套用：与其它待重启改动共用一条提示
         registerPendingRestart('preset-update');
-        logInfo('preset', '已下载预设快照', { version: snapshot.version, hash: snapshot.hash });
+        logInfo('preset', '已下载预设快照', {
+          version: snapshot.version,
+          hash: snapshot.hash,
+          downloadSource: status.downloadSource ?? source,
+        });
       },
     });
     if (!result.ok && result.error !== null) {
@@ -179,10 +213,18 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         <ExternalLink
           dataRole="preset-repo-link"
           className="text-primary-strong underline"
-          href="https://github.com/muyangplus/dawn-tick-presets"
+          href={`${MIRRORS.github.site}/${MIRRORS.github.presets}`}
           ariaLabel="打开预设仓库（GitHub）"
         >
           GitHub
+        </ExternalLink>
+        <ExternalLink
+          dataRole="preset-repo-link-gitee"
+          className="text-primary-strong underline"
+          href={`${MIRRORS.gitee.site}/${MIRRORS.gitee.presets}`}
+          ariaLabel="打开预设仓库（Gitee）"
+        >
+          Gitee
         </ExternalLink>
         <StatusLine dataRole="preset-version">
           预设版本：
@@ -191,6 +233,10 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
             : `${presetSource.version}（${presetSource.kind === 'cached' ? '已更新' : '内置'}）`}
         </StatusLine>
       </span>
+      <StatusLine dataRole="preset-source">
+        预设源：
+        {presetRemote !== null ? presetSourceLabel(presetRemote) : presetSourceHint(settings.downloadSource)}
+      </StatusLine>
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
