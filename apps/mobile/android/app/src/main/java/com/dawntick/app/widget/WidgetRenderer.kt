@@ -12,11 +12,6 @@ import android.view.View
 import android.widget.RemoteViews
 import com.dawntick.app.MainActivity
 import com.dawntick.app.R
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 /**
  * 小组件每行文案顺序（与日程页日程时间线一致）：
@@ -28,10 +23,8 @@ import java.util.concurrent.TimeUnit
  * 只渲染前 N 行，放不下的整行不渲染；标题放不下由系统换行，换行顶出的部分由根布局裁掉。
  */
 object WidgetRenderer {
-    private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     // 与 packages/core/src/time.ts 的 WEEKDAY_LABELS 同源（Kotlin 侧无法直接引用 TS 常量，改文案时两边一起改）。
     private val weekdays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-    private const val TIME_SEPARATOR = "–"
 
     /** 与 widget_*.xml 的 android:padding 一致。 */
     private const val ROOT_PADDING_DP = 12
@@ -162,8 +155,9 @@ object WidgetRenderer {
         }
     }
 
-    fun buildNext(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
+    fun buildNext(context: Context, read: WidgetReadResult, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_next)
+        val snapshot = read.snapshot
         applyTheme(
             views,
             context,
@@ -180,23 +174,35 @@ object WidgetRenderer {
             R.id.widget_label,
             context.getString(if (current != null) R.string.widget_in_class else R.string.widget_next_label),
         )
-        val texts = if (primary == null) {
-            views.setTextViewText(R.id.widget_count, "")
-            listOf(context.getString(R.string.widget_no_lesson))
-        } else {
-            views.setTextViewText(
-                R.id.widget_count,
-                if (current != null) remaining(current.endsAt) else countdown(primary.startsAt),
-            )
-            listOf(lessonLine(primary.startsAt, primary.endsAt, primary.title, primary.room))
+        val texts = when {
+            read.failed -> {
+                views.setTextViewText(R.id.widget_count, "")
+                listOf(context.getString(R.string.widget_read_error))
+            }
+            primary == null -> {
+                views.setTextViewText(R.id.widget_count, "")
+                listOf(context.getString(R.string.widget_no_lesson))
+            }
+            else -> {
+                views.setTextViewText(
+                    R.id.widget_count,
+                    if (current != null) {
+                        WidgetText.remaining(current.endsAt)
+                    } else {
+                        WidgetText.countdown(primary.startsAt)
+                    },
+                )
+                listOf(WidgetText.lessonLine(primary.startsAt, primary.endsAt, primary.title, primary.room))
+            }
         }
         fillRows(views, intArrayOf(R.id.widget_row1, R.id.widget_row2, R.id.widget_row3), capacity, texts)
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views
     }
 
-    fun buildToday(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
+    fun buildToday(context: Context, read: WidgetReadResult, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_today)
+        val snapshot = read.snapshot
         val rowIds = intArrayOf(
             R.id.widget_row1,
             R.id.widget_row2,
@@ -217,21 +223,27 @@ object WidgetRenderer {
             views,
             rowIds,
             capacity,
-            lessons.map { lessonLine(it.startsAt, it.endsAt, it.title, it.room) },
+            lessons.map { WidgetText.lessonLine(it.startsAt, it.endsAt, it.title, it.room) },
         )
         views.setTextViewText(
             R.id.widget_header,
-            if (snapshot == null) context.getString(R.string.widget_no_data)
-            else context.getString(R.string.widget_today_header, snapshot.week),
+            when {
+                read.failed -> context.getString(R.string.widget_read_error)
+                snapshot == null -> context.getString(R.string.widget_no_data)
+                else -> context.getString(R.string.widget_today_header, snapshot.week)
+            },
         )
-        views.setViewVisibility(R.id.widget_empty, if (lessons.isEmpty()) View.VISIBLE else View.GONE)
+        // 没有快照或读取失败时不显示「今天没有课」，避免和标题矛盾
+        val showEmpty = lessons.isEmpty() && !read.failed && snapshot != null
+        views.setViewVisibility(R.id.widget_empty, if (showEmpty) View.VISIBLE else View.GONE)
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views
     }
 
     /** 4×4 一周概览：一节课一行，放不下的整行不渲染；放不下时标题补「还有 N 节」。 */
-    fun buildWeekOverview(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
+    fun buildWeekOverview(context: Context, read: WidgetReadResult, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_week)
+        val snapshot = read.snapshot
         val rowIds = intArrayOf(
             R.id.widget_week_row1,
             R.id.widget_week_row2,
@@ -255,15 +267,17 @@ object WidgetRenderer {
             rowIds,
             capacity,
             texts.ifEmpty {
-                listOf(
-                    if (snapshot == null) context.getString(R.string.widget_no_data)
-                    else context.getString(R.string.widget_week_no_lesson),
-                )
+                when {
+                    read.failed -> emptyList()
+                    snapshot == null -> listOf(context.getString(R.string.widget_no_data))
+                    else -> listOf(context.getString(R.string.widget_week_no_lesson))
+                }
             },
         )
         views.setTextViewText(
             R.id.widget_week_header,
             when {
+                read.failed -> context.getString(R.string.widget_read_error)
                 snapshot == null -> context.getString(R.string.widget_no_data)
                 // 放不下的课整行不渲染，用标题补一句「还有 N 节」，避免看起来只有这些课
                 texts.size > capacity ->
@@ -287,8 +301,9 @@ object WidgetRenderer {
     }
 
     /** 2×2 考试倒计时：按开考时间列出未开始的考试，天数单独一行。 */
-    fun buildExamCountdown(context: Context, snapshot: WidgetSnapshot?, appWidgetId: Int): RemoteViews {
+    fun buildExamCountdown(context: Context, read: WidgetReadResult, appWidgetId: Int): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_exam)
+        val snapshot = read.snapshot
         applyTheme(
             views,
             context,
@@ -303,86 +318,16 @@ object WidgetRenderer {
         val nearest = exams.firstOrNull()
         views.setTextViewText(
             R.id.widget_exam_days,
-            if (nearest == null) "" else daysLeft(nearest.startAt),
+            if (nearest == null) "" else WidgetText.daysLeft(nearest.startAt),
         )
-        val texts = if (exams.isEmpty()) {
-            listOf(context.getString(R.string.widget_exam_none))
-        } else {
-            exams.map { exam -> examLine(exam.date, exam.title) }
+        val texts = when {
+            read.failed -> listOf(context.getString(R.string.widget_read_error))
+            exams.isEmpty() -> listOf(context.getString(R.string.widget_exam_none))
+            else -> exams.map { exam -> WidgetText.examLine(exam.date, exam.title) }
         }
         fillRows(views, intArrayOf(R.id.widget_row1, R.id.widget_row2), capacity, texts)
         views.setOnClickPendingIntent(R.id.widget_root, openApp(context))
         return views
-    }
-
-    /** 课程行：08:00–09:40 高等数学 · A101。 */
-    private fun lessonLine(startsAt: Long, endsAt: Long, title: String, room: String?): String = buildString {
-        append(timeText(startsAt, endsAt))
-        append(' ')
-        append(title)
-        if (!room.isNullOrEmpty()) append(" · ").append(room)
-    }
-
-    /** 考试行：2026-01-08 大学英语。 */
-    private fun examLine(date: String, title: String): String = buildString {
-        if (date.isNotEmpty()) append(date).append(' ')
-        append(title)
-    }
-
-    private fun timeText(startsAt: Long, endsAt: Long): String = buildString {
-        append(timeFormat.format(Date(startsAt)))
-        if (endsAt > startsAt) {
-            append(TIME_SEPARATOR)
-            append(timeFormat.format(Date(endsAt)))
-        }
-    }
-
-    private fun countdown(startsAt: Long): String {
-        val diff = startsAt - System.currentTimeMillis()
-        if (diff <= 0) return "即将开始"
-        val totalSeconds = diff / 1000
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-        return if (hours > 0) {
-            String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
-        }
-    }
-
-    /** 距课程结束的剩余时间，格式与倒计时一致；课程已结束时返回 00:00。 */
-    private fun remaining(endsAt: Long): String {
-        val diff = endsAt - System.currentTimeMillis()
-        if (diff <= 0) return "00:00"
-        val totalSeconds = diff / 1000
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
-        return if (hours > 0) {
-            String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
-        }
-    }
-
-    private fun daysLeft(startsAt: Long): String {
-        val calendarNow = Calendar.getInstance()
-        val calendarExam = Calendar.getInstance().apply { timeInMillis = startsAt }
-        val startOfToday = calendarNow.apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val startOfExam = calendarExam.apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-        val days = TimeUnit.MILLISECONDS.toDays(startOfExam - startOfToday)
-        return if (days <= 0) "今天" else "$days 天"
     }
 
     private fun openApp(context: Context): PendingIntent {
