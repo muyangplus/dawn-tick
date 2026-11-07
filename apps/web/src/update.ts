@@ -1,9 +1,33 @@
 /** 更新检查只判断「有没有新版」，下载与安装由界面触发。 */
-/** 只有 fetch 抛错才从 UPDATE_API_FEEDS 回退 UPDATE_FEEDS，HTTP 状态错误不回退。 */
+/** 首选选中源的发布接口：网络异常时同源 version.json 兜底，仍失败且允许时跨源回退。 */
 
 import { errorMessage } from './lib/errors.ts';
+import {
+  DOWNLOAD_SOURCE_LABEL,
+  releaseApiUrl,
+  versionJsonAssetUrl,
+  type DownloadSource,
+} from './lib/download-source.ts';
+import {
+  compareVersions,
+  isPrereleaseOrDraft,
+  isUpdateManifest,
+  manifestFromRelease,
+  pickBetaCandidate,
+} from './lib/update-release.ts';
+
+/** 发布解析（版本比较、资产挑选、beta 候选）在 `lib/update-release.ts`，这里转出保持调用路径不变。 */
+export {
+  compareVersions,
+  isUpdateManifest,
+  manifestFromRelease,
+  pickBetaCandidate,
+} from './lib/update-release.ts';
 
 export type UpdateChannel = 'dev' | 'beta' | 'release';
+
+/** 下载源：与 `lib/download-source.ts` 同一口径，转出方便调用方只 import 本模块。 */
+export type UpdateSource = DownloadSource;
 
 const OWNER = 'muyangplus';
 const REPO = 'dawn-tick';
@@ -27,10 +51,6 @@ export const UPDATE_API_FEEDS: Record<UpdateChannel, string> = {
   beta: UPDATE_RELEASES_API,
   release: `https://api.github.com/repos/${OWNER}/${REPO}/releases/latest`,
 };
-
-/** beta 预发布标签与正式版标签。 */
-const BETA_RELEASE_TAG = /^v?\d+\.\d+\.\d+-beta(?:\.\d+)?$/;
-const STABLE_RELEASE_TAG = /^v?\d+\.\d+\.\d+$/;
 
 /** GitHub 接口的 accept：只读公开仓库，不带任何凭据。 */
 const GITHUB_API_ACCEPT = 'application/vnd.github+json';
@@ -71,6 +91,10 @@ export interface UpdateStatus {
   current: string;
   latest: string | null;
   manifest: UpdateManifest | null;
+  /** 实际取到清单的下载源：跨源回退后是回退源 */
+  source: UpdateSource;
+  /** 从首选源回退到另一个源时，记下首选源 */
+  fallbackFrom?: UpdateSource;
 }
 
 /**
@@ -97,289 +121,159 @@ export function resolveReceiveBeta(stored: boolean | null, channel: UpdateChanne
   return stored === null ? defaultReceiveBeta(channel) : stored;
 }
 
-interface ParsedVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string[];
-}
-
-function parseVersion(value: string): ParsedVersion | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(value.trim());
-  if (match === null) return null;
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2]),
-    patch: Number(match[3]),
-    prerelease: match[4] === undefined ? [] : match[4].split('.'),
-  };
-}
-
-/** 语义化版本比较：a > b 返回正数，相等返回 0。预发布版本小于同号正式版。 */
-export function compareVersions(a: string, b: string): number {
-  const left = parseVersion(a);
-  const right = parseVersion(b);
-  if (left === null || right === null) return a.localeCompare(b);
-  for (const key of ['major', 'minor', 'patch'] as const) {
-    if (left[key] !== right[key]) return left[key] - right[key];
-  }
-  if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0;
-  if (left.prerelease.length === 0) return 1;
-  if (right.prerelease.length === 0) return -1;
-  const length = Math.max(left.prerelease.length, right.prerelease.length);
-  for (let index = 0; index < length; index += 1) {
-    const one = left.prerelease[index];
-    const two = right.prerelease[index];
-    if (one === undefined) return -1;
-    if (two === undefined) return 1;
-    if (one === two) continue;
-    const oneNumber = Number(one);
-    const twoNumber = Number(two);
-    const bothNumeric = Number.isFinite(oneNumber) && Number.isFinite(twoNumber);
-    if (bothNumeric) return oneNumber - twoNumber;
-    if (Number.isFinite(oneNumber)) return -1;
-    if (Number.isFinite(twoNumber)) return 1;
-    return one.localeCompare(two);
-  }
-  return 0;
-}
-
-export function isUpdateManifest(value: unknown): value is UpdateManifest {
-  if (typeof value !== 'object' || value === null) return false;
-  const row = value as Partial<UpdateManifest>;
-  return (
-    (row.channel === 'dev' || row.channel === 'beta' || row.channel === 'release') &&
-    typeof row.version === 'string' &&
-    row.version.length > 0
-  );
-}
-
 export interface CheckUpdateOptions {
   channel: UpdateChannel;
   receiveBeta: boolean;
   currentVersion: string;
   fetchImpl?: typeof fetch;
-}
-
-/** tag 里能读出的版本：`v0.2.0` / `0.2.0-beta.1`。滚动标签（dev-latest）读不出。 */
-const TAG_VERSION = /^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/;
-
-/** 资产名里的版本：`DawnTick-<版本>-<渠道>-<平台>-…`（渠道段是版本段的右边界）。 */
-const ASSET_VERSION = /^DawnTick-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)-(?:dev|beta|release)-/i;
-
-/** 发布说明里的提交号（发布流程写入 `… · 提交 b7e140a`）。 */
-const NOTES_COMMIT = /提交 ([0-9a-f]{7,40})/;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
+  /** 首选下载源；缺省 GitHub，保持既有调用点的行为 */
+  source?: UpdateSource;
+  /** 首选源失败后是否自动回退另一个源（应用内传 true） */
+  fallback?: boolean;
 }
 
 /** HTTP 状态 → 可读文案。 */
-function describeApiStatus(status: number): string {
+function describeApiStatus(source: UpdateSource, status: number): string {
   if (status === 404) return '该渠道还没有发布记录';
-  if (status === 403 || status === 429) return 'GitHub 接口限流，请稍后再试';
+  if (status === 403 || status === 429) return `${DOWNLOAD_SOURCE_LABEL[source]} 接口限流，请稍后再试`;
   return `更新源返回 ${status}`;
 }
 
-/** `/releases/latest` 拿到预发布或草稿：按「无可用更新」处理，不算失败。 */
-function isPrereleaseOrDraft(value: unknown): boolean {
-  const record = asRecord(value);
-  return record !== null && (record['prerelease'] === true || record['draft'] === true);
+/** 各源的请求 accept：GitHub 要 v3 媒体类型，Gitee v5 用普通 JSON。 */
+function acceptOf(source: UpdateSource): string {
+  return source === 'github' ? GITHUB_API_ACCEPT : 'application/json';
 }
 
-/** 版本优先取 tag；滚动标签（dev-latest）取不到，再从资产名取。 */
-function versionFromTag(tag: unknown): string | null {
-  if (typeof tag !== 'string') return null;
-  const matched = TAG_VERSION.exec(tag.trim());
-  return matched === null ? null : (matched[1] ?? null);
+function emptyStatus(feed: UpdateChannel, current: string, source: UpdateSource): UpdateStatus {
+  return { available: false, error: null, feed, current, latest: null, manifest: null, source };
 }
 
-function versionFromAssets(assets: unknown): string | null {
-  if (!Array.isArray(assets)) return null;
-  for (const raw of assets) {
-    const record = asRecord(raw);
-    if (record === null) continue;
-    const name = record['name'];
-    if (typeof name !== 'string') continue;
-    const matched = ASSET_VERSION.exec(name.trim());
-    if (matched !== null) return matched[1] ?? null;
-  }
-  return null;
-}
-
-/** 发布里的合并校验文件（`sha256sum * > SHA256SUMS.txt`），匹配大小写不敏感的固定名。 */
-const CHECKSUMS_ASSET = 'sha256sums.txt';
-
-/**
- * 发布资产 → 下载项：windows 优先安装包、其次便携包；android 取 APK；web 取静态包。
- * 便携 zip 另存在 `windowsPortable`：安装版与便携版各自选自己的产物。
- * 校验统一走发布里的 `SHA256SUMS.txt`（内含每个产物的摘要），自动更新下载后据此校验。
- */
-function assetsFromRelease(
-  value: unknown,
-): { assets: NonNullable<UpdateManifest['assets']>; checksumsUrl?: string } | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const available: Array<{ name: string; url: string; size?: number }> = [];
-  for (const raw of value) {
-    const record = asRecord(raw);
-    if (record === null) continue;
-    const name = record['name'];
-    const url = record['browser_download_url'];
-    if (typeof name !== 'string' || typeof url !== 'string' || url === '') continue;
-    const size = record['size'];
-    available.push(typeof size === 'number' && Number.isFinite(size) ? { name, url, size } : { name, url });
-  }
-  const pick = (suffix: string): UpdateAsset | undefined => {
-    const found = available.find((item) => item.name.toLowerCase().endsWith(suffix));
-    if (found === undefined) return undefined;
-    return {
-      url: found.url,
-      name: found.name,
-      ...(found.size === undefined ? {} : { size: found.size }),
-    };
+function manifestStatus(status: UpdateStatus, manifest: UpdateManifest, currentVersion: string): UpdateStatus {
+  return {
+    ...status,
+    available: compareVersions(manifest.version, currentVersion) > 0,
+    latest: manifest.version,
+    manifest,
   };
-
-  const assets: NonNullable<UpdateManifest['assets']> = {};
-  const windowsPortable = pick('-windows-x64-portable.zip');
-  const windows = pick('-windows-x64-setup.exe') ?? windowsPortable;
-  const android = pick('-android.apk');
-  const web = pick('-web.zip');
-  if (windows !== undefined) assets.windows = windows;
-  if (windowsPortable !== undefined) assets.windowsPortable = windowsPortable;
-  if (android !== undefined) assets.android = android;
-  if (web !== undefined) assets.web = web;
-  if (Object.keys(assets).length === 0) return undefined;
-  const checksums = available.find((item) => item.name.toLowerCase() === CHECKSUMS_ASSET);
-  return checksums === undefined ? { assets } : { assets, checksumsUrl: checksums.url };
 }
 
-/** 把 GitHub 发布响应转成本模块清单：channel 固定为本次查询的 feed，取不到版本或结构不符时返回 null。 */
-/** 回滚到正式版也从发布列表里挑目标（`lib/update-preferences.ts`），因此导出这条纯转换。 */
-export function manifestFromRelease(feed: UpdateChannel, value: unknown): UpdateManifest | null {
-  const record = asRecord(value);
-  if (record === null) return null;
-  const version = versionFromTag(record['tag_name']) ?? versionFromAssets(record['assets']);
-  if (version === null) return null;
-
-  const manifest: UpdateManifest = { channel: feed, version };
-  const publishedAt = record['published_at'];
-  if (typeof publishedAt === 'string') {
-    const releasedAt = Date.parse(publishedAt);
-    if (Number.isFinite(releasedAt)) manifest.releasedAt = releasedAt;
-  }
-  const body = record['body'];
-  if (typeof body === 'string') {
-    const notes = body.trim();
-    manifest.notes = notes;
-    const commit = NOTES_COMMIT.exec(notes);
-    if (commit !== null && commit[1] !== undefined) manifest.commit = commit[1];
-  }
-  const parsedAssets = assetsFromRelease(record['assets']);
-  if (parsedAssets !== undefined) {
-    manifest.assets = parsedAssets.assets;
-    if (parsedAssets.checksumsUrl !== undefined) manifest.checksumsUrl = parsedAssets.checksumsUrl;
-  }
-  return isUpdateManifest(manifest) ? manifest : null;
-}
-
-/** 从发布列表挑候选：最新 beta 预发布与最新正式版取版本较高者；草稿、rc 等非 beta 预发布跳过。 */
-export function pickBetaCandidate(
-  releases: unknown,
-): { record: Record<string, unknown>; channel: 'beta' | 'release' } | null {
-  if (!Array.isArray(releases)) return null;
-  let best: { record: Record<string, unknown>; channel: 'beta' | 'release'; version: string } | null = null;
-  for (const raw of releases) {
-    const record = asRecord(raw);
-    if (record === null || record['draft'] === true) continue;
-    const tag = typeof record['tag_name'] === 'string' ? record['tag_name'].trim() : '';
-    // beta 预发布允许两种标签：`-beta.<n>`，或者不带序号的纯版本号（发布时选择 plain）
-    const isBeta =
-      record['prerelease'] === true && (BETA_RELEASE_TAG.test(tag) || STABLE_RELEASE_TAG.test(tag));
-    const isStable = STABLE_RELEASE_TAG.test(tag) && record['prerelease'] !== true;
-    if (!isBeta && !isStable) continue;
-    const version = versionFromTag(tag);
-    if (version === null) continue;
-    if (best === null || compareVersions(version, best.version) > 0) {
-      best = { record, channel: isBeta ? 'beta' : 'release', version };
+/** 同源的 version.json 兜底地址：GitHub 是静态直连；Gitee 没有 latest 别名，从同渠道发布的资产里取。 */
+async function versionJsonUrlOf(
+  feed: UpdateChannel,
+  source: UpdateSource,
+  doFetch: typeof fetch,
+): Promise<string | null> {
+  if (source === 'github') return UPDATE_FEEDS[feed] ?? null;
+  try {
+    const response = await doFetch(releaseApiUrl(source, feed), { headers: { accept: acceptOf(source) } });
+    if (!response.ok) return null;
+    const parsed: unknown = await response.json();
+    if (feed === 'beta') {
+      const candidate = pickBetaCandidate(parsed);
+      return candidate === null ? null : versionJsonAssetUrl(candidate.record);
     }
+    return versionJsonAssetUrl(parsed);
+  } catch {
+    return null;
   }
-  return best === null ? null : { record: best.record, channel: best.channel };
 }
 
-/** 先查 GitHub 发布接口，只有网络异常才回退 version.json 直连。 */
-/** 跨渠道或降级的清单一律视为无更新（防串版）。 */
-export async function checkForUpdate(options: CheckUpdateOptions): Promise<UpdateStatus> {
-  const feed = resolveFeed(options.channel, options.receiveBeta);
-  const base: UpdateStatus = {
-    available: false,
-    error: null,
-    feed,
-    current: options.currentVersion,
-    latest: null,
-    manifest: null,
-  };
-  const doFetch = options.fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') return { ...base, error: '当前环境无法联网检查更新' };
+interface SourceAttempt {
+  /** 查询成功（包含「无可用更新」）时的状态 */
+  status: UpdateStatus | null;
+  /** 失败原因 */
+  error: string | null;
+}
 
-  // ① 首选：GitHub 发布接口。状态错误与格式错误就地给文案，不回退。
+/** 只查一个源：发布 API → 同源 version.json 兜底；跨源回退由 `checkForUpdate` 负责。 */
+async function querySource(
+  feed: UpdateChannel,
+  source: UpdateSource,
+  currentVersion: string,
+  doFetch: typeof fetch,
+): Promise<SourceAttempt> {
+  const base = emptyStatus(feed, currentVersion, source);
   let networkError: string | null = null;
   try {
-    const response = await doFetch(UPDATE_API_FEEDS[feed], { headers: { accept: GITHUB_API_ACCEPT } });
-    if (!response.ok) return { ...base, error: describeApiStatus(response.status) };
+    const response = await doFetch(releaseApiUrl(source, feed), { headers: { accept: acceptOf(source) } });
+    if (!response.ok) return { status: null, error: describeApiStatus(source, response.status) };
     let parsed: unknown;
     try {
       parsed = await response.json();
     } catch {
-      return { ...base, error: '更新清单格式不正确' };
+      return { status: null, error: '更新清单格式不正确' };
     }
     if (feed === 'beta') {
       const candidate = pickBetaCandidate(parsed);
-      if (candidate === null) return { ...base, error: '该渠道还没有发布记录' };
+      if (candidate === null) return { status: null, error: '该渠道还没有发布记录' };
       const manifest = manifestFromRelease(candidate.channel, candidate.record);
-      if (manifest === null) return { ...base, error: '更新清单格式不正确' };
-      return {
-        ...base,
-        available: compareVersions(manifest.version, options.currentVersion) > 0,
-        latest: manifest.version,
-        manifest,
-      };
+      if (manifest === null) return { status: null, error: '更新清单格式不正确' };
+      return { status: manifestStatus(base, manifest, currentVersion), error: null };
     }
-    if (feed === 'release' && isPrereleaseOrDraft(parsed)) return base;
+    if (feed === 'release' && isPrereleaseOrDraft(parsed)) return { status: base, error: null };
     const manifest = manifestFromRelease(feed, parsed);
-    if (manifest === null) return { ...base, error: '更新清单格式不正确' };
-    return {
-      ...base,
-      available: compareVersions(manifest.version, options.currentVersion) > 0,
-      latest: manifest.version,
-      manifest,
-    };
+    if (manifest === null) return { status: null, error: '更新清单格式不正确' };
+    return { status: manifestStatus(base, manifest, currentVersion), error: null };
   } catch (cause: unknown) {
     // 网络异常：记住原始原因，下面回退；回退也失败时把它交出去（不吞掉真实原因）
     networkError = errorMessage(cause);
   }
 
-  // ② 回退：version.json 直连（github.com 资产）。beta 没有固定直连地址，直接交回原始网络错误。
-  const fallbackUrl = UPDATE_FEEDS[feed];
-  if (fallbackUrl === undefined) return { ...base, error: networkError };
+  const fallbackUrl = await versionJsonUrlOf(feed, source, doFetch);
+  if (fallbackUrl === null) return { status: null, error: networkError };
   try {
     const response = await doFetch(fallbackUrl, { headers: { accept: 'application/json' } });
-    if (!response.ok) return { ...base, error: networkError };
+    if (!response.ok) return { status: null, error: networkError };
     const parsed: unknown = await response.json();
-    if (!isUpdateManifest(parsed)) return { ...base, error: networkError };
+    if (!isUpdateManifest(parsed)) return { status: null, error: networkError };
     if (parsed.channel !== feed) {
-      return { ...base, error: `清单渠道 ${parsed.channel} 与查询渠道 ${feed} 不一致，已忽略` };
+      return { status: null, error: `清单渠道 ${parsed.channel} 与查询渠道 ${feed} 不一致，已忽略` };
     }
-    const newer = compareVersions(parsed.version, options.currentVersion) > 0;
     return {
-      ...base,
-      available: newer,
-      latest: parsed.version,
-      manifest: parsed,
+      status: {
+        ...base,
+        available: compareVersions(parsed.version, currentVersion) > 0,
+        latest: parsed.version,
+        manifest: parsed,
+      },
+      error: null,
     };
   } catch {
-    return { ...base, error: networkError };
+    return { status: null, error: networkError };
   }
+}
+
+/** 两个源都失败时把两边原因都交出去，用户能看出是哪一侧不可用。 */
+function summarizeFailure(
+  requested: UpdateSource,
+  firstError: string | null,
+  other: UpdateSource,
+  secondError: string | null,
+): string {
+  return `${DOWNLOAD_SOURCE_LABEL[requested]}：${firstError ?? '查询失败'}；${DOWNLOAD_SOURCE_LABEL[other]}：${
+    secondError ?? '查询失败'
+  }`;
+}
+
+/**
+ * 检查更新：按选中的下载源查询，失败时（`fallback`）自动回退另一个源，并在结果里标明实际源。
+ * 跨渠道或降级的清单一律视为无更新（防串版）；两个源都失败时给出两侧原因。
+ */
+export async function checkForUpdate(options: CheckUpdateOptions): Promise<UpdateStatus> {
+  const feed = resolveFeed(options.channel, options.receiveBeta);
+  const requested = options.source ?? 'github';
+  const base = emptyStatus(feed, options.currentVersion, requested);
+  const doFetch = options.fetchImpl ?? globalThis.fetch;
+  if (typeof doFetch !== 'function') return { ...base, error: '当前环境无法联网检查更新' };
+
+  const first = await querySource(feed, requested, options.currentVersion, doFetch);
+  if (first.status !== null) return first.status;
+  if (options.fallback !== true) return { ...base, error: first.error };
+
+  const other: UpdateSource = requested === 'github' ? 'gitee' : 'github';
+  const second = await querySource(feed, other, options.currentVersion, doFetch);
+  if (second.status !== null) return { ...second.status, fallbackFrom: requested };
+  return { ...base, error: summarizeFailure(requested, first.error, other, second.error) };
 }
 
 /** 各平台自带的合法性验证命令，展示给用户核对。 */

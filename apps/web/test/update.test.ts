@@ -638,3 +638,230 @@ test('回退源也失败时把 API 的原始网络错误交出去', async () => 
   assert.equal(status.latest, null);
   assert.match(String(status.error), /fetch failed: api\.github\.com/);
 });
+
+// —— 双下载源：Gitee / GitHub ——
+
+const GITEE_API = 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases';
+const GITEE_VERSION_JSON_ASSET =
+  'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/version.json';
+
+/** Gitee 发布响应：字段形状与 GitHub 类似，下载地址是 Gitee 自己的（可执行文件可能不以 .exe 结尾）。 */
+function giteeReleaseBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    tag_name: 'v0.2.0',
+    name: 'DawnTick 0.2.0',
+    body: '渠道 release · 来源 main · 提交 4f2a1cd',
+    published_at: '2026-05-02T00:00:00Z',
+    prerelease: false,
+    draft: false,
+    assets: [
+      {
+        name: 'DawnTick-0.2.0-release-windows-x64-setup.exe',
+        size: 120,
+        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/asset-1',
+      },
+      {
+        name: 'DawnTick-0.2.0-release-android.apk',
+        size: 60,
+        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/asset-2',
+      },
+      {
+        name: 'version.json',
+        size: 8,
+        browser_download_url: GITEE_VERSION_JSON_ASSET,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+test('缺省下载源仍是 GitHub：请求 api.github.com 并标明来源', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async (input) => {
+      assert.equal(String(input), 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest');
+      return manifestResponse(releaseBody());
+    },
+  });
+  assert.equal(status.source, 'github');
+  assert.equal(status.fallbackFrom, undefined);
+});
+
+test('选中 Gitee 时查 Gitee API，清单与下载地址都来自 Gitee', async () => {
+  const seen: string[] = [];
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fetchImpl: async (input, init) => {
+      seen.push(String(input));
+      assert.equal(
+        (init?.headers as Record<string, string> | undefined)?.['accept'],
+        'application/json',
+        'Gitee v5 用普通 JSON accept',
+      );
+      return manifestResponse(giteeReleaseBody());
+    },
+  });
+  assert.deepEqual(seen, [`${GITEE_API}/latest`]);
+  assert.equal(status.error, null);
+  assert.equal(status.source, 'gitee');
+  assert.equal(status.available, true);
+  assert.equal(status.latest, '0.2.0');
+  assert.equal(
+    status.manifest?.assets?.windows?.url,
+    'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.2.0/asset-1',
+    '下载地址来自 Gitee 资产，不以 .exe 结尾也算安装包',
+  );
+  assert.equal(status.manifest?.assets?.windows?.name, 'DawnTick-0.2.0-release-windows-x64-setup.exe');
+});
+
+test('Gitee dev 用滚动标签，版本从资产名读出', async () => {
+  const seen: string[] = [];
+  const status = await checkForUpdate({
+    channel: 'dev',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fetchImpl: async (input) => {
+      seen.push(String(input));
+      return manifestResponse(
+        giteeReleaseBody({
+          tag_name: 'dev-latest',
+          body: '渠道 dev · 来源 dev · 提交 b7e140a',
+          assets: [
+            {
+              name: 'DawnTick-0.1.1-dev-windows-x64-setup.exe',
+              browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/dev-latest/asset-9',
+            },
+          ],
+        }),
+      );
+    },
+  });
+  assert.deepEqual(seen, [`${GITEE_API}/tags/dev-latest`]);
+  assert.equal(status.latest, '0.1.1');
+  assert.equal(status.manifest?.channel, 'dev');
+  assert.equal(status.source, 'gitee');
+});
+
+test('Gitee beta 用发布列表并沿用 pickBetaCandidate 语义', async () => {
+  const status = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.2.0-beta.1',
+    source: 'gitee',
+    fetchImpl: async (input) => {
+      assert.match(String(input), /\?per_page=30$/);
+      return manifestResponse([
+        giteeReleaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true }),
+        giteeReleaseBody({ tag_name: 'v0.3.0', prerelease: false }),
+      ]);
+    },
+  });
+  assert.equal(status.source, 'gitee');
+  assert.equal(status.latest, '0.3.0', '正式版更高时按正式版算');
+  assert.equal(status.manifest?.channel, 'release');
+});
+
+test('Gitee API 网络异常时从同源发布资产里取 version.json 兜底', async () => {
+  const seen: string[] = [];
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fetchImpl: async (input) => {
+      const url = String(input);
+      seen.push(url);
+      if (url === `${GITEE_API}/latest` && seen.length === 1) throw new Error('fetch failed: gitee');
+      if (url === GITEE_VERSION_JSON_ASSET) {
+        return manifestResponse({ channel: 'release', version: '0.2.0', notes: 'Gitee 兜底清单' });
+      }
+      return manifestResponse(giteeReleaseBody());
+    },
+  });
+  assert.deepEqual(seen, [`${GITEE_API}/latest`, `${GITEE_API}/latest`, GITEE_VERSION_JSON_ASSET]);
+  assert.equal(status.error, null);
+  assert.equal(status.source, 'gitee');
+  assert.equal(status.latest, '0.2.0');
+  assert.equal(status.manifest?.notes, 'Gitee 兜底清单');
+});
+
+test('首选源失败时自动回退另一个源，并在结果里标明实际源', async () => {
+  const seen: string[] = [];
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fallback: true,
+    fetchImpl: async (input) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.startsWith('https://gitee.com/')) return manifestResponse({ message: '404 Not Found' }, false, 404);
+      return manifestResponse(releaseBody());
+    },
+  });
+  assert.deepEqual(seen, [`${GITEE_API}/latest`, 'https://api.github.com/repos/muyangplus/dawn-tick/releases/latest']);
+  assert.equal(status.error, null);
+  assert.equal(status.source, 'github', '回退后标明实际源');
+  assert.equal(status.fallbackFrom, 'gitee');
+  assert.equal(status.available, true);
+  assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe');
+});
+
+test('反向回退：GitHub 失败时选 Gitee', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'github',
+    fallback: true,
+    fetchImpl: async (input) => {
+      const url = String(input);
+      if (url.startsWith('https://api.github.com/')) return manifestResponse({}, false, 503);
+      return manifestResponse(giteeReleaseBody());
+    },
+  });
+  assert.equal(status.source, 'gitee');
+  assert.equal(status.fallbackFrom, 'github');
+  assert.equal(status.available, true);
+});
+
+test('两个源都失败时把两侧原因都交出去', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fallback: true,
+    fetchImpl: async (input) => {
+      const url = String(input);
+      if (url.startsWith('https://gitee.com/')) return manifestResponse({ message: '404 Not Found' }, false, 404);
+      return manifestResponse({}, false, 500);
+    },
+  });
+  assert.equal(status.available, false);
+  assert.equal(status.source, 'gitee', '都失败时保持首选源');
+  assert.equal(status.fallbackFrom, undefined);
+  assert.match(String(status.error), /Gitee：该渠道还没有发布记录/);
+  assert.match(String(status.error), /GitHub：更新源返回 500/);
+});
+
+test('Gitee 的 latest 拿到预发布或草稿时按无更新处理', async () => {
+  const skipped = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    source: 'gitee',
+    fetchImpl: async () => manifestResponse(giteeReleaseBody({ prerelease: true })),
+  });
+  assert.equal(skipped.error, null);
+  assert.equal(skipped.available, false);
+  assert.equal(skipped.manifest, null);
+  assert.equal(skipped.source, 'gitee');
+});

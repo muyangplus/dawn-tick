@@ -169,17 +169,18 @@ function baseNameFromUrl(url: string): string {
   return (pathname.split('/').pop() ?? '').split('?')[0] ?? '';
 }
 
-/** 固定落盘名：从资产地址取出安装包扩展名，非安装包（如便携 zip）返回 null。 */
-export function installerFileName(platform: 'windows' | 'android', url: string): string | null {
-  const lower = baseNameFromUrl(url).toLowerCase();
+/** 固定落盘名：从资产名（优先）或地址取出安装包扩展名，非安装包（如便携 zip）返回 null。 */
+/** Gitee 的下载地址可能是 `…/download/v0.2.0/asset-1` 这类不带扩展名的 id，必须按发布里的原始文件名判断。 */
+export function installerFileName(platform: 'windows' | 'android', url: string, name?: string): string | null {
+  const lower = (name ?? baseNameFromUrl(url)).toLowerCase();
   const suffix = INSTALLER_SUFFIXES[platform].find((item) => lower.endsWith(item));
   if (suffix === undefined) return null;
   return platform === 'windows' ? `DawnTick-update${suffix}` : 'DawnTick-update.apk';
 }
 
 /** 便携包固定落盘名：只认 `.zip`，重复下载覆盖旧包。 */
-export function portableFileName(url: string): string | null {
-  return baseNameFromUrl(url).toLowerCase().endsWith('.zip') ? 'DawnTick-update.zip' : null;
+export function portableFileName(url: string, name?: string): string | null {
+  return (name ?? baseNameFromUrl(url)).toLowerCase().endsWith('.zip') ? 'DawnTick-update.zip' : null;
 }
 
 /**
@@ -200,7 +201,7 @@ export function planUpdateDownload(
     if (asset === undefined || asset.url === '') {
       return { kind: 'unavailable', reason: '这次发布没有提供 Android 安装包' };
     }
-    const fileName = installerFileName('android', asset.url);
+    const fileName = installerFileName('android', asset.url, asset.name);
     if (fileName === null) {
       return { kind: 'unavailable', reason: '发布里的 Android 产物不是 APK' };
     }
@@ -219,7 +220,7 @@ export function planUpdateDownload(
     };
   }
   if (portable) {
-    const fileName = portableFileName(asset.url);
+    const fileName = portableFileName(asset.url, asset.name);
     if (fileName === null) {
       return { kind: 'unavailable', reason: '发布里的 Windows 便携包不是 zip，请到发布页下载' };
     }
@@ -228,7 +229,7 @@ export function planUpdateDownload(
       target: downloadTarget('windows', 'portable', asset, fileName, manifest),
     };
   }
-  const fileName = installerFileName('windows', asset.url);
+  const fileName = installerFileName('windows', asset.url, asset.name);
   if (fileName === null) {
     return {
       kind: 'unavailable',

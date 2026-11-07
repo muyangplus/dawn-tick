@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { UpdateChannel, UpdateManifest } from '../update.ts';
+import type { DownloadSource } from './download-source.ts';
 import type { DownloadProgress } from './chunked-download.ts';
 import { errorMessage } from './errors.ts';
 import {
@@ -41,6 +42,8 @@ export interface UpdateTask {
   /** 目标版本；还没确定时为 null */
   version: string | null;
   channel: UpdateChannel | null;
+  /** 这次下载用的源：Gitee / GitHub；旧任务或未知时为 null */
+  source: DownloadSource | null;
   progress: DownloadProgress | null;
   error: string | null;
   needsPermission: boolean;
@@ -56,6 +59,7 @@ export const IDLE_UPDATE_TASK: UpdateTask = {
   status: 'idle',
   version: null,
   channel: null,
+  source: null,
   progress: null,
   error: null,
   needsPermission: false,
@@ -72,6 +76,8 @@ export interface StartUpdateOptions {
   fetchImpl?: typeof fetch;
   /** Windows 运行形态：单测/冒烟显式注入，正常界面从原生命令检测 */
   installKind?: WindowsInstallKind;
+  /** 本次下载用的源：弹窗把它带进来，面板据此显示「来源」 */
+  source?: DownloadSource;
 }
 
 let task: UpdateTask = IDLE_UPDATE_TASK;
@@ -197,6 +203,7 @@ export async function startBackgroundUpdate(
     ...IDLE_UPDATE_TASK,
     version,
     channel: manifest?.channel ?? null,
+    source: options.source ?? null,
     target: buildTarget(plan, platform, version),
     updatedAt: Date.now(),
   };

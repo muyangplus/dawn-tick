@@ -529,3 +529,61 @@ test('路径拼接与进度文案', () => {
   assert.equal(formatDownloadProgress(unknown), '已下载 10 B');
   assert.equal(formatDownloadProgress({ ...INITIAL_UPDATE_STATE, phase: 'verifying', message: '正在校验安装包…' }), '正在校验安装包…');
 });
+
+// —— Gitee 资产：下载地址不带扩展名，扩展名按发布里的原始文件名判断 ——
+
+const GITEE_WINDOWS_ASSET = {
+  url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.5.0/asset-1',
+  name: 'DawnTick-0.5.0-release-windows-x64-setup.exe',
+  size: 12,
+};
+const GITEE_PORTABLE_ASSET = {
+  url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.5.0/asset-2',
+  name: 'DawnTick-0.5.0-release-windows-x64-portable.zip',
+  size: 14,
+};
+const GITEE_ANDROID_ASSET = {
+  url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.5.0/asset-3',
+  name: 'DawnTick-0.5.0-release-android.apk',
+  size: 9,
+};
+
+test('Gitee 下载地址不以 .exe 结尾时按资产名判定安装包', () => {
+  const plan = planUpdateDownload(manifestWith({ windows: GITEE_WINDOWS_ASSET }), 'windows');
+  assert.equal(plan.kind, 'download');
+  if (plan.kind !== 'download') return;
+  assert.equal(plan.target.url, GITEE_WINDOWS_ASSET.url, '下载仍用清单里的绝对地址');
+  assert.equal(plan.target.fileName, 'DawnTick-update.exe');
+  assert.equal(plan.target.assetName, GITEE_WINDOWS_ASSET.name, 'SHA256SUMS.txt 仍按资产原名匹配');
+
+  const portable = planUpdateDownload(
+    manifestWith({ windowsPortable: GITEE_PORTABLE_ASSET }),
+    'windows',
+    'portable',
+  );
+  assert.equal(portable.kind, 'download');
+  if (portable.kind === 'download') {
+    assert.equal(portable.target.kind, 'portable');
+    assert.equal(portable.target.fileName, 'DawnTick-update.zip');
+    assert.equal(portable.target.assetName, GITEE_PORTABLE_ASSET.name);
+  }
+
+  const android = planUpdateDownload(manifestWith({ android: GITEE_ANDROID_ASSET }), 'android');
+  assert.equal(android.kind, 'download');
+  if (android.kind === 'download') assert.equal(android.target.fileName, 'DawnTick-update.apk');
+});
+
+test('资产名与扩展名不符时仍按资产名判定，不把 zip 当安装包', () => {
+  const notInstaller = planUpdateDownload(
+    manifestWith({ windows: { url: 'https://gitee.com/x/asset-1', name: 'DawnTick-0.5.0-release-windows-x64-portable.zip' } }),
+    'windows',
+  );
+  assert.equal(notInstaller.kind, 'unavailable');
+  if (notInstaller.kind === 'unavailable') assert.match(notInstaller.reason, /不是安装包/);
+
+  // 没有 name 时退回地址判扩展名（旧清单/version.json 直连清单）
+  assert.equal(installerFileName('windows', 'https://x/DawnTick-0.5.0-release-windows-x64-setup.exe'), 'DawnTick-update.exe');
+  assert.equal(installerFileName('windows', 'https://gitee.com/x/asset-1', GITEE_WINDOWS_ASSET.name), 'DawnTick-update.exe');
+  assert.equal(portableFileName('https://gitee.com/x/asset-2', GITEE_PORTABLE_ASSET.name), 'DawnTick-update.zip');
+  assert.equal(portableFileName('https://gitee.com/x/asset-2'), null);
+});

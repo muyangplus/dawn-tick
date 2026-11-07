@@ -3,6 +3,7 @@ import { releaseChannelOf } from '../../update.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { fail } from '../../copy/zh.ts';
 import { errorMessage } from '../../lib/errors.ts';
+import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';
 import { planUpdateDownload } from '../../lib/update-download.ts';
 import {
@@ -63,6 +64,9 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   const notes = status?.manifest?.notes?.trim() ?? '';
   /** 渠道取发布本身的渠道：beta 预发布=测试版、正式版=正式版，不看接收开关 */
   const channel = status === null ? CHANNEL : releaseChannelOf(status);
+  /** 实际下载源：跨源回退后显示回退源，并说明回退 */
+  const sourceLabel = status === null ? null : DOWNLOAD_SOURCE_LABEL[status.source];
+  const fallbackLabel = status?.fallbackFrom === undefined ? null : DOWNLOAD_SOURCE_LABEL[status.fallbackFrom];
   const platform = updatePlatform();
   /** Windows 运行形态：便携版下 zip，安装版下安装包；检测中是 null（先按安装版渲染） */
   const installKind = useDetectedWindowsInstallKind(platform);
@@ -108,7 +112,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   /** 开始下载：任务挂在模块级 store 上，弹窗随后被关掉也不会中断。 */
   async function startDownload(): Promise<void> {
     if (status === null) return;
-    announce(await startBackgroundUpdate(status.manifest));
+    announce(await startBackgroundUpdate(status.manifest, { source: status.source }));
   }
 
   /** 失败重试：优先沿用后台任务记住的清单，没有任务时用当前弹窗的清单。 */
@@ -204,6 +208,12 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
           <span>{CHANNEL_LABEL[channel]}</span>
           <span aria-hidden>←</span>
           <span>当前 {appVersion()}</span>
+          {sourceLabel !== null && (
+            <span data-role="update-source">
+              下载源 {sourceLabel}
+              {fallbackLabel === null ? '' : `（${fallbackLabel} 不可用，已回退）`}
+            </span>
+          )}
           <UpdateInstallKindLine platform={platform} />
         </div>
         {view.showProgress && <UpdateProgress progress={matchedTask?.progress ?? null} />}
