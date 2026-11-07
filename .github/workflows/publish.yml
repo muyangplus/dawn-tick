@@ -368,11 +368,13 @@ jobs:
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          if [ -n "$GITEE_TOKEN" ]; then
+          # GitHub Actions 机器到 Gitee 的网络实测超时，默认不在云端同步；
+          # 需要时可设仓库变量 GITEE_SYNC_IN_CI=true（或改用自托管 runner），平时在维护机本地同步
+          if [ -n "$GITEE_TOKEN" ] && [ "${{ vars.GITEE_SYNC_IN_CI }}" = "true" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "未配置 GITEE_TOKEN，跳过 Gitee 发布同步" >> "$GITHUB_STEP_SUMMARY"
+            echo "跳过云端 Gitee 同步（未配置 GITEE_TOKEN，或未开启仓库变量 GITEE_SYNC_IN_CI）；可在维护机运行本地同步命令" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: 同步到 Gitee 发布

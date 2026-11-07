@@ -19,7 +19,8 @@
  * - 未配置 GITEE_TOKEN 时明确跳过（返回 0），便于 fork/自建仓库不带该 secret。
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const GITEE_API = 'https://gitee.com/api/v5';
@@ -176,6 +177,39 @@ async function uploadAsset(token, owner, repo, releaseId, asset) {
   }
 }
 
+/**
+ * 从 GitHub Release 下载全部资产到本地目录，供「本地同步到 Gitee」使用。
+ *
+ * GitHub Actions 的机器到 Gitee 的 API 网络经常超时（实测 15s 无响应），
+ * 云端双写不可靠；维护机（能访问两边）用一条命令完成：先拉产物，再发 Gitee。
+ */
+async function downloadReleaseAssets({ ghToken, githubRepo, tag, outDir }) {
+  const headers = { accept: 'application/vnd.github+json' };
+  if (ghToken !== '') headers.authorization = `Bearer ${ghToken}`;
+  const response = await fetch(
+    `https://api.github.com/repos/${githubRepo}/releases/tags/${encodeURIComponent(tag)}`,
+    { headers, signal: signalOf(REQUEST_TIMEOUT_MS) },
+  );
+  if (!response.ok) throw new Error(`读取 GitHub 发布失败（${response.status}）`);
+  const release = await response.json();
+  mkdirSync(outDir, { recursive: true });
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  for (const asset of assets) {
+    const name = typeof asset?.name === 'string' ? asset.name : '';
+    const url = typeof asset?.browser_download_url === 'string' ? asset.browser_download_url : '';
+    if (name === '' || url === '') continue;
+    const wanted =
+      name === 'SHA256SUMS.txt' || name === 'version.json' || ASSET_SUFFIXES.some((suffix) => name.endsWith(suffix));
+    if (!wanted) continue;
+    const file = await fetch(url, { signal: signalOf(UPLOAD_TIMEOUT_MS) });
+    if (!file.ok) throw new Error(`下载 ${name} 失败（${file.status}）`);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    writeFileSync(join(outDir, name), buffer);
+    console.log(`已下载 ${name}（${buffer.length} 字节）`);
+  }
+  return release;
+}
+
 /** 优先复用 GitHub 已生成的正文（含 Full Changelog），拿不到时退回 NOTES/CHANGELOG 段落。 */
 async function githubReleaseBody({ ghToken, githubRepo, tag }) {
   if (!ghToken) return null;
@@ -271,10 +305,12 @@ async function main() {
   );
   const dryRun = args.has('dry-run');
   const tag = args.get('tag') ?? process.env.TAG ?? '';
-  const channel = args.get('channel') ?? process.env.CHANNEL ?? 'release';
+  const explicitChannel = args.get('channel') ?? process.env.CHANNEL ?? '';
+  let channel = explicitChannel === '' ? 'release' : explicitChannel;
   const rolling = (args.get('rolling') ?? String(process.env.ROLLING ?? '')).toLowerCase() === 'true';
-  const prerelease = (args.get('prerelease') ?? String(process.env.PRERELEASE ?? '')).toLowerCase() === 'true';
-  const outDir = args.get('out') ?? process.env.OUT_DIR ?? 'out';
+  let prerelease = (args.get('prerelease') ?? String(process.env.PRERELEASE ?? '')).toLowerCase() === 'true';
+  const fromGithub = args.has('from-github');
+  let outDir = args.get('out') ?? process.env.OUT_DIR ?? 'out';
   const owner = process.env.GITEE_OWNER ?? DEFAULT_OWNER;
   const repo = process.env.GITEE_REPO ?? DEFAULT_REPO;
   const githubRepo = process.env.GITHUB_REPO ?? DEFAULT_GITHUB_REPO;
@@ -284,8 +320,29 @@ async function main() {
   const keepRecent = Number(args.get('keep-releases') ?? process.env.GITEE_KEEP_RELEASES ?? 6);
 
   if (tag === '') throw new Error('缺少标签：--tag 或 TAG');
-  const assets = selectAssets(outDir);
+  if (token === '' && !dryRun) {
+    console.log('未配置 GITEE_TOKEN，跳过 Gitee 发布同步');
+    return;
+  }
+  if (fromGithub && !dryRun) {
+    outDir = args.get('out') ?? join(tmpdir(), `dawn-tick-gitee-${tag}`);
+    console.log(`从 GitHub 拉取 ${tag} 的发布资产到 ${outDir}`);
+    const release = await downloadReleaseAssets({
+      ghToken: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '',
+      githubRepo,
+      tag,
+      outDir,
+    });
+    // 未显式指定渠道/预发布时按 GitHub 发布推断：dev-latest → dev；pre-release → beta
+    if (explicitChannel === '') {
+      channel = tag === 'dev-latest' ? 'dev' : release?.prerelease === true ? 'beta' : 'release';
+    }
+    if (args.get('prerelease') === undefined && process.env.PRERELEASE === undefined) {
+      prerelease = release?.prerelease === true;
+    }
+  }
 
+  const assets = selectAssets(outDir);
   if (dryRun) {
     console.log(`dry-run：Gitee ${owner}/${repo} 标签 ${tag} 渠道 ${channel}`);
     const incomingBytes = assets.reduce((total, asset) => total + statSync(asset.path).size, 0);
@@ -294,10 +351,6 @@ async function main() {
     );
     console.log(`dry-run：保留最近 ${keepRecent} 个发布，总容量上限 ${maxBytes} 字节（Gitee 附件限额）`);
     for (const asset of assets) console.log(`  - ${asset.name}（${statSync(asset.path).size} 字节）`);
-    return;
-  }
-  if (token === '') {
-    console.log('未配置 GITEE_TOKEN，跳过 Gitee 发布同步');
     return;
   }
 
