@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
+  DOWNLOAD_SOURCE_CHOICES,
   VIEW_DAY_OPTIONS,
   WAL_MODES,
   WIDGET_VARIANT_LABEL,
@@ -125,4 +126,33 @@ test('旧库悬浮窗样式读取兼容，未知值回退 bar', async () => {
     /悬浮窗样式/,
   );
   assert.equal(await storage.readMeta('widget_variant'), 'exam-future');
+});
+
+test('下载源默认自动检测，可切国内 / 国际并持久化', async () => {
+  assert.deepEqual([...DOWNLOAD_SOURCE_CHOICES], ['auto', 'gitee', 'github']);
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).downloadSource, 'auto', '新装默认自动检测');
+  const saved = await writeSettings(storage, { downloadSource: 'gitee' });
+  assert.equal(saved.downloadSource, 'gitee');
+  assert.equal(await storage.readMeta('download_source'), 'gitee');
+  assert.equal((await readSettings(storage)).downloadSource, 'gitee');
+  assert.equal((await writeSettings(storage, { downloadSource: 'github' })).downloadSource, 'github');
+});
+
+test('旧库缺少 download_source 时按自动检测读取，非法值被拒', async () => {
+  const storage = createStorage();
+  // 只写旧版本已有的键：download_source 缺失，模拟从旧版本升上来的库
+  await storage.writeMeta('view_days', '7');
+  assert.equal((await readSettings(storage)).downloadSource, 'auto');
+  assert.equal(await storage.readMeta('download_source'), undefined, '读取默认值不写库');
+
+  // 旧库/未来版本写坏的值回退 auto，不抛异常
+  await storage.writeMeta('download_source', 'gitlab');
+  assert.equal((await readSettings(storage)).downloadSource, 'auto');
+
+  await assert.rejects(
+    () => writeSettings(storage, { downloadSource: 'gitlab' as unknown as 'gitee' }),
+    /下载源/,
+  );
+  assert.equal(await storage.readMeta('download_source'), 'gitlab', '非法值不落库');
 });
