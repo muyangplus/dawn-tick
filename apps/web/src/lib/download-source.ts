@@ -139,6 +139,101 @@ export interface SourceProbe {
   error: string | null;
   /** 探测用到的最后一个地址（排障用） */
   url: string | null;
+  /** 探测方式：真实资产分块下载 > version.json > 仓库可达性 */
+  kind?: 'asset' | 'version' | 'reachability';
+  /** 资产探测实际读到的字节数（用于显示 256KB） */
+  bytes?: number;
+}
+
+/** 资产探测读取的字节数：version.json 太小，改成从真实安装包里读 256KB 再计时。 */
+export const PROBE_ASSET_BYTES = 256 * 1024;
+
+/** 从发布资产里挑一个用于探测的安装包：portable zip > apk > web zip > 任意附件。 */
+export function pickProbeAssetUrl(release: unknown): string | null {
+  const assets = asRecord(release)?.['assets'];
+  if (!Array.isArray(assets)) return null;
+  const candidates: Array<{ name: string; url: string }> = [];
+  for (const raw of assets) {
+    const asset = asRecord(raw);
+    const name = String(asset?.['name'] ?? '');
+    const url = asset?.['browser_download_url'] ?? asset?.['download_url'];
+    if (typeof url === 'string' && url !== '' && name !== '') candidates.push({ name, url });
+  }
+  for (const suffix of ['-windows-x64-portable.zip', '-android.apk', '-web.zip', '-windows-x64-setup.exe']) {
+    const found = candidates.find((item) => item.name.endsWith(suffix));
+    if (found !== undefined) return found.url;
+  }
+  return candidates[0]?.url ?? null;
+}
+
+export interface AssetProbeResult {
+  ok: boolean;
+  latencyMs: number;
+  bytes: number;
+  error: string | null;
+}
+
+/**
+ * 从真实资产地址读一小段（默认 256KB）并计时：比 version.json 更能反映下载速度。
+ *
+ * - 用 Range 只要前 N 字节；服务端忽略 Range（200 全量）时读到 N 字节就主动取消；
+ * - 时钟与 fetch 可注入，单测用假流构造确定性结果。
+ */
+export async function probeAssetChunk(
+  url: string,
+  fetchImpl: typeof fetch,
+  options: ProbeOptions & { maxBytes?: number } = {},
+): Promise<AssetProbeResult> {
+  const now = options.now ?? Date.now;
+  const maxBytes = options.maxBytes ?? PROBE_ASSET_BYTES;
+  const started = now();
+  const timerMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error('探测超时'));
+    }, Math.max(1, timerMs));
+  });
+  try {
+    const response = await Promise.race([
+      fetchImpl(url, {
+        headers: { range: `bytes=0-${Math.max(0, maxBytes - 1)}` },
+        signal: controller.signal,
+      }),
+      timeout,
+    ]);
+    if (!response.ok) throw new Error(`返回 ${response.status}`);
+    let bytes = 0;
+    const reader = response.body?.getReader();
+    if (reader === undefined) {
+      const buffer = await Promise.race([response.arrayBuffer(), timeout]);
+      bytes = Math.min(buffer.byteLength, maxBytes);
+    } else {
+      while (bytes < maxBytes) {
+        const { done, value } = await Promise.race([reader.read(), timeout]);
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes >= maxBytes) {
+          void reader.cancel().catch(() => {});
+          break;
+        }
+      }
+    }
+    if (bytes <= 0) throw new Error('没有读到数据');
+    return { ok: true, latencyMs: Math.max(1, now() - started), bytes, error: null };
+  } catch (cause: unknown) {
+    const message = errorMessage(cause);
+    return {
+      ok: false,
+      latencyMs: Math.max(0, now() - started),
+      bytes: 0,
+      error: /abort|timeout|超时/i.test(message) ? '探测超时' : describeProbeError(cause),
+    };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function hasVersion(value: unknown): boolean {
@@ -202,20 +297,47 @@ export async function probeSource(
     lastUrl = url;
     lastError = describeProbeError(cause);
   };
-  const done = (ok: boolean, degraded: boolean, url: string | null): SourceProbe => ({
+  const done = (
+    ok: boolean,
+    degraded: boolean,
+    url: string | null,
+    extra: { kind?: SourceProbe['kind']; bytes?: number } = {},
+  ): SourceProbe => ({
     source,
     ok,
     degraded,
     latencyMs: Math.max(0, now() - started),
     error: ok ? null : lastError,
     url,
+    ...(extra.kind === undefined ? {} : { kind: extra.kind }),
+    ...(extra.bytes === undefined ? {} : { bytes: extra.bytes }),
   });
+
+  // ① 真实资产分块：优先用 256KB 探测包，拿不到再退回 version.json
+  const releaseUrl = releaseApiUrl(source, 'release');
+  try {
+    const release = await requestJson(fetchImpl, releaseUrl, remainingOf(deadline, now));
+    const assetUrl = pickProbeAssetUrl(release);
+    if (assetUrl !== null) {
+      const chunk = await probeAssetChunk(assetUrl, fetchImpl, {
+        timeoutMs: remainingOf(deadline, now),
+        now,
+      });
+      if (chunk.ok) return done(true, false, assetUrl, { kind: 'asset', bytes: chunk.bytes });
+      fail(assetUrl, new Error(chunk.error ?? '资产探测失败'));
+    }
+  } catch (cause: unknown) {
+    fail(releaseUrl, cause);
+  }
+
 
   // ① version.json：GitHub 走 latest 别名；Gitee 先查 latest 发布再取 version.json 资产
   if (source === 'github') {
     const url = latestVersionJsonUrl(source);
     try {
-      return done(true, !hasVersion(await requestJson(fetchImpl, url, remainingOf(deadline, now))), url);
+      return done(true, !hasVersion(await requestJson(fetchImpl, url, remainingOf(deadline, now))), url, {
+        kind: 'version',
+      });
     } catch (cause: unknown) {
       fail(url, cause);
     }
@@ -225,9 +347,11 @@ export async function probeSource(
       const release = await requestJson(fetchImpl, apiUrl, remainingOf(deadline, now));
       const assetUrl = versionJsonAssetUrl(release);
       // 有 Releases 但没有 version.json 资产：可达但清单不全，按降级处理
-      if (assetUrl === null) return done(true, true, apiUrl);
+      if (assetUrl === null) return done(true, true, apiUrl, { kind: 'reachability' });
       try {
-        return done(true, !hasVersion(await requestJson(fetchImpl, assetUrl, remainingOf(deadline, now))), assetUrl);
+        return done(true, !hasVersion(await requestJson(fetchImpl, assetUrl, remainingOf(deadline, now))), assetUrl, {
+          kind: 'version',
+        });
       } catch (cause: unknown) {
         fail(assetUrl, cause);
       }
@@ -240,7 +364,7 @@ export async function probeSource(
   for (const url of reachabilityUrls(source)) {
     try {
       await requestJson(fetchImpl, url, remainingOf(deadline, now));
-      return done(true, true, url);
+      return done(true, true, url, { kind: 'reachability' });
     } catch (cause: unknown) {
       fail(url, cause);
     }
@@ -345,7 +469,8 @@ export function describeProbe(probe: SourceProbe): string {
   const label = DOWNLOAD_SOURCE_LABEL[probe.source];
   if (!probe.ok) return `${label}（不可用）`;
   const latency = Math.max(1, Math.round(probe.latencyMs));
-  return `${label}（${latency}ms${probe.degraded ? '，暂无 Releases' : ''}）`;
+  const bytes = probe.kind === 'asset' && probe.bytes !== undefined ? ` / ${Math.round(probe.bytes / 1024)}KB` : '';
+  return `${label}（${latency}ms${bytes}${probe.degraded ? '，暂无 Releases' : ''}）`;
 }
 
 /** 状态行：自动显示两个源与耗时；手动显示当前源（重新检测后追加探测结果）。 */

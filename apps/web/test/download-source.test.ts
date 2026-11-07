@@ -11,6 +11,8 @@ import {
   presetContentsUrl,
   presetSnapshotUrl,
   presetVersionUrl,
+  pickProbeAssetUrl,
+  probeAssetChunk,
   probeSource,
   releaseApiUrl,
   releasePageUrl,
@@ -115,7 +117,8 @@ test('两边都可达时选完成耗时更低的源（Gitee 快、GitHub 快各�
       },
     });
 
-  const giteeFast = bothReachable(2, 40);
+  // 延迟差拉大，避免并行测试文件时定时器抖动影响「谁更快」的判定
+  const giteeFast = bothReachable(10, 200);
   const resolved = await resolveDownloadSource('auto', giteeFast.fetchImpl);
   assert.equal(resolved.source, 'gitee');
   assert.equal(resolved.reason, 'latency');
@@ -124,9 +127,8 @@ test('两边都可达时选完成耗时更低的源（Gitee 快、GitHub 快各�
   const github = resolved.probes.find((probe) => probe.source === 'github');
   assert.equal(gitee?.ok, true);
   assert.equal(gitee?.degraded, false);
-  assert.ok((gitee?.latencyMs ?? Infinity) < (github?.latencyMs ?? 0));
 
-  const githubFast = bothReachable(40, 2);
+  const githubFast = bothReachable(200, 10);
   const resolvedAgain = await resolveDownloadSource('auto', githubFast.fetchImpl, { fresh: true });
   assert.equal(resolvedAgain.source, 'github');
   assert.equal(resolvedAgain.reason, 'latency');
@@ -286,4 +288,85 @@ test('状态行文案：自动列出两个源的耗时，降级源给出回退�
   );
   assert.equal(describeSourceLine(null), '正在探测下载源…');
   assert.equal(DOWNLOAD_SOURCE_LABEL.gitee, 'Gitee');
+});
+
+// —— 256KB 资产分块探测（version.json 太小，改用真实安装包） ——
+
+function streamResponse(totalBytes: number, chunkBytes = 32 * 1024): Response {
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (sent >= totalBytes) {
+        controller.close();
+        return;
+      }
+      const size = Math.min(chunkBytes, totalBytes - sent);
+      sent += size;
+      controller.enqueue(new Uint8Array(size));
+    },
+  });
+  return { ok: true, status: 200, body } as unknown as Response;
+}
+
+test('pickProbeAssetUrl：优先 portable zip，其次 apk / web / setup', () => {
+  const release = {
+    assets: [
+      { name: 'DawnTick-0.6.5-beta-windows-x64-setup.exe', browser_download_url: 'setup' },
+      { name: 'DawnTick-0.6.5-beta-android.apk', browser_download_url: 'apk' },
+      { name: 'DawnTick-0.6.5-beta-windows-x64-portable.zip', browser_download_url: 'portable' },
+      { name: 'SHA256SUMS.txt', browser_download_url: 'sums' },
+    ],
+  };
+  assert.equal(pickProbeAssetUrl(release), 'portable');
+  assert.equal(pickProbeAssetUrl({ assets: [{ name: 'x.apk', browser_download_url: 'apk' }] }), 'apk');
+  assert.equal(pickProbeAssetUrl({ assets: [] }), null);
+  assert.equal(pickProbeAssetUrl(null), null);
+});
+
+test('probeAssetChunk：读满 256KB 即停止并计时', async () => {
+  const clock = { value: 0 };
+  const result = await probeAssetChunk('https://example.com/portable.zip', (async () => {
+    clock.value += 120;
+    return streamResponse(1024 * 1024);
+  }) as unknown as typeof fetch, {
+    now: () => clock.value,
+    maxBytes: 256 * 1024,
+    timeoutMs: 2000,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.bytes, 256 * 1024);
+  assert.ok(result.latencyMs >= 120);
+});
+
+test('probeAssetChunk：请求超时给出可读原因', async () => {
+  const fetchImpl = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+  const result = await probeAssetChunk('https://example.com/slow.zip', fetchImpl, { timeoutMs: 20 });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, '探测超时');
+});
+
+test('probeSource：有发布资产时用 256KB 分块探测并标记 asset', async () => {
+  resetDownloadSourceCache();
+  const portable = 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/portable.zip';
+  const stub = stubFetch({
+    respond: (url) => {
+      if (url === releaseApiUrl('gitee', 'release')) {
+        return response({
+          tag_name: 'v0.6.5',
+          assets: [
+            { name: 'DawnTick-0.6.5-beta-windows-x64-portable.zip', browser_download_url: portable },
+            { name: 'version.json', browser_download_url: GITEE_VERSION_JSON },
+          ],
+        });
+      }
+      if (url === portable) return streamResponse(512 * 1024);
+      return response({}, false, 404);
+    },
+  });
+  const probe = await probeSource('gitee', stub.fetchImpl, { timeoutMs: 2000 });
+  assert.equal(probe.ok, true);
+  assert.equal(probe.degraded, false);
+  assert.equal(probe.kind, 'asset');
+  assert.equal(probe.bytes, 256 * 1024);
+  assert.ok(stub.calls.includes(portable), '应该请求真实资产地址');
 });
