@@ -10,7 +10,8 @@
 - 下载源选择：设置里可选「自动检测 / 国内 Gitee / 国际 GitHub」，自动从两源真实安装包读取 256KB 测速取低（version.json 太小，已改为资产分块探测）；应用更新与预设更新共用，失败自动回退另一源
 - 应用更新支持 Gitee Release（Gitee API 发布解析、同源 `version.json` 兜底、按资产名判断安装包扩展名），更新弹窗与设备页显示实际来源
 - 预设更新支持 Gitee raw / contents 双通道，失败回退另一源
-- 发布双写：提供 `publish-gitee` 同步脚本把同样的标签、正文与资产发到 Gitee Release；因 GitHub Actions 到 Gitee 网络超时，默认在维护机本地运行（CI 需仓库变量 `GITEE_SYNC_IN_CI=true` 才尝试）
+- 国内分发改用独立 assets 仓库：GitHub Actions 把每个渠道最新的 4 个产物 + `SHA256SUMS.txt` + `version.json` + `mirror.json` 推送到 `dawn-tick-assets` 仓库的单提交分支（dev/beta/release），Gitee 通过拉取式镜像同步，客户端按 `mirror.json` 从两源 raw 下载；不再依赖 Gitee Releases/API
+- Gitee 附件限额与网络问题随之绕开；旧的 Gitee Releases 同步脚本保留为手动兜底
 - Gitee 附件保留策略：默认保留最近 6 个发布 + `dev-latest`，总量超过 800MB 时自动删除最旧构建
 
 ## [0.6.5] - 2026-11-07
