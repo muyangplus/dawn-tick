@@ -12,11 +12,15 @@ import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 
+import com.dawntick.app.diag.NativeLog;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 /**
  * 系统级动作：用系统浏览器打开外部链接、跳到电池优化白名单申请页、读通知状态。
@@ -27,32 +31,77 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "SystemActions")
 public class SystemActionsPlugin extends Plugin {
 
+    /** 原生诊断日志标签，与 diag/native.log 里的 `[tag]` 对应。 */
+    private static final String TAG = "SystemActions";
     /** 课前提醒走本地通知插件创建的渠道；静音判断按这个渠道看。 */
     private static final String NOTIFY_CHANNEL_ID = "default";
-    /** 用 ACTION_VIEW 交给系统浏览器；没有浏览器时 resolve 失败原因。 */
+    /** readNativeLog 未传 maxBytes 时的默认读取量（与 NativeLog 默认值一致）。 */
+    private static final int DEFAULT_LOG_BYTES = 256 * 1024;
+
+    /** 用 ACTION_VIEW 交给系统浏览器；失败时把异常类名与原 message 一起交回 Web 层。 */
     @PluginMethod
     public void openExternal(PluginCall call) {
-        String url = call.getString("url");
-        if (url == null || url.trim().isEmpty()) {
+        String raw = call.getString("url");
+        NativeLog.info(
+                getContext(),
+                TAG,
+                "openExternal 入口 url=" + NativeLog.redactUrl(raw) + " length=" + (raw == null ? 0 : raw.length())
+        );
+        if (raw == null || raw.trim().isEmpty()) {
+            NativeLog.warn(getContext(), TAG, "openExternal 缺少链接地址");
             call.reject("缺少链接地址");
             return;
         }
-        String trimmed = url.trim();
+        String trimmed = raw.trim();
         Uri uri = Uri.parse(trimmed);
-        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
         if (!scheme.equals("http") && !scheme.equals("https")) {
+            NativeLog.warn(
+                    getContext(),
+                    TAG,
+                    "openExternal scheme 不受支持 scheme=" + (scheme.isEmpty() ? "(无)" : scheme)
+                            + " url=" + NativeLog.redactUrl(trimmed)
+            );
             call.reject("只支持 http 与 https 链接");
             return;
         }
+        NativeLog.info(getContext(), TAG, "openExternal scheme 校验通过 scheme=" + scheme + " host=" + uri.getHost());
         Intent intent = new Intent(Intent.ACTION_VIEW, uri);
         intent.addCategory(Intent.CATEGORY_BROWSABLE);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             getContext().startActivity(intent);
+            NativeLog.info(getContext(), TAG, "openExternal startActivity 成功");
             call.resolve(new JSObject().put("opened", true));
-        } catch (ActivityNotFoundException error) {
-            call.reject("没有可打开该链接的应用", error);
+        } catch (Exception error) {
+            // 不再只报「没有可打开的应用」：把异常类名 + message 原样给界面，避免用户只看到「没反应」
+            NativeLog.error(getContext(), TAG, "openExternal startActivity 失败", error);
+            call.reject(NativeLog.describe(error));
         }
+    }
+
+    /**
+     * 读原生诊断日志（`filesDir/diag/native.log`）最近的行，供设置页「导出诊断」使用。
+     * 返回 `text`（最多 200 行）、`path`（日志绝对路径）与 `bytes`（本次返回文本的 UTF-8 字节数）。
+     */
+    @PluginMethod
+    public void readNativeLog(PluginCall call) {
+        Integer requested = call.getInt("maxBytes");
+        int maxBytes = requested == null ? DEFAULT_LOG_BYTES : requested;
+        String text = NativeLog.read(getContext(), maxBytes);
+        JSObject result = new JSObject();
+        result.put("text", text);
+        result.put("path", NativeLog.logFile(getContext()).getAbsolutePath());
+        result.put("bytes", text.getBytes(StandardCharsets.UTF_8).length);
+        call.resolve(result);
+    }
+
+    /** 清空原生诊断日志（当前文件与滚动文件）；成功时 `cleared` 为 true。 */
+    @PluginMethod
+    public void clearNativeLog(PluginCall call) {
+        NativeLog.clear(getContext());
+        NativeLog.info(getContext(), TAG, "原生诊断日志已清空");
+        call.resolve(new JSObject().put("cleared", true));
     }
 
     /** 是否已在电池优化白名单里（false 表示后台可能被系统掐掉，提醒会晚）。 */
