@@ -1,3 +1,5 @@
+import { isAndroidApp } from '../../lib/capabilities.ts';
+import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from '../../lib/plugins.ts';
 import { dayStampUtc } from '../../lib/dates.ts';
 import { revealExportedFile, savedFileActions, shareExportedFile } from '../../lib/export-files.ts';
 import { clearLogs, logsText } from '../../log.ts';
@@ -85,8 +87,25 @@ async function revealSavedFile(path: string): Promise<void> {
 }
 
 /** 导出当前日志缓冲区：没有日志时也写出占位文案，成功后清空缓冲区。 */
+/**
+ * 安卓原生日志（插件/小组件/窗口/链接的失败细节）：原生侧写 `filesDir/diag/native.log`，
+ * 导出诊断时追加到 Web 日志后面，用户发回一份文件就能同时拿到两侧信息。
+ */
+async function androidNativeLog(): Promise<string> {
+  if (!isAndroidApp()) return '';
+  try {
+    const plugin = await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
+    const result = await plugin?.readNativeLog?.({ maxBytes: 256 * 1024 });
+    const text = typeof result?.text === 'string' ? result.text.trim() : '';
+    return text === '' ? '' : `\n===== 安卓原生日志 =====\n${text}`;
+  } catch {
+    return '';
+  }
+}
+
 export async function exportLogs(): Promise<void> {
-  const entries = logsText();
+  const native = await androidNativeLog();
+  const entries = logsText() + native;
   const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;
   const result = await saveText(name, entries === '' ? '暂无日志' : entries, 'txt', '日志文件');
   if (!result.saved) return;

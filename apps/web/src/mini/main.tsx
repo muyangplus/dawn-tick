@@ -209,7 +209,8 @@ function Mini() {
    */
   const contentRows = ((): number | undefined => {
     if (variant === 'minimal') return undefined;
-    if (error !== null) return 1;
+    // 错误态给两行：一行说明 + 一行「打开主窗口修复」提示，避免窗口过矮只剩标题像空白
+    if (error !== null) return 2;
     if (variant === 'today') return Math.max(1, todayShown.length);
     // combo 上半区固定 3 行（标签 / 课程名 / 时间行）+ 待办区标签 1 行
     if (variant === 'combo') return 4 + Math.max(1, comboTasks.length);
@@ -242,7 +243,8 @@ function Mini() {
     return (
       <MiniShell variant={variant} onHide={hide} onOpen={openMain} background={background}>
         <div className="mini-empty" data-role="mini-error" role="alert">
-          {error}
+          <span>{error}</span>
+          <span className="mini-hint">可点右上「打开」进入主窗口修复数据</span>
         </div>
       </MiniShell>
     );

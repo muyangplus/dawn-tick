@@ -5,6 +5,18 @@
 
 ## [未发布]
 
+## [0.6.5] - 2026-11-07
+
+### 新增
+
+- 安卓原生日志：教务窗口、外部链接、小组件读取失败会记录到 `filesDir/diag/native.log`，并随「导出诊断日志」一起导出；启动时记录插件注册自检
+
+### 修复
+
+- 安卓小组件区分「读取失败」与「尚未创建学期」：读取失败显示「请打开晓刻后重试」，并兼容 WAL 未回放（自动读写重试一次）
+- 安卓教务内嵌窗口 / 外部链接失败时透传原生异常原因；外部链接失败在确认框内直接显示原因，不再像「点确认没反应」
+- Windows 悬浮窗读取失败时窗口按两行高度显示，并提示可从悬浮窗「打开」进入主窗口修复数据
+
 ## [0.6.4] - 2026-10-24
 
 ### 新增
@@ -255,7 +267,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.4...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.5...dev
+[0.6.5]: https://github.com/muyangplus/dawn-tick/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/muyangplus/dawn-tick/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/muyangplus/dawn-tick/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/muyangplus/dawn-tick/compare/v0.6.1...v0.6.2

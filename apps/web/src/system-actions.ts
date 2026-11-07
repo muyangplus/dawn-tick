@@ -8,16 +8,38 @@ import { logInfo, logWarn } from './log.ts';
 /** 插件接口定义已集中到 `lib/plugins.ts`，这里保留原导出路径供旧调用方使用。 */
 export type { SystemActionsPlugin } from './lib/plugins.ts';
 
+export interface OpenExternalResult {
+  ok: boolean;
+  /** 失败原因（用户可读）；成功或已降级为可读文案时为 null */
+  error: string | null;
+}
+
+/**
+ * 用系统默认浏览器打开链接，并返回可展示的失败原因。
+ *
+ * 与 [openExternalUrl] 的区别：调用方需要在界面上说明「为什么没打开」时用它；
+ * 只关心成功与否的老调用方继续用布尔版本。
+ */
+export async function openExternalUrlDetailed(url: string): Promise<OpenExternalResult> {
+  const result = await openExternalWithReason(url);
+  return { ok: result.ok, error: result.error };
+}
+
 /** 用系统默认浏览器打开链接：桌面端走原生命令，Android 走原生 ACTION_VIEW（WebView 的 window.open 会卡包可见性），Web 开新窗口。 */
 export async function openExternalUrl(url: string): Promise<boolean> {
+  return (await openExternalWithReason(url)).ok;
+}
+
+async function openExternalWithReason(url: string): Promise<OpenExternalResult> {
   if (isDesktopApp()) {
     try {
       await invokeNative('open_external_url', { url });
       logInfo('link', '用默认浏览器打开', { url });
-      return true;
+      return { ok: true, error: null };
     } catch (cause: unknown) {
-      logWarn('link', '打开默认浏览器失败', { url, message: nativeErrorMessage(cause) });
-      return false;
+      const error = nativeErrorMessage(cause);
+      logWarn('link', '打开默认浏览器失败', { url, message: error });
+      return { ok: false, error: `系统浏览器打开失败：${error}` };
     }
   }
   const plugin = await loadSystemActions();
@@ -25,19 +47,22 @@ export async function openExternalUrl(url: string): Promise<boolean> {
     try {
       if (await openWithSystem(url)) {
         logInfo('link', '交给系统浏览器打开', { url });
-        return true;
+        return { ok: true, error: null };
       }
     } catch (cause: unknown) {
-      logWarn('link', '原生打开失败，改用新窗口', { url, message: nativeErrorMessage(cause) });
+      const error = nativeErrorMessage(cause);
+      logWarn('link', '原生打开失败，改用新窗口', { url, message: error });
+      // 原生明确失败时不再静默降级：把原因交给界面，避免「点确认没反应」
+      if (isAndroidApp()) return { ok: false, error: `调用系统浏览器失败：${error}` };
     }
   }
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
   if (opened === null) {
     logWarn('link', '新窗口被拦截', { url });
-    return false;
+    return { ok: false, error: '浏览器新窗口被拦截，请改用「复制链接」' };
   }
   logInfo('link', '在新窗口打开', { url });
-  return true;
+  return { ok: true, error: null };
 }
 
 /** 原生读到的通知状态：应用级开关 + 运行时权限 + 渠道静音。 */export interface NotifyStatusDetail {
@@ -97,10 +122,25 @@ async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
   }
 }
 
+/** 原生调用加超时：插件未注册或桥卡住时给可读失败，而不是让按钮一直转圈。 */
+async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function openWithSystem(url: string): Promise<boolean> {
   const plugin = await loadSystemActions();
   if (plugin === null) return false;
-  const result = await plugin.openExternal({ url });
+  const result = await withTimeout(plugin.openExternal({ url }), 8_000, '调用系统浏览器超时');
   return result.opened === true;
 }
 

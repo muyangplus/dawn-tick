@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogFooter } from './dialog.tsx';
 import { Input } from './input.tsx';
 import { toast } from './toaster.tsx';
 import { useAction } from '../../lib/action.ts';
-import { copyText, openExternalUrl } from '../../system-actions.ts';
+import { copyText, openExternalUrlDetailed } from '../../system-actions.ts';
 
 type Listener = (url: string | null) => void;
 
@@ -71,6 +71,32 @@ export function ExternalLink({ href, children, className, ariaLabel, dataRole }:
 export function ExternalLinkConfirm() {
   const url = useExternalLinkRequest();
   const { busy, run } = useAction();
+  /** 打开失败时在弹窗内停留并展示原因：只弹 toast 容易被忽略，看起来像「点确认没反应」 */
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setError(null);
+  }, [url]);
+
+  async function open(url: string): Promise<void> {
+    setError(null);
+    const result = await run({
+      scope: 'link',
+      label: '正在打开链接…',
+      task: () => openExternalUrlDetailed(url),
+    });
+    if (!result.ok) {
+      setError(result.error ?? '打开失败，请稍后重试');
+      return;
+    }
+    const outcome = result.value;
+    if (outcome === null || outcome === undefined || !outcome.ok) {
+      setError(outcome?.error ?? '打开失败，请改用「复制链接」');
+      return;
+    }
+    closeExternalLink();
+    toast.success('已在默认浏览器打开');
+  }
 
   async function act(action: () => Promise<boolean>, done: string, failed: string): Promise<void> {
     const result = await run({ scope: 'link', label: '正在打开链接…', task: action });
@@ -117,9 +143,7 @@ export function ExternalLinkConfirm() {
             variant="primary"
             data-role="external-link-open"
             loading={busy}
-            onClick={() =>
-              void act(() => openExternalUrl(url ?? ''), '已在默认浏览器打开', '打开浏览器失败，请改用复制链接')
-            }
+            onClick={() => void open(url ?? '')}
           >
             用默认浏览器打开
           </Button>

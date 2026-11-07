@@ -161,6 +161,12 @@
     cursor: grabbing;
   }
 
+  .mini-hint {
+    font-size: 10px;
+    line-height: 1.3;
+    color: var(--mini-muted);
+  }
+
   /*
    * 小组件背景：浅色 / 深色 / 透明，与 Android 小组件的三种底色同一口径。
    * 浅色/深色固定取对应模式的预设令牌；透明跟随当前主题，只降低底色不透明度。
