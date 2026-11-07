@@ -363,45 +363,40 @@ jobs:
             exit 1
           fi
 
-      - name: 检查 Gitee 令牌
-        id: gitee
+      - name: 检查 assets 令牌
+        id: assets
         env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          ASSETS_TOKEN: ${{ secrets.ASSETS_TOKEN }}
         run: |
-          # GitHub Actions 机器到 Gitee 的网络实测超时，默认不在云端同步；
-          # 需要时可设仓库变量 GITEE_SYNC_IN_CI=true（或改用自托管 runner），平时在维护机本地同步
-          if [ -n "$GITEE_TOKEN" ] && [ "${{ vars.GITEE_SYNC_IN_CI }}" = "true" ]; then
+          # 产物推到独立 GitHub assets 仓库（muyangplus/dawn-tick-assets），Gitee 侧从 GitHub 镜像；
+          # CI 不再直连 Gitee API（实测超时）。没有 token 时跳过，不影响 GitHub Release。
+          if [ -n "$ASSETS_TOKEN" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "跳过云端 Gitee 同步（未配置 GITEE_TOKEN，或未开启仓库变量 GITEE_SYNC_IN_CI）；可在维护机运行本地同步命令" >> "$GITHUB_STEP_SUMMARY"
+            echo "跳过 assets 仓库同步（未配置 ASSETS_TOKEN）；GitHub Release 已发布" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: 同步到 Gitee 发布
-        # Gitee 侧失败不阻断 GitHub 发布（发布已在上一步完成），日志推 ci-debug 供排查
+      - name: 同步到 assets 仓库
+        # assets 侧失败不阻断 GitHub 发布（发布已在上一步完成），日志推 ci-debug 供排查
         continue-on-error: true
         timeout-minutes: 6
-        if: steps.gitee.outputs.ready == 'true'
+        if: steps.assets.outputs.ready == 'true'
         env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          GITEE_OWNER: muyangplus
-          GITEE_REPO: dawn-tick
-          GITHUB_REPO: muyangplus/dawn-tick
+          ASSETS_TOKEN: ${{ secrets.ASSETS_TOKEN }}
+          ASSETS_REPO: muyangplus/dawn-tick-assets
           OUT_DIR: out
           NOTES_FILE: ${{ runner.temp }}/release-notes.md
-          # Gitee 仓库附件有容量/数量限制：保留最近 6 个发布 + dev-latest，总量超过 800MB 自动删最旧
-          GITEE_KEEP_RELEASES: '6'
-          GITEE_MAX_TOTAL_BYTES: '838860800'
         run: |
           set -o pipefail
-          LOG="$RUNNER_TEMP/publish-gitee.txt"
-          if ! node tools/release/publish-gitee.mjs 2>&1 | tee "$LOG"; then
+          LOG="$RUNNER_TEMP/publish-assets.txt"
+          if ! node tools/release/publish-assets.mjs 2>&1 | tee "$LOG"; then
             mkdir -p ci-debug
-            cp "$LOG" ci-debug/publish-gitee.txt
+            cp "$LOG" ci-debug/publish-assets.txt
             git checkout -B ci-debug
             git add -f ci-debug
             git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
-              commit -m "ci: Gitee 发布失败日志（自动化提交，仅 ci-debug 分支）" || true
+              commit -m "ci: assets 仓库同步失败日志（自动化提交，仅 ci-debug 分支）" || true
             git push -f origin HEAD:refs/heads/ci-debug || true
             exit 1
           fi
