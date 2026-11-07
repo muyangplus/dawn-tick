@@ -1,11 +1,15 @@
 /**
  * 把 GitHub Actions 已发布的 Release 同步到 Gitee（代码镜像之外的「发布」双写）。
  *
- * 为什么需要：Gitee 免费仓库不能跑 CI 构建，所以安装包仍由 GitHub Actions 产出；
- * 这个脚本在发布 job 末尾调用 Gitee API，把同样的标签、正文与 6 个资产发到镜像仓库，
- * 客户端「国内 Gitee / 国际 GitHub / 自动检测」两条下载链路才能拿到一致的产物。
+ * ⚠️ 已不推荐：CI 已改为把产物推到独立 GitHub assets 仓库
+ * （`tools/release/publish-assets.mjs`），Gitee 侧从 GitHub 镜像该仓库；
+ * Gitee Releases/API 在 Actions 网络下实测超时、附件也有容量与数量限制。
+ * 本脚本只保留给维护机手动兜底（GITEE_TOKEN + --from-github），工作流不再调用。
  *
- * 用法（CI）：
+ * 历史原因：Gitee 免费仓库不能跑 CI 构建，所以安装包仍由 GitHub Actions 产出，
+ * 过去由这个脚本把标签、正文与 6 个资产发到 Gitee 镜像仓库。
+ *
+ * 用法（本地兜底，已不推荐）：
  *   GITEE_TOKEN=... TAG=v0.6.5 CHANNEL=beta PRERELEASE=true ROLLING=false \
  *   OUT_DIR=out node tools/release/publish-gitee.mjs
  *
@@ -15,7 +19,7 @@
  * 约定：
  * - 只依赖 Node 内置 fetch/FormData/Blob（Node 18+），不引第三方库；
  * - token 只从环境变量读，不打日志；
- * - 失败让 CI 步骤失败（发布日志由 publish.yml 统一推到 ci-debug），不静默吞错；
+ * - 失败让调用方看到非零退出，不静默吞错；
  * - 未配置 GITEE_TOKEN 时明确跳过（返回 0），便于 fork/自建仓库不带该 secret。
  */
 
