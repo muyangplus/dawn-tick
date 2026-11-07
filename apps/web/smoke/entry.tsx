@@ -28,11 +28,11 @@ import type { AppData } from '../src/data.ts';
 import { SemesterStatsCard } from '../src/screens/cards/semester-stats-card.tsx';
 import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
-import type { UpdateManifest, UpdateStatus } from '../src/update.ts';
+import { checkForUpdate, type UpdateManifest, type UpdateStatus } from '../src/update.ts';
 import { sha256Hex, type UpdateDownloadHost } from '../src/lib/update-download.ts';
 import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
 import { dismissUpdateTask, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
-import { resetDownloadSourceCache } from '../src/lib/download-source.ts';
+import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
 import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
@@ -3048,66 +3048,47 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   resetDownloadSourceCache();
   const realSourceFetch = globalThis.fetch;
   const sourceCalls: string[] = [];
-  const giteeVersionJsonAsset = 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/version.json';
-  const giteeLatestRelease = {
-    tag_name: 'v0.6.5',
-    prerelease: false,
-    draft: false,
-    body: '渠道 release · 来源 main · 提交 abcdef1',
-    assets: [
-      {
-        name: 'DawnTick-0.6.5-release-windows-x64-setup.exe',
-        size: 12,
-        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/asset-1',
+  // 独立 assets 仓库：取源与下载都走 raw，桩按渠道分支给 mirror.json 与便携包分块
+  const giteeMirrorDev = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/mirror.json';
+  const giteeMirrorRelease = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/mirror.json';
+  const githubMirrorDev = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/mirror.json';
+  const githubMirrorRelease = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/mirror.json';
+  const giteePortableRelease =
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/DawnTick-0.6.5-release-windows-x64-portable.zip';
+  const githubPortableRelease =
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.6.5-release-windows-x64-portable.zip';
+  const mirrorJson = (channel: string, version: string): Record<string, unknown> => {
+    const prefix = `DawnTick-${version}-${channel}`;
+    return {
+      schema: 1,
+      channel,
+      version,
+      tag: channel === 'dev' ? 'dev-latest' : `v${version}`,
+      commit: 'abcdef1',
+      releasedAt: 1_760_000_000_000,
+      notes: `渠道 ${channel} · 来源 ${channel === 'release' ? 'main' : channel} · 提交 abcdef1`,
+      files: {
+        windowsSetup: { name: `${prefix}-windows-x64-setup.exe`, size: 12, sha256: 'a'.repeat(64) },
+        windowsPortable: { name: `${prefix}-windows-x64-portable.zip`, size: 12, sha256: 'b'.repeat(64) },
+        android: { name: `${prefix}-android.apk`, size: 12, sha256: 'c'.repeat(64) },
+        web: { name: `${prefix}-web.zip`, size: 12, sha256: 'd'.repeat(64) },
       },
-      { name: 'version.json', browser_download_url: giteeVersionJsonAsset },
-    ],
+      checksums: 'SHA256SUMS.txt',
+    };
   };
-  const giteeDevRelease = {
-    tag_name: 'dev-latest',
-    prerelease: true,
-    draft: false,
-    body: '渠道 dev · 来源 dev · 提交 abcdef1',
-    assets: [
-      {
-        name: 'DawnTick-0.6.6-dev-windows-x64-setup.exe',
-        size: 12,
-        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/dev-latest/asset-7',
-      },
-    ],
-  };
-  const githubDevRelease = {
-    tag_name: 'dev-latest',
-    prerelease: true,
-    draft: false,
-    body: '渠道 dev · 来源 dev · 提交 abcdef1',
-    assets: [
-      {
-        name: 'DawnTick-0.6.6-dev-windows-x64-setup.exe',
-        size: 12,
-        browser_download_url: 'https://example.com/setup.exe',
-      },
-    ],
-  };
+  /** 256KB 分块探测：给一段比探测上限更大的流，客户端读满即停 */
+  const assetChunkResponse = (): Response => new Response(new Uint8Array(512 * 1024), { status: 200 });
   Object.defineProperty(globalThis, 'fetch', {
     configurable: true,
     writable: true,
     value: (input: unknown): Promise<Response> => {
       const url = String(input);
       sourceCalls.push(url);
-      if (url === 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/latest') {
-        return Promise.resolve(presetJsonResponse(giteeLatestRelease));
-      }
-      if (url === giteeVersionJsonAsset) return Promise.resolve(presetJsonResponse({ version: '0.6.5' }));
-      if (url === 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/tags/dev-latest') {
-        return Promise.resolve(presetJsonResponse(giteeDevRelease));
-      }
-      if (url === 'https://github.com/muyangplus/dawn-tick/releases/latest/download/version.json') {
-        return Promise.resolve(presetJsonResponse({ version: '0.6.5' }));
-      }
-      if (url === 'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest') {
-        return Promise.resolve(presetJsonResponse(githubDevRelease));
-      }
+      if (url === giteeMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', '0.6.5')));
+      if (url === giteeMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', '0.6.6')));
+      if (url === githubMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', '0.6.5')));
+      if (url === githubMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', '0.6.6')));
+      if (url === giteePortableRelease || url === githubPortableRelease) return Promise.resolve(assetChunkResponse());
       return Promise.resolve(presetJsonResponse({}, false, 404));
     },
   });
@@ -3151,13 +3132,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     sourceCalls.length = 0;
     const checkButton = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
     if (checkButton instanceof window.HTMLElement) checkButton.click();
-    await waitFor(() => sourceCalls.some((url) => url.includes('gitee.com/api/v5')), 40);
+    await waitFor(() => sourceCalls.includes(giteeMirrorDev), 40);
     await flush(6);
     const giteeCheckCalls = [...sourceCalls];
     check(
-      '手动选 Gitee 后检查更新走 Gitee 发布接口，不请求 GitHub',
-      giteeCheckCalls.some((url) => url === 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/tags/dev-latest') &&
-        !giteeCheckCalls.some((url) => url.includes('api.github.com')),
+      '手动选 Gitee 后检查更新读 gitee.com/muyangplus/dawn-tick-assets/raw/dev/mirror.json，不请求 GitHub',
+      giteeCheckCalls.includes(giteeMirrorDev) &&
+        !giteeCheckCalls.some((url) => url.includes('api.github.com') || url.includes('raw.githubusercontent.com')),
       giteeCheckCalls.join(' / ') || '(无请求)',
     );
     const giteeDialog = document.querySelector<HTMLElement>('[data-role="update-dialog"]');
@@ -3166,11 +3147,26 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       giteeDialog !== null && (giteeDialog.textContent ?? '').includes('下载源 Gitee'),
       (giteeDialog?.textContent ?? '').slice(0, 60),
     );
+    // 下载 URL 指向同源 raw 文件：清单只有文件名，绝对地址由 assets 仓库分支拼出
+    const giteeStatus = await checkForUpdate({
+      channel: 'dev',
+      receiveBeta: false,
+      currentVersion: '0.0.1',
+      source: 'gitee',
+    });
+    check(
+      'Gitee 清单的下载 URL 与校验文件都指向同源 assets raw',
+      giteeStatus.manifest?.assets?.windows?.url ===
+        'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-0.6.6-dev-windows-x64-setup.exe' &&
+        giteeStatus.manifest?.checksumsUrl ===
+          'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/SHA256SUMS.txt',
+      `${giteeStatus.manifest?.assets?.windows?.url ?? '(无)'} / ${giteeStatus.manifest?.checksumsUrl ?? '(无)'}`,
+    );
     closeUpdatePrompt();
     dismissUpdateTask();
     await flush(8);
 
-    // 手动切到 GitHub：检查更新只请求 api.github.com
+    // 手动切到 GitHub：检查更新只请求 raw.githubusercontent.com 的 assets 分支
     if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
     await flush(8);
     const githubOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
@@ -3181,20 +3177,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     sourceCalls.length = 0;
     const checkButtonAgain = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
     if (checkButtonAgain instanceof window.HTMLElement) checkButtonAgain.click();
-    await waitFor(() => sourceCalls.some((url) => url.includes('api.github.com')), 40);
+    await waitFor(() => sourceCalls.includes(githubMirrorDev), 40);
     await flush(6);
     const githubCheckCalls = [...sourceCalls];
     check(
-      '手动选 GitHub 后检查更新走 GitHub 发布接口，不请求 Gitee',
-      githubCheckCalls.some((url) => url === 'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest') &&
-        !githubCheckCalls.some((url) => url.includes('gitee.com')),
+      '手动选 GitHub 后检查更新读 raw.githubusercontent.com 的 assets 分支，不请求 Gitee',
+      githubCheckCalls.includes(githubMirrorDev) && !githubCheckCalls.some((url) => url.includes('gitee.com')),
       githubCheckCalls.join(' / ') || '(无请求)',
     );
     closeUpdatePrompt();
     dismissUpdateTask();
     await flush(8);
 
-    // 重新检测：强制重新探测两个源并回到自动选择
+    // 重新检测：强制重新探测两个源并回到自动选择（探测读 release 分支的 mirror.json + 便携包）
     if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
     await flush(8);
     const autoOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
@@ -3207,14 +3202,20 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     const redetect = view.container.querySelector<HTMLElement>('[data-role="redetect-download-source"]');
     redetect?.click();
     await waitFor(
-      () => sourceCalls.some((url) => url.includes('gitee.com')) && sourceCalls.some((url) => url.includes('github.com')),
+      () =>
+        sourceCalls.includes(giteeMirrorRelease) &&
+        sourceCalls.includes(githubMirrorRelease) &&
+        sourceCalls.includes(giteePortableRelease) &&
+        sourceCalls.includes(githubPortableRelease),
       40,
     );
     check(
-      '「重新检测」重新探测两个源并显示自动选择结果',
+      '「重新检测」探测两个源的 release 分支 mirror.json 与真实便携包，并显示自动选择结果',
       sourceResultLine().includes('自动：') &&
-        sourceCalls.some((url) => url.includes('gitee.com')) &&
-        sourceCalls.some((url) => url.includes('github.com')),
+        sourceCalls.includes(giteeMirrorRelease) &&
+        sourceCalls.includes(githubMirrorRelease) &&
+        sourceCalls.includes(giteePortableRelease) &&
+        sourceCalls.includes(githubPortableRelease),
       `${sourceResultLine()} / ${sourceCalls.join(' / ') || '(无请求)'}`,
     );
   } finally {
