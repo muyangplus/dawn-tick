@@ -3049,14 +3049,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const realSourceFetch = globalThis.fetch;
   const sourceCalls: string[] = [];
   // 独立 assets 仓库：取源与下载都走 raw，桩按渠道分支给 mirror.json 与便携包分块
+  // 版本必须高于当前构建，否则更新检查判定「无更新」不会弹窗（版本号随发布变动，这里按 appVersion 递推）
+  const newerVersion = (() => {
+    const parts = appVersion().split('.').map((item) => Number(item));
+    const major = Number.isFinite(parts[0]) ? parts[0] : 0;
+    const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
+    return `${major}.${minor + 1}.0`;
+  })();
   const giteeMirrorDev = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/mirror.json';
   const giteeMirrorRelease = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/mirror.json';
   const githubMirrorDev = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/mirror.json';
   const githubMirrorRelease = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/mirror.json';
   const giteePortableRelease =
-    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/DawnTick-0.6.5-release-windows-x64-portable.zip';
+    `https://gitee.com/muyangplus/dawn-tick-assets/raw/release/DawnTick-${newerVersion}-release-windows-x64-portable.zip`;
   const githubPortableRelease =
-    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.6.5-release-windows-x64-portable.zip';
+    `https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-${newerVersion}-release-windows-x64-portable.zip`;
   const mirrorJson = (channel: string, version: string): Record<string, unknown> => {
     const prefix = `DawnTick-${version}-${channel}`;
     return {
@@ -3084,10 +3091,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     value: (input: unknown): Promise<Response> => {
       const url = String(input);
       sourceCalls.push(url);
-      if (url === giteeMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', '0.6.5')));
-      if (url === giteeMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', '0.6.6')));
-      if (url === githubMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', '0.6.5')));
-      if (url === githubMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', '0.6.6')));
+      if (url === giteeMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', newerVersion)));
+      if (url === giteeMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', newerVersion)));
+      if (url === githubMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', newerVersion)));
+      if (url === githubMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', newerVersion)));
       if (url === giteePortableRelease || url === githubPortableRelease) return Promise.resolve(assetChunkResponse());
       return Promise.resolve(presetJsonResponse({}, false, 404));
     },
@@ -3157,7 +3164,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     check(
       'Gitee 清单的下载 URL 与校验文件都指向同源 assets raw',
       giteeStatus.manifest?.assets?.windows?.url ===
-        'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-0.6.6-dev-windows-x64-setup.exe' &&
+        `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-windows-x64-setup.exe` &&
         giteeStatus.manifest?.checksumsUrl ===
           'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/SHA256SUMS.txt',
       `${giteeStatus.manifest?.assets?.windows?.url ?? '(无)'} / ${giteeStatus.manifest?.checksumsUrl ?? '(无)'}`,

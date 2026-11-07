@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.6.6] - 2026-11-07
+
 ### 新增
 
 - 下载源选择：设置里可选「自动检测 / 国内 Gitee / 国际 GitHub」，自动从两源真实安装包读取 256KB 测速取低（version.json 太小，已改为资产分块探测）；应用更新与预设更新共用，失败自动回退另一源
@@ -276,7 +278,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.5...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.6...dev
+[0.6.6]: https://github.com/muyangplus/dawn-tick/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/muyangplus/dawn-tick/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/muyangplus/dawn-tick/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/muyangplus/dawn-tick/compare/v0.6.2...v0.6.3
