@@ -7,6 +7,9 @@
 
 ### 新增
 
+- 下载源选择：设置里可选「自动检测 / 国内 Gitee / 国际 GitHub」，自动探测两源 `version.json` 延迟取低；应用更新与预设更新共用，失败自动回退另一源
+- 应用更新支持 Gitee Release（Gitee API 发布解析、同源 `version.json` 兜底、按资产名判断安装包扩展名），更新弹窗与设备页显示实际来源
+- 预设更新支持 Gitee raw / contents 双通道，失败回退另一源
 - 发布双写：GitHub Actions 发布后自动同步同样的标签、正文与资产到 Gitee Release（需 `GITEE_TOKEN`；未配置时跳过）
 - Gitee 附件保留策略：默认保留最近 6 个发布 + `dev-latest`，总量超过 800MB 时自动删除最旧构建
 
