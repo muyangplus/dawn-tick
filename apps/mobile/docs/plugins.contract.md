@@ -18,6 +18,8 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
     （提醒投递在 `.../reminder/ReminderNotifier.kt`、`.../reminder/ReminderAlarms.kt`，动作按钮与离线队列在 `.../reminder/ReminderReceivers.kt`、`.../reminder/ReminderStore.kt`）
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/secret/SecretStorePlugin.kt`
     （AndroidKeyStore AES-GCM 实现在 `.../secret/SecretVault.kt`；Windows 对应实现在 `apps/desktop/src-tauri/src/secret_store.rs`）
+  - 原生诊断日志：`apps/mobile/android/app/src/main/java/com/dawntick/app/diag/NativeLog.kt`
+    （教务窗口、外部链接、小组件读取的失败原因都写 `filesDir/diag/native.log`；由 `SystemActions.readNativeLog` 读出）
 - TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–9 节，`plugins.test.ts` 与其余插件一并对齐。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库用 `gradlew.bat :app:compileDebugKotlin --no-daemon` 做 Android 编译检查，真机验证在打包机上执行 `pnpm android:dev`。
 
@@ -39,11 +41,31 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 
 | 方法 | 参数 | 返回字段 | 说明 |
 |---|---|---|---|
-| `openExternal` | `url: string` | `opened: boolean` | 只接受 http/https；没有可打开的应用时 reject |
+| `openExternal` | `url: string` | `opened: boolean` | 只接受 http/https；没有可打开的应用时 reject，`message` 为 `<异常类>: <原始 message>`（同时写 `native.log`） |
 | `isIgnoringBatteryOptimizations` | 无 | `ignoring: boolean` | 是否已在电池优化白名单 |
 | `requestIgnoreBatteryOptimizations` | 无 | `ignoring?: boolean`、`requested?: boolean` | 已在白名单返回 `ignoring`，否则跳系统页并返回 `requested` |
 | `notificationStatus` | `asked: boolean` | `appEnabled?: boolean`、`runtime?: string`、`asked?: boolean`、`channelId?: string \| null`、`channelName?: string \| null`、`channelMuted?: boolean` | `runtime` 取值 `granted` / `denied` / `prompt` / `permanently-denied` |
 | `openNotificationSettings` | `channelId?: string` | `opened: boolean` | 有渠道 id 时直达该渠道 |
+| `readNativeLog` | `maxBytes?: number` | `text?: string`、`path?: string`、`bytes?: number` | 读 `filesDir/diag/native.log` 最近约 200 行；默认读尾部 256KB，`maxBytes` 限制读取字节数 |
+| `clearNativeLog` | 无 | `cleared: boolean` | 清空当前日志与滚动文件 `native.log.1` |
+
+### 1.1 原生诊断日志
+
+真机没有 logcat 时，用这段日志排查「内嵌教务窗口打不开 / 外部链接确认后没反应 / 小组件空白」：
+
+- 位置：`<app files>/diag/native.log`（应用私有目录，卸载即清除）。
+- 格式：`2026-11-07 14:20:10.123 I [SchoolWindow] open 入口 url=https://…/path length=64`；
+  级别 `I` / `W` / `E`，标签对应插件或组件（`startup`、`SchoolWindow`、`SchoolWeb`、`SystemActions`、
+  `WidgetStore`、`WidgetRefresher`、`WidgetPin`）。
+- 滚动：单文件约 512KB，写满后改名为 `native.log.1`（旧的 `.1` 丢弃）。
+- 读取：`SystemActions.readNativeLog`（应用内「导出诊断日志」使用）→ 返回文本与绝对路径；
+  `clearNativeLog` 清空。
+- 记录点：`MainActivity` 启动版本与插件自检、`SchoolWindow.open` 入口/构造 Intent/`startActivityForResult`、
+  `SchoolWebActivity` 的 `onCreate` / `onPageStarted` / `onPageFinished` / `onReceivedError` / 控制台 ERROR、
+  `openExternal` 入口/scheme 校验/`startActivity` 成功与异常、`WidgetStore.load` 的候选库存在性/打开异常/
+  snapshot 行是否为空/JSON 解析异常、`WidgetRefresher` 刷新触发与结果、`WidgetPin.requestPin` 各分支。
+- 隐私：URL 只记 scheme + host + path（查询串可能带登录 token，不写日志）。
+
 
 ## 2. SchoolWindow
 
@@ -55,7 +77,8 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 
 | 方法 | 参数 | 返回字段 | 说明 |
 |---|---|---|---|
-| `open` | `url: string` | `payload?: string` | 打开内嵌教务窗口；用户取消或失败时 `payload` 为空串，页面内容带 `<<<DAWNTICK>>>` 标记时由 Web 层解析 |
+| `open` | `url: string` | `payload?: string` | 打开内嵌教务窗口；用户取消或失败时 `payload` 为空串，页面内容带 `<<<DAWNTICK>>>` 标记时由 Web 层解析。入口、Intent 构造与 `startActivityForResult` 异常都写 `native.log` 并 reject 原始 message |
+| `available` | 无 | `platform?: string`、`supported?: boolean` | 当前平台是否支持内嵌窗口；安卓恒为 `{ platform: "android", supported: true }` |
 
 ## 3. DawnTickWidget
 

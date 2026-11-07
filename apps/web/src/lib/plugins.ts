@@ -48,8 +48,10 @@ export const PLUGIN_METHODS = {
     'requestIgnoreBatteryOptimizations',
     'notificationStatus',
     'openNotificationSettings',
+    'readNativeLog',
+    'clearNativeLog',
   ],
-  [PLUGIN_NAMES.schoolWindow]: ['open'],
+  [PLUGIN_NAMES.schoolWindow]: ['open', 'available'],
   [PLUGIN_NAMES.widgetPin]: ['requestPin', 'readStates'],
   [PLUGIN_NAMES.widgetRefresh]: ['refresh'],
   [PLUGIN_NAMES.apkInstaller]: ['installApk'],
@@ -81,10 +83,27 @@ export interface SystemActionsPlugin {
   }>;
   /** 跳系统通知设置页；给了 `channelId` 就直达该渠道。 */
   openNotificationSettings(options: { channelId?: string }): Promise<{ opened: boolean }>;
+  /**
+   * 读原生诊断日志（`filesDir/diag/native.log`），返回最近约 200 行。
+   *
+   * `maxBytes` 限制读取尾部字节数（默认 256KB）；`text` 为空串表示日志还没写入或已清空。
+   * 日志格式 `时间戳 级别 [标签] 消息`，单文件 512KB 滚动为 `native.log.1`。
+   */
+  readNativeLog(options?: { maxBytes?: number }): Promise<{
+    text?: string;
+    /** 日志文件绝对路径，供导出时显示/定位。 */
+    path?: string;
+    /** 本次返回文本的 UTF-8 字节数。 */
+    bytes?: number;
+  }>;
+  /** 清空原生诊断日志（当前文件与滚动文件）；`cleared` 为 true 表示已执行。 */
+  clearNativeLog(): Promise<{ cleared: boolean }>;
 }
 
 /** 内嵌教务窗口插件：打开页面并带回页面内容。 */
 export interface SchoolWindowPlugin {
+  /** 当前平台是否支持内嵌教务窗口；安卓恒为 `{ platform: 'android', supported: true }`。 */
+  available(): Promise<{ platform?: string; supported?: boolean }>;
   /** 打开 `url`；用户取消时 `payload` 为空串。 */
   open(options: { url: string }): Promise<{ payload?: string }>;
 }

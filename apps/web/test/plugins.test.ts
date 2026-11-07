@@ -10,6 +10,7 @@ import { PLUGIN_METHODS, PLUGIN_NAMES } from '../src/lib/plugins.ts';
  */
 const ANDROID_ROOT = new URL('../../mobile/android/app/src/main/java/com/dawntick/app/', import.meta.url);
 const CONTRACT_DOC = new URL('../../mobile/docs/plugins.contract.md', import.meta.url);
+const STRINGS_XML = new URL('../../mobile/android/app/src/main/res/values/strings.xml', import.meta.url);
 
 const SOURCES = [
   { name: PLUGIN_NAMES.systemActions, file: 'system/SystemActionsPlugin.java' },
@@ -66,4 +67,43 @@ test('插件名与加载入口集中在 lib/plugins.ts', () => {
   ]);
   // 每个插件名都要有方法清单，避免只登记插件名不登记方法
   assert.deepEqual(Object.keys(PLUGIN_METHODS).toSorted(), Object.values(PLUGIN_NAMES).toSorted());
+});
+
+test('原生诊断日志契约：SystemActions 可读/清空，教务窗口可探测能力', () => {
+  assert.ok(PLUGIN_METHODS[PLUGIN_NAMES.systemActions].includes('readNativeLog'));
+  assert.ok(PLUGIN_METHODS[PLUGIN_NAMES.systemActions].includes('clearNativeLog'));
+  assert.ok(PLUGIN_METHODS[PLUGIN_NAMES.schoolWindow].includes('available'));
+
+  const nativeLog = readAndroid('diag/NativeLog.kt');
+  assert.match(nativeLog, /object NativeLog/);
+  assert.match(nativeLog, /native\.log/);
+  assert.match(nativeLog, /512 \* 1024/);
+  assert.match(nativeLog, /fun read\(/);
+  assert.match(nativeLog, /fun clear\(/);
+
+  // 三条真机失败路径都要落日志：没有 logcat 时只能靠 native.log 定位
+  const systemActions = readAndroid('system/SystemActionsPlugin.java');
+  assert.match(systemActions, /NativeLog\.info/);
+  assert.match(systemActions, /NativeLog\.read\(/);
+  assert.match(systemActions, /NativeLog\.clear\(/);
+  assert.match(readAndroid('school/SchoolWindowPlugin.kt'), /NativeLog\.info/);
+  assert.match(readAndroid('MainActivity.java'), /NativeLog\.info/);
+
+  const strings = readFileSync(fileURLToPath(STRINGS_XML), 'utf8');
+  assert.match(strings, /name="widget_read_error"/);
+});
+
+test('小组件读取状态区分「无数据」与「读失败」', () => {
+  const store = readAndroid('widget/WidgetStore.kt');
+  assert.match(store, /enum class WidgetReadStatus/);
+  assert.match(store, /NO_DATABASE/);
+  assert.match(store, /NO_SNAPSHOT/);
+  assert.match(store, /OPEN_FAILED/);
+  assert.match(store, /PARSE_FAILED/);
+  // WAL 未回放时改用读写打开再读一次
+  assert.match(store, /OPEN_READWRITE/);
+
+  const renderer = readAndroid('widget/WidgetRenderer.kt');
+  assert.match(renderer, /R\.string\.widget_read_error/);
+  assert.match(renderer, /R\.string\.widget_no_data/);
 });
