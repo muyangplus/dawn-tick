@@ -1,5 +1,11 @@
-import { useState } from 'react';
-import type { AppSettings, Storage } from '@dawn-tick/core';
+import { useEffect, useState } from 'react';
+import {
+  DOWNLOAD_SOURCE_CHOICE_LABEL,
+  DOWNLOAD_SOURCE_CHOICES,
+  type AppSettings,
+  type DownloadSourceChoice,
+  type Storage,
+} from '@dawn-tick/core';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { fail } from '../../copy/zh.ts';
 import { errorMessage } from '../../lib/errors.ts';
@@ -11,8 +17,15 @@ import { UpdateInstallKindLine } from '../../components/update/update-install-ki
 import { UpdateTaskPanel } from '../../components/update/update-task-panel.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
-import { SwitchField } from '../../components/ui/controls.tsx';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SwitchField,
+} from '../../components/ui/controls.tsx';
 import { ExternalLink } from '../../components/ui/external-link.tsx';
+import { Field } from '../../components/ui/input.tsx';
 import { StatusLine } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { RollbackDialog } from './update-rollback.tsx';
@@ -44,6 +57,12 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
   /** 回滚复用安装链路：Web 只能刷新页面，不提供回滚入口 */
   const rollbackVisible =
     platform !== 'web' && canRollbackToStable({ current, channel: CHANNEL, latestStable: update.latestStable });
+
+  // 打开「更新」分组时解析下载源：自动模式探测一次并缓存 10 分钟，手动模式不探测
+  useEffect(() => {
+    void update.ensureSource();
+    // 只在下载源设置变化时重新解析；update 每次渲染都是新对象，不做依赖
+  }, [settings.downloadSource]);
 
   async function unignore(): Promise<void> {
     try {
@@ -107,6 +126,42 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
           onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
           ariaLabel="自动检查版本更新"
         />
+        {/* 下载源：自动探测 Gitee / GitHub 的 version.json，选完成快的；也可手动指定 */}
+        <div className="flex flex-col gap-2" data-role="download-source-group">
+          <Field
+            label="下载源"
+            hint="自动检测会同时探测 Gitee 与 GitHub 的 version.json，选完成快的；某个源不可用或还没有发布时自动回退另一个源"
+          >
+            <Select
+              value={settings.downloadSource}
+              onValueChange={(value) => void onPatch({ downloadSource: value as DownloadSourceChoice })}
+            >
+              <SelectTrigger aria-label="下载源" data-role="download-source-select">
+                <span>{DOWNLOAD_SOURCE_CHOICE_LABEL[settings.downloadSource]}</span>
+              </SelectTrigger>
+              <SelectContent>
+                {DOWNLOAD_SOURCE_CHOICES.map((choice) => (
+                  <SelectItem key={choice} value={choice}>
+                    {DOWNLOAD_SOURCE_CHOICE_LABEL[choice]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusLine dataRole="download-source-result">{update.sourceLine}</StatusLine>
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="重新检测下载源"
+              data-role="redetect-download-source"
+              loading={update.sourceBusy}
+              onClick={() => void update.refreshSource()}
+            >
+              重新检测
+            </Button>
+          </div>
+        </div>
       </div>
       {/* ② 后台下载任务：与更新弹窗共享同一个任务，关掉弹窗后这里继续显示进度 */}
       <UpdateTaskPanel />
