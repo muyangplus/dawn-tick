@@ -21,6 +21,7 @@ export function nextBetaNumber(existingTags, version) {
  * - beta：手动触发时默认用纯版本号 `v<version>` 发预发布（不带 -beta）；
  *   也可显式指定 `-beta` 或序号 `-beta.<n>`；构建自 main，保留历史
  * - release：标签 v<version>；构建自 main，打标签触发自动发布
+ *   若标签说明里写了 `[prerelease]`，则纯版本号标签按测试版预发布（标签仍是 v<version>）
  * beta 与 release 都从 main 发版：改动在 dev 上做，经 PR 合入 main 后再打标签。
  */
 export function planRelease({
@@ -34,6 +35,8 @@ export function planRelease({
    * 填 'bare' → `v<version>-beta`（带 -beta、不带序号）；填数字 → `-beta.<n>`
    */
   betaSuffix = 'plain',
+  /** 打标签时的说明文字：纯版本号标签若含 `[prerelease]`，按测试版预发布处理 */
+  tagMessage = '',
   existingTags = [],
 }) {
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -50,6 +53,7 @@ export function planRelease({
     // 测试版标签允许不带序号（`vX.Y.Z-beta`）或带序号（`vX.Y.Z-beta.N`）
     if (/-beta(\.|$)/.test(name)) channel = 'beta';
     else if (/-dev\./.test(name)) channel = 'dev';
+    else if (tagMessage.toLowerCase().includes('[prerelease]')) channel = 'beta';
     else channel = 'release';
   } else if (typeof dispatchChannel === 'string' && dispatchChannel.length > 0) {
     if (!CHANNELS.includes(dispatchChannel)) throw new Error(`未知渠道: ${dispatchChannel}`);
@@ -115,6 +119,7 @@ if (invokedDirectly) {
     version: args.get('version') ?? currentVersion(),
     dispatchChannel: args.get('channel') ?? '',
     betaSuffix: args.get('beta-suffix') ?? 'plain',
+    tagMessage: args.get('tag-message') ?? '',
     existingTags: (args.get('existing-tags') ?? '').split(',').filter((item) => item.trim().length > 0),
   });
 

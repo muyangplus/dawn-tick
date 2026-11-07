@@ -58,12 +58,18 @@ jobs:
           INPUT_BETA_SUFFIX: ${{ inputs.beta_suffix }}
         run: |
           TAGS=$(git tag --list 'v*-beta.*' | tr '\n' ',')
+          # 纯版本号标签的测试版：标签说明里带 [prerelease] 即按预发布发布
+          TAG_MESSAGE=""
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_MESSAGE=$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)' 2>/dev/null || true)
+          fi
           node tools/release/plan.mjs \
             --ref="$GITHUB_REF" \
             --event="$GITHUB_EVENT_NAME" \
             --run="$GITHUB_RUN_NUMBER" \
             --channel="$INPUT_CHANNEL" \
             --beta-suffix="${INPUT_BETA_SUFFIX:-plain}" \
+            --tag-message="$TAG_MESSAGE" \
             --existing-tags="$TAGS" \
             --github-output >> "$GITHUB_OUTPUT"
       - name: 判断是否需要构建
