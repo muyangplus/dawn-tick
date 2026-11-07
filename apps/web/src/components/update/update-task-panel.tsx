@@ -1,4 +1,5 @@
 import { fail } from '../../copy/zh.ts';
+import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
   cancelUpdateTask,
   dismissUpdateTask,
@@ -79,6 +80,11 @@ export function UpdateTaskPanel() {
       <div className="flex flex-col gap-2" data-role="update-task">
         <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-xs font-medium text-ink">版本 {task.version ?? '—'}</span>
+          {task.source !== null && (
+            <span className="text-xs text-muted" data-role="update-task-source">
+              来源 {DOWNLOAD_SOURCE_LABEL[task.source]}
+            </span>
+          )}
           {task.target !== null && <span className="text-xs text-muted">{task.target.installerLabel}</span>}
           <StatusLine dataRole="update-task-status" tone={tone}>
             {text}

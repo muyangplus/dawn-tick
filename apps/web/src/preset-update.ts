@@ -13,6 +13,12 @@ import {
   type TimetablePreset,
 } from '@dawn-tick/core';
 import { compareVersions } from './update.ts';
+import {
+  presetContentsUrl,
+  presetSnapshotUrl,
+  presetVersionUrl,
+  type DownloadSource,
+} from './lib/download-source.ts';
 import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { errorMessage } from './lib/errors.ts';
 
@@ -37,11 +43,14 @@ export const PRESET_VERSION_API_URL =
 export const PRESET_SNAPSHOT_API_URL = (version: string): string =>
   `https://api.github.com/repos/muyangplus/dawn-tick-presets/contents/snapshot/presets-${version}.json`;
 
-/** 预设数据的实际来源：`raw` 为 raw.githubusercontent.com 直连，`api` 为 api.github.com 回退。 */
+/** 预设数据的实际来源：`raw` 为 raw.githubusercontent.com / gitee.com 直连，`api` 为 contents 接口回退。 */
 export type PresetRemoteSource = 'raw' | 'api';
 
 /** GitHub 接口的 accept（raw 直连沿用 application/json）。 */
 const GITHUB_API_ACCEPT = 'application/vnd.github+json';
+
+/** 两个下载源互为回退。 */
+const OTHER_SOURCE: Record<DownloadSource, DownloadSource> = { github: 'gitee', gitee: 'github' };
 
 /** 内置预设的版本号：来自 core 的 `preset-version.json`（当前 = 预设仓库 0.1.0）。 */
 export const BUILTIN_PRESET_VERSION: string = CORE_BUILTIN_PRESET_VERSION;
@@ -70,8 +79,18 @@ export interface PresetUpdateStatus {
   available: boolean;
   version: string | null;
   error: string | null;
-  /** 实际取到数据的来源；失败时为 undefined（原有字段的含义与类型不变） */
+  /** 实际取到数据的来源（raw / api）；失败时为 undefined（原有字段的含义与类型不变） */
   source?: PresetRemoteSource;
+  /** 实际使用的下载源：Gitee 或 GitHub */
+  downloadSource?: DownloadSource;
+}
+
+/** 预设取源选项：缺省走 GitHub + 同源 raw→API，保持既有调用点的行为。 */
+export interface PresetFetchOptions {
+  /** 首选下载源 */
+  source?: DownloadSource;
+  /** 首选源整条链路失败后是否回退另一个源（应用内自动模式传 true） */
+  fallback?: boolean;
 }
 
 /** 当前应当使用的预设来源。 */
@@ -173,11 +192,41 @@ function requireJsonVersion(value: unknown): string | null {
 interface PresetFetchSource {
   kind: PresetRemoteSource;
   url: string;
+  /** 这条地址属于哪个下载源：界面与结果要标明 Gitee / GitHub */
+  downloadSource: DownloadSource;
 }
 
 interface PresetFetchResult {
   value: unknown;
   source: PresetRemoteSource;
+  downloadSource: DownloadSource;
+}
+
+/** 一个下载源内部的取源顺序：raw 直连 → contents API（base64）。 */
+function sourcesOf(kind: 'version' | 'snapshot', source: DownloadSource, version: string): PresetFetchSource[] {
+  if (kind === 'version') {
+    return [
+      { kind: 'raw', url: presetVersionUrl(source), downloadSource: source },
+      { kind: 'api', url: presetContentsUrl(source, 'version.json'), downloadSource: source },
+    ];
+  }
+  const path = `snapshot/presets-${version}.json`;
+  return [
+    { kind: 'raw', url: presetSnapshotUrl(source, version), downloadSource: source },
+    { kind: 'api', url: presetContentsUrl(source, path), downloadSource: source },
+  ];
+}
+
+/** 取源计划：首选源整条链路 → （允许时）另一个源整条链路。 */
+export function presetSourcesFor(
+  kind: 'version' | 'snapshot',
+  options: PresetFetchOptions = {},
+  version = '',
+): PresetFetchSource[] {
+  const primary = options.source ?? 'github';
+  const sources = sourcesOf(kind, primary, version);
+  if (options.fallback !== true) return sources;
+  return [...sources, ...sourcesOf(kind, OTHER_SOURCE[primary], version)];
 }
 
 /** base64 → UTF-8 文本。优先 `atob`（浏览器与 Node 24 都有），没有时退回 Node 的 Buffer。 */
@@ -229,7 +278,7 @@ async function readPresetJson(
       if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
       const payload: unknown = await response.json();
       const value = source.kind === 'api' ? parseContentsPayload(payload) : payload;
-      return { value, source: source.kind };
+      return { value, source: source.kind, downloadSource: source.downloadSource };
     } catch (cause: unknown) {
       lastError = describeFetchError(cause);
     }
@@ -237,24 +286,26 @@ async function readPresetJson(
   throw new Error(lastError ?? '无法连接预设源');
 }
 
-/** 检查有没有更新的预设版本：取源 raw 直连 → api contents，都失败时收敛为可读 error、不向界面抛出。 */
+/** 检查有没有更新的预设版本：按下载源 raw → api，允许时再回退另一个源；失败收敛为可读 error、不向界面抛出。 */
 export async function checkPresetUpdate(options: {
   cachedVersion: string;
   fetchImpl?: typeof fetch;
+  /** 首选下载源；缺省 GitHub（旧调用点行为不变） */
+  source?: DownloadSource;
+  /** 首选源整条链路失败后是否回退另一个源（自动模式传 true） */
+  fallback?: boolean;
 }): Promise<PresetUpdateStatus> {
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   if (typeof doFetch !== 'function') {
     return { available: false, version: null, error: '当前环境无法联网检查预设更新' };
   }
+  const fetchOptions: PresetFetchOptions = {
+    ...(options.source === undefined ? {} : { source: options.source }),
+    ...(options.fallback === undefined ? {} : { fallback: options.fallback }),
+  };
   let result: PresetFetchResult;
   try {
-    result = await readPresetJson(
-      [
-        { kind: 'raw', url: PRESET_VERSION_URL },
-        { kind: 'api', url: PRESET_VERSION_API_URL },
-      ],
-      doFetch,
-    );
+    result = await readPresetJson(presetSourcesFor('version', fetchOptions), doFetch);
   } catch (cause: unknown) {
     // 文案已是可读句子（最后一条来源的原因，网络类已包成「无法连接预设源（…）」），不再二次包装
     return { available: false, version: null, error: errorMessage(cause) };
@@ -276,11 +327,16 @@ export async function checkPresetUpdate(options: {
     version: latest,
     error: null,
     source: result.source,
+    downloadSource: result.downloadSource,
   };
 }
 
 /** 下载并校验指定版本的快照：结构、HTTP 或哈希问题都抛可读错误，调用方回退内置。 */
-export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): Promise<PresetSnapshot> {
+export async function fetchSnapshot(
+  version: string,
+  fetchImpl?: typeof fetch,
+  options: PresetFetchOptions = {},
+): Promise<PresetSnapshot> {
   if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version.trim())) {
     throw new Error(`预设版本号不合法：${version}`);
   }
@@ -290,13 +346,7 @@ export async function fetchSnapshot(version: string, fetchImpl?: typeof fetch): 
   const trimmed = version.trim();
   let parsed: unknown;
   try {
-    const result = await readPresetJson(
-      [
-        { kind: 'raw', url: PRESET_SNAPSHOT_URL(trimmed) },
-        { kind: 'api', url: PRESET_SNAPSHOT_API_URL(trimmed) },
-      ],
-      doFetch,
-    );
+    const result = await readPresetJson(presetSourcesFor('snapshot', options, trimmed), doFetch);
     parsed = result.value;
   } catch (cause: unknown) {
     throw new Error(`预设快照下载失败：${errorMessage(cause)}`);

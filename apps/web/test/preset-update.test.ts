@@ -900,3 +900,116 @@ test('索引：schemaVersion 高于本版能消费的版本时提示升级', () 
   index['schemaVersion'] = PRESET_SCHEMA_VERSION + 1;
   assert.match(String(describePresetIndexProblem(index)), /schemaVersion 2.*请升级应用/);
 });
+
+// —— 预设双下载源：Gitee raw → Gitee API → （自动模式）GitHub ——
+
+const GITEE_PRESET_VERSION_RAW = 'https://gitee.com/muyangplus/dawn-tick-presets/raw/main/version.json';
+const GITEE_PRESET_VERSION_API =
+  'https://gitee.com/api/v5/repos/muyangplus/dawn-tick-presets/contents/version.json';
+const giteePresetSnapshotRaw = (version: string): string =>
+  `https://gitee.com/muyangplus/dawn-tick-presets/raw/main/snapshot/presets-${version}.json`;
+const GITEE_PRESET_SNAPSHOT_API = (version: string): string =>
+  `https://gitee.com/api/v5/repos/muyangplus/dawn-tick-presets/contents/snapshot/presets-${version}.json`;
+
+test('checkPresetUpdate：指定 Gitee 时走 Gitee raw 并在结果里标明来源', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    source: 'gitee',
+    fetchImpl: async (input) => {
+      seen.push(String(input));
+      return jsonResponse({ version: '1.1.0', schemaVersion: 1 });
+    },
+  });
+  assert.deepEqual(seen, [GITEE_PRESET_VERSION_RAW]);
+  assert.equal(status.available, true);
+  assert.equal(status.version, '1.1.0');
+  assert.equal(status.source, 'raw');
+  assert.equal(status.downloadSource, 'gitee');
+});
+
+test('checkPresetUpdate：Gitee raw 失败后回退 Gitee API contents（base64）', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    source: 'gitee',
+    fetchImpl: async (input) => {
+      const url = String(input);
+      seen.push(url);
+      if (url === GITEE_PRESET_VERSION_RAW) throw new Error('fetch failed: gitee raw');
+      return contentsResponse({ version: '1.2.0', schemaVersion: 1 });
+    },
+  });
+  assert.deepEqual(seen, [GITEE_PRESET_VERSION_RAW, GITEE_PRESET_VERSION_API]);
+  assert.equal(status.version, '1.2.0');
+  assert.equal(status.source, 'api');
+  assert.equal(status.downloadSource, 'gitee');
+});
+
+test('checkPresetUpdate：自动模式 Gitee 整条链路失败后回退 GitHub', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    source: 'gitee',
+    fallback: true,
+    fetchImpl: async (input) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.startsWith('https://gitee.com/')) return jsonResponse({}, false, 404);
+      return jsonResponse({ version: '1.3.0', schemaVersion: 1 });
+    },
+  });
+  assert.deepEqual(seen, [
+    GITEE_PRESET_VERSION_RAW,
+    GITEE_PRESET_VERSION_API,
+    PRESET_VERSION_URL,
+  ]);
+  assert.equal(status.version, '1.3.0');
+  assert.equal(status.downloadSource, 'github', '回退后标明实际源');
+});
+
+test('checkPresetUpdate：手动指定不回退另一个源', async () => {
+  const seen: string[] = [];
+  const status = await checkPresetUpdate({
+    cachedVersion: '1.0.0',
+    source: 'gitee',
+    fetchImpl: async (input) => {
+      seen.push(String(input));
+      return jsonResponse({}, false, 404);
+    },
+  });
+  assert.deepEqual(seen, [GITEE_PRESET_VERSION_RAW, GITEE_PRESET_VERSION_API]);
+  assert.equal(status.available, false);
+  assert.equal(status.error, '预设源返回 404');
+});
+
+test('fetchSnapshot：Gitee raw 下载快照并通过哈希校验', async () => {
+  const seen: string[] = [];
+  const snapshot = await fetchSnapshot('1.1.0', async (input) => {
+    seen.push(String(input));
+    return jsonResponse(DEMO_SNAPSHOT);
+  }, { source: 'gitee' });
+  assert.deepEqual(seen, [giteePresetSnapshotRaw('1.1.0')]);
+  assert.equal(snapshot.version, '1.1.0');
+  assert.equal(snapshot.hash, DEMO_SNAPSHOT.hash);
+});
+
+test('fetchSnapshot：Gitee raw 失败回退 Gitee API，再失败时（自动模式）回退 GitHub', async () => {
+  const seen: string[] = [];
+  const snapshot = await fetchSnapshot(
+    '1.1.0',
+    async (input) => {
+      const url = String(input);
+      seen.push(url);
+      if (url.startsWith('https://gitee.com/')) return jsonResponse({}, false, 404);
+      return jsonResponse(DEMO_SNAPSHOT);
+    },
+    { source: 'gitee', fallback: true },
+  );
+  assert.deepEqual(seen, [
+    giteePresetSnapshotRaw('1.1.0'),
+    GITEE_PRESET_SNAPSHOT_API('1.1.0'),
+    PRESET_SNAPSHOT_URL('1.1.0'),
+  ]);
+  assert.equal(snapshot.version, '1.1.0');
+});

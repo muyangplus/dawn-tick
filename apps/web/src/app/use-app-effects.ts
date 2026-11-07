@@ -9,6 +9,7 @@ import { ensureStartupPermissions } from '../permissions.ts';
 import { markNotifyAsked } from '../notify.ts';
 import { isFallbackStorage } from '../db/fallback.ts';
 import { checkForUpdate, resolveReceiveBeta } from '../update.ts';
+import { resolveDownloadSource } from '../lib/download-source.ts';
 import { CHANNEL, appVersion } from '../channel.ts';
 import type { AppData } from '../data.ts';
 import type { NoticeDismissOptions } from '../components/app-dialogs.tsx';
@@ -131,10 +132,20 @@ export function useAppEffects(input: {
     autoChecked.current = true;
     let cancelled = false;
     void (async () => {
+      // 与手动检查共用下载源解析：自动模式探测一次（会话缓存），手动指定直接用它
+      const doFetch = globalThis.fetch;
+      const resolved =
+        typeof doFetch === 'function'
+          ? await resolveDownloadSource(settings.downloadSource, doFetch)
+          : null;
+      if (cancelled) return;
       const status = await checkForUpdate({
         channel: CHANNEL,
         receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
         currentVersion: appVersion(),
+        ...(resolved === null ? {} : { source: resolved.source }),
+        // 选中的源失败时回退另一个源：Gitee 暂无 Releases 时也能拿到更新
+        fallback: true,
       });
       if (cancelled || !status.available) return;
       // 忽略只针对那一个版本：远端出了更高版本仍要自动提示

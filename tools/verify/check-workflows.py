@@ -26,6 +26,8 @@ PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""']
 PUBLISH_FULL_CHANGELOG_REQUIRED = ['**Full Changelog**: https://github.com/%s/compare/%s...%s', 'BODY_FILE']
 # 标签已存在时不传 --target：附注标签对象不是有效目标
 PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
+# Gitee 发布同步：GitHub Actions 构建完后双写 Gitee；没配 token 时跳过
+PUBLISH_GITEE_REQUIRED = ['tools/release/publish-gitee.mjs', 'GITEE_TOKEN', 'GITEE_OWNER', 'GITEE_REPO']
 # 便携包说明：数据在程序所在目录，不是 %LOCALAPPDATA%
 PUBLISH_PORTABLE_README_REQUIRED = ['数据与日志都在本目录']
 PUBLISH_PORTABLE_README_FORBIDDEN = ['数据与日志目录：%LOCALAPPDATA%']
@@ -48,6 +50,7 @@ def check_publish_notes(text: str) -> list:
     problems += [f'publish.yml 便携包说明缺少: {item}' for item in PUBLISH_PORTABLE_README_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明写错数据目录: {item}' for item in PUBLISH_PORTABLE_README_FORBIDDEN if item in text]
     problems += [f'publish.yml 缺少更新兜底清单的约束: {item}' for item in PUBLISH_VERSION_JSON_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少 Gitee 发布同步的约束: {item}' for item in PUBLISH_GITEE_REQUIRED if item not in text]
     return problems
 
 

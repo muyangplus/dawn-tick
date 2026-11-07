@@ -33,6 +33,15 @@ export const TODO_SORTS: readonly TodoSort[] = ['start', 'type'];
 export type WalMode = 'auto' | 'on' | 'off';
 export const WAL_MODES: readonly WalMode[] = ['auto', 'on', 'off'];
 
+/** 更新下载源：auto 自动探测延迟，gitee 国内镜像，github 国际源。 */
+export type DownloadSourceChoice = 'auto' | 'gitee' | 'github';
+export const DOWNLOAD_SOURCE_CHOICES: readonly DownloadSourceChoice[] = ['auto', 'gitee', 'github'];
+export const DOWNLOAD_SOURCE_CHOICE_LABEL: Record<DownloadSourceChoice, string> = {
+  auto: '自动检测',
+  gitee: '国内（Gitee）',
+  github: '国际（GitHub）',
+};
+
 /** 界面动效：system 跟随系统「减少动态效果」，full 始终播放，off 全部关闭。 */
 export type MotionMode = 'system' | 'full' | 'off';
 export const MOTION_MODES: readonly MotionMode[] = ['system', 'full', 'off'];
@@ -77,6 +86,8 @@ export interface AppSettings {
   receiveBeta: boolean | null;
   /** 启动后自动检查一次版本更新 */
   autoCheckUpdate: boolean;
+  /** 更新下载源：自动探测 / 国内 Gitee / 国际 GitHub；旧库缺键按 auto */
+  downloadSource: DownloadSourceChoice;
   /** 待办排序：按开始时间 / 按类型 */
   todoSort: TodoSort;
   /** 开发者特性：默认关闭；打开后按开发版特性运行（更新渠道不受影响） */
@@ -133,6 +144,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   widgetVariant: 'bar',
   receiveBeta: null,
   autoCheckUpdate: true,
+  downloadSource: 'auto',
   todoSort: 'start',
   devFeatures: false,
   logEnabled: true,
@@ -179,6 +191,7 @@ const KEYS = {
   widgetVariant: 'widget_variant',
   receiveBeta: 'receive_beta',
   autoCheckUpdate: 'auto_check_update',
+  downloadSource: 'download_source',
   todoSort: 'todo_sort',
   devFeatures: 'dev_features',
   logEnabled: 'log_enabled',
@@ -231,6 +244,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     storage.readMeta(KEYS.widgetVariant),
     storage.readMeta(KEYS.receiveBeta),
     storage.readMeta(KEYS.autoCheckUpdate),
+    storage.readMeta(KEYS.downloadSource),
     storage.readMeta(KEYS.todoSort),
     storage.readMeta(KEYS.devFeatures),
     storage.readMeta(KEYS.logEnabled),
@@ -269,6 +283,7 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     widgetVariant,
     receiveBeta,
     autoCheckUpdate,
+    downloadSource,
     todoSort,
     devFeatures,
     logEnabled,
@@ -328,6 +343,10 @@ export async function readSettings(storage: Storage): Promise<AppSettings> {
     receiveBeta:
       receiveBeta === '1' || receiveBeta === 'true' ? true : receiveBeta === '0' || receiveBeta === 'false' ? false : null,
     autoCheckUpdate: parseBoolean(autoCheckUpdate, DEFAULT_SETTINGS.autoCheckUpdate),
+    downloadSource:
+      downloadSource !== undefined && (DOWNLOAD_SOURCE_CHOICES as readonly string[]).includes(downloadSource)
+        ? (downloadSource as DownloadSourceChoice)
+        : DEFAULT_SETTINGS.downloadSource,
     todoSort:
       todoSort !== undefined && (TODO_SORTS as readonly string[]).includes(todoSort)
         ? (todoSort as TodoSort)
@@ -429,6 +448,12 @@ export async function writeSettings(storage: Storage, patch: Partial<AppSettings
   }
   if (patch.autoCheckUpdate !== undefined) {
     await storage.writeMeta(KEYS.autoCheckUpdate, patch.autoCheckUpdate ? '1' : '0');
+  }
+  if (patch.downloadSource !== undefined) {
+    if (!(DOWNLOAD_SOURCE_CHOICES as readonly string[]).includes(patch.downloadSource)) {
+      throw new RangeError(`下载源只能是 ${DOWNLOAD_SOURCE_CHOICES.join(' / ')}`);
+    }
+    await storage.writeMeta(KEYS.downloadSource, patch.downloadSource);
   }
   if (patch.todoSort !== undefined) {
     if (!(TODO_SORTS as readonly string[]).includes(patch.todoSort)) {

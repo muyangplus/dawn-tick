@@ -32,6 +32,7 @@ import type { UpdateManifest, UpdateStatus } from '../src/update.ts';
 import { sha256Hex, type UpdateDownloadHost } from '../src/lib/update-download.ts';
 import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
 import { dismissUpdateTask, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
+import { resetDownloadSourceCache } from '../src/lib/download-source.ts';
 import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
@@ -3042,6 +3043,184 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
   );
+
+  // —— 双下载源：默认自动探测 Gitee / GitHub，手动切换后检查更新走选中的源（全程桩 fetch） ——
+  resetDownloadSourceCache();
+  const realSourceFetch = globalThis.fetch;
+  const sourceCalls: string[] = [];
+  const giteeVersionJsonAsset = 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/version.json';
+  const giteeLatestRelease = {
+    tag_name: 'v0.6.5',
+    prerelease: false,
+    draft: false,
+    body: '渠道 release · 来源 main · 提交 abcdef1',
+    assets: [
+      {
+        name: 'DawnTick-0.6.5-release-windows-x64-setup.exe',
+        size: 12,
+        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/asset-1',
+      },
+      { name: 'version.json', browser_download_url: giteeVersionJsonAsset },
+    ],
+  };
+  const giteeDevRelease = {
+    tag_name: 'dev-latest',
+    prerelease: true,
+    draft: false,
+    body: '渠道 dev · 来源 dev · 提交 abcdef1',
+    assets: [
+      {
+        name: 'DawnTick-0.6.6-dev-windows-x64-setup.exe',
+        size: 12,
+        browser_download_url: 'https://gitee.com/muyangplus/dawn-tick/releases/download/dev-latest/asset-7',
+      },
+    ],
+  };
+  const githubDevRelease = {
+    tag_name: 'dev-latest',
+    prerelease: true,
+    draft: false,
+    body: '渠道 dev · 来源 dev · 提交 abcdef1',
+    assets: [
+      {
+        name: 'DawnTick-0.6.6-dev-windows-x64-setup.exe',
+        size: 12,
+        browser_download_url: 'https://example.com/setup.exe',
+      },
+    ],
+  };
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: (input: unknown): Promise<Response> => {
+      const url = String(input);
+      sourceCalls.push(url);
+      if (url === 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/latest') {
+        return Promise.resolve(presetJsonResponse(giteeLatestRelease));
+      }
+      if (url === giteeVersionJsonAsset) return Promise.resolve(presetJsonResponse({ version: '0.6.5' }));
+      if (url === 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/tags/dev-latest') {
+        return Promise.resolve(presetJsonResponse(giteeDevRelease));
+      }
+      if (url === 'https://github.com/muyangplus/dawn-tick/releases/latest/download/version.json') {
+        return Promise.resolve(presetJsonResponse({ version: '0.6.5' }));
+      }
+      if (url === 'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest') {
+        return Promise.resolve(presetJsonResponse(githubDevRelease));
+      }
+      return Promise.resolve(presetJsonResponse({}, false, 404));
+    },
+  });
+  try {
+    // 重新进分组触发自动探测（会话缓存已在上面清空）
+    await openDeviceGroup('本地存储');
+    await openDeviceGroup('更新');
+    const sourceResultLine = (): string =>
+      (view.container.querySelector('[data-role="download-source-result"]')?.textContent ?? '').trim();
+    const sourceSelect = view.container.querySelector<HTMLElement>('[aria-label="下载源"]');
+    check(
+      '更新卡带下载源选择（自动检测 / 国内 Gitee / 国际 GitHub）',
+      sourceSelect !== null && (sourceSelect.textContent ?? '').includes('自动检测'),
+      sourceSelect?.textContent?.trim() ?? '(无)',
+    );
+    // 强制重新探测：不依赖进页面时那一次（可能命中会话缓存或真实网络结果）
+    view.container.querySelector<HTMLElement>('[data-role="redetect-download-source"]')?.click();
+    const detected = await waitFor(
+      () => sourceResultLine().includes('自动：') && !sourceResultLine().includes('不可用'),
+      60,
+    );
+    check(
+      '自动检测并发探测两个源并显示各自耗时',
+      detected && sourceResultLine().includes('Gitee（') && sourceResultLine().includes('GitHub（'),
+      sourceResultLine(),
+    );
+
+    // 手动切到 Gitee：检查更新只请求 gitee.com 的发布接口
+    if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
+    await flush(8);
+    const giteeOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('国内（Gitee）'),
+    );
+    giteeOption?.click();
+    await flush(12);
+    check(
+      '手动切到国内 Gitee 后状态行改为「手动」',
+      sourceResultLine().includes('手动：Gitee'),
+      sourceResultLine(),
+    );
+    sourceCalls.length = 0;
+    const checkButton = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
+    if (checkButton instanceof window.HTMLElement) checkButton.click();
+    await waitFor(() => sourceCalls.some((url) => url.includes('gitee.com/api/v5')), 40);
+    await flush(6);
+    const giteeCheckCalls = [...sourceCalls];
+    check(
+      '手动选 Gitee 后检查更新走 Gitee 发布接口，不请求 GitHub',
+      giteeCheckCalls.some((url) => url === 'https://gitee.com/api/v5/repos/muyangplus/dawn-tick/releases/tags/dev-latest') &&
+        !giteeCheckCalls.some((url) => url.includes('api.github.com')),
+      giteeCheckCalls.join(' / ') || '(无请求)',
+    );
+    const giteeDialog = document.querySelector<HTMLElement>('[data-role="update-dialog"]');
+    check(
+      '更新弹窗显示下载源 Gitee',
+      giteeDialog !== null && (giteeDialog.textContent ?? '').includes('下载源 Gitee'),
+      (giteeDialog?.textContent ?? '').slice(0, 60),
+    );
+    closeUpdatePrompt();
+    dismissUpdateTask();
+    await flush(8);
+
+    // 手动切到 GitHub：检查更新只请求 api.github.com
+    if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
+    await flush(8);
+    const githubOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('国际（GitHub）'),
+    );
+    githubOption?.click();
+    await flush(12);
+    sourceCalls.length = 0;
+    const checkButtonAgain = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
+    if (checkButtonAgain instanceof window.HTMLElement) checkButtonAgain.click();
+    await waitFor(() => sourceCalls.some((url) => url.includes('api.github.com')), 40);
+    await flush(6);
+    const githubCheckCalls = [...sourceCalls];
+    check(
+      '手动选 GitHub 后检查更新走 GitHub 发布接口，不请求 Gitee',
+      githubCheckCalls.some((url) => url === 'https://api.github.com/repos/muyangplus/dawn-tick/releases/tags/dev-latest') &&
+        !githubCheckCalls.some((url) => url.includes('gitee.com')),
+      githubCheckCalls.join(' / ') || '(无请求)',
+    );
+    closeUpdatePrompt();
+    dismissUpdateTask();
+    await flush(8);
+
+    // 重新检测：强制重新探测两个源并回到自动选择
+    if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
+    await flush(8);
+    const autoOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('自动检测'),
+    );
+    autoOption?.click();
+    await flush(12);
+    await waitFor(() => sourceResultLine().includes('自动：'), 40);
+    sourceCalls.length = 0;
+    const redetect = view.container.querySelector<HTMLElement>('[data-role="redetect-download-source"]');
+    redetect?.click();
+    await waitFor(
+      () => sourceCalls.some((url) => url.includes('gitee.com')) && sourceCalls.some((url) => url.includes('github.com')),
+      40,
+    );
+    check(
+      '「重新检测」重新探测两个源并显示自动选择结果',
+      sourceResultLine().includes('自动：') &&
+        sourceCalls.some((url) => url.includes('gitee.com')) &&
+        sourceCalls.some((url) => url.includes('github.com')),
+      `${sourceResultLine()} / ${sourceCalls.join(' / ') || '(无请求)'}`,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', { value: realSourceFetch, configurable: true, writable: true });
+    // 不清理会话缓存：后续分组重挂载直接复用这次桩结果，避免再打真实网络
+  }
   // 开发者特性：默认关，打开后诊断入口出现、关掉后又隐藏
   const devSwitch = view.container.querySelector('[aria-label="开发者特性"]');
   check(
@@ -3599,6 +3778,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     available: true,
     error: null,
     feed: 'beta',
+    source: 'github',
     current: appVersion(),
     latest: '0.5.0',
     manifest: {
@@ -3837,6 +4017,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     available: true,
     error: null,
     feed: 'release',
+    source: 'gitee',
+    fallbackFrom: 'github',
     current: appVersion(),
     latest: '0.5.3',
     manifest: backgroundManifest,
@@ -3845,6 +4027,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     platform: 'windows',
     installKind: 'installed',
     host: slowUpdateHost,
+    source: 'gitee',
   });
   requestUpdatePrompt(backgroundPrompt);
   await flush(2);
@@ -3873,6 +4056,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       backgroundDetail.includes('剩余'),
     backgroundDetail || backgroundTask?.textContent?.trim() || '(无)',
   );
+  const backgroundSource = backgroundTask?.querySelector('[data-role="update-task-source"]')?.textContent ?? '';
+  check('后台任务显示下载来源（Gitee）', backgroundSource.includes('来源 Gitee'), backgroundSource || '(无)');
   releaseSlowChunk?.();
   await flush(8);
   check(
