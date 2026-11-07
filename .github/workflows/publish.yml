@@ -347,6 +347,44 @@ jobs:
         run: |
           gh release delete "$TAG" --yes --cleanup-tag || true
 
+      - name: 检查 Gitee 令牌
+        id: gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          if [ -n "$GITEE_TOKEN" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "未配置 GITEE_TOKEN，跳过 Gitee 发布同步" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 同步到 Gitee 发布
+        if: steps.gitee.outputs.ready == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: muyangplus
+          GITEE_REPO: dawn-tick
+          GITHUB_REPO: muyangplus/dawn-tick
+          OUT_DIR: out
+          NOTES_FILE: ${{ runner.temp }}/release-notes.md
+          # Gitee 仓库附件有容量/数量限制：保留最近 6 个发布 + dev-latest，总量超过 800MB 自动删最旧
+          GITEE_KEEP_RELEASES: '6'
+          GITEE_MAX_TOTAL_BYTES: '838860800'
+        run: |
+          set -o pipefail
+          LOG="$RUNNER_TEMP/publish-gitee.log"
+          if ! node tools/release/publish-gitee.mjs 2>&1 | tee "$LOG"; then
+            mkdir -p ci-debug
+            cp "$LOG" ci-debug/publish-gitee.log
+            git checkout -B ci-debug
+            git add -A ci-debug
+            git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
+              commit -m "ci: Gitee 发布失败日志（自动化提交，仅 ci-debug 分支）" || true
+            git push -f origin HEAD:refs/heads/ci-debug || true
+            exit 1
+          fi
+
       - name: 发布或更新
         run: |
           set -o pipefail
