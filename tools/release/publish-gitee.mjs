@@ -26,6 +26,20 @@ const GITEE_API = 'https://gitee.com/api/v5';
 const DEFAULT_OWNER = 'muyangplus';
 const DEFAULT_REPO = 'dawn-tick';
 const DEFAULT_GITHUB_REPO = 'muyangplus/dawn-tick';
+/** 单请求超时：Gitee 在海外/CI 网络下可能长时间不响应，不能让发布 job 挂住。 */
+const REQUEST_TIMEOUT_MS = 15_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
+/** 整个同步的硬上限：超过就退出，由 workflow 的超时兜底。 */
+const TOTAL_TIMEOUT_MS = 4 * 60_000;
+
+function signalOf(ms) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
 
 /** 需要同步的资产：与发布步骤产出的 out/ 一致（不把 .sha256 单文件带回来）。 */
 export const ASSET_SUFFIXES = ['-windows-x64-setup.exe', '-windows-x64-portable.zip', '-android.apk', '-web.zip'];
@@ -85,7 +99,7 @@ export function planPrune({ releases, incomingBytes, maxBytes, keepTags = [], ke
 async function api(token, path, init = {}) {
   const url = new URL(`${GITEE_API}${path}`);
   url.searchParams.set('access_token', token);
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, signal: signalOf(REQUEST_TIMEOUT_MS) });
   const text = await response.text();
   let body = null;
   try {
@@ -99,10 +113,23 @@ async function api(token, path, init = {}) {
 async function gitee(method, path, token, payload) {
   const init = { method };
   if (payload !== undefined) {
-    init.headers = { 'content-type': 'application/json' };
-    init.body = JSON.stringify(payload);
+    // Gitee v5 的发布接口按表单参数解析；JSON 在部分接口会 400，统一用 form-urlencoded
+    const form = new URLSearchParams();
+    for (const [key, value] of Object.entries(payload)) {
+      if (value === undefined || value === null) continue;
+      form.set(key, String(value));
+    }
+    init.headers = { 'content-type': 'application/x-www-form-urlencoded' };
+    init.body = form.toString();
   }
   return api(token, path, init);
+}
+
+function reason(result) {
+  if (result.body === null) return `HTTP ${result.status}`;
+  if (typeof result.body === 'string') return `HTTP ${result.status}：${result.body.slice(0, 160)}`;
+  const message = result.body?.message ?? result.body?.error;
+  return `HTTP ${result.status}${typeof message === 'string' ? `：${message}` : ''}`;
 }
 
 async function deleteRelease(token, owner, repo, id) {
@@ -138,7 +165,11 @@ async function uploadAsset(token, owner, repo, releaseId, asset) {
   form.append('file', new Blob([data]), asset.name);
   const url = new URL(`${GITEE_API}/repos/${owner}/${repo}/releases/${releaseId}/attach_files`);
   url.searchParams.set('access_token', token);
-  const response = await fetch(url, { method: 'POST', body: form });
+  const response = await fetch(url, {
+    method: 'POST',
+    body: form,
+    signal: signalOf(UPLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`上传 ${asset.name} 失败（${response.status}）：${text.slice(0, 200)}`);
@@ -151,6 +182,7 @@ async function githubReleaseBody({ ghToken, githubRepo, tag }) {
   try {
     const response = await fetch(`https://api.github.com/repos/${githubRepo}/releases/tags/${encodeURIComponent(tag)}`, {
       headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${ghToken}` },
+      signal: signalOf(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) return null;
     return await response.json();
@@ -222,6 +254,12 @@ async function pruneReleases({ token, owner, repo, keepTags, maxBytes, keepRecen
 }
 
 async function main() {
+  // 硬超时：任何一步网络卡住都直接退出，避免 CI 发布 job 挂到 job 级超时
+  const watchdog = setTimeout(() => {
+    console.error('Gitee 同步超过 4 分钟，已中止');
+    process.exit(1);
+  }, TOTAL_TIMEOUT_MS);
+  watchdog.unref?.();
   const args = new Map(
     process.argv
       .slice(2)
@@ -290,16 +328,45 @@ async function main() {
     if (!updated.ok) throw new Error(`更新 Gitee 发布失败（${updated.status}）`);
     await deleteAssets(token, owner, repo, releaseId);
   } else {
-    const created = await gitee('POST', `/repos/${owner}/${repo}/releases`, token, {
-      tag_name: tag,
-      name,
-      body,
-      prerelease,
-      target_commitish: process.env.GITHUB_SHA ?? '',
-    });
-    if (!created.ok) throw new Error(`创建 Gitee 发布失败（${created.status}）：${JSON.stringify(created.body).slice(0, 200)}`);
-    releaseId = created.body?.id;
-    if (typeof releaseId !== 'number') throw new Error('创建 Gitee 发布后没有拿到 id');
+    // 先带 target_commitish（滚动渠道的提交镜像可能还没同步到 Gitee，会失败）；失败再退回不带 commit 创建
+    const basePayload = { tag_name: tag, name, body, prerelease };
+    const commits = [process.env.GITHUB_SHA ?? '', ''];
+    let created = null;
+    const failures = [];
+    for (const target of commits) {
+      const attempt = await gitee('POST', `/repos/${owner}/${repo}/releases`, token, {
+        ...basePayload,
+        ...(target === '' ? {} : { target_commitish: target }),
+      });
+      if (attempt.ok) {
+        created = attempt;
+        break;
+      }
+      failures.push(`${target === '' ? '不带 commit' : `commit ${target.slice(0, 7)}`} → ${reason(attempt)}`);
+      // 已有同名标签时再次创建会冲突：直接读回已有发布
+      if (attempt.status === 409 || attempt.status === 422) {
+        const existingByTag = await getReleaseByTag(token, owner, repo, tag);
+        if (existingByTag !== null) {
+          existing = existingByTag;
+          break;
+        }
+      }
+    }
+    if (existing !== null) {
+      releaseId = existing.id;
+      const updated = await gitee('PATCH', `/repos/${owner}/${repo}/releases/${releaseId}`, token, {
+        name,
+        body,
+        prerelease,
+      });
+      if (!updated.ok) throw new Error(`更新 Gitee 已有发布失败：${reason(updated)}`);
+      await deleteAssets(token, owner, repo, releaseId);
+    } else if (created !== null) {
+      releaseId = created.body?.id;
+    }
+    if (typeof releaseId !== 'number') {
+      throw new Error(`创建 Gitee 发布失败：${failures.join('；')}`);
+    }
   }
 
   for (const asset of assets) await uploadAsset(token, owner, repo, releaseId, asset);

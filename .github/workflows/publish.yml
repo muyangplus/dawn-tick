@@ -347,6 +347,22 @@ jobs:
         run: |
           gh release delete "$TAG" --yes --cleanup-tag || true
 
+      - name: 发布或更新
+        run: |
+          set -o pipefail
+          LOG="$RUNNER_TEMP/publish.log"
+          # 失败时把日志推到 ci-debug 分支：Actions 日志需要仓库权限，公开仓库匿名读不到，用分支自证
+          if ! bash tools/release/publish.sh 2>&1 | tee "$LOG"; then
+            mkdir -p ci-debug
+            cp "$LOG" ci-debug/publish.log
+            git checkout -B ci-debug
+            git add -A ci-debug
+            git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
+              commit -m "ci: 发布失败日志（自动化提交，仅 ci-debug 分支）" || true
+            git push -f origin HEAD:refs/heads/ci-debug || true
+            exit 1
+          fi
+
       - name: 检查 Gitee 令牌
         id: gitee
         env:
@@ -360,6 +376,9 @@ jobs:
           fi
 
       - name: 同步到 Gitee 发布
+        # Gitee 侧失败不阻断 GitHub 发布（发布已在上一步完成），日志推 ci-debug 供排查
+        continue-on-error: true
+        timeout-minutes: 6
         if: steps.gitee.outputs.ready == 'true'
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
@@ -373,30 +392,14 @@ jobs:
           GITEE_MAX_TOTAL_BYTES: '838860800'
         run: |
           set -o pipefail
-          LOG="$RUNNER_TEMP/publish-gitee.log"
+          LOG="$RUNNER_TEMP/publish-gitee.txt"
           if ! node tools/release/publish-gitee.mjs 2>&1 | tee "$LOG"; then
             mkdir -p ci-debug
-            cp "$LOG" ci-debug/publish-gitee.log
+            cp "$LOG" ci-debug/publish-gitee.txt
             git checkout -B ci-debug
-            git add -A ci-debug
+            git add -f ci-debug
             git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
               commit -m "ci: Gitee 发布失败日志（自动化提交，仅 ci-debug 分支）" || true
-            git push -f origin HEAD:refs/heads/ci-debug || true
-            exit 1
-          fi
-
-      - name: 发布或更新
-        run: |
-          set -o pipefail
-          LOG="$RUNNER_TEMP/publish.log"
-          # 失败时把日志推到 ci-debug 分支：Actions 日志需要仓库权限，公开仓库匿名读不到，用分支自证
-          if ! bash tools/release/publish.sh 2>&1 | tee "$LOG"; then
-            mkdir -p ci-debug
-            cp "$LOG" ci-debug/publish.log
-            git checkout -B ci-debug
-            git add -A ci-debug
-            git -c user.name="github-actions" -c user.email="actions@users.noreply.github.com" \
-              commit -m "ci: 发布失败日志（自动化提交，仅 ci-debug 分支）" || true
             git push -f origin HEAD:refs/heads/ci-debug || true
             exit 1
           fi
