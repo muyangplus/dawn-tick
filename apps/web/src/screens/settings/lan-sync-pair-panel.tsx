@@ -1,20 +1,13 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Button } from '../../components/ui/button.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { StatusLine } from '../../components/ui/status-line.tsx';
+import { ScanOverlay } from '../../components/scan/scan-overlay.tsx';
 import { errorMessage } from '../../lib/errors.ts';
+import { parseScannedPayload, scanCodeOnce, stopScanCode, type ScannedPairRequest } from '../../lib/scan.ts';
 import { formatPeerAddress } from '../../lan-sync-protocol.ts';
-import {
-  parsePairPayload,
-  type PairPayload,
-} from '../../lan-pair-payload.ts';
-import {
-  describeScanError,
-  isScanAvailable,
-  scanPairPayload,
-  stopScan,
-} from '../../lan-pair-scan.ts';
+import { parsePairPayload, type PairPayload } from '../../lan-pair-payload.ts';
+import { describeScanError, isScanAvailable, stopScan } from '../../lan-pair-scan.ts';
 
 export interface LanSyncPairPanelProps {
   busy: boolean;
@@ -22,67 +15,41 @@ export interface LanSyncPairPanelProps {
   /** 受控的对方地址与配对码：发现设备的结果会直接填入 */
   peer: string;
   code: string;
+  /** 上一次配对失败的具体原因：在配对面板里保留，不静默 */
+  error?: string | null;
   onPeerChange: (value: string) => void;
   onCodeChange: (value: string) => void;
   /** 地址 / 配对码文本交给父组件校验并发起配对；`name` 来自扫码或粘贴 */
   onPair: (peerText: string, codeText: string, name?: string) => void;
   /** 扫码 / 粘贴过程中的提示（父组件的状态行统一展示） */
   onNote: (text: string) => void;
+  /** 通用扫一扫交来的配对请求：自动填入并发起配对，只消费一次 */
+  pendingPair?: ScannedPairRequest | null;
+  onPendingPairHandled?: (() => void) | undefined;
 }
 
 /**
  * 配对入口：手输地址 + 配对码 / 安卓应用内扫码 / 粘贴标准配对信息。
  *
- * 扫码使用 `@capacitor-mlkit/barcode-scanning` 的相机预览（WebView 后方），本组件画一层
- * 透明覆盖层做提示与取消；解析与自动填入复用 `lan-pair-payload.ts` 的同一套格式。
+ * 扫码与主界面的「扫一扫」共用 `lib/scan.ts` 的同一套相机与解析；扫到标准配对信息
+ * 自动填入并发起配对，扫到其它文本则提示可用主界面「扫一扫」查看。
  */
 export function LanSyncPairPanel({
   busy,
   paired,
   peer,
   code,
+  error = null,
   onPeerChange,
   onCodeChange,
   onPair,
   onNote,
+  pendingPair = null,
+  onPendingPairHandled,
 }: LanSyncPairPanelProps) {
   const [pasteInput, setPasteInput] = useState('');
   const [scanState, setScanState] = useState<'idle' | 'scanning' | 'failed'>('idle');
   const scanAvailable = isScanAvailable();
-  /** 覆盖层挂到 body：扫码时把 #root 隐藏，相机预览才能从 WebView 后面透出来 */
-  const [scanHost] = useState<HTMLElement | null>(() =>
-    typeof document === 'undefined' ? null : document.createElement('div'),
-  );
-
-  useEffect(() => {
-    if (scanHost === null) return;
-    scanHost.setAttribute('data-role', 'lan-sync-scan-host');
-    document.body.append(scanHost);
-    return () => {
-      scanHost.remove();
-    };
-  }, [scanHost]);
-
-  // 开始扫码时透明化页面背景并隐藏主界面；结束时原样恢复
-  useEffect(() => {
-    if (scanState !== 'scanning' || scanHost === null) return;
-    const root = document.getElementById('root');
-    const html = document.documentElement;
-    const body = document.body;
-    const previous = {
-      html: html.style.background,
-      body: body.style.background,
-      root: root?.style.visibility ?? '',
-    };
-    html.style.background = 'transparent';
-    body.style.background = 'transparent';
-    if (root !== null) root.style.visibility = 'hidden';
-    return () => {
-      html.style.background = previous.html;
-      body.style.background = previous.body;
-      if (root !== null) root.style.visibility = previous.root;
-    };
-  }, [scanState, scanHost]);
 
   // 离开页面时一定要关相机，否则预览会留在后台
   useEffect(() => {
@@ -99,6 +66,15 @@ export function LanSyncPairPanel({
     if (autoPair) onPair(peerText, payload.code, payload.name);
   }
 
+  // 通用扫一扫把配对信息交进来：填入并自动配对，然后通知父组件已消费
+  useEffect(() => {
+    if (pendingPair === null) return;
+    applyPayload(pendingPair.payload, true, '扫码结果');
+    onPendingPairHandled?.();
+    // 只在请求 id 变化时消费一次；applyPayload 随渲染重建，不放进依赖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPair]);
+
   function parsePasted(): void {
     const parsed = parsePairPayload(pasteInput);
     if (!parsed.ok) {
@@ -112,16 +88,20 @@ export function LanSyncPairPanel({
     setScanState('scanning');
     onNote('正在打开相机…请在取景框内对准对方屏幕上的二维码');
     try {
-      const text = await scanPairPayload();
+      const text = await scanCodeOnce();
       if (text === null) {
         setScanState('idle');
         onNote('已取消扫码');
         return;
       }
-      const parsed = parsePairPayload(text);
-      if (!parsed.ok) {
-        setScanState('failed');
-        onNote(`扫码结果无法识别：${parsed.error}`);
+      const parsed = parseScannedPayload(text);
+      if (parsed.kind !== 'pair') {
+        setScanState('idle');
+        onNote(
+          parsed.note === undefined
+            ? '扫码结果不是配对信息；可以在主界面「扫一扫」里查看或复制'
+            : `扫码结果不是配对信息：${parsed.note}`,
+        );
         return;
       }
       setScanState('idle');
@@ -134,7 +114,7 @@ export function LanSyncPairPanel({
 
   async function cancelScan(): Promise<void> {
     setScanState('idle');
-    await stopScan();
+    await stopScanCode();
     onNote('已取消扫码');
   }
 
@@ -186,6 +166,11 @@ export function LanSyncPairPanel({
           </Button>
         )}
       </div>
+      {error !== null && error !== '' && (
+        <StatusLine dataRole="lan-sync-pair-error" tone="danger">
+          {error}
+        </StatusLine>
+      )}
       <Field label="粘贴配对信息" hint="链接或 IP:端口 配对码 都行">
         <Input
           data-role="lan-sync-paste"
@@ -208,30 +193,13 @@ export function LanSyncPairPanel({
           扫码没有成功，可以点「重新扫码」再试，或改用粘贴配对信息。
         </StatusLine>
       )}
-      {scanState === 'scanning' &&
-        scanHost !== null &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-50 flex flex-col items-center justify-between bg-transparent p-4"
-            data-role="lan-sync-scan-overlay"
-            role="dialog"
-            aria-label="扫码配对"
-            aria-modal="true"
-          >
-            <div className="mt-10 rounded-md bg-black/60 px-3 py-2 text-sm text-white">
-              将对方屏幕上的二维码放入取景框
-            </div>
-            <div className="mb-6 flex w-full max-w-xs flex-col items-center gap-2 rounded-md bg-black/60 p-3">
-              <span className="text-center text-xs text-white">
-                扫到第一条二维码会自动停止并填入地址与配对码
-              </span>
-              <Button size="sm" variant="secondary" aria-label="取消扫码" onClick={() => void cancelScan()}>
-                取消扫码
-              </Button>
-            </div>
-          </div>,
-          scanHost,
-        )}
+      {scanState === 'scanning' && (
+        <ScanOverlay
+          onCancel={() => void cancelScan()}
+          title="扫码配对"
+          hint="将对方屏幕上的二维码放入取景框"
+        />
+      )}
     </div>
   );
 }

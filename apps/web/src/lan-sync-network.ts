@@ -1,4 +1,5 @@
 import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
+import { errorMessage } from './lib/errors.ts';
 import { invokeNative } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { logWarn } from './log.ts';
@@ -212,32 +213,48 @@ export function setLanNetworkListerForTests(lister: LanNetworkLister | null): vo
   listOverride = lister;
 }
 
+/** 候选网络 + 可读错误：Android 在权限/ROM 异常时不再把失败伪装成「没有网络」。 */
+export interface LanNetworkListResult {
+  networks: LanNetwork[];
+  error: string | null;
+}
+
 /**
  * 列本机候选网络：桌面走 `lan_network_list`，安卓走 `LanSync.networks`；
- * 其它平台或失败时返回空列表（界面退回「自动选择」）。
+ * 其它平台返回空列表且没有错误。原生失败时保留「异常类: message」级别的可读原因。
  */
-export async function listLanNetworks(): Promise<LanNetwork[]> {
+export async function readLanNetworks(): Promise<LanNetworkListResult> {
   if (listOverride !== null) {
     try {
-      return parseLanNetworks(await listOverride());
+      return { networks: parseLanNetworks(await listOverride()), error: null };
     } catch (cause: unknown) {
-      logWarn('lan-sync', '读取本机网络失败', { message: cause instanceof Error ? cause.message : String(cause) });
-      return [];
+      const message = errorMessage(cause, '读取本机网络失败');
+      logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
+      return { networks: [], error: message };
     }
   }
   try {
     if (isDesktopApp()) {
-      return parseLanNetworks(await invokeNative<unknown>('lan_network_list'));
+      return { networks: parseLanNetworks(await invokeNative<unknown>('lan_network_list')), error: null };
     }
     if (isAndroidApp()) {
       const plugin = await loadPlugin<LanSyncPlugin>('LanSync');
-      const result = await plugin?.networks();
-      return parseLanNetworks(result?.networks);
+      if (plugin === null) return { networks: [], error: '没有可用的局域网插件，请重新安装应用' };
+      const result = await plugin.networks();
+      return { networks: parseLanNetworks(result?.networks), error: null };
     }
   } catch (cause: unknown) {
-    logWarn('lan-sync', '读取本机网络失败', {
-      message: cause instanceof Error ? cause.message : String(cause),
-    });
+    const message = errorMessage(cause, '读取本机网络失败');
+    logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
+    return { networks: [], error: message };
   }
-  return [];
+  return { networks: [], error: null };
+}
+
+/**
+ * 列本机候选网络：失败时返回空列表，界面退回「自动选择」。
+ * 需要把失败原因展示给用户时用 `readLanNetworks()`。
+ */
+export async function listLanNetworks(): Promise<LanNetwork[]> {
+  return (await readLanNetworks()).networks;
 }

@@ -4,9 +4,12 @@ import { StatusLine, type StatusMessage } from '../../components/ui/status-line.
 import { toast } from '../../components/ui/toaster.tsx';
 import { errorMessage } from '../../lib/errors.ts';
 import { useAction } from '../../lib/action.ts';
+import { isAndroidApp } from '../../lib/capabilities.ts';
+import type { ScannedPairRequest } from '../../lib/scan.ts';
 import { logWarn } from '../../log.ts';
 import { copyText } from '../../system-actions.ts';
 import {
+  LAN_SERVER_START_HINT,
   LAN_SYNC_POLL_INTERVAL_MS,
   applyLanReply,
   canServeLanSync,
@@ -26,7 +29,7 @@ import {
 } from '../../lan-pair-payload.ts';
 import {
   defaultLanNetwork,
-  listLanNetworks,
+  readLanNetworks,
   readStoredLanHost,
   resolveLanHost,
   saveStoredLanHost,
@@ -49,6 +52,9 @@ export interface LanSyncBlockProps {
   onSettingsReplaced: () => Promise<void>;
   /** 拉取写入了业务数据后刷新界面 */
   onChanged: () => void;
+  /** 通用扫一扫交来的配对请求：自动填入并只消费一次 */
+  pendingPair?: ScannedPairRequest | null;
+  onPendingPairHandled?: (() => void) | undefined;
 }
 
 /**
@@ -62,7 +68,13 @@ export interface LanSyncBlockProps {
  * - 可信令牌只把 SHA-256 哈希写入 `app_meta`（`lan_trusted_tokens_v1`），
  *   客户端配对记录在 `lan-pairings.ts` 持久化。
  */
-export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSyncBlockProps) {
+export function LanSyncBlock({
+  storage,
+  onSettingsReplaced,
+  onChanged,
+  pendingPair = null,
+  onPendingPairHandled,
+}: LanSyncBlockProps) {
   const action = useAction();
   const [server, setServer] = useState<LanServerInfo | null>(null);
   const [pairing, setPairing] = useState<Pairing | null>(null);
@@ -72,21 +84,36 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
   /** 本机候选网络与选中地址：多网卡 / VPN 时让用户切到真正的局域网。 */
   const [networks, setNetworks] = useState<LanNetwork[]>([]);
   const [selectedHost, setSelectedHost] = useState<string | null>(null);
+  /** 读取网络失败的可读原因；Android 上仍显示网络行并允许重试 */
+  const [networkError, setNetworkError] = useState<string | null>(null);
   /** 服务端内存态：轮询回调里读，不触发重渲染 */
   const runtime = useRef<LanRuntime>({ pairing: null, tokens: [] });
   const started = useRef(false);
   const savedTokens = useRef<readonly TrustedToken[]>([]);
   const deviceName = useMemo(() => defaultDeviceName(), []);
 
+  /** 读候选网络：Android 失败时把可读原因留在网络行，不静默当成「没有网络」。 */
+  const refreshNetworks = async (): Promise<void> => {
+    const result = await readLanNetworks();
+    setNetworks(result.networks);
+    setNetworkError(result.error);
+    setSelectedHost((current) => resolveLanHost(result.networks, current ?? readStoredLanHost()));
+    if (result.error !== null) {
+      logWarn('lan-sync', '读取本机网络失败', { message: result.error });
+      setStatus(said(`读取本机网络失败：${result.error}`));
+    }
+  };
+
   // 进来先读候选网络：默认选首选局域网，用户上次选过的地址优先
   useEffect(() => {
     if (!canServeLanSync()) return;
     let cancelled = false;
     void (async () => {
-      const list = await listLanNetworks();
+      const result = await readLanNetworks();
       if (cancelled) return;
-      setNetworks(list);
-      setSelectedHost(resolveLanHost(list, readStoredLanHost()));
+      setNetworks(result.networks);
+      setNetworkError(result.error);
+      setSelectedHost(resolveLanHost(result.networks, readStoredLanHost()));
     })();
     return () => {
       cancelled = true;
@@ -137,18 +164,20 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
     };
   }, [server, storage]);
 
-  async function startPairing(): Promise<void> {
+  async function startPairing(hostOverride?: string): Promise<void> {
+    const host = hostOverride ?? selectedNetwork?.address;
     await action.run({
       scope: 'lan-sync',
       label: '正在开启局域网配对…',
       fail: false,
       task: async () => {
-        const result = await startLanServer({ host: selectedNetwork?.address });
+        const result = await startLanServer(host === undefined ? {} : { host });
         if (!result.ok || result.info === null) {
           const message = result.error ?? '开启配对失败：请确认本机已连上 Wi-Fi 或有线网络';
+          const shown = `${message}；${LAN_SERVER_START_HINT}`;
           setStartFailed(true);
-          setStatus(said(message));
-          toast.error(message);
+          setStatus(said(shown));
+          toast.error(shown);
           return;
         }
         // 服务端启动时加载已持久化的可信令牌（只含哈希）
@@ -196,17 +225,18 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
     setStatus(said(`已生成新配对码 ${next.code}（5 分钟内有效）`));
   }
 
-  /** 切换网络：记住地址；已开配对时先停掉，提示用户用新地址重新开启。 */
+  /** 切换网络：记住地址；已开配对时自动停掉并用新地址重启监听。 */
   async function changeNetwork(address: string): Promise<void> {
     const network = networks.find((item) => item.address === address) ?? null;
     if (network === null || address === selectedNetwork?.address) return;
     setSelectedHost(address);
     saveStoredLanHost(address);
     if (server !== null) {
+      // 先停旧监听再按新地址重启：广播与展示地址都跟着换
       await stopPairing();
-      const message = `已切换网络：${network.address}；监听地址已变化，请重新开启配对`;
+      const message = `已切换网络：${network.address}，正在按新地址重启监听…`;
       setStatus(said(message));
-      toast.success('已切换网络，请重新开启配对');
+      await startPairing(network.address);
       return;
     }
     setStatus(said(`已切换网络：${network.address}`));
@@ -240,6 +270,8 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
           tokens={tokens}
           networks={networks}
           selectedHost={selectedHost}
+          alwaysShowNetwork={isAndroidApp()}
+          networkError={networkError}
           failed={startFailed}
           busy={action.busy}
           deviceName={deviceName}
@@ -247,6 +279,7 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
           onStop={() => void stopPairing()}
           onNewCode={newPairingCode}
           onChangeNetwork={(address) => void changeNetwork(address)}
+          onRefreshNetworks={() => void refreshNetworks()}
           onCopy={() => void copyPairing()}
         />
       ) : (
@@ -259,6 +292,8 @@ export function LanSyncBlock({ storage, onSettingsReplaced, onChanged }: LanSync
         self={server === null ? null : { host: server.host, port: server.port }}
         onSettingsReplaced={onSettingsReplaced}
         onChanged={onChanged}
+        pendingPair={pendingPair}
+        onPendingPairHandled={onPendingPairHandled}
       />
       {status !== null && (
         <StatusLine dataRole="lan-sync-status" at={status.at}>

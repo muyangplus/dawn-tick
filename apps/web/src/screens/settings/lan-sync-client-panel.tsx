@@ -6,41 +6,18 @@ import { toast } from '../../components/ui/toaster.tsx';
 import { fail } from '../../copy/zh.ts';
 import { useAction } from '../../lib/action.ts';
 import {
-  LAN_CLIENT_IDLE,
-  LAN_SCOPES,
-  LAN_SCOPE_LABEL,
-  defaultDeviceName,
-  formatPeerAddress,
-  pairWithPeer,
-  parsePeerAddress,
-  pushToPeer,
-  reduceLanClient,
-  sessionExpired,
-  type LanScope,
-  type LanSession,
+  LAN_CLIENT_IDLE, LAN_SCOPES, LAN_SCOPE_LABEL, checkPeerReachable, defaultDeviceName,
+  formatPeerAddress, pairWithPeer, parsePeerAddress, pushToPeer, reduceLanClient,
+  sessionExpired, type LanScope, type LanSession,
 } from '../../lan-sync.ts';
+import type { ScannedPairRequest } from '../../lib/scan.ts';
 import {
-  dedupeDiscoveryPeers,
-  filterDiscoverySelf,
-  scanLanPeers,
-  type LanDiscoveryPeer,
+  dedupeDiscoveryPeers, filterDiscoverySelf, scanLanPeers, type LanDiscoveryPeer,
 } from '../../lan-sync-discovery.ts';
+import { loadAutoConfig, saveAutoConfig, type LanAutoConfig, type LanAutoMode } from '../../lan-sync-auto.ts';
+import { applyLanPreview, previewPullFromPeer, type LanPreviewResult } from '../../lan-sync-preview.ts';
 import {
-  loadAutoConfig,
-  saveAutoConfig,
-  type LanAutoConfig,
-  type LanAutoMode,
-} from '../../lan-sync-auto.ts';
-import {
-  applyLanPreview,
-  previewPullFromPeer,
-  type LanPreviewResult,
-} from '../../lan-sync-preview.ts';
-import {
-  createLanPairingStore,
-  createLanPairing,
-  markLanPairingSynced,
-  upsertLanPairing,
+  createLanPairingStore, createLanPairing, markLanPairingSynced, upsertLanPairing,
 } from '../../lan-pairings.ts';
 import { LanAutoPanel } from './lan-sync-auto-panel.tsx';
 import { LanDiscoveryPanel } from './lan-sync-discovery-panel.tsx';
@@ -56,6 +33,9 @@ export interface LanSyncClientPanelProps {
   self: { host: string; port: number } | null;
   onSettingsReplaced: () => Promise<void>;
   onChanged: () => void;
+  /** 通用扫一扫交来的配对请求：自动填入并只消费一次 */
+  pendingPair?: ScannedPairRequest | null;
+  onPendingPairHandled?: (() => void) | undefined;
 }
 
 /**
@@ -65,7 +45,14 @@ export interface LanSyncClientPanelProps {
  * 服务端与二维码在父组件；配对成功后长期令牌写入 `app_meta`（Web 用 localStorage），
  * 由 `lan-pairings.ts` 负责持久化与 30 秒探测，本组件只管界面状态。
  */
-export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChanged }: LanSyncClientPanelProps) {
+export function LanSyncClientPanel({
+  storage,
+  self,
+  onSettingsReplaced,
+  onChanged,
+  pendingPair = null,
+  onPendingPairHandled,
+}: LanSyncClientPanelProps) {
   const action = useAction();
   const [auto, setAuto] = useState<LanAutoConfig>(loadAutoConfig);
   const [peerInput, setPeerInput] = useState('');
@@ -172,10 +159,20 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
       fail: false,
       task: async () => {
         // 提交给服务端的设备名是本机名；扫码/粘贴里的 name 是「对方」的展示名，只用于本地记录
+        const reachable = await checkPeerReachable(peer);
+        if (!reachable.ok) {
+          const detail = reachable.hint ?? '无法连接对方';
+          const error = reachable.error === null || reachable.error === '' ? detail : `${detail}（${reachable.error}）`;
+          dispatch({ type: 'failed', error });
+          note(`配对失败：${error}`);
+          toast.error(fail('配对', error, '请确认两端在同一 Wi-Fi 后重试'));
+          return;
+        }
         const result = await pairWithPeer(peer, codeText, Date.now(), defaultDeviceName());
         if (!result.ok || result.session === null) {
           const error = result.error ?? '配对失败';
           dispatch({ type: 'failed', error });
+          note(`配对失败：${error}`);
           toast.error(fail('配对', error, '请核对对方地址与配对码'));
           return;
         }
@@ -301,10 +298,13 @@ export function LanSyncClientPanel({ storage, self, onSettingsReplaced, onChange
         paired={client.phase === 'paired'}
         peer={peerInput}
         code={codeInput}
+        error={client.phase === 'failed' ? client.error : null}
         onPeerChange={setPeerInput}
         onCodeChange={setCodeInput}
         onPair={(peer, code, name) => void pairPeer(peer, code, name)}
         onNote={note}
+        pendingPair={pendingPair}
+        onPendingPairHandled={onPendingPairHandled}
       />
       {client.session !== null && (
         <span className="text-xs text-muted" data-role="lan-sync-session">

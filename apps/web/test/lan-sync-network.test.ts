@@ -11,6 +11,7 @@ import {
   lanAddressRank,
   listLanNetworks,
   parseLanNetworks,
+  readLanNetworks,
   readStoredLanHost,
   resolveLanHost,
   saveStoredLanHost,
@@ -181,6 +182,17 @@ test('原生列表读取：桌面调 lan_network_list（本例用测试桩覆盖
   });
   try {
     assert.deepEqual(await listLanNetworks(), []);
+    const failed = await readLanNetworks();
+    assert.deepEqual(failed.networks, []);
+    assert.equal(failed.error, '枚举失败');
+  } finally {
+    setLanNetworkListerForTests(null);
+  }
+  setLanNetworkListerForTests(async () => [WIFI]);
+  try {
+    const ok = await readLanNetworks();
+    assert.equal(ok.error, null);
+    assert.equal(ok.networks[0]?.address, '192.168.1.23');
   } finally {
     setLanNetworkListerForTests(null);
   }

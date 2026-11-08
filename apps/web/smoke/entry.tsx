@@ -52,6 +52,7 @@ import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
 import { formatPairPayload } from '../src/lan-pair-payload.ts';
 import { setPairScannerForTests } from '../src/lan-pair-scan.ts';
 import { LanSyncBlock } from '../src/screens/settings/lan-sync-block.tsx';
+import { LanSyncServerPanel } from '../src/screens/settings/lan-sync-server-panel.tsx';
 import {
   defaultLanNetwork,
   formatLanNetworkLine,
@@ -4485,6 +4486,197 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   } catch {
     // localStorage 不可用：无需清理
   }
+
+  // —— Android 网络行：没有候选也显示空态与刷新；多候选可切换并触发重启 ——
+  let networkRefreshed = false;
+  let networkPicked = '';
+  const emptyNetworkView = mount(
+    <LanSyncServerPanel
+      server={null}
+      pairing={null}
+      tokens={[]}
+      networks={[]}
+      selectedHost={null}
+      alwaysShowNetwork
+      failed={false}
+      busy={false}
+      deviceName="测试手机"
+      onStart={() => {}}
+      onStop={() => {}}
+      onNewCode={() => {}}
+      onChangeNetwork={() => {}}
+      onRefreshNetworks={() => {
+        networkRefreshed = true;
+      }}
+      onCopy={() => {}}
+    />,
+  );
+  await flush(6);
+  const emptyNetwork = emptyNetworkView.container.querySelector('[data-role="lan-sync-network-empty"]');
+  const refreshNetwork = emptyNetworkView.container.querySelector<HTMLElement>(
+    'button[aria-label="刷新本机网络"]',
+  );
+  refreshNetwork?.click();
+  await flush(4);
+  check(
+    'Android 网络行始终显示：无候选给空态文案与刷新按钮',
+    emptyNetwork !== null &&
+      (emptyNetwork.textContent ?? '').includes('未发现局域网地址') &&
+      (emptyNetwork.textContent ?? '').includes('Wi-Fi/热点') &&
+      refreshNetwork !== null &&
+      networkRefreshed,
+    emptyNetwork?.textContent?.trim() ?? '(无空态)',
+  );
+  emptyNetworkView.root.unmount();
+
+  const networkOptions: LanNetwork[] = [
+    { name: 'WLAN', address: '192.168.1.23', isLan: true, kind: 'wifi', preferred: 0 },
+    { name: '以太网', address: '10.0.0.8', isLan: true, kind: 'ethernet', preferred: 1 },
+  ];
+  const switchNetworkView = mount(
+    <LanSyncServerPanel
+      server={null}
+      pairing={null}
+      tokens={[]}
+      networks={networkOptions}
+      selectedHost="192.168.1.23"
+      alwaysShowNetwork
+      failed={false}
+      busy={false}
+      deviceName="测试手机"
+      onStart={() => {}}
+      onStop={() => {}}
+      onNewCode={() => {}}
+      onChangeNetwork={(address) => {
+        networkPicked = address;
+      }}
+      onRefreshNetworks={() => {}}
+      onCopy={() => {}}
+    />,
+  );
+  await flush(6);
+  const networkTrigger = switchNetworkView.container.querySelector<HTMLElement>(
+    '[data-role="lan-sync-network-select"]',
+  );
+  networkTrigger?.dispatchEvent(pointerEvent('pointerdown', { pointerId: 91, button: 0 }));
+  networkTrigger?.click();
+  await flush(10);
+  const networkOptionLabels = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) =>
+    (item.textContent ?? '').trim(),
+  );
+  const ethernetOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+    (item.textContent ?? '').includes('10.0.0.8'),
+  );
+  ethernetOption?.click();
+  await flush(8);
+  check(
+    'Android 网络下拉可看到多块网卡并切换地址',
+    networkTrigger !== null &&
+      networkOptionLabels.some((label) => label.includes('192.168.1.23 · Wi-Fi')) &&
+      networkOptionLabels.some((label) => label.includes('10.0.0.8 · 有线网络')) &&
+      networkPicked === '10.0.0.8',
+    `候选=${networkOptionLabels.join(' / ') || '(无)'} 选择=${networkPicked || '(无)'}`,
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(4);
+  switchNetworkView.root.unmount();
+
+  // —— 通用扫一扫：主界面入口 → 扫到配对信息 → 跳设备页并自动配对 ——
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：不影响断言
+  }
+  const universalPairText = formatPairPayload({
+    host: '192.168.1.77',
+    port: 8765,
+    code: '222222',
+    name: '扫码电脑',
+  });
+  const universalToken = 'c'.repeat(32);
+  const originalUniversalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = new URL(typeof input === 'string' ? input : String(input));
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (url.pathname === '/ping') return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (url.pathname === '/pair' && method === 'POST') {
+      return new Response(
+        JSON.stringify({ token: universalToken, expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    if (url.pathname === '/pair/refresh') {
+      return new Response(
+        JSON.stringify({ token: universalToken, expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  setPairScannerForTests({ scan: async () => universalPairText, available: true });
+  if (clickByText(view.container, '课表')) await flush(12);
+  const universalScanButton = view.container.querySelector<HTMLElement>('button[aria-label="扫一扫"]');
+  check(
+    '通用扫一扫入口：Android 顶部工具区出现「扫一扫」图标按钮',
+    universalScanButton !== null && universalScanButton.getAttribute('data-role') === 'scan-entry',
+    universalScanButton?.getAttribute('aria-label') ?? '(无入口)',
+  );
+  universalScanButton?.click();
+  const universalPaired = await waitFor(
+    () => view.container.querySelector('[data-role="lan-paired-item"]') !== null,
+    80,
+  );
+  const universalPeer = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+  const universalCode = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-pair-code"]');
+  const universalPairedItem = view.container.querySelector<HTMLElement>('[data-role="lan-paired-item"]');
+  const universalPairings = window.localStorage.getItem('dt.lan.pairings.v1') ?? '';
+  check(
+    '扫一扫识别配对信息：跳到设备页「局域网同步」并自动填入 / 配对',
+    universalPaired &&
+      activeDeviceGroup(view.container) === 'lan' &&
+      universalPeer?.value === '192.168.1.77:8765' &&
+      universalCode?.value === '222222' &&
+      (universalPairedItem?.textContent ?? '').includes('扫码电脑') &&
+      universalPairings.includes('192.168.1.77'),
+    `组=${activeDeviceGroup(view.container)} 地址=${universalPeer?.value ?? '(无)'} 列表=${(universalPairedItem?.textContent ?? '(无)').slice(0, 50)}`,
+  );
+
+  // 普通文本：进入结果面板，显示内容与复制按钮；未知 scheme 带说明
+  if (clickByText(view.container, '课表')) await flush(12);
+  setPairScannerForTests({ scan: async () => 'tel:10086', available: true });
+  view.container.querySelector<HTMLElement>('button[aria-label="扫一扫"]')?.click();
+  const scanResultShown = await waitFor(
+    () => document.querySelector('[data-role="scan-result-text"]') !== null,
+    60,
+  );
+  const scanResultText = document.querySelector<HTMLElement>('[data-role="scan-result-text"]');
+  const scanResultNote = document.querySelector<HTMLElement>('[data-role="scan-result-note"]');
+  const copyScanButton = document.querySelector<HTMLElement>('button[aria-label="复制扫码内容"]');
+  check(
+    '扫一扫识别普通文本：结果面板显示内容、复制与未知 scheme 说明',
+    scanResultShown &&
+      (scanResultText?.textContent ?? '').trim() === 'tel:10086' &&
+      (scanResultNote?.textContent ?? '').includes('暂不支持 tel://') &&
+      copyScanButton !== null,
+    `内容=${scanResultText?.textContent?.trim() ?? '(无)'} 说明=${scanResultNote?.textContent?.trim() ?? '(无)'}`,
+  );
+  document
+    .querySelector<HTMLElement>('button[aria-label="关闭扫码结果"]')
+    ?.click();
+  await flush(6);
+  globalThis.fetch = originalUniversalFetch;
+  setPairScannerForTests(null);
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：无需清理
+  }
+  if (clickByText(view.container, '设备与同步')) await flush(12);
+  check(
+    'Web / 桌面不显示通用扫一扫入口',
+    view.container.querySelector('button[aria-label="扫一扫"]') === null,
+    '',
+  );
 
   check(
     '主区底部留白按底部栏与悬浮按钮高度计算',
