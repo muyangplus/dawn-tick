@@ -5,6 +5,21 @@
 
 ## [未发布]
 
+## [0.6.10] - 2026-11-08（测试版）
+
+### 新增
+
+- 主界面顶部新增通用「扫一扫」入口（Android）：扫到配对链接自动跳到局域网同步并填入地址/配对码发起配对；扫到其它文本进结果面板，可复制、关闭，后续可扩展其它用途
+- 安卓局域网同步的网络行常显：可刷新与切换网络，切换后自动用新地址重启监听；无候选时给出「请确认已连接 Wi-Fi/热点」提示
+- 配对前新增 `GET /ping` 可达性预检（3 秒；旧版本无该接口时按可达继续，兼容新旧互配），`/pair` 增加 8 秒超时，失败保留服务端原文
+- 局域网原生诊断日志：开配对/网络枚举/绑定/广播/组播锁都写入 `diag/native.log`（标签 `DawnTickLanSync`、`DawnTickLanDiscovery`）
+
+### 修复
+
+- 安卓开配对失败/超时：地址失效时回退首选局域网地址，失败原因带异常类与排查提示（Wi-Fi、VPN/代理、同一网段）
+- 扫码后配对不上：连不上时明确提示 AP 隔离/VPN/不同 Wi-Fi，并保留原始错误
+- 近期更新给测试版显示「测试版」标签
+
 ## [0.6.9] - 2026-11-08（测试版）
 ### 修复
 
@@ -298,7 +313,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.9...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.10...dev
+[0.6.10]: https://github.com/muyangplus/dawn-tick/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/muyangplus/dawn-tick/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/muyangplus/dawn-tick/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/muyangplus/dawn-tick/compare/v0.6.6...v0.6.7
