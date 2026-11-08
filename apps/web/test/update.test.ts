@@ -429,7 +429,14 @@ test('beta 的 version.json 网络异常：只回退旧 beta 发布列表，不�
       throw new Error('unexpected');
     },
   });
-  assert.deepEqual(seen, [VERSION_BETA, UPDATE_RELEASES_API]);
+  // beta 渠道会顺带查 release 分支，用来判断是否有更高的正式版；release 缺失不影响 beta 结果
+  assert.deepEqual(seen, [
+    VERSION_BETA,
+    UPDATE_RELEASES_API,
+    VERSION_RELEASE,
+    UPDATE_API_FEEDS.release,
+    UPDATE_FEEDS.release,
+  ]);
   assert.equal(status.latest, '0.3.0', '旧兜底仍保留 beta 列表「取较高者」的语义');
   assert.equal(status.manifest?.channel, 'release');
 });
@@ -585,4 +592,60 @@ test('beta 候选认 beta 预发布与纯版本号预发布：草稿 / rc / 滚�
   ]);
   assert.equal(picked?.channel, 'release', '同号正式版高于预发布');
   assert.equal(picked?.record['tag_name'], 'v0.1.0');
+});
+
+test('beta 渠道：正式版更高时提示正式版更新', async () => {
+  const fetchImpl = (async (input: unknown): Promise<Response> => {
+    const url = String(input);
+    if (url === VERSION_BETA) return manifestResponse(versionBody({ channel: 'beta', version: '0.6.8-beta.1' }));
+    if (url === VERSION_RELEASE) return manifestResponse(versionBody({ channel: 'release', version: '0.6.9' }));
+    return manifestResponse({}, false, 404);
+  }) as unknown as typeof fetch;
+  const status = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.6.8-beta.1',
+    fetchImpl,
+    source: 'github',
+  });
+  assert.equal(status.available, true);
+  assert.equal(status.latest, '0.6.9');
+  assert.equal(releaseChannelOf(status), 'release');
+});
+
+test('beta 渠道：测试版更高时仍提示测试版', async () => {
+  const fetchImpl = (async (input: unknown): Promise<Response> => {
+    const url = String(input);
+    if (url === VERSION_BETA) return manifestResponse(versionBody({ channel: 'beta', version: '0.6.9-beta.2' }));
+    if (url === VERSION_RELEASE) return manifestResponse(versionBody({ channel: 'release', version: '0.6.8' }));
+    return manifestResponse({}, false, 404);
+  }) as unknown as typeof fetch;
+  const status = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.6.8',
+    fetchImpl,
+    source: 'github',
+  });
+  assert.equal(status.available, true);
+  assert.equal(status.latest, '0.6.9-beta.2');
+  assert.equal(releaseChannelOf(status), 'beta');
+});
+
+test('beta 渠道：release 分支缺失时仍按测试版检查', async () => {
+  const fetchImpl = (async (input: unknown): Promise<Response> => {
+    const url = String(input);
+    if (url === VERSION_BETA) return manifestResponse(versionBody({ channel: 'beta', version: '0.6.9-beta.1' }));
+    return manifestResponse({}, false, 404);
+  }) as unknown as typeof fetch;
+  const status = await checkForUpdate({
+    channel: 'beta',
+    receiveBeta: true,
+    currentVersion: '0.6.8',
+    fetchImpl,
+    source: 'github',
+  });
+  assert.equal(status.available, true);
+  assert.equal(status.latest, '0.6.9-beta.1');
+  assert.equal(releaseChannelOf(status), 'beta');
 });

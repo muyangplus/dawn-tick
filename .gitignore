@@ -91,3 +91,5 @@ local.properties
 
 # 临时脚本（轮询/调试）不入库
 tools/tmp-*
+# Gitee 同步令牌（本地维护机用，绝不入库）
+tools/release/.gitee-token

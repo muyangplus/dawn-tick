@@ -5,6 +5,16 @@
 
 ## [未发布]
 
+## [0.6.9] - 2026-11-08
+
+### 修复
+
+- beta 渠道重新支持「更新到更高的正式版」：检查更新时同时比较 beta 与 release 渠道，正式版版本更高就提示正式版；release 镜像分支不存在时仍按测试版检查
+
+### 新增
+
+- 本地立即同步 Gitee 的 CD 命令：`node tools/release/sync-gitee-assets.mjs` 把 assets 仓库的 dev/beta/release 分支直接推到 Gitee，绕开镜像拉取延迟（token 放环境变量或 `tools/release/.gitee-token`）
+
 ## [0.6.8] - 2026-11-08
 
 ### 修复
@@ -293,7 +303,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.8...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.9...dev
+[0.6.9]: https://github.com/muyangplus/dawn-tick/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/muyangplus/dawn-tick/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/muyangplus/dawn-tick/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/muyangplus/dawn-tick/compare/v0.6.5...v0.6.6

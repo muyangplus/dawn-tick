@@ -278,6 +278,33 @@ async function querySource(
   return queryLegacyGitHub(feed, source, currentVersion, doFetch);
 }
 
+/** 同一源上比较 beta 与 release 两个渠道，取版本更高的一份（beta 用户也要能升到更新的正式版）。 */
+function bestAttempt(primary: SourceAttempt, stable: SourceAttempt): SourceAttempt {
+  if (primary.status === null) return stable.status === null ? primary : stable;
+  if (stable.status === null) return primary;
+  const betaLatest = primary.status.latest;
+  const stableLatest = stable.status.latest;
+  if (betaLatest === null) return stable;
+  if (stableLatest === null) return primary;
+  return compareVersions(stableLatest, betaLatest) > 0 ? stable : primary;
+}
+
+/**
+ * beta 渠道同时查 beta 与 release：正式版版本更高时提示正式版，
+ * 否则用测试版候选；release 分支不存在/404 时自然回退到 beta。
+ */
+async function queryBestForFeed(
+  feed: UpdateChannel,
+  source: UpdateSource,
+  currentVersion: string,
+  doFetch: typeof fetch,
+): Promise<SourceAttempt> {
+  const primary = await querySource(feed, source, currentVersion, doFetch);
+  if (feed !== 'beta') return primary;
+  const stable = await querySource('release', source, currentVersion, doFetch);
+  return bestAttempt(primary, stable);
+}
+
 /** 两个源都失败时把两边原因都交出去，用户能看出是哪一侧不可用。 */
 function summarizeFailure(
   requested: UpdateSource,
@@ -301,12 +328,12 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   if (typeof doFetch !== 'function') return { ...base, error: '当前环境无法联网检查更新' };
 
-  const first = await querySource(feed, requested, options.currentVersion, doFetch);
+  const first = await queryBestForFeed(feed, requested, options.currentVersion, doFetch);
   if (first.status !== null) return first.status;
   if (options.fallback !== true) return { ...base, error: first.error };
 
   const other: UpdateSource = requested === 'github' ? 'gitee' : 'github';
-  const second = await querySource(feed, other, options.currentVersion, doFetch);
+  const second = await queryBestForFeed(feed, other, options.currentVersion, doFetch);
   if (second.status !== null) return { ...second.status, fallbackFrom: requested };
   return { ...base, error: summarizeFailure(requested, first.error, other, second.error) };
 }
