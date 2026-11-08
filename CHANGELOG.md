@@ -5,6 +5,21 @@
 
 ## [未发布]
 
+## [0.6.11] - 2026-11-09（测试版）
+
+### 新增
+
+- 帮助模块：引导式步骤 + 实时搜索，覆盖更新与下载源、局域网配对/扫码、备份恢复/数据库修复、教务导入、小组件与悬浮窗、通知权限、数据目录与 WebDAV 等常见问题；桌面侧栏与移动端设置列表均可进入，条目内可「去设置」直达对应分组
+- 更新弹窗精简为唯一主操作「立即更新」：自动下载 → 校验 → 安装/退出替换，次要操作收进「更多」菜单，减少点击与按钮数量
+
+### 变更
+
+- 「设备与同步」页顶部不再放快捷按钮：导出备份/ICS、新建快照、检查更新下沉到对应分组卡片
+
+### 修复
+
+- Windows 便携版更新提示「启动更新脚本失败: 句柄无效 (os error 6)」：启动脚本改用 null 标准句柄，避免 GUI 进程继承无效句柄导致 CreateProcess 失败
+
 ## [0.6.10] - 2026-11-08（测试版）
 
 ### 新增
@@ -313,7 +328,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.10...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.11...dev
+[0.6.11]: https://github.com/muyangplus/dawn-tick/compare/v0.6.10...v0.6.11
 [0.6.10]: https://github.com/muyangplus/dawn-tick/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/muyangplus/dawn-tick/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/muyangplus/dawn-tick/compare/v0.6.7...v0.6.8
