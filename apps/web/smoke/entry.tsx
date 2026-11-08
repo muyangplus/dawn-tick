@@ -4218,7 +4218,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     recentDialog !== null &&
       recentItems.length >= 2 &&
       /v\d+\.\d+\.\d+/.test(recentItems[0]?.textContent ?? '') &&
-      recentItems.some((item) => (item.textContent ?? '').includes('0.6.3')),
+      (recentItems[0]?.textContent ?? '').includes(`v${appVersion()}`) &&
+      recentItems.every((item) => /v\d+\.\d+\.\d+/.test(item.textContent ?? '')),
     `版本 ${recentItems.map((item) => item.textContent?.slice(0, 12)).join(' / ')}`,
   );
   if (clickByText(document.body, '知道了')) await flush(6);
