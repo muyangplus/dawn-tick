@@ -1,6 +1,7 @@
 package com.dawntick.app.lan
 
 import android.util.Log
+import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -17,12 +18,17 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - 方法名与字段名逐字对应 apps/web/src/lib/plugins.ts 的 `LanSyncPlugin` 与
  *   apps/mobile/docs/plugins.contract.md，协议见 apps/mobile/docs/lan-sync.contract.md；
  * - `start` 用通配地址监听，resolve 前确认 socket 已 bind，返回 `{host, port, listening:true}`；
- *   失败时把原始异常 message 原样交给 TS（界面拼「开启配对失败：<原因>」）。
+ *   `host` 未传或已失效时回退 `LanNetworks.preferredAddress()`；仍失败时 reject
+ *   「异常类: message」，界面拼「开启配对失败：<原因>」；
+ * - `networks` 失败不再返回空数组，而是 reject 可读原因，界面显示「读取本机网络失败：…」。
+ *
+ * 诊断：入口参数、网络摘要、bind 成功/失败、广播启动失败都写 `filesDir/diag/native.log`
+ * （标签 `DawnTickLanSync`），真机没有 logcat 时也能导出定位。
  *
  * 卡住的兜底：
  * - `start` 的网络操作在后台线程，另起一个 10 秒看门狗，超时就 reject 一句可照做的文案；
  * - 看门狗与真实结果用同一个 `AtomicBoolean` 抢答，保证 resolve / reject 只发生一次；
- * - UDP 广播启动失败只记日志，不影响监听成功的 resolve（发现是增强能力，不是开配对前提）。
+ * - UDP 广播 / multicast lock 失败只记日志，不影响监听成功的 resolve。
  */
 @CapacitorPlugin(name = "LanSync")
 class LanSyncPlugin : Plugin() {
@@ -32,7 +38,8 @@ class LanSyncPlugin : Plugin() {
     /** 起监听；可选 `host` 指定本机网络地址，缺省自动选首选局域网。 */
     @PluginMethod
     fun start(call: PluginCall) {
-        val host = call.getString("host")
+        val requested = call.getString("host")?.trim()?.takeIf { it.isNotEmpty() }
+        diagInfo("start 入口 host=${requested ?: "(自动选择)"}")
         val settled = AtomicBoolean(false)
         // 绑定 socket 是网络操作：放到后台线程，避免主线程 NetworkOnMainThread
         val watchdog = Thread {
@@ -43,6 +50,7 @@ class LanSyncPlugin : Plugin() {
             }
             if (settled.compareAndSet(false, true)) {
                 Log.w(TAG, "开启局域网配对超时（${START_TIMEOUT_MS}ms）")
+                diagWarn("开启局域网配对超时（${START_TIMEOUT_MS}ms）")
                 call.reject("开启配对超时：请确认已连接 Wi-Fi 后重试")
             }
         }.apply {
@@ -52,10 +60,11 @@ class LanSyncPlugin : Plugin() {
         }
         Thread {
             try {
+                val host = resolveHost(requested)
                 val active = synchronized(lock) {
                     val existing = server
-                    val requested = host?.trim()
-                    if (existing != null && (requested.isNullOrEmpty() || existing.host == requested)) {
+                    if (existing != null && (host == null || existing.host == host)) {
+                        diagInfo("复用现有监听 ${existing.host}:${existing.port}")
                         existing
                     } else {
                         // 与桌面 lan_sync_start 一致：地址变了就先停旧监听再起新的
@@ -63,22 +72,26 @@ class LanSyncPlugin : Plugin() {
                         server = null
                         val started = LanSyncServer.start(host)
                         server = started
+                        diagInfo("监听成功 ${started.host}:${started.port}")
                         started
                     }
                 }
                 // 二期发现：开配对期间广播设备名与 HTTP 端口，不含配对码。
                 // 广播失败不影响开配对：监听与配对码已经可用。
                 runCatching {
-                    LanDiscoveryAdvertiser.start(active.host, active.port, LanDiscoveryCodec.deviceName())
+                    LanDiscoveryAdvertiser.start(context, active.host, active.port, LanDiscoveryCodec.deviceName())
+                    diagInfo("局域网发现广播已启动")
                 }.onFailure { error ->
                     Log.w(TAG, "局域网发现广播启动失败：${error.message ?: error.javaClass.simpleName}")
+                    diagWarn("局域网发现广播启动失败：${NativeLog.describe(error)}")
                 }
                 if (settled.compareAndSet(false, true)) {
                     call.resolve(JSObject().put("host", active.host).put("port", active.port).put("listening", true))
                 }
             } catch (error: Throwable) {
-                val reason = describe(error)
+                val reason = NativeLog.describe(error)
                 Log.w(TAG, "开启局域网配对失败：$reason")
+                diagError("开启局域网配对失败", error)
                 if (settled.compareAndSet(false, true)) {
                     reject(call, reason, error)
                 }
@@ -92,9 +105,29 @@ class LanSyncPlugin : Plugin() {
         }
     }
 
+    /**
+     * 解析实际使用的对外地址：用户选中地址仍在本机网卡上才用；否则回退首选局域网。
+     * 返回 null 表示交给 `LanSyncServer.start` 走 `LanNetworks.preferredAddress()`。
+     */
+    private fun resolveHost(requested: String?): String? {
+        if (requested == null) {
+            diagInfo("未指定网络地址，使用首选局域网")
+            return null
+        }
+        val stillPresent = runCatching { LanNetworks.findAddress(requested) != null }
+            .onFailure { error ->
+                diagWarn("校验指定地址失败：${NativeLog.describe(error)}")
+            }
+            .getOrDefault(false)
+        if (stillPresent) return requested
+        diagWarn("指定地址不在本机网卡上，回退首选局域网：$requested")
+        return null
+    }
+
     /** 关监听并让等待中的连接立即结束；重复调用保持成功（幂等）。 */
     @PluginMethod
     fun stop(call: PluginCall) {
+        diagInfo("stop 入口")
         stopServer()
         call.resolve()
     }
@@ -102,13 +135,18 @@ class LanSyncPlugin : Plugin() {
     /** 列出本机候选网络（地址 / 网卡名 / 分类 / 首选优先级），供「切换网络」下拉。 */
     @PluginMethod
     fun networks(call: PluginCall) {
+        diagInfo("networks 入口")
         Thread {
             try {
+                val list = LanNetworks.list()
+                diagInfo("networks 结果 ${list.size} 个：${LanNetworks.summary(list)}")
                 val array = JSArray()
-                for (network in LanNetworks.list()) array.put(network.toJsObject())
+                for (network in list) array.put(network.toJsObject())
                 call.resolve(JSObject().put("networks", array))
             } catch (error: Throwable) {
-                reject(call, error.message ?: "读取本机网络失败", error)
+                val reason = NativeLog.describe(error)
+                diagError("networks 失败", error)
+                reject(call, reason, error)
             }
         }.apply {
             isDaemon = true
@@ -120,13 +158,18 @@ class LanSyncPlugin : Plugin() {
     @PluginMethod
     fun scanDiscovery(call: PluginCall) {
         val timeoutMs = (call.data.opt("timeoutMs") as? Number)?.toInt() ?: 1500
+        diagInfo("scanDiscovery 入口 timeoutMs=$timeoutMs")
         Thread {
             try {
+                val peers = LanDiscovery.scan(context, timeoutMs)
+                diagInfo("scanDiscovery 结果 ${peers.size} 个")
                 val array = JSArray()
-                for (peer in LanDiscovery.scan(timeoutMs)) array.put(peer.toJsObject())
+                for (peer in peers) array.put(peer.toJsObject())
                 call.resolve(JSObject().put("peers", array))
             } catch (error: Throwable) {
-                reject(call, error.message ?: "扫描局域网设备失败", error)
+                val reason = NativeLog.describe(error)
+                diagError("scanDiscovery 失败", error)
+                reject(call, reason, error)
             }
         }.apply {
             isDaemon = true
@@ -165,7 +208,7 @@ class LanSyncPlugin : Plugin() {
             active.respond(id, status, body)
             call.resolve()
         } catch (error: Exception) {
-            reject(call, error.message ?: "回应请求失败", error)
+            reject(call, NativeLog.describe(error), error)
         }
     }
 
@@ -182,16 +225,23 @@ class LanSyncPlugin : Plugin() {
                 server = null
             }
         }
+        diagInfo("stop 完成")
     }
 
     private fun reject(call: PluginCall, message: String, error: Throwable?) {
         if (error is Exception) call.reject(message, error) else call.reject(message)
     }
 
-    /** 原始异常 message 优先；没有 message 时退回异常类名，保证 TS 拿到可读原因。 */
-    private fun describe(error: Throwable): String {
-        val message = error.message?.trim()
-        return if (message.isNullOrEmpty()) error.javaClass.simpleName else message
+    private fun diagInfo(message: String) {
+        runCatching { NativeLog.info(context, TAG, message) }
+    }
+
+    private fun diagWarn(message: String) {
+        runCatching { NativeLog.warn(context, TAG, message) }
+    }
+
+    private fun diagError(message: String, error: Throwable) {
+        runCatching { NativeLog.error(context, TAG, message, error) }
     }
 
     companion object {

@@ -231,6 +231,7 @@ class LanSyncServer private constructor(
     }
 
     private fun expectedMethod(path: String): String? = when (path) {
+        "/ping" -> "GET"
         "/pair", "/pair/refresh", "/pair/revoke" -> "POST"
         "/export" -> "GET"
         "/import" -> "POST"

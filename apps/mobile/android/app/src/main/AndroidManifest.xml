@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 教务站点多数还是 http：允许明文，否则 WebView 直接报 ERR_CLEARTEXT_NOT_PERMITTED -->
     <application
@@ -137,6 +138,15 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 局域网同步：读网络状态 / Wi-Fi 状态与组播锁（UDP 广播发现用） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Android 13+ 的 Wi-Fi 相关能力；neverForLocation 表示不把扫描结果用于定位 -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 局域网同步扫码配对：应用内相机扫码（@capacitor-mlkit/barcode-scanning） -->
     <uses-permission android:name="android.permission.CAMERA" />

@@ -1,5 +1,6 @@
 package com.dawntick.app.lan
 
+import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSObject
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -104,8 +105,9 @@ object LanNetworks {
         val seen = mutableSetOf<String>()
         val interfaces = try {
             NetworkInterface.getNetworkInterfaces()
-        } catch (_: Throwable) {
-            null
+        } catch (error: Throwable) {
+            // 权限 / ROM 限制时不要伪装成「没有网络」：抛出可读原因，由插件 reject 给界面
+            throw IllegalStateException("读取网卡失败：${NativeLog.describe(error)}", error)
         } ?: return emptyList()
         for (network in Collections.list(interfaces)) {
             val rawName = runCatching { network.name }.getOrNull().orEmpty()
@@ -129,6 +131,15 @@ object LanNetworks {
             }
         }
         return sort(result)
+    }
+
+    /** 诊断用摘要：`地址/网卡/kind`，空列表直接写数量，便于日志定位。 */
+    fun summary(networks: List<LanNetwork>): String {
+        if (networks.isEmpty()) return "0 个"
+        return networks.joinToString("; ") { network ->
+            val flag = if (network.isLan) "" else "(非局域网)"
+            "${network.address}/${network.name}/${network.kind}$flag"
+        }
     }
 
     /** 默认选择：排序后的第一条局域网地址；没有时 null。 */

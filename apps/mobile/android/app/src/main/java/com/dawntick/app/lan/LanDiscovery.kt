@@ -1,7 +1,10 @@
 package com.dawntick.app.lan
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
+import com.dawntick.app.diag.NativeLog
 import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -97,6 +100,30 @@ object LanDiscoveryCodec {
     }
 }
 
+/** Wi-Fi 组播锁：部分 ROM 不允许没有 multicast lock 的 UDP 广播/接收；失败只记日志。 */
+internal object LanMulticast {
+    fun acquire(context: Context, tag: String): WifiManager.MulticastLock? {
+        return try {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                ?: return null
+            val lock = wifi.createMulticastLock("dawn-tick-lan-sync").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+            NativeLog.info(context, tag, "已获取 Wi-Fi multicast lock")
+            lock
+        } catch (error: Throwable) {
+            NativeLog.warn(context, tag, "获取 Wi-Fi multicast lock 失败（不影响开配对）：${NativeLog.describe(error)}")
+            null
+        }
+    }
+
+    fun release(lock: WifiManager.MulticastLock?) {
+        if (lock == null) return
+        runCatching { lock.release() }
+    }
+}
+
 /** 开配对期间每 800ms 广播一次；停止时关 socket 并让线程退出。
  *
  * 广播目标：选中地址所属网段的广播地址（`NetworkInterface` 直接给出）+ 受限广播 + 环回。
@@ -108,14 +135,16 @@ object LanDiscoveryAdvertiser {
     @Volatile private var running = false
     @Volatile private var socket: DatagramSocket? = null
     @Volatile private var thread: Thread? = null
+    @Volatile private var multicastLock: WifiManager.MulticastLock? = null
 
-    fun start(host: String, port: Int, name: String) {
-        runCatching { startInternal(host, port, name) }.onFailure { error ->
+    fun start(context: Context, host: String, port: Int, name: String) {
+        runCatching { startInternal(context, host, port, name) }.onFailure { error ->
             Log.w(TAG, "启动局域网广播失败：${error.message ?: error.javaClass.simpleName}")
+            NativeLog.warn(context, TAG, "启动局域网广播失败：${NativeLog.describe(error)}")
         }
     }
 
-    private fun startInternal(host: String, port: Int, name: String) {
+    private fun startInternal(context: Context, host: String, port: Int, name: String) {
         stop()
         val packet = LanDiscoveryCodec.encode(host, port, name) ?: return
         val bytes = packet.toByteArray(Charsets.UTF_8)
@@ -125,12 +154,14 @@ object LanDiscoveryAdvertiser {
             runCatching { targets.add(InetAddress.getByName(text)) }
         }
         if (targets.isEmpty()) return
+        multicastLock = LanMulticast.acquire(context, TAG)
         running = true
         thread = Thread {
             val active = try {
                 DatagramSocket().apply { broadcast = true }
-            } catch (_: Exception) {
+            } catch (error: Exception) {
                 running = false
+                NativeLog.warn(context, TAG, "广播 socket 创建失败：${NativeLog.describe(error)}")
                 return@Thread
             }
             socket = active
@@ -167,41 +198,49 @@ object LanDiscoveryAdvertiser {
         socket = null
         thread?.let { runCatching { it.join(300) } }
         thread = null
+        LanMulticast.release(multicastLock)
+        multicastLock = null
     }
 }
 
 /** 扫描端：绑定发现端口，短超时收集广播，去重后返回。 */
 object LanDiscovery {
-    fun scan(timeoutMs: Int = LAN_DISCOVERY_DEFAULT_TIMEOUT_MS): List<LanDiscoveryPeer> {
+    fun scan(context: Context, timeoutMs: Int = LAN_DISCOVERY_DEFAULT_TIMEOUT_MS): List<LanDiscoveryPeer> {
         val timeout = timeoutMs.coerceIn(100, LAN_DISCOVERY_MAX_TIMEOUT_MS)
-        val socket = try {
-            DatagramSocket(null).apply {
-                reuseAddress = true
-                bind(InetSocketAddress(LAN_DISCOVERY_PORT))
-                soTimeout = 200
-            }
-        } catch (_: Exception) {
-            return emptyList()
-        }
-        val peers = mutableListOf<LanDiscoveryPeer>()
+        val lock = LanMulticast.acquire(context, "DawnTickLanDiscovery")
         try {
-            val deadline = System.currentTimeMillis() + timeout
-            while (System.currentTimeMillis() < deadline) {
-                val buffer = ByteArray(1024)
-                try {
-                    val packet = DatagramPacket(buffer, buffer.size)
-                    socket.receive(packet)
-                    val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
-                    LanDiscoveryCodec.parse(text)?.let { peers.add(it) }
-                } catch (_: java.net.SocketTimeoutException) {
-                    // 继续等下一轮，直到总超时
-                } catch (_: Exception) {
-                    break
+            val socket = try {
+                DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(LAN_DISCOVERY_PORT))
+                    soTimeout = 200
                 }
+            } catch (error: Exception) {
+                NativeLog.warn(context, "DawnTickLanDiscovery", "绑定发现端口失败：${NativeLog.describe(error)}")
+                return emptyList()
             }
+            val peers = mutableListOf<LanDiscoveryPeer>()
+            try {
+                val deadline = System.currentTimeMillis() + timeout
+                while (System.currentTimeMillis() < deadline) {
+                    val buffer = ByteArray(1024)
+                    try {
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        socket.receive(packet)
+                        val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                        LanDiscoveryCodec.parse(text)?.let { peers.add(it) }
+                    } catch (_: java.net.SocketTimeoutException) {
+                        // 继续等下一轮，直到总超时
+                    } catch (_: Exception) {
+                        break
+                    }
+                }
+            } finally {
+                runCatching { socket.close() }
+            }
+            return LanDiscoveryCodec.merge(peers)
         } finally {
-            runCatching { socket.close() }
+            LanMulticast.release(lock)
         }
-        return LanDiscoveryCodec.merge(peers)
     }
 }
