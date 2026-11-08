@@ -71,24 +71,50 @@ export function planGiteeRelease({ rolling }) {
   return rolling ? 'recreate' : 'upsert';
 }
 
+/** 标签 → 发布渠道：dev-latest；`-beta` 结尾（可带序号）→ beta；其余 `vX.Y.Z` → release。 */
+export function channelOfTag(tag) {
+  if (tag === 'dev-latest') return 'dev';
+  if (/-beta(\.|$)/.test(tag)) return 'beta';
+  return 'release';
+}
+
 /**
  * 附件保留策略：Gitee 仓库附件有容量/数量限制，超过阈值要删旧构建。
  *
  * 规则（按顺序）：
  * 1. 当前要发布的标签、`dev-latest` 永不删除；
- * 2. 最近 `keepRecent` 个发布保留（按创建时间倒序）；
+ * 2. `release` 与 `beta` 各保留最近 `keepPerChannel` 个发布；
  * 3. 其余从最旧开始删，直到「已用体积 + 本次将上传体积」不超过 `maxBytes`；
- * 4. 体积未知的旧发布（API 没给 size 且 HEAD 失败）按 0 计，交给「最近 N 个」规则兜底。
+ * 4. 体积未知的旧发布（API 没给 size 且 HEAD 失败）按 0 计，交给「每渠道最近 N 个」规则兜底。
  *
  * @param releases [{ tag, createdAt, bytes }]
  * @param keepTags 永不删除的标签（含本次发布的标签）
  */
-export function planPrune({ releases, incomingBytes, maxBytes, keepTags = [], keepRecent = 6 }) {
+export function planPrune({
+  releases,
+  incomingBytes,
+  maxBytes,
+  keepTags = [],
+  keepPerChannel = 8,
+}) {
   const protectedTags = new Set([...keepTags, 'dev-latest']);
-  // 按创建时间倒序：最近的 keepRecent 个必须保留，其余按最旧优先删
+  // 按创建时间倒序；每个渠道只保留最近 keepPerChannel 个，dev-latest 单独保护
   const ordered = [...releases].sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0));
   const keep = new Set(protectedTags);
-  ordered.slice(0, Math.max(0, keepRecent)).forEach((item) => keep.add(item.tag));
+  const seenPerChannel = new Map();
+  for (const item of ordered) {
+    if (keep.has(item.tag)) continue;
+    const channel = channelOfTag(item.tag);
+    if (channel === 'dev') {
+      // 旧滚动标签（dev 渠道历史）没有价值，直接进入可删候选
+      continue;
+    }
+    const count = seenPerChannel.get(channel) ?? 0;
+    if (count < keepPerChannel) {
+      keep.add(item.tag);
+      seenPerChannel.set(channel, count + 1);
+    }
+  }
   const removable = ordered.filter((item) => !keep.has(item.tag)).reverse(); // 最旧在前
 
   let used = ordered.reduce((total, item) => total + (item.bytes ?? 0), 0) + incomingBytes;
@@ -273,14 +299,14 @@ async function releaseSummary(token, owner, repo, release) {
 }
 
 /** 删除超出保留策略的旧发布：删发布与标签（附件随发布一起移除）。 */
-async function pruneReleases({ token, owner, repo, keepTags, maxBytes, keepRecent, incomingBytes }) {
+async function pruneReleases({ token, owner, repo, keepTags, maxBytes, keepPerChannel, incomingBytes }) {
   const releases = await listReleases(token, owner, repo);
   const summaries = [];
   for (const release of releases) {
     if (typeof release?.tag_name !== 'string' || typeof release?.id !== 'number') continue;
     summaries.push(await releaseSummary(token, owner, repo, release));
   }
-  const plan = planPrune({ releases: summaries, incomingBytes, maxBytes, keepTags, keepRecent });
+  const plan = planPrune({ releases: summaries, incomingBytes, maxBytes, keepTags, keepPerChannel });
   for (const tag of plan.remove) {
     const target = releases.find((release) => release.tag_name === tag);
     if (target === undefined) continue;
@@ -321,7 +347,7 @@ async function main() {
   const token = process.env.GITEE_TOKEN ?? '';
   const notesFile = process.env.NOTES_FILE ?? '';
   const maxBytes = Number(args.get('max-total-bytes') ?? process.env.GITEE_MAX_TOTAL_BYTES ?? 800 * 1024 * 1024);
-  const keepRecent = Number(args.get('keep-releases') ?? process.env.GITEE_KEEP_RELEASES ?? 6);
+  const keepPerChannel = Number(args.get('keep-releases') ?? process.env.GITEE_KEEP_RELEASES ?? 8);
 
   if (tag === '') throw new Error('缺少标签：--tag 或 TAG');
   if (token === '' && !dryRun) {
@@ -353,7 +379,7 @@ async function main() {
     console.log(
       `dry-run：策略 ${planGiteeRelease({ rolling })}，预发布 ${prerelease}，资产 ${assets.length} 个，共 ${incomingBytes} 字节`,
     );
-    console.log(`dry-run：保留最近 ${keepRecent} 个发布，总容量上限 ${maxBytes} 字节（Gitee 附件限额）`);
+    console.log(`dry-run：release/beta 各保留最近 ${keepPerChannel} 个发布 + dev-latest，总容量上限 ${maxBytes} 字节（Gitee 附件限额）`);
     for (const asset of assets) console.log(`  - ${asset.name}（${statSync(asset.path).size} 字节）`);
     return;
   }
@@ -372,7 +398,7 @@ async function main() {
 
   // 先按容量/数量清理旧构建，再上传本次资产（超过 Gitee 附件限额时上传会直接失败）
   const incomingBytes = assets.reduce((total, asset) => total + statSync(asset.path).size, 0);
-  await pruneReleases({ token, owner, repo, keepTags: [tag], maxBytes, keepRecent, incomingBytes });
+  await pruneReleases({ token, owner, repo, keepTags: [tag], maxBytes, keepPerChannel, incomingBytes });
 
   let releaseId;
   if (existing !== null) {

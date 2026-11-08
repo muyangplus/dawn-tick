@@ -318,7 +318,8 @@ jobs:
 
           (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 
-          # 更新兜底清单：渠道、版本、标签、发布说明与产物名一致，客户端网络异常时直连读取
+          # 更新清单（v2）：渠道、版本、标签、提交、发布说明与四个平台的 files / checksums，
+          # GitHub Release 与 assets 仓库放同一份，客户端只维护一份清单
           # 版本取标签里的语义化值（beta 带预发布号）；dev 的滚动标签没有版本，用构建版本
           if [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
             MANIFEST_VERSION="${BASH_REMATCH[1]}"
@@ -334,6 +335,7 @@ jobs:
             --channel="$CHANNEL" \
             --version="$MANIFEST_VERSION" \
             --tag="$TAG" \
+            --commit="$GITHUB_SHA" \
             "${notes_arg[@]}" \
             --out=out
 

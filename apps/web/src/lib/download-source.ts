@@ -4,14 +4,21 @@
  * - 地址表 `MIRRORS` 是唯一事实来源：应用更新、预设更新、可达性探测都从这里拼 URL；
  * - 产物（安装包）放在独立 assets 仓库，地址口径见 `assets-mirror.ts`；
  * - 探测在 `download-probe.ts`，选择与缓存文案在 `download-selection.ts`（本模块只留地址表）；
- * - 自动选择只看「mirror.json 探测 + 便携包 256KB 测速」结果，不做 GeoIP；结果按会话缓存 10 分钟；
+ * - 自动选择只看「version.json 探测 + 便携包 256KB 测速」结果，不做 GeoIP；结果按会话缓存 10 分钟；
  * - Gitee 镜像未同步/不可达时退化成「仓库可达」探测（`degraded`），下载链路据此回退另一个源。
  */
 
 import type { DownloadSourceChoice } from '@dawn-tick/core';
 import type { UpdateChannel } from '../update.ts';
 
-export { ASSETS_BRANCH, ASSETS_REPO, CHECKSUMS_FILE, MIRROR_FILE, assetsFileUrl, assetsMirrorUrl } from './assets-mirror.ts';
+export {
+  ASSETS_BRANCH,
+  ASSETS_REPO,
+  ASSETS_VERSION_FILE,
+  CHECKSUMS_FILE,
+  assetsFileUrl,
+  assetsVersionUrl,
+} from './assets-mirror.ts';
 
 /** 具体的一次下载（应用更新与预设更新共用）：不含 auto。 */
 export type DownloadSource = 'github' | 'gitee';
@@ -30,7 +37,7 @@ export interface Mirror {
   repo: string;
   /** 预设仓库（owner/repo） */
   presets: string;
-  /** 独立产物仓库（owner/repo）：按渠道分支存安装包与 mirror.json */
+  /** 独立产物仓库（owner/repo）：按渠道分支存安装包与 version.json */
   assets: string;
   /** 默认分支：预设 raw 与可达性探测用 */
   branch: string;

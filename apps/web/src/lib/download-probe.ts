@@ -1,24 +1,24 @@
 /**
- * 下载源探测：mirror.json（小 JSON）+ 便携包 256KB 分块测速。
+ * 下载源探测：version.json（小 JSON）+ 便携包 256KB 分块测速。
  *
  * 为什么改成 assets 仓库：客户端下载与校验都走独立产物仓库的 raw 地址，
  * 探测也必须打同一条链路，否则「探测很快、下载很慢」会选错源。
  *
  * 边界：
  * - 纯逻辑 + 注入 fetch 与时钟，单测不碰真实网络；
- * - 先读渠道分支的 mirror.json，再用其中便携包的绝对 URL 读 256KB 并计时；
- * - mirror.json 缺失/未同步时退化成「仓库可达」并标记 degraded，选择逻辑会优先另一个源。
+ * - 先读渠道分支的 version.json，再用其中便携包的绝对 URL 读 256KB 并计时；
+ * - version.json 缺失/未同步时退化成「仓库可达」并标记 degraded，选择逻辑会优先另一个源。
  */
 
-import type { MirrorFile, MirrorFiles } from './assets-mirror.ts';
-import { assetsFileUrl, assetsMirrorUrl, parseAssetsMirror } from './assets-mirror.ts';
+import type { VersionFile, VersionFiles } from './assets-mirror.ts';
+import { assetsFileUrl, assetsVersionUrl, parseAssetsVersion } from './assets-mirror.ts';
 import { MIRRORS, type DownloadSource } from './download-source.ts';
 import { errorMessage } from './errors.ts';
 
 /** 单次探测的超时：两个源并发，界面最多等这么久。 */
 export const PROBE_TIMEOUT_MS = 2500;
 
-/** 资产探测读取的字节数：mirror.json 太小，改成从真实安装包里读 256KB 再计时。 */
+/** 资产探测读取的字节数：version.json 太小，改成从真实安装包读取 256KB 再计时。 */
 export const PROBE_ASSET_BYTES = 256 * 1024;
 
 /** 探测用哪个渠道分支：正式版分支最稳定、一定先有产物。 */
@@ -36,7 +36,7 @@ export interface SourceProbe {
   ok: boolean;
   /** 完成耗时（毫秒）：失败时也记录，便于界面显示「不可用」 */
   latencyMs: number;
-  /** 只确认了仓库可达、没有取到 mirror.json（Gitee 镜像还没同步） */
+  /** 只确认了仓库可达、没有取到 version.json（Gitee 镜像还没同步） */
   degraded: boolean;
   error: string | null;
   /** 探测用到的最后一个地址（排障用） */
@@ -54,8 +54,8 @@ export interface AssetProbeResult {
   error: string | null;
 }
 
-/** 从 mirror.json 的文件表里挑探测包：便携 zip > apk > web > 安装程序。 */
-export function pickProbeFile(files: MirrorFiles): MirrorFile | null {
+/** 从 version.json 的文件表里挑探测包：便携 zip > apk > web > 安装程序。 */
+export function pickProbeFile(files: VersionFiles): VersionFile | null {
   return files.windowsPortable ?? files.android ?? files.web ?? files.windowsSetup ?? null;
 }
 
@@ -161,8 +161,8 @@ function reachabilityUrls(source: DownloadSource): string[] {
 }
 
 /**
- * 探测一个源：请求渠道分支的 mirror.json，再用其中便携包装载 256KB。
- * mirror.json 拿不到（Gitee 镜像未同步）时退化成「仓库可达」并标记 degraded。
+ * 探测一个源：请求渠道分支的 version.json，再用其中便携包装载 256KB。
+ * version.json 拿不到（Gitee 镜像未同步）时退化成「仓库可达」并标记 degraded。
  */
 export async function probeSource(
   source: DownloadSource,
@@ -194,16 +194,16 @@ export async function probeSource(
     ...(extra.bytes === undefined ? {} : { bytes: extra.bytes }),
   });
 
-  // ① mirror.json + 便携包 256KB：与真实下载同一条 raw 链路
-  const mirrorUrl = assetsMirrorUrl(source, PROBE_FEED);
+  // ① version.json + 便携包 256KB：与真实下载同一条 raw 链路
+  const versionUrl = assetsVersionUrl(source, PROBE_FEED);
   try {
-    const parsed = parseAssetsMirror(await requestJson(fetchImpl, mirrorUrl, remainingOf(deadline, now)));
+    const parsed = parseAssetsVersion(await requestJson(fetchImpl, versionUrl, remainingOf(deadline, now)));
     if (!parsed.ok) {
-      fail(mirrorUrl, new Error(parsed.error));
+      fail(versionUrl, new Error(parsed.error));
     } else {
-      const file = pickProbeFile(parsed.mirror.files);
+      const file = pickProbeFile(parsed.manifest.files);
       if (file === null) {
-        fail(mirrorUrl, new Error('mirror.json 没有可探测的产物'));
+        fail(versionUrl, new Error('version.json 没有可探测的产物'));
       } else {
         const assetUrl = assetsFileUrl(source, PROBE_FEED, file.name);
         const chunk = await probeAssetChunk(assetUrl, fetchImpl, {
@@ -215,7 +215,7 @@ export async function probeSource(
       }
     }
   } catch (cause: unknown) {
-    fail(mirrorUrl, cause);
+    fail(versionUrl, cause);
   }
 
   // ② 退化：仓库可达即视为可尝试（Gitee 镜像还没同步时标记 degraded）

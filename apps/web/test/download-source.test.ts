@@ -5,7 +5,7 @@ import {
   DOWNLOAD_SOURCE_LABEL,
   MIRRORS,
   assetsFileUrl,
-  assetsMirrorUrl,
+  assetsVersionUrl,
   latestVersionJsonUrl,
   presetContentsUrl,
   presetSnapshotUrl,
@@ -32,8 +32,8 @@ import {
 
 const GITEE_VERSION_JSON = 'https://gitee.com/muyangplus/dawn-tick/releases/download/v0.6.5/version.json';
 const GITHUB_VERSION_JSON = latestVersionJsonUrl('github');
-const GITEE_MIRROR = assetsMirrorUrl('gitee', 'release');
-const GITHUB_MIRROR = assetsMirrorUrl('github', 'release');
+const GITEE_VERSION = assetsVersionUrl('gitee', 'release');
+const GITHUB_VERSION = assetsVersionUrl('github', 'release');
 const PORTABLE = 'DawnTick-0.6.5-release-windows-x64-portable.zip';
 const GITEE_PORTABLE = assetsFileUrl('gitee', 'release', PORTABLE);
 const GITHUB_PORTABLE = assetsFileUrl('github', 'release', PORTABLE);
@@ -42,10 +42,10 @@ function response(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as unknown as Response;
 }
 
-/** mirror.json：只放便携包，探测用它做 256KB 测速。 */
-function mirrorJson(channel: 'dev' | 'beta' | 'release', version = '0.6.5'): Record<string, unknown> {
+/** version.json v2：只放便携包，探测用它做 256KB 测速。 */
+function versionJson(channel: 'dev' | 'beta' | 'release', version = '0.6.5'): Record<string, unknown> {
   return {
-    schema: 1,
+    schema: 2,
     channel,
     version,
     tag: `v${version}`,
@@ -91,9 +91,9 @@ function stubFetch(options: StubOptions): { fetchImpl: typeof fetch; calls: stri
   return { fetchImpl: impl as unknown as typeof fetch, calls };
 }
 
-/** 两个源都返回 mirror.json + 便携包（供需要「探测成功」的用例复用）。 */
+/** 两个源都返回 version.json v2 + 便携包（供需要「探测成功」的用例复用）。 */
 function healthyResponses(url: string): Response | 'throw' {
-  if (url === GITEE_MIRROR || url === GITHUB_MIRROR) return response(mirrorJson('release'));
+  if (url === GITEE_VERSION || url === GITHUB_VERSION) return response(versionJson('release'));
   if (url === GITEE_PORTABLE || url === GITHUB_PORTABLE) return streamResponse(512 * 1024);
   return response({}, false, 404);
 }
@@ -135,12 +135,12 @@ test('镜像地址表：主仓库 / 预设仓库 / 独立 assets 仓库各就各
 
 test('assets 地址拼接：渠道分支 + raw 基地址，文件名按 URL 编码', () => {
   assert.equal(
-    assetsMirrorUrl('github', 'beta'),
-    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/beta/mirror.json',
+    assetsVersionUrl('github', 'beta'),
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/beta/version.json',
   );
   assert.equal(
-    assetsMirrorUrl('gitee', 'release'),
-    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/mirror.json',
+    assetsVersionUrl('gitee', 'release'),
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/version.json',
   );
   assert.equal(
     assetsFileUrl('gitee', 'dev', 'DawnTick-0.6.6-dev-android.apk'),
@@ -153,7 +153,7 @@ test('assets 地址拼接：渠道分支 + raw 基地址，文件名按 URL 编�
   assert.throws(() => assetsFileUrl('github', 'release', '  '), /文件名为空/);
   // 三个渠道各一条分支：dev→dev、beta→beta、release→release
   for (const feed of ['dev', 'beta', 'release'] as const) {
-    assert.match(assetsMirrorUrl('github', feed), new RegExp(`/dawn-tick-assets/${feed}/mirror\\.json$`));
+    assert.match(assetsVersionUrl('github', feed), new RegExp(`/dawn-tick-assets/${feed}/version\\.json$`));
   }
 });
 
@@ -180,7 +180,7 @@ test('两边都可达时选完成耗时更低的源（Gitee 快、GitHub 快各�
   assert.equal(resolved.source, 'gitee');
   assert.equal(resolved.reason, 'latency');
   assert.equal(resolved.probes.length, 2);
-  assert.ok(giteeFast.calls.includes(GITEE_MIRROR), '先读 Gitee 的 mirror.json');
+  assert.ok(giteeFast.calls.includes(GITEE_VERSION), '先读 Gitee 的 version.json');
   assert.ok(giteeFast.calls.includes(GITEE_PORTABLE), '再用便携包 256KB 测速');
   const gitee = resolved.probes.find((probe) => probe.source === 'gitee');
   const github = resolved.probes.find((probe) => probe.source === 'github');
@@ -248,11 +248,11 @@ test('探测超时按不可达处理，不会一直等', async () => {
   assert.ok(PROBE_TIMEOUT_MS >= 1000, '默认超时留够慢网络的时间');
 });
 
-test('Gitee 镜像未同步：mirror.json 404 后退化成仓库可达并标记 degraded', async () => {
+test('Gitee 镜像未同步：version.json 404 后退化成仓库可达并标记 degraded', async () => {
   resetDownloadSourceCache();
   const stub = stubFetch({
     respond: (url) => {
-      if (url === GITEE_MIRROR) return response({ message: '404 Not Found' }, false, 404);
+      if (url === GITEE_VERSION) return response({ message: '404 Not Found' }, false, 404);
       if (url === 'https://gitee.com/muyangplus/dawn-tick/raw/main/package.json') return response({ name: 'dawn-tick' });
       return response({}, false, 404);
     },
@@ -274,7 +274,7 @@ test('Gitee 镜像未同步（降级）时自动选健康的 GitHub', async () =
   const stub = stubFetch({
     delay: (url) => (url.startsWith('https://gitee.com/') ? 5 : 80),
     respond: (url) => {
-      if (url === GITEE_MIRROR) return response({}, false, 404);
+      if (url === GITEE_VERSION) return response({}, false, 404);
       if (url === 'https://gitee.com/muyangplus/dawn-tick/raw/main/package.json') return response({ name: 'dawn-tick' });
       return healthyResponses(url);
     },
@@ -359,7 +359,7 @@ test('状态行文案：自动列出两个源的耗时，降级源给出回退�
   assert.equal(DOWNLOAD_SOURCE_LABEL.gitee, 'Gitee');
 });
 
-// —— 256KB 资产分块探测（mirror.json 太小，改用真实便携包） ——
+// —— 256KB 资产分块探测（version.json 太小，改用真实便携包） ——
 
 function streamResponse(totalBytes: number, chunkBytes = 32 * 1024): Response {
   let sent = 0;
@@ -413,7 +413,7 @@ test('probeAssetChunk：请求超时给出可读原因', async () => {
   assert.equal(result.error, '探测超时');
 });
 
-test('probeSource：读 mirror.json 后用便携包 256KB 分块探测并标记 asset', async () => {
+test('probeSource：读 version.json 后用便携包 256KB 分块探测并标记 asset', async () => {
   resetDownloadSourceCache();
   const stub = stubFetch({ respond: healthyResponses });
   const probe = await probeSource('gitee', stub.fetchImpl, { timeoutMs: 2000 });
@@ -421,5 +421,5 @@ test('probeSource：读 mirror.json 后用便携包 256KB 分块探测并标记 
   assert.equal(probe.degraded, false);
   assert.equal(probe.kind, 'asset');
   assert.equal(probe.bytes, 256 * 1024);
-  assert.deepEqual(stub.calls.slice(0, 2), [GITEE_MIRROR, GITEE_PORTABLE], '先清单、再真实资产');
+  assert.deepEqual(stub.calls.slice(0, 2), [GITEE_VERSION, GITEE_PORTABLE], '先清单、再真实资产');
 });

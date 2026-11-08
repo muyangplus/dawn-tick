@@ -33,12 +33,14 @@ PUBLISH_ASSETS_FORBIDDEN = ['GITEE_TOKEN', 'tools/release/publish-gitee.mjs']
 # 便携包说明：数据在程序所在目录，不是 %LOCALAPPDATA%
 PUBLISH_PORTABLE_README_REQUIRED = ['数据与日志都在本目录']
 PUBLISH_PORTABLE_README_FORBIDDEN = ['数据与日志目录：%LOCALAPPDATA%']
-# 更新兜底：发布产物必须带 version.json（渠道 / 版本 / 标签 / 发布说明 / 产物名）
+# 更新清单：发布产物必须带 version.json v2（渠道 / 版本 / 标签 / 提交 / 发布说明 + files / checksums），
+# GitHub Release 与 assets 仓库共用同一份
 PUBLISH_VERSION_JSON_REQUIRED = [
     'node tools/release/version-json.mjs',
     '--channel="$CHANNEL"',
     '--version="$MANIFEST_VERSION"',
     '--tag="$TAG"',
+    '--commit="$GITHUB_SHA"',
     '--out=out',
     # 校验清单覆盖全部产物（含 version.json）：`sha256sum * > SHA256SUMS.txt`
     'SHA256SUMS.txt',

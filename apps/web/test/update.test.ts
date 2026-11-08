@@ -12,13 +12,13 @@ import {
   resolveFeed,
   resolveReceiveBeta,
 } from '../src/update.ts';
-import { assetsMirrorUrl } from '../src/lib/download-source.ts';
+import { assetsVersionUrl } from '../src/lib/download-source.ts';
 import { CHANNEL_LABEL } from '../src/channel.ts';
 
-const MIRROR_RELEASE = assetsMirrorUrl('github', 'release');
-const MIRROR_BETA = assetsMirrorUrl('github', 'beta');
-const MIRROR_DEV = assetsMirrorUrl('github', 'dev');
-const GITEE_MIRROR_RELEASE = assetsMirrorUrl('gitee', 'release');
+const VERSION_RELEASE = assetsVersionUrl('github', 'release');
+const VERSION_BETA = assetsVersionUrl('github', 'beta');
+const VERSION_DEV = assetsVersionUrl('github', 'dev');
+const GITEE_VERSION_RELEASE = assetsVersionUrl('gitee', 'release');
 
 function manifestResponse(body: unknown, ok = true, status = 200): Response {
   return {
@@ -32,12 +32,12 @@ function fileSuffix(suffix: string, version: string, channel: string, size: numb
   return { name: `DawnTick-${version}-${channel}${suffix}`, size, sha256: sha };
 }
 
-/** mirror.json：与发布脚本 `tools/release/publish-assets.mjs` 的产物一致。 */
-function mirrorBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+/** version.json v2：与发布脚本 `tools/release/version-json.mjs` 的产物一致。 */
+function versionBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const version = typeof overrides['version'] === 'string' ? overrides['version'] : '0.2.0';
   const channel = typeof overrides['channel'] === 'string' ? overrides['channel'] : 'release';
   return {
-    schema: 1,
+    schema: 2,
     channel,
     version,
     tag: `v${version}`,
@@ -55,7 +55,7 @@ function mirrorBody(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
-/** 旧 GitHub Release 响应：仅作为 mirror.json 不可达时的兼容兜底。 */
+/** 旧 GitHub Release 响应：仅作为 assets version.json 不可达时的兼容兜底。 */
 function releaseBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tag_name: 'v0.2.0',
@@ -134,9 +134,9 @@ test('release 与 beta 按开关决定源，beta 默认开', () => {
   assert.equal(resolveReceiveBeta(false, 'beta'), false, '显式关闭优先于默认值');
 });
 
-// —— mirror.json 取源（首选） ——
+// —— assets version.json v2 取源（首选） ——
 
-test('缺省下载源仍是 GitHub：请求 release 分支的 mirror.json 并标明来源', async () => {
+test('缺省下载源仍是 GitHub：请求 release 分支的 version.json 并标明来源', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
@@ -144,10 +144,10 @@ test('缺省下载源仍是 GitHub：请求 release 分支的 mirror.json 并标
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
       seen.push(String(input));
-      return manifestResponse(mirrorBody());
+      return manifestResponse(versionBody());
     },
   });
-  assert.deepEqual(seen, [MIRROR_RELEASE]);
+  assert.deepEqual(seen, [VERSION_RELEASE]);
   assert.equal(status.source, 'github');
   assert.equal(status.fallbackFrom, undefined);
   assert.equal(status.error, null);
@@ -158,7 +158,7 @@ test('发现新版本：版本 / 渠道 / 说明 / 时间来自清单，下载�
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.1.0',
-    fetchImpl: async () => manifestResponse(mirrorBody()),
+    fetchImpl: async () => manifestResponse(versionBody()),
   });
   assert.equal(status.available, true);
   assert.equal(status.latest, '0.2.0');
@@ -199,7 +199,7 @@ test('只有便携包时 windows 退回便携 zip，windowsPortable 仍单独保
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.1.0',
-    fetchImpl: async () => manifestResponse(mirrorBody({ files })),
+    fetchImpl: async () => manifestResponse(versionBody({ files })),
   });
   assert.match(String(status.manifest?.assets?.windows?.url), /-windows-x64-portable\.zip$/);
   assert.equal(status.manifest?.assets?.windowsPortable?.url, status.manifest?.assets?.windows?.url);
@@ -210,7 +210,7 @@ test('同版本或更旧版本不算更新', async () => {
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.2.0',
-    fetchImpl: async () => manifestResponse(mirrorBody({ version: '0.2.0' })),
+    fetchImpl: async () => manifestResponse(versionBody({ version: '0.2.0' })),
   });
   assert.equal(same.available, false);
 
@@ -218,7 +218,7 @@ test('同版本或更旧版本不算更新', async () => {
     channel: 'release',
     receiveBeta: false,
     currentVersion: '0.3.0',
-    fetchImpl: async () => manifestResponse(mirrorBody({ version: '0.2.0' })),
+    fetchImpl: async () => manifestResponse(versionBody({ version: '0.2.0' })),
   });
   assert.equal(older.available, false, '不允许降级');
 });
@@ -236,7 +236,7 @@ test('判定：只有远端版本严格大于当前版本才提示', async () =>
       channel: 'release',
       receiveBeta: false,
       currentVersion: current,
-      fetchImpl: async () => manifestResponse(mirrorBody({ version: latest })),
+      fetchImpl: async () => manifestResponse(versionBody({ version: latest })),
     });
     assert.equal(status.available, expected, `当前 ${current}、远端 ${latest} 应${expected ? '' : '不'}提示`);
   }
@@ -248,8 +248,8 @@ test('提示渠道取清单里的渠道：beta 分支显示测试版', async () 
     receiveBeta: true,
     currentVersion: '0.1.0-beta.1',
     fetchImpl: async (input) => {
-      assert.equal(String(input), MIRROR_BETA, '接收测试版时读 beta 分支');
-      return manifestResponse(mirrorBody({ channel: 'beta', version: '0.2.0-beta.1' }));
+      assert.equal(String(input), VERSION_BETA, '接收测试版时读 beta 分支');
+      return manifestResponse(versionBody({ channel: 'beta', version: '0.2.0-beta.1' }));
     },
   });
   assert.equal(beta.feed, 'beta');
@@ -263,8 +263,8 @@ test('提示渠道取清单里的渠道：beta 分支显示测试版', async () 
     receiveBeta: false,
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
-      assert.equal(String(input), MIRROR_RELEASE);
-      return manifestResponse(mirrorBody());
+      assert.equal(String(input), VERSION_RELEASE);
+      return manifestResponse(versionBody());
     },
   });
   assert.equal(stable.manifest?.channel, 'release');
@@ -280,13 +280,13 @@ test('清单渠道与查询渠道不一致时忽略，不跨渠道兜底', async
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
       seen.push(String(input));
-      return manifestResponse(mirrorBody({ channel: 'dev' }));
+      return manifestResponse(versionBody({ channel: 'dev' }));
     },
   });
   assert.equal(status.available, false);
   assert.equal(status.latest, null);
   assert.match(String(status.error), /渠道/);
-  assert.deepEqual(seen, [MIRROR_RELEASE], '渠道不一致是配置问题，不再回退旧 Releases');
+  assert.deepEqual(seen, [VERSION_RELEASE], '渠道不一致是配置问题，不再回退旧 Releases');
 });
 
 test('dev 渠道读 dev 分支：滚动标签没有语义化版本，版本从清单拿', async () => {
@@ -295,9 +295,9 @@ test('dev 渠道读 dev 分支：滚动标签没有语义化版本，版本从�
     receiveBeta: false,
     currentVersion: '0.1.0',
     fetchImpl: async (input) => {
-      assert.equal(String(input), MIRROR_DEV);
+      assert.equal(String(input), VERSION_DEV);
       return manifestResponse(
-        mirrorBody({
+        versionBody({
           channel: 'dev',
           version: '0.1.1',
           tag: 'dev-latest',
@@ -345,7 +345,7 @@ test('网络与格式异常都有可读原因', async () => {
   assert.equal(httpError.error, '该渠道还没有发布记录');
 });
 
-test('GitHub 的 mirror.json 不可达时退回旧 Releases 接口（兼容兜底）', async () => {
+test('GitHub 的 version.json 不可达时退回旧 Releases 接口（兼容兜底）', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
@@ -354,11 +354,11 @@ test('GitHub 的 mirror.json 不可达时退回旧 Releases 接口（兼容兜�
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
-      if (url === MIRROR_RELEASE) throw new Error('fetch failed');
+      if (url === VERSION_RELEASE) throw new Error('fetch failed');
       return manifestResponse(releaseBody());
     },
   });
-  assert.deepEqual(seen, [MIRROR_RELEASE, UPDATE_API_FEEDS.release], '先 mirror.json，网络异常再回退发布接口');
+  assert.deepEqual(seen, [VERSION_RELEASE, UPDATE_API_FEEDS.release], '先 version.json，网络异常再回退发布接口');
   assert.equal(status.error, null);
   assert.equal(status.latest, '0.2.0');
   assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe');
@@ -374,12 +374,12 @@ test('旧 Releases 接口也异常时再回退同源 version.json 直连', async
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
-      if (url === MIRROR_DEV) throw new Error('fetch failed');
+      if (url === VERSION_DEV) throw new Error('fetch failed');
       if (isGitHubApi(url)) throw new Error('fetch failed');
       return manifestResponse({ channel: 'dev', version: '0.2.0', notes: '回退清单' });
     },
   });
-  assert.deepEqual(seen, [MIRROR_DEV, UPDATE_API_FEEDS.dev, UPDATE_FEEDS.dev], 'mirror → 发布接口 → 直连清单');
+  assert.deepEqual(seen, [VERSION_DEV, UPDATE_API_FEEDS.dev, UPDATE_FEEDS.dev], '清单 → 发布接口 → 直连清单');
   assert.equal(status.error, null);
   assert.equal(status.latest, '0.2.0');
   assert.equal(status.manifest?.notes, '回退清单');
@@ -394,7 +394,7 @@ test('release 网络异常时回退发布内的 version.json，额外字段不�
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
-      if (url === MIRROR_RELEASE) throw new Error('fetch failed');
+      if (url === VERSION_RELEASE) throw new Error('fetch failed');
       if (isGitHubApi(url)) throw new Error('fetch failed');
       return manifestResponse({
         channel: 'release',
@@ -405,12 +405,12 @@ test('release 网络异常时回退发布内的 version.json，额外字段不�
       });
     },
   });
-  assert.deepEqual(seen, [MIRROR_RELEASE, UPDATE_API_FEEDS.release, UPDATE_FEEDS.release]);
+  assert.deepEqual(seen, [VERSION_RELEASE, UPDATE_API_FEEDS.release, UPDATE_FEEDS.release]);
   assert.equal(status.latest, '0.2.0');
   assert.equal(status.manifest?.channel, 'release');
 });
 
-test('beta 的 mirror.json 网络异常：只回退旧 beta 发布列表，不碰滚动标签', async () => {
+test('beta 的 version.json 网络异常：只回退旧 beta 发布列表，不碰滚动标签', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'beta',
@@ -419,7 +419,7 @@ test('beta 的 mirror.json 网络异常：只回退旧 beta 发布列表，不�
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
-      if (url === MIRROR_BETA) throw new Error('fetch failed');
+      if (url === VERSION_BETA) throw new Error('fetch failed');
       if (url === UPDATE_RELEASES_API) {
         return manifestResponse([
           releaseBody({ tag_name: 'v0.2.0-beta.1', prerelease: true }),
@@ -429,12 +429,12 @@ test('beta 的 mirror.json 网络异常：只回退旧 beta 发布列表，不�
       throw new Error('unexpected');
     },
   });
-  assert.deepEqual(seen, [MIRROR_BETA, UPDATE_RELEASES_API]);
+  assert.deepEqual(seen, [VERSION_BETA, UPDATE_RELEASES_API]);
   assert.equal(status.latest, '0.3.0', '旧兜底仍保留 beta 列表「取较高者」的语义');
   assert.equal(status.manifest?.channel, 'release');
 });
 
-test('Gitee 只读 assets 仓库的 mirror.json：不回退 Gitee Releases', async () => {
+test('Gitee 只读 assets 仓库的 version.json：不回退 Gitee Releases', async () => {
   const seen: string[] = [];
   const status = await checkForUpdate({
     channel: 'release',
@@ -444,11 +444,11 @@ test('Gitee 只读 assets 仓库的 mirror.json：不回退 Gitee Releases', asy
     fetchImpl: async (input) => {
       const url = String(input);
       seen.push(url);
-      if (url === GITEE_MIRROR_RELEASE) return manifestResponse({ message: '404 Not Found' }, false, 404);
+      if (url === GITEE_VERSION_RELEASE) return manifestResponse({ message: '404 Not Found' }, false, 404);
       return manifestResponse({}, false, 404);
     },
   });
-  assert.deepEqual(seen, [GITEE_MIRROR_RELEASE]);
+  assert.deepEqual(seen, [GITEE_VERSION_RELEASE]);
   assert.equal(status.source, 'gitee');
   assert.equal(status.available, false);
   assert.equal(status.error, '该渠道还没有发布记录');
@@ -461,13 +461,13 @@ test('选中 Gitee 时清单与下载地址都来自 Gitee 的 assets raw', asyn
     currentVersion: '0.1.0',
     source: 'gitee',
     fetchImpl: async (input, init) => {
-      assert.equal(String(input), GITEE_MIRROR_RELEASE);
+      assert.equal(String(input), GITEE_VERSION_RELEASE);
       assert.equal(
         (init?.headers as Record<string, string> | undefined)?.['accept'],
         'application/json',
-        'mirror.json 用普通 JSON accept',
+        'version.json 用普通 JSON accept',
       );
-      return manifestResponse(mirrorBody());
+      return manifestResponse(versionBody());
     },
   });
   assert.equal(status.error, null);
@@ -497,10 +497,10 @@ test('首选源失败时自动回退另一个源，并在结果里标明实际�
       const url = String(input);
       seen.push(url);
       if (url.startsWith('https://gitee.com/')) return manifestResponse({ message: '404 Not Found' }, false, 404);
-      return manifestResponse(mirrorBody());
+      return manifestResponse(versionBody());
     },
   });
-  assert.deepEqual(seen, [GITEE_MIRROR_RELEASE, MIRROR_RELEASE], 'Gitee 失败后回退 GitHub 的 mirror.json');
+  assert.deepEqual(seen, [GITEE_VERSION_RELEASE, VERSION_RELEASE], 'Gitee 失败后回退 GitHub 的 version.json');
   assert.equal(status.error, null);
   assert.equal(status.source, 'github', '回退后标明实际源');
   assert.equal(status.fallbackFrom, 'gitee');
@@ -517,7 +517,7 @@ test('反向回退：GitHub 失败时选 Gitee', async () => {
     fallback: true,
     fetchImpl: async (input) => {
       const url = String(input);
-      if (url.startsWith('https://gitee.com/')) return manifestResponse(mirrorBody());
+      if (url.startsWith('https://gitee.com/')) return manifestResponse(versionBody());
       return manifestResponse({}, false, 503);
     },
   });

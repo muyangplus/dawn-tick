@@ -3048,7 +3048,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   resetDownloadSourceCache();
   const realSourceFetch = globalThis.fetch;
   const sourceCalls: string[] = [];
-  // 独立 assets 仓库：取源与下载都走 raw，桩按渠道分支给 mirror.json 与便携包分块
+  // 独立 assets 仓库：取源与下载都走 raw，桩按渠道分支给 version.json（v2）与便携包分块
   // 版本必须高于当前构建，否则更新检查判定「无更新」不会弹窗（版本号随发布变动，这里按 appVersion 递推）
   const newerVersion = (() => {
     const parts = appVersion().split('.').map((item) => Number(item));
@@ -3056,18 +3056,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
     return `${major}.${minor + 1}.0`;
   })();
-  const giteeMirrorDev = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/mirror.json';
-  const giteeMirrorRelease = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/mirror.json';
-  const githubMirrorDev = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/mirror.json';
-  const githubMirrorRelease = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/mirror.json';
+  const giteeVersionDev = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/version.json';
+  const giteeVersionRelease = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/version.json';
+  const githubVersionDev = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/version.json';
+  const githubVersionRelease = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/version.json';
   const giteePortableRelease =
     `https://gitee.com/muyangplus/dawn-tick-assets/raw/release/DawnTick-${newerVersion}-release-windows-x64-portable.zip`;
   const githubPortableRelease =
     `https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-${newerVersion}-release-windows-x64-portable.zip`;
-  const mirrorJson = (channel: string, version: string): Record<string, unknown> => {
+  const versionJson = (channel: string, version: string): Record<string, unknown> => {
     const prefix = `DawnTick-${version}-${channel}`;
     return {
-      schema: 1,
+      schema: 2,
       channel,
       version,
       tag: channel === 'dev' ? 'dev-latest' : `v${version}`,
@@ -3091,10 +3091,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     value: (input: unknown): Promise<Response> => {
       const url = String(input);
       sourceCalls.push(url);
-      if (url === giteeMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', newerVersion)));
-      if (url === giteeMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', newerVersion)));
-      if (url === githubMirrorRelease) return Promise.resolve(presetJsonResponse(mirrorJson('release', newerVersion)));
-      if (url === githubMirrorDev) return Promise.resolve(presetJsonResponse(mirrorJson('dev', newerVersion)));
+      if (url === giteeVersionRelease) return Promise.resolve(presetJsonResponse(versionJson('release', newerVersion)));
+      if (url === giteeVersionDev) return Promise.resolve(presetJsonResponse(versionJson('dev', newerVersion)));
+      if (url === githubVersionRelease) return Promise.resolve(presetJsonResponse(versionJson('release', newerVersion)));
+      if (url === githubVersionDev) return Promise.resolve(presetJsonResponse(versionJson('dev', newerVersion)));
       if (url === giteePortableRelease || url === githubPortableRelease) return Promise.resolve(assetChunkResponse());
       return Promise.resolve(presetJsonResponse({}, false, 404));
     },
@@ -3139,12 +3139,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     sourceCalls.length = 0;
     const checkButton = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
     if (checkButton instanceof window.HTMLElement) checkButton.click();
-    await waitFor(() => sourceCalls.includes(giteeMirrorDev), 40);
+    await waitFor(() => sourceCalls.includes(giteeVersionDev), 40);
     await flush(6);
     const giteeCheckCalls = [...sourceCalls];
     check(
-      '手动选 Gitee 后检查更新读 gitee.com/muyangplus/dawn-tick-assets/raw/dev/mirror.json，不请求 GitHub',
-      giteeCheckCalls.includes(giteeMirrorDev) &&
+      '手动选 Gitee 后检查更新读 gitee.com/muyangplus/dawn-tick-assets/raw/dev/version.json，不请求 GitHub',
+      giteeCheckCalls.includes(giteeVersionDev) &&
         !giteeCheckCalls.some((url) => url.includes('api.github.com') || url.includes('raw.githubusercontent.com')),
       giteeCheckCalls.join(' / ') || '(无请求)',
     );
@@ -3184,19 +3184,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     sourceCalls.length = 0;
     const checkButtonAgain = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
     if (checkButtonAgain instanceof window.HTMLElement) checkButtonAgain.click();
-    await waitFor(() => sourceCalls.includes(githubMirrorDev), 40);
+    await waitFor(() => sourceCalls.includes(githubVersionDev), 40);
     await flush(6);
     const githubCheckCalls = [...sourceCalls];
     check(
       '手动选 GitHub 后检查更新读 raw.githubusercontent.com 的 assets 分支，不请求 Gitee',
-      githubCheckCalls.includes(githubMirrorDev) && !githubCheckCalls.some((url) => url.includes('gitee.com')),
+      githubCheckCalls.includes(githubVersionDev) && !githubCheckCalls.some((url) => url.includes('gitee.com')),
       githubCheckCalls.join(' / ') || '(无请求)',
     );
     closeUpdatePrompt();
     dismissUpdateTask();
     await flush(8);
 
-    // 重新检测：强制重新探测两个源并回到自动选择（探测读 release 分支的 mirror.json + 便携包）
+    // 重新检测：强制重新探测两个源并回到自动选择（探测读 release 分支的 version.json + 便携包）
     if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
     await flush(8);
     const autoOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
@@ -3210,17 +3210,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     redetect?.click();
     await waitFor(
       () =>
-        sourceCalls.includes(giteeMirrorRelease) &&
-        sourceCalls.includes(githubMirrorRelease) &&
+        sourceCalls.includes(giteeVersionRelease) &&
+        sourceCalls.includes(githubVersionRelease) &&
         sourceCalls.includes(giteePortableRelease) &&
         sourceCalls.includes(githubPortableRelease),
       40,
     );
     check(
-      '「重新检测」探测两个源的 release 分支 mirror.json 与真实便携包，并显示自动选择结果',
+      '「重新检测」探测两个源的 release 分支 version.json 与真实便携包，并显示自动选择结果',
       sourceResultLine().includes('自动：') &&
-        sourceCalls.includes(giteeMirrorRelease) &&
-        sourceCalls.includes(githubMirrorRelease) &&
+        sourceCalls.includes(giteeVersionRelease) &&
+        sourceCalls.includes(githubVersionRelease) &&
         sourceCalls.includes(giteePortableRelease) &&
         sourceCalls.includes(githubPortableRelease),
       `${sourceResultLine()} / ${sourceCalls.join(' / ') || '(无请求)'}`,

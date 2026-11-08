@@ -132,7 +132,7 @@ export interface UpdateDownloadTarget {
    * `portable` 是 Windows 便携版 zip，退出应用后由原生脚本覆盖 exe。
    */
   kind: 'installer' | 'portable';
-  /** 清单里的绝对地址：mirror.json 的文件名由客户端拼成同源 assets raw URL */
+  /** 清单里的绝对地址：version.json 的文件名由客户端拼成同源 assets raw URL */
   url: string;
   /** 落盘文件名：固定名，重复下载覆盖旧安装包 */
   fileName: string;

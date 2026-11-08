@@ -39,7 +39,7 @@ export function resetDownloadSourceCache(): void {
 function pickSource(probes: readonly SourceProbe[]): { source: DownloadSource; reason: SourceReason } {
   const reachable = probes.filter((probe) => probe.ok);
   if (reachable.length === 0) return { source: 'github', reason: 'default-github' };
-  // 有真实 mirror.json 的源优先：降级的源（镜像还没同步）无法提供完整更新
+  // 有真实 version.json 的源优先：降级的源（镜像还没同步）无法提供完整更新
   const healthy = reachable.filter((probe) => !probe.degraded);
   const pool = healthy.length > 0 ? healthy : reachable;
   const best = pool.reduce((left, right) => (right.latencyMs < left.latencyMs ? right : left));

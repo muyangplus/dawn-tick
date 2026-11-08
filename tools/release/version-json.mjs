@@ -1,42 +1,161 @@
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** 发布产物里的更新兜底清单：客户端网络异常时直接读它，字段与 `UpdateManifest` 对齐。 */
+/**
+ * 产物里的更新清单：`version.json` 升到 v2，同时承载发布信息与平台文件表。
+ *
+ * v2 字段：沿用旧字段（channel / version / tag / notes / artifacts），新增
+ * schema=2、commit / releasedAt、files（四个平台的名字 / 体积 / SHA256）与
+ * checksums。GitHub Release 与独立 assets 仓库放同一份，客户端只维护一份清单。
+ */
 export const VERSION_JSON_FILE = 'version.json';
+export const CHECKSUMS_FILE = 'SHA256SUMS.txt';
+export const VERSION_SCHEMA = 2;
 export const CHANNELS = ['release', 'beta', 'dev'];
 
+/** 平台 → 产物后缀：发布产物名由 CI 固定，客户端按平台取值。 */
+export const PLATFORM_SUFFIXES = {
+  windowsSetup: '-windows-x64-setup.exe',
+  windowsPortable: '-windows-x64-portable.zip',
+  android: '-android.apk',
+  web: '-web.zip',
+};
+
+export const PLATFORM_KEYS = Object.keys(PLATFORM_SUFFIXES);
+
+const SHA256_HEX = /^[0-9a-f]{64}$/i;
+
+/** 计算文件 sha256（小写十六进制）。 */
+export function sha256File(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
 /**
- * 产物名清单：只列可直接下载的安装产物，不含自身与派生的 `.sha256`。
+ * 产物名清单：只列可直接下载的安装产物，不含清单自身、校验清单与派生的 `.sha256`。
  * 这样同一份清单在发布页与客户端读到的「有哪些产物」保持一致。
  */
 export function listArtifacts(outDir) {
   return readdirSync(outDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name !== VERSION_JSON_FILE && !entry.name.endsWith('.sha256'))
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        entry.name !== VERSION_JSON_FILE &&
+        entry.name !== CHECKSUMS_FILE &&
+        !entry.name.endsWith('.sha256'),
+    )
     .map((entry) => entry.name)
     .sort();
 }
 
-/** 生成 version.json 的内容：版本、渠道、标签、发布说明与产物名。 */
-export function buildVersionManifest({ channel, version, tag, notes, artifacts = [] }) {
+/** 从目录里按后缀挑出四个平台的文件名；缺的键为 null。 */
+export function collectPlatformFileNames(outDir) {
+  const names = readdirSync(outDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
+  const picked = {};
+  for (const key of PLATFORM_KEYS) {
+    picked[key] = names.find((name) => name.endsWith(PLATFORM_SUFFIXES[key])) ?? null;
+  }
+  return picked;
+}
+
+/**
+ * 读 out/ 里四个平台产物的名字、体积与 SHA256。
+ * 缺任一平台都报错：半套产物发出去，该平台的更新会直接不可用。
+ */
+export function readPlatformFiles(outDir) {
+  const names = collectPlatformFileNames(outDir);
+  const missing = PLATFORM_KEYS.filter((key) => names[key] === null);
+  if (missing.length > 0) {
+    throw new Error(`缺少发布产物：${missing.join('、')}（${outDir} 里需要四个平台各一个产物）`);
+  }
+  const files = {};
+  for (const key of PLATFORM_KEYS) {
+    const name = names[key];
+    const path = join(outDir, name);
+    files[key] = { name, size: statSync(path).size, sha256: sha256File(path) };
+  }
+  return files;
+}
+
+function checkFileEntry(key, value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${key} 不是文件对象`);
+  }
+  if (typeof value.name !== 'string' || value.name.trim() === '') {
+    throw new Error(`${key} 缺少文件名`);
+  }
+  if (!Number.isInteger(value.size) || value.size < 0) {
+    throw new Error(`${key} 的 size 不是有效字节数`);
+  }
+  if (typeof value.sha256 !== 'string' || !SHA256_HEX.test(value.sha256)) {
+    throw new Error(`${key} 的 sha256 不是 64 位十六进制`);
+  }
+  return { name: value.name.trim(), size: value.size, sha256: value.sha256.toLowerCase() };
+}
+
+/**
+ * 生成 v2 清单：旧字段原样保留，新增 schema / files / checksums。
+ *
+ * `files` 由 `readPlatformFiles(outDir)` 或调用方按同一结构提供；四个平台缺一
+ * 不可。`commit` 有值时按 7 位短哈希写入（与旧 mirror.json 同一口径）。
+ */
+export function buildVersionManifest({
+  channel,
+  version,
+  tag,
+  notes,
+  artifacts = [],
+  files,
+  commit = '',
+  releasedAt = Date.now(),
+}) {
   if (!CHANNELS.includes(channel)) throw new Error(`未知渠道: ${channel}`);
   if (typeof version !== 'string' || version.trim().length === 0) throw new Error('版本号不能为空');
   if (typeof tag !== 'string' || tag.trim().length === 0) throw new Error('标签不能为空');
   if (typeof notes !== 'string' || notes.trim().length === 0) throw new Error('发布说明不能为空');
+  if (typeof releasedAt !== 'number' || !Number.isFinite(releasedAt) || releasedAt <= 0) {
+    throw new Error('releasedAt 不是有效毫秒时间戳');
+  }
+  if (typeof files !== 'object' || files === null) throw new Error('缺少 files（四个平台产物）');
+  const missing = PLATFORM_KEYS.filter((key) => files[key] === undefined || files[key] === null);
+  if (missing.length > 0) throw new Error(`缺少发布产物：${missing.join('、')}`);
+  const platformFiles = {};
+  for (const key of PLATFORM_KEYS) platformFiles[key] = checkFileEntry(key, files[key]);
+
   const names = [...new Set(artifacts.map((name) => String(name).trim()))]
     .filter((name) => name.length > 0)
     .sort();
+  const shortCommit = typeof commit === 'string' ? commit.trim().slice(0, 7) : '';
   return {
+    schema: VERSION_SCHEMA,
     channel,
     version: version.trim(),
     tag: tag.trim(),
+    ...(shortCommit === '' ? {} : { commit: shortCommit }),
+    releasedAt,
     notes: notes.trim(),
     artifacts: names,
+    files: platformFiles,
+    checksums: CHECKSUMS_FILE,
   };
 }
 
-/** 写入 `<outDir>/version.json`，返回写入的内容。 */
-export function writeVersionJson({ outDir = 'out', channel, version, tag, notes, artifacts = listArtifacts(outDir) }) {
-  const manifest = buildVersionManifest({ channel, version, tag, notes, artifacts });
+/** 写入 `<outDir>/version.json`（v2），返回写入的内容。 */
+export function writeVersionJson({
+  outDir = 'out',
+  channel,
+  version,
+  tag,
+  notes,
+  artifacts = listArtifacts(outDir),
+  files = readPlatformFiles(outDir),
+  commit = '',
+  releasedAt = Date.now(),
+}) {
+  const manifest = buildVersionManifest({ channel, version, tag, notes, artifacts, files, commit, releasedAt });
   writeFileSync(join(outDir, VERSION_JSON_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
@@ -51,12 +170,17 @@ if (invokedDirectly) {
   const outDir = args.get('out') ?? 'out';
   const notesFile = args.get('notes-file');
   const notes = notesFile === undefined ? (args.get('notes') ?? '') : readFileSync(notesFile, 'utf8');
+  const releasedAt = args.has('released-at') ? Number(args.get('released-at')) : Date.now();
   const manifest = writeVersionJson({
     outDir,
     channel: args.get('channel') ?? '',
     version: args.get('version') ?? '',
     tag: args.get('tag') ?? '',
     notes,
+    commit: args.get('commit') ?? '',
+    releasedAt,
   });
-  process.stdout.write(`写入 ${join(outDir, VERSION_JSON_FILE)}（${manifest.artifacts.length} 个产物）\n`);
+  process.stdout.write(
+    `写入 ${join(outDir, VERSION_JSON_FILE)}（v2，${manifest.artifacts.length} 个产物，${PLATFORM_KEYS.length} 个平台）\n`,
+  );
 }

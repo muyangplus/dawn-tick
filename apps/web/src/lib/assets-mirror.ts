@@ -3,13 +3,17 @@
  *
  * 背景：Gitee Releases/API 在 GitHub Actions 网络下不可用、附件也有容量限制。
  * 产物改放独立仓库 `muyangplus/dawn-tick-assets`，按渠道用三条单提交分支
- * `dev` / `beta` / `release`（每次发布 force-push 覆盖，只留最新一套），
+ * `dev` / `beta` / `release`（每次发布 force-push 覆盖，只留最新一套）。
+ *
+ * 清单只有一份：GitHub Release 与 assets 仓库里的 `version.json` 是同一个文件，
+ * schema=2 —— 旧字段（channel / version / tag / notes / artifacts）之外补上
+ * commit / releasedAt / files（四个平台的名字、体积、SHA256）/ checksums。
  * 客户端只读两条 raw 链路（Gitee 侧由镜像同步后同样可读）：
  *
- *   GitHub: https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/<branch>/<file>
- *   Gitee : https://gitee.com/muyangplus/dawn-tick-assets/raw/<branch>/<file>
+ *   GitHub: https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/<branch>/version.json
+ *   Gitee : https://gitee.com/muyangplus/dawn-tick-assets/raw/<branch>/version.json
  *
- * 本模块只做「地址 + mirror.json 解析 → UpdateManifest」的纯转换，不发请求。
+ * 本模块只做「地址 + version.json 解析 → UpdateManifest」的纯转换，不发请求。
  */
 
 import type { UpdateAsset, UpdateChannel, UpdateManifest } from '../update.ts';
@@ -17,9 +21,9 @@ import type { DownloadSource } from './download-source.ts';
 
 /** 产物仓库：与主仓库分开，避免产物把主仓库撑大，也绕开 Gitee Releases 限制。 */
 export const ASSETS_REPO = 'muyangplus/dawn-tick-assets';
-export const MIRROR_FILE = 'mirror.json';
+export const ASSETS_VERSION_FILE = 'version.json';
 export const CHECKSUMS_FILE = 'SHA256SUMS.txt';
-export const MIRROR_SCHEMA = 1;
+export const ASSETS_VERSION_SCHEMA = 2;
 
 /** 渠道 → assets 仓库分支：三条分支各自只留该渠道最新一套文件。 */
 export const ASSETS_BRANCH: Record<UpdateChannel, string> = {
@@ -28,20 +32,20 @@ export const ASSETS_BRANCH: Record<UpdateChannel, string> = {
   release: 'release',
 };
 
-export const MIRROR_FILE_KEYS = ['windowsSetup', 'windowsPortable', 'android', 'web'] as const;
+export const VERSION_FILE_KEYS = ['windowsSetup', 'windowsPortable', 'android', 'web'] as const;
 
-export type MirrorFileKey = (typeof MIRROR_FILE_KEYS)[number];
+export type VersionFileKey = (typeof VERSION_FILE_KEYS)[number];
 
-export interface MirrorFile {
+export interface VersionFile {
   name: string;
   size: number;
   sha256: string;
 }
 
-export type MirrorFiles = Partial<Record<MirrorFileKey, MirrorFile>>;
+export type VersionFiles = Partial<Record<VersionFileKey, VersionFile>>;
 
-/** `mirror.json` 的完整契约：发布脚本 `tools/release/publish-assets.mjs` 生成。 */
-export interface AssetsMirror {
+/** `version.json` v2 的完整契约：发布脚本 `tools/release/version-json.mjs` 生成。 */
+export interface AssetsVersion {
   schema: number;
   channel: UpdateChannel;
   version: string;
@@ -49,7 +53,7 @@ export interface AssetsMirror {
   commit?: string;
   releasedAt?: number;
   notes?: string;
-  files: MirrorFiles;
+  files: VersionFiles;
   checksums: string;
 }
 
@@ -62,9 +66,9 @@ export function assetsRawBase(source: DownloadSource): string {
     : `https://gitee.com/${ASSETS_REPO}/raw`;
 }
 
-/** 渠道分支的 mirror.json 地址：客户端取源的第一个请求。 */
-export function assetsMirrorUrl(source: DownloadSource, feed: UpdateChannel): string {
-  return `${assetsRawBase(source)}/${ASSETS_BRANCH[feed]}/${MIRROR_FILE}`;
+/** 渠道分支的 version.json 地址：客户端取源的第一个请求。 */
+export function assetsVersionUrl(source: DownloadSource, feed: UpdateChannel): string {
+  return `${assetsRawBase(source)}/${ASSETS_BRANCH[feed]}/${ASSETS_VERSION_FILE}`;
 }
 
 /** 渠道分支下某个文件的绝对地址：下载、校验文件都用它拼。 */
@@ -74,10 +78,10 @@ export function assetsFileUrl(source: DownloadSource, feed: UpdateChannel, name:
   return `${assetsRawBase(source)}/${ASSETS_BRANCH[feed]}/${encodeURIComponent(file)}`;
 }
 
-// —— mirror.json 解析 ——
+// —— version.json v2 解析 ——
 
-export type MirrorParseResult =
-  | { ok: true; mirror: AssetsMirror }
+export type VersionParseResult =
+  | { ok: true; manifest: AssetsVersion }
   | { ok: false; error: string };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -92,7 +96,7 @@ function isChannel(value: unknown): value is UpdateChannel {
 const SHA256_HEX = /^[0-9a-f]{64}$/i;
 
 /** 单个文件项：名字非空、体积为非负整数、摘要为 64 位十六进制。 */
-function parseFile(value: unknown, key: string): { ok: true; file: MirrorFile } | { ok: false; error: string } {
+function parseFile(value: unknown, key: string): { ok: true; file: VersionFile } | { ok: false; error: string } {
   const record = asRecord(value);
   if (record === null) return { ok: false, error: `${key} 不是对象` };
   const name = record['name'];
@@ -109,15 +113,17 @@ function parseFile(value: unknown, key: string): { ok: true; file: MirrorFile } 
 }
 
 /**
- * 解析并校验 mirror.json。
+ * 解析并校验 assets 仓库的 version.json（v2）。
  *
- * 只要求「渠道 + 版本 + 至少一个平台文件」成立：某个平台产物缺失时，
+ * 只要求「schema=2 + 渠道 + 版本 + 至少一个平台文件」成立：某个平台产物缺失时，
  * 客户端对那个平台提示「这次发布没有提供」，而不是整条更新链路失败。
  */
-export function parseAssetsMirror(value: unknown): MirrorParseResult {
+export function parseAssetsVersion(value: unknown): VersionParseResult {
   const record = asRecord(value);
-  if (record === null) return { ok: false, error: 'mirror.json 不是对象' };
-  if (record['schema'] !== MIRROR_SCHEMA) return { ok: false, error: `schema 不是 ${MIRROR_SCHEMA}` };
+  if (record === null) return { ok: false, error: 'version.json 不是对象' };
+  if (record['schema'] !== ASSETS_VERSION_SCHEMA) {
+    return { ok: false, error: `schema 不是 ${ASSETS_VERSION_SCHEMA}` };
+  }
   const channel = record['channel'];
   if (!isChannel(channel)) return { ok: false, error: '渠道不是 dev / beta / release' };
   const version = record['version'];
@@ -140,8 +146,8 @@ export function parseAssetsMirror(value: unknown): MirrorParseResult {
   }
   const filesRecord = asRecord(record['files']);
   if (filesRecord === null) return { ok: false, error: '缺少 files' };
-  const files: MirrorFiles = {};
-  for (const key of MIRROR_FILE_KEYS) {
+  const files: VersionFiles = {};
+  for (const key of VERSION_FILE_KEYS) {
     const raw = filesRecord[key];
     if (raw === undefined) continue;
     const parsed = parseFile(raw, key);
@@ -149,10 +155,10 @@ export function parseAssetsMirror(value: unknown): MirrorParseResult {
     files[key] = parsed.file;
   }
   if (Object.keys(files).length === 0) {
-    return { ok: false, error: `缺少文件（${MIRROR_FILE_KEYS.join(' / ')} 至少一个）` };
+    return { ok: false, error: `缺少文件（${VERSION_FILE_KEYS.join(' / ')} 至少一个）` };
   }
-  const mirror: AssetsMirror = {
-    schema: MIRROR_SCHEMA,
+  const manifest: AssetsVersion = {
+    schema: ASSETS_VERSION_SCHEMA,
     channel,
     version: version.trim(),
     ...(tag === undefined ? {} : { tag: tag.trim() }),
@@ -162,14 +168,14 @@ export function parseAssetsMirror(value: unknown): MirrorParseResult {
     files,
     checksums: checksums === undefined ? CHECKSUMS_FILE : checksums.trim(),
   };
-  return { ok: true, mirror };
+  return { ok: true, manifest };
 }
 
-// —— mirror.json → UpdateManifest ——
+// —— version.json v2 → UpdateManifest ——
 
-function assetOf(mirror: AssetsMirror, source: DownloadSource, file: MirrorFile): UpdateAsset {
+function assetOf(manifest: AssetsVersion, source: DownloadSource, file: VersionFile): UpdateAsset {
   return {
-    url: assetsFileUrl(source, mirror.channel, file.name),
+    url: assetsFileUrl(source, manifest.channel, file.name),
     name: file.name,
     size: file.size,
     sha256: file.sha256,
@@ -182,21 +188,21 @@ function assetOf(mirror: AssetsMirror, source: DownloadSource, file: MirrorFile)
  * - `windowsPortable` 单独保留便携 zip：便携版自动更新要它，不能被安装包挤掉；
  * - 所有 URL 都是同源 raw 的绝对地址，`checksumsUrl` 指向同一分支的 `SHA256SUMS.txt`。
  */
-export function manifestFromAssetsMirror(mirror: AssetsMirror, source: DownloadSource): UpdateManifest {
+export function manifestFromAssetsVersion(manifest: AssetsVersion, source: DownloadSource): UpdateManifest {
   const assets: NonNullable<UpdateManifest['assets']> = {};
-  const portable = mirror.files.windowsPortable;
-  const windows = mirror.files.windowsSetup ?? portable;
-  if (windows !== undefined) assets.windows = assetOf(mirror, source, windows);
-  if (portable !== undefined) assets.windowsPortable = assetOf(mirror, source, portable);
-  if (mirror.files.android !== undefined) assets.android = assetOf(mirror, source, mirror.files.android);
-  if (mirror.files.web !== undefined) assets.web = assetOf(mirror, source, mirror.files.web);
+  const portable = manifest.files.windowsPortable;
+  const windows = manifest.files.windowsSetup ?? portable;
+  if (windows !== undefined) assets.windows = assetOf(manifest, source, windows);
+  if (portable !== undefined) assets.windowsPortable = assetOf(manifest, source, portable);
+  if (manifest.files.android !== undefined) assets.android = assetOf(manifest, source, manifest.files.android);
+  if (manifest.files.web !== undefined) assets.web = assetOf(manifest, source, manifest.files.web);
   return {
-    channel: mirror.channel,
-    version: mirror.version,
-    ...(mirror.releasedAt === undefined ? {} : { releasedAt: mirror.releasedAt }),
-    ...(mirror.commit === undefined ? {} : { commit: mirror.commit }),
-    ...(mirror.notes === undefined ? {} : { notes: mirror.notes }),
+    channel: manifest.channel,
+    version: manifest.version,
+    ...(manifest.releasedAt === undefined ? {} : { releasedAt: manifest.releasedAt }),
+    ...(manifest.commit === undefined ? {} : { commit: manifest.commit }),
+    ...(manifest.notes === undefined ? {} : { notes: manifest.notes }),
     ...(Object.keys(assets).length === 0 ? {} : { assets }),
-    checksumsUrl: assetsFileUrl(source, mirror.channel, mirror.checksums),
+    checksumsUrl: assetsFileUrl(source, manifest.channel, manifest.checksums),
   };
 }
