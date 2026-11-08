@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 
@@ -29,13 +29,23 @@ export interface GroupedSettingsProps {
   /** 分组清单的无障碍名称 */
   ariaLabel: string;
   groups: readonly SettingsGroup[];
+  /**
+   * 外部请求打开某个分组（如扫一扫配对后直达「局域网同步」）。
+   * `nonce` 每次变化都会重新应用，方便重复请求同一组。
+   */
+  openRequest?: { id: string; nonce: number } | null;
 }
 
-export function GroupedSettings({ pageTitle, ariaLabel, groups }: GroupedSettingsProps) {
+export function GroupedSettings({ pageTitle, ariaLabel, groups, openRequest = null }: GroupedSettingsProps) {
   /** null = 移动端还在清单页；桌面下 null 视为第一组 */
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = groups.find((group) => group.id === activeId) ?? groups[0];
   const navVisibleOnMobile = activeId === null;
+
+  useEffect(() => {
+    if (openRequest === null) return;
+    setActiveId(openRequest.id);
+  }, [openRequest]);
 
   return (
     <div className="flex flex-col gap-4 desktop:flex-row desktop:items-start">

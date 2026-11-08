@@ -16,6 +16,7 @@ import { Card } from '../components/ui/card.tsx';
 import { GroupedSettings, type SettingsGroup } from '../components/grouped-settings.tsx';
 import { canConfigureStorage, readStorageInfo } from '../storage-config.ts';
 import { davConfigured } from '../webdav.ts';
+import type { ScannedPairRequest } from '../lib/scan.ts';
 import { AboutCard } from './settings/about-card.tsx';
 import { BackupCard } from './settings/backup-card.tsx';
 import { LanSyncBlock } from './settings/lan-sync-block.tsx';
@@ -43,6 +44,9 @@ export interface DevicesViewProps {
   onChanged: () => void;
   /** 从库外写入设置后（如 WebDAV 只应用设置）重新读取设置并热加载 */
   onSettingsReplaced: () => Promise<void>;
+  /** 通用扫一扫交来的配对请求：进入本页时自动展开「局域网同步」并配对一次 */
+  pendingPair?: ScannedPairRequest | null;
+  onPendingPairHandled?: () => void;
 }
 
 /** 七个分组的固定顺序与图标：与原来的卡片顺序、图标一一对应，方便老用户找得到。 */
@@ -72,12 +76,16 @@ export function DevicesView({
   onPatch,
   onChanged,
   onSettingsReplaced,
+  pendingPair = null,
+  onPendingPairHandled,
 }: DevicesViewProps) {
   /** 版本检查：顶部快捷动作与「更新」组共用同一份进行中状态 */
   const update = useUpdateCheck(settings);
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [icsOpen, setIcsOpen] = useState(false);
+  /** 外部请求打开的分组：扫码配对固定落到「局域网同步」 */
+  const [groupRequest, setGroupRequest] = useState<{ id: string; nonce: number } | null>(null);
   /** WebDAV 下载前会建快照：递增版本号让备份组重读列表 */
   const [snapshotsRevision, setSnapshotsRevision] = useState(0);
   const refreshSnapshots = useCallback(async (): Promise<void> => {
@@ -100,6 +108,12 @@ export function DevicesView({
       cancelled = true;
     };
   }, [storage]);
+
+  // 扫一扫的配对请求：先落到「局域网同步」子页，再交给局域网块自动填入并发起配对
+  useEffect(() => {
+    if (pendingPair === null) return;
+    setGroupRequest({ id: 'lan', nonce: pendingPair.id });
+  }, [pendingPair]);
 
   const summaries = deviceGroupSummaries({
     storageKind,
@@ -156,7 +170,15 @@ export function DevicesView({
       />
     ),
 
-    lan: <LanSyncBlock storage={storage} onSettingsReplaced={onSettingsReplaced} onChanged={onChanged} />,
+    lan: (
+      <LanSyncBlock
+        storage={storage}
+        onSettingsReplaced={onSettingsReplaced}
+        onChanged={onChanged}
+        pendingPair={pendingPair}
+        onPendingPairHandled={onPendingPairHandled}
+      />
+    ),
 
     maintenance: <MaintenanceCard storage={storage} settings={settings} onPatch={onPatch} />,
 
@@ -192,7 +214,12 @@ export function DevicesView({
       </div>
 
       <div ref={shellRef}>
-        <GroupedSettings pageTitle="设备与同步" ariaLabel="设备与同步分组" groups={groups} />
+        <GroupedSettings
+          pageTitle="设备与同步"
+          ariaLabel="设备与同步分组"
+          groups={groups}
+          openRequest={groupRequest}
+        />
       </div>
 
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} storage={storage} />

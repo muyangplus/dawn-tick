@@ -7,6 +7,7 @@ import { AppToolbar } from './components/app-toolbar.tsx';
 import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
 import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
+import { ScanFlow } from './components/scan/scan-flow.tsx';
 import { BusyOverlay } from './components/ui/busy-overlay.tsx';
 import { PendingRestartBar } from './components/pending-restart-bar.tsx';
 import { ExternalLinkConfirm } from './components/ui/external-link.tsx';
@@ -15,6 +16,7 @@ import { DatabaseCorruptDialog } from './components/database-corrupt-dialog.tsx'
 import { Sheet, type FormContainer } from './components/ui/sheet.tsx';
 import { Toaster } from './components/ui/toaster.tsx';
 import { clampDayDate, dayRangeOf, defaultDayDate, stepDay, stepWindow } from './lib/day-nav.ts';
+import { isScanAvailable, type ScannedPairRequest } from './lib/scan.ts';
 import { useBreakpoint, useMediaQuery } from './lib/use-media.ts';
 import { CourseForm } from './screens/course-form.tsx';
 import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
@@ -62,6 +64,10 @@ export function App() {
   const recovery = useRecoveryActions({ fallback: session.fallback });
   const breakpoint = useBreakpoint();
   const isDesktop = breakpoint === 'desktop';
+  /** 通用扫一扫：打开相机、结果面板与「扫到配对信息后跳设备页」的跨页状态 */
+  const [scanOpen, setScanOpen] = useState(false);
+  const [pendingPair, setPendingPair] = useState<ScannedPairRequest | null>(null);
+  const pairRequestId = useRef(0);
   /** 高频短表单的容器：与底部导航同口径，非桌面（手机/平板）用底部 Sheet，桌面仍是居中 Dialog */
   const formContainer: FormContainer = isDesktop ? 'dialog' : 'sheet';
   /** ≥1440 才把课程详情并排成第三栏；1024–1439 用右侧覆盖层，避免把课表列宽压到不可读 */
@@ -274,6 +280,8 @@ export function App() {
           onPatch={session.patch}
           onChanged={session.refresh}
           onSettingsReplaced={session.reloadSettings}
+          pendingPair={pendingPair}
+          onPendingPairHandled={() => setPendingPair(null)}
         />
       )}
     </div>
@@ -349,6 +357,7 @@ export function App() {
               onToday={session.backToToday}
               onSearch={() => actions.setSearchOpen(true)}
               addActions={actions.addActions}
+              onScan={isScanAvailable() ? () => setScanOpen(true) : null}
               compact={!isDesktop}
             />
           </div>
@@ -409,6 +418,17 @@ export function App() {
         storage={screenStorage}
         semesterId={data.semester.id}
         onPick={(hit) => void actions.pickSearchHit(hit)}
+      />
+
+      {/* 通用扫一扫：配对信息转交设备页，其它文本留在结果面板 */}
+      <ScanFlow
+        open={scanOpen}
+        onOpenChange={setScanOpen}
+        onPair={(payload) => {
+          pairRequestId.current += 1;
+          setPendingPair({ id: pairRequestId.current, payload });
+          setView('devices');
+        }}
       />
 
       <CourseForm

@@ -1,6 +1,7 @@
 import { CalendarRange, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { dayOfWeek, WEEKDAY_LABELS, type SemesterRow } from '@dawn-tick/core';
 import { AddMenuButton, type AddActionHandlers } from './add-menu.tsx';
+import { ScanEntryButton } from './scan/scan-entry-button.tsx';
 import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs.tsx';
@@ -38,6 +39,8 @@ export interface AppToolbarProps {
   onSearch: () => void;
   /** 统一「＋」菜单的四类动作：桌面端是主按钮 + 下拉 */
   addActions: AddActionHandlers;
+  /** 通用扫一扫入口；null / 缺省表示当前平台不显示（仅 Android 原生） */
+  onScan?: (() => void) | null;
   compact: boolean;
 }
 
@@ -58,6 +61,7 @@ export function AppToolbar({
   onToday,
   onSearch,
   addActions,
+  onScan = null,
   compact,
 }: AppToolbarProps) {
   return (
@@ -115,6 +119,7 @@ export function AppToolbar({
       </Tabs>
 
       <div className="ml-auto flex items-center gap-2">
+        {onScan !== null && <ScanEntryButton onScan={onScan} />}
         <Button variant="ghost" size="icon" aria-label="搜索" aria-keyshortcuts="/" onClick={onSearch}>
           <Search className="size-4" aria-hidden />
         </Button>
