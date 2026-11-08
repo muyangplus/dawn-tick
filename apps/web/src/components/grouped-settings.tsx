@@ -34,9 +34,17 @@ export interface GroupedSettingsProps {
    * `nonce` 每次变化都会重新应用，方便重复请求同一组。
    */
   openRequest?: { id: string; nonce: number } | null;
+  /** 分组清单末尾的附加入口（帮助页），不参与分组切换与计数 */
+  extraNav?: ReactNode;
 }
 
-export function GroupedSettings({ pageTitle, ariaLabel, groups, openRequest = null }: GroupedSettingsProps) {
+export function GroupedSettings({
+  pageTitle,
+  ariaLabel,
+  groups,
+  openRequest = null,
+  extraNav,
+}: GroupedSettingsProps) {
   /** null = 移动端还在清单页；桌面下 null 视为第一组 */
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = groups.find((group) => group.id === activeId) ?? groups[0];
@@ -82,6 +90,7 @@ export function GroupedSettings({ pageTitle, ariaLabel, groups, openRequest = nu
             </button>
           );
         })}
+        {extraNav}
       </nav>
 
       <section

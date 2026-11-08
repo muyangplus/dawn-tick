@@ -15,6 +15,7 @@ import { Button } from '../components/ui/button.tsx';
 import { Card } from '../components/ui/card.tsx';
 import { Dialog, DialogContent } from '../components/ui/dialog.tsx';
 import { GroupedSettings, type SettingsGroup } from '../components/grouped-settings.tsx';
+import { HelpNavItem } from '../components/help-nav-item.tsx';
 import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { AppearanceCard } from './settings/appearance-card.tsx';
@@ -41,6 +42,10 @@ export interface SettingsViewProps {
   onChanged: () => void;
   /** 课表空态点「导入课表」时递增，用于自动打开导入抽屉 */
   importSignal?: number;
+  /** 帮助页「去设置」请求：切页后直接打开对应分组 */
+  openGroupRequest?: { id: string; nonce: number } | null;
+  /** 移动端从设置列表进入帮助页 */
+  onOpenHelp?: () => void;
 }
 
 /**
@@ -64,6 +69,8 @@ export function SettingsView({
   onPatch,
   onChanged,
   importSignal = 0,
+  openGroupRequest = null,
+  onOpenHelp,
 }: SettingsViewProps) {
   /** 顶部快捷动作打开的导入抽屉 */
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
@@ -193,7 +200,13 @@ export function SettingsView({
         </Button>
       </div>
 
-      <GroupedSettings pageTitle="设置" ariaLabel="设置分组" groups={groups} />
+      <GroupedSettings
+        pageTitle="设置"
+        ariaLabel="设置分组"
+        groups={groups}
+        openRequest={openGroupRequest}
+        extraNav={onOpenHelp === undefined ? undefined : <HelpNavItem onOpenHelp={onOpenHelp} />}
+      />
 
       <Dialog open={importDrawerOpen} onOpenChange={setImportDrawerOpen}>
         <DialogContent title="导入课表" description="网页课表 / 教务窗口 / ICS / CSV / Excel">

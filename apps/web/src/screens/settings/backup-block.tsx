@@ -35,7 +35,7 @@ export interface BackupBlockProps {
 }
 
 /**
- * 备份块：自动快照开关与保留份数、立即创建快照、快照列表（恢复 / 删除）。
+ * 备份块：自动快照开关与保留份数、新建快照、快照列表（恢复 / 删除）。
  *
  * 快照列表本身由 `useSnapshots` 持有；本块只管动作与动作结果的状态行。
  */
@@ -181,11 +181,11 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
         <Button
           size="sm"
           variant="secondary"
-          aria-label="立即创建快照"
+          aria-label="新建快照"
           loading={snapshotAction.busy}
           onClick={() => void backupNow()}
         >
-          立即创建快照
+          新建快照
         </Button>
         <span className="text-xs text-muted" data-role="backup-kind">
           {snapshotKind() === 'file' ? '整库文件快照（保存在数据目录）' : '库内 JSON 快照'}

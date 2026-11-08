@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   CalendarDays,
+  CircleHelp,
   ListChecks,
   MonitorSmartphone,
   PanelLeftClose,
@@ -12,7 +13,7 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 import { isCollapsed, rememberCollapsed } from '../lib/collapse-store.ts';
 
-export type NavId = 'timetable' | 'schedule' | 'settings' | 'devices';
+export type NavId = 'timetable' | 'schedule' | 'settings' | 'devices' | 'help';
 
 export interface NavItem {
   id: NavId;
@@ -20,15 +21,20 @@ export interface NavItem {
   icon: LucideIcon;
 }
 
-/** 导入已并入设置；「设备与同步」排在设置后面，承载存储、同步、更新与关于。 */
+/**
+ * 桌面侧栏：导入已并入设置；「设备与同步」承载存储、同步、更新与关于；
+ * 「帮助」在设置/设备同一导航体系内，移动端从设置/设备列表进入（底栏不占位）。
+ */
 export const DESKTOP_NAV: readonly NavItem[] = [
   { id: 'timetable', label: '课表', icon: CalendarDays },
   { id: 'schedule', label: '日程', icon: ListChecks },
   { id: 'settings', label: '设置', icon: Settings },
   { id: 'devices', label: '设备与同步', icon: MonitorSmartphone },
+  { id: 'help', label: '帮助', icon: CircleHelp },
 ];
 
-export const MOBILE_NAV: readonly NavItem[] = DESKTOP_NAV;
+/** 移动端底栏只放四个主页面，帮助从设置/设备列表或顶部「?」进入。 */
+export const MOBILE_NAV: readonly NavItem[] = DESKTOP_NAV.filter((item) => item.id !== 'help');
 
 export function AppSidebar({
   current,

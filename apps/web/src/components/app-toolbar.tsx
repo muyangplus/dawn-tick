@@ -1,4 +1,4 @@
-import { CalendarRange, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { CalendarRange, ChevronLeft, ChevronRight, CircleHelp, Search } from 'lucide-react';
 import { dayOfWeek, WEEKDAY_LABELS, type SemesterRow } from '@dawn-tick/core';
 import { AddMenuButton, type AddActionHandlers } from './add-menu.tsx';
 import { ScanEntryButton } from './scan/scan-entry-button.tsx';
@@ -37,6 +37,8 @@ export interface AppToolbarProps {
   /** 回到今天：周模式回默认起点，日模式回今天 */
   onToday: () => void;
   onSearch: () => void;
+  /** 打开帮助页：主界面顶部工具区常驻「?」入口 */
+  onHelp: () => void;
   /** 统一「＋」菜单的四类动作：桌面端是主按钮 + 下拉 */
   addActions: AddActionHandlers;
   /** 通用扫一扫入口；null / 缺省表示当前平台不显示（仅 Android 原生） */
@@ -60,6 +62,7 @@ export function AppToolbar({
   day,
   onToday,
   onSearch,
+  onHelp,
   addActions,
   onScan = null,
   compact,
@@ -120,6 +123,9 @@ export function AppToolbar({
 
       <div className="ml-auto flex items-center gap-2">
         {onScan !== null && <ScanEntryButton onScan={onScan} />}
+        <Button variant="ghost" size="icon" aria-label="帮助" data-role="open-help" onClick={onHelp}>
+          <CircleHelp className="size-4" aria-hidden />
+        </Button>
         <Button variant="ghost" size="icon" aria-label="搜索" aria-keyshortcuts="/" onClick={onSearch}>
           <Search className="size-4" aria-hidden />
         </Button>

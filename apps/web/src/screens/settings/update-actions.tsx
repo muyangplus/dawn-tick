@@ -35,7 +35,7 @@ export interface UpdateActionsProps {
   storage: Storage;
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
-  /** 版本检查与设备页顶部快捷动作共用一份状态 */
+  /** 版本检查状态由设备页持有，与「更新」分组共用一份 */
   update: UpdateCheckApi;
 }
 

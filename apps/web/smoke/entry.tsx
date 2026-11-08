@@ -31,7 +31,7 @@ import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update
 import { checkForUpdate, type UpdateManifest, type UpdateStatus } from '../src/update.ts';
 import { sha256Hex, type UpdateDownloadHost } from '../src/lib/update-download.ts';
 import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
-import { dismissUpdateTask, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
+import { dismissUpdateTask, setUpdateHostFactoryForTests, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
 import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
 import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
@@ -1196,6 +1196,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     sidebarText.includes('快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天'),
     sidebarText.slice(-40),
   );
+  const sidebarHelp = [...sidebar.container.querySelectorAll('button')].find(
+    (item) => (item.textContent ?? '').trim() === '帮助',
+  );
+  check('桌面侧栏在设置/设备同一导航体系内提供「帮助」', sidebarHelp !== undefined, sidebarText.slice(0, 60));
   sidebar.root.unmount();
   sidebar.container.remove();
 
@@ -2729,14 +2733,48 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   const devicesActions = view.container.querySelector<HTMLElement>('[data-role="devices-actions"]');
   check(
-    '设备页顶部提供备份 / ICS / 课表图片（PNG）/ 课表 PDF 导出、恢复快照与检查更新',
-    devicesActions !== null &&
-      ['导出备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF', '恢复快照', '检查更新'].every(
-        (label) => (devicesActions.textContent ?? '').includes(label),
+    '设备与同步页顶部不再放快捷动作行',
+    devicesActions === null,
+    devicesActions?.textContent?.trim() ?? '(无)',
+  );
+  const enteredStorage = await openDeviceGroup('本地存储');
+  const storageActions = view.container.querySelector<HTMLElement>('[data-role="storage-transfer-actions"]');
+  check(
+    '导出备份 / 导入备份 / ICS / 课表图片 PNG / 课表 PDF 下沉到「本地存储」分组',
+    enteredStorage &&
+      storageActions !== null &&
+      ['导出备份', '导入备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF'].every((label) =>
+        (storageActions.textContent ?? '').includes(label),
       ) &&
-      devicesActions.querySelector('[data-role="export-timetable-png"]') !== null &&
-      devicesActions.querySelector('[data-role="export-timetable-pdf"]') !== null,
-    (devicesActions?.textContent ?? '(无)').trim(),
+      storageActions.querySelector('[data-role="export-timetable-png"]') !== null &&
+      storageActions.querySelector('[data-role="export-timetable-pdf"]') !== null &&
+      storageActions.querySelector('[data-role="export-ics"]') !== null,
+    (storageActions?.textContent ?? '(无)').trim(),
+  );
+  const enteredBackupGroup = await openDeviceGroup('备份与恢复');
+  const backupGroupText = view.container.textContent ?? '';
+  check(
+    '「备份与恢复」分组保留快照列表与「新建快照」，不再重复导出/导入入口',
+    enteredBackupGroup &&
+      view.container.querySelector('[data-role="backup-settings"]') !== null &&
+      backupGroupText.includes('新建快照') &&
+      view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null &&
+      !backupGroupText.includes('导出备份') &&
+      !backupGroupText.includes('导出课表（ICS）'),
+    backupGroupText.slice(0, 80),
+  );
+  const enteredUpdateGroup = await openDeviceGroup('更新');
+  const updateButtons = [
+    ...view.container.querySelectorAll<HTMLButtonElement>('button[aria-label="检查更新"]'),
+  ];
+  check(
+    '「更新」分组保留唯一的「检查更新」，页面顶部不再重复',
+    enteredUpdateGroup &&
+      updateButtons.length === 1 &&
+      (view.container.querySelector('[data-role="release-page-link"]')?.getAttribute('href') ?? '').includes(
+        'muyangplus/dawn-tick/releases',
+      ),
+    `检查更新按钮 ${updateButtons.length} 个`,
   );
   await gotoSettings();
   // 导入流程挂在「学期设置」分组的课程管理里：先点进该组
@@ -3821,24 +3859,40 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (updateDialog?.textContent ?? '').includes('发布渠道 正式版'),
     (updateDialog?.textContent ?? '').slice(0, 48),
   );
-  const copyRelease = document.querySelector<HTMLElement>('[data-role="update-copy-link"]');
-  copyRelease?.click();
-  await flush(10);
+  /** 打开更新弹窗的「更多」菜单并点其中一项：主操作之外的动作都收在这里 */
+  const clickUpdateMenuItem = async (role: string): Promise<boolean> => {
+    document.querySelector<HTMLElement>('[data-role="update-more"]')?.click();
+    await flush(2);
+    const item = document.querySelector<HTMLElement>(`[data-role="${role}"]`);
+    if (item === null) return false;
+    item.click();
+    await flush(6);
+    return true;
+  };
+  const copyReleaseClicked = await clickUpdateMenuItem('update-copy-link');
+  await flush(8);
   check(
-    '更新弹窗复制发布页链接可用',
-    copyRelease !== null &&
+    '更新弹窗「更多」里复制下载链接可用',
+    copyReleaseClicked &&
       clipboardWrites[0] === RELEASES_URL &&
-      (document.body.textContent ?? '').includes('已复制发布页链接'),
+      (document.body.textContent ?? '').includes('已复制下载链接'),
     `剪贴板=${clipboardWrites[0] ?? '(空)'}`,
   );
+  // 头部只留发布说明链接，不再有单独的复制 / 打开发布页按钮
+  check(
+    '更新弹窗头部只保留「详细说明」文本链接',
+    document.querySelector('[data-role="update-notes-link"]') !== null &&
+      (document.querySelector('[data-role="update-notes-link"]')?.textContent ?? '').includes('详细说明') &&
+      document.querySelector('[data-role="update-release-url"]') === null,
+    document.querySelector('[data-role="update-notes-link"]')?.textContent?.trim() ?? '(无)',
+  );
   // 「忽略此版本」：记进 app_meta，设备页更新区出现已忽略版本与取消忽略；再弹同一个版本仍可取消忽略
-  const ignoreButton = document.querySelector<HTMLElement>('[data-role="update-ignore"]');
-  ignoreButton?.click();
-  await flush(16);
+  const ignoreClicked = await clickUpdateMenuItem('update-ignore');
+  await flush(12);
   const ignoredLine = view.container.querySelector<HTMLElement>('[data-role="ignored-version"]');
   check(
-    '更新弹窗可忽略此版本，设备页更新区给出已忽略版本与取消忽略',
-    ignoreButton !== null &&
+    '更新弹窗「更多」里可忽略此版本，设备页更新区给出已忽略版本与取消忽略',
+    ignoreClicked &&
       document.querySelector('[data-role="update-dialog"]') === null &&
       (ignoredLine?.textContent ?? '').includes('已忽略的版本：0.5.0') &&
       view.container.querySelector('[data-role="unignore-version"]') !== null,
@@ -3852,11 +3906,12 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('[data-role="update-unignore"]') !== null,
     document.querySelector('[data-role="update-ignored"]')?.textContent?.trim() ?? '(无)',
   );
-  document.querySelector<HTMLElement>('[data-role="update-unignore"]')?.click();
-  await flush(16);
+  const unignoreClicked = await clickUpdateMenuItem('update-unignore');
+  await flush(12);
   check(
     '取消忽略后弹窗与设备页都不再显示已忽略版本',
-    document.querySelector('[data-role="update-ignored"]') === null &&
+    unignoreClicked &&
+      document.querySelector('[data-role="update-ignored"]') === null &&
       view.container.querySelector('[data-role="ignored-version"]') === null,
     view.container.querySelector('[data-role="ignored-version"]')?.textContent?.trim() ?? '(无)',
   );
@@ -3904,11 +3959,13 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       },
     });
     await flush(12);
-    const updateDownload = document.querySelector<HTMLElement>('[data-role="update-download"]');
+    const updatePrimary = document.querySelector<HTMLElement>('[data-role="update-primary"]');
     check(
-      '桌面端更新弹窗提供「下载并安装」',
-      updateDownload !== null && (updateDownload.textContent ?? '').includes('下载并安装'),
-      updateDownload?.textContent?.trim() ?? '(无)',
+      '桌面端更新弹窗主操作只保留一个「立即更新」',
+      updatePrimary !== null &&
+        (updatePrimary.textContent ?? '').trim() === '立即更新' &&
+        document.querySelectorAll('[data-role="update-primary"]').length === 1,
+      updatePrimary?.textContent?.trim() ?? '(无)',
     );
     const installedKindLine = document.querySelector<HTMLElement>('[data-role="update-install-kind"]');
     check(
@@ -3922,55 +3979,146 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       rollbackButton !== null && (rollbackButton.textContent ?? '').includes('回滚到正式版'),
       rollbackButton?.textContent?.trim() ?? '(无)',
     );
-    updateDownload?.click();
-    await flush(24);
+    updatePrimary?.click();
+    await waitFor(() => updateTaskSnapshot().status === 'failed', 40);
+    await flush(6);
     const updateStatus = document.querySelector<HTMLElement>('[data-role="update-status"]');
     check(
-      '更新下载失败给出可读原因并可重试',
+      '更新下载失败直接显示原因，重试收在「更多」菜单里',
       updateStatus !== null &&
         (updateStatus.textContent ?? '').includes('下载更新失败') &&
         (updateStatus.textContent ?? '').includes('offline') &&
-        (document.querySelector('[data-role="update-download"]')?.textContent ?? '').includes('重试'),
+        document.querySelector('[data-role="update-retry"]') !== null &&
+        (document.querySelector('[data-role="update-primary"]')?.textContent ?? '').includes('立即更新'),
       updateStatus?.textContent?.trim() ?? '(无)',
     );
-    // 便携版：检测结果切到 portable 后，弹窗改下便携 zip，按钮文案说明「退出后替换」
+
+    // —— 默认 1 次点击：下载 → 校验 → 自动交给安装器（假出口，不真实下载） ——
+    const autoBytes = new TextEncoder().encode('dawn-tick one-click smoke payload');
+    const autoDigest = await sha256Hex(autoBytes);
+    const autoCalls: { writes: string[]; installs: string[] } = { writes: [], installs: [] };
+    const autoHost: UpdateDownloadHost = {
+      fetchImpl: async () =>
+        new Response(autoBytes, { status: 200, headers: { 'content-length': String(autoBytes.length) } }),
+      readChecksum: async () => `${autoDigest}  DawnTick-0.5.6-release-windows-x64-setup.exe\n`,
+      write: async (name) => {
+        autoCalls.writes.push(name);
+        return `C:\\Temp\\${name}`;
+      },
+      install: async (path) => {
+        autoCalls.installs.push(path);
+        return { needsPermission: false };
+      },
+    };
+    setUpdateHostFactoryForTests(() => autoHost);
+    setWindowsInstallKindForTests('installed');
+    requestUpdatePrompt({
+      available: true,
+      error: null,
+      feed: 'release',
+      current: appVersion(),
+      latest: '0.5.6',
+      manifest: {
+        channel: 'release',
+        version: '0.5.6',
+        checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.6-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.6-release-windows-x64-setup.exe',
+            size: autoBytes.length,
+          },
+        },
+      },
+    });
+    await flush(12);
+    document.querySelector<HTMLElement>('[data-role="update-primary"]')?.click();
+    const oneClickInstalled = await waitFor(() => autoCalls.installs.length === 1, 80);
+    await flush(6);
+    check(
+      '默认 1 次点击：下载校验后自动启动安装器',
+      oneClickInstalled &&
+        autoCalls.writes[0] === 'DawnTick-update.exe' &&
+        updateTaskSnapshot().installed === true &&
+        updateTaskSnapshot().status === 'ready',
+      `写盘=${autoCalls.writes.join(',') || '(无)'} 安装器=${autoCalls.installs.join(',') || '(无)'}`,
+    );
+    closeUpdatePrompt();
+    dismissUpdateTask();
+    await flush(4);
+
+    // 便携版同样 1 次点击：下载 → prepare_portable_update → 退出应用完成替换
+    const portableCalls: { writes: string[]; portables: string[]; exits: number } = {
+      writes: [],
+      portables: [],
+      exits: 0,
+    };
+    const autoPortableHost: UpdateDownloadHost = {
+      ...autoHost,
+      readChecksum: async () => `${autoDigest}  DawnTick-0.5.7-release-windows-x64-portable.zip\n`,
+      write: async (name) => {
+        portableCalls.writes.push(name);
+        return `C:\\Temp\\${name}`;
+      },
+      installPortable: async (path) => {
+        portableCalls.portables.push(path);
+        return 'C:\\Temp\\dawn-tick-update-auto.cmd';
+      },
+      exitForUpdate: async () => {
+        portableCalls.exits += 1;
+      },
+    };
+    setUpdateHostFactoryForTests(() => autoPortableHost);
     setWindowsInstallKindForTests('portable');
     requestUpdatePrompt({
       available: true,
       error: null,
       feed: 'release',
       current: appVersion(),
-      latest: '0.5.2',
+      latest: '0.5.7',
       manifest: {
         channel: 'release',
-        version: '0.5.2',
+        version: '0.5.7',
         checksumsUrl: 'https://example.com/SHA256SUMS.txt',
         assets: {
           windows: {
-            url: 'https://example.com/DawnTick-0.5.2-release-windows-x64-setup.exe',
-            name: 'DawnTick-0.5.2-release-windows-x64-setup.exe',
-            size: 16,
+            url: 'https://example.com/DawnTick-0.5.7-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.7-release-windows-x64-setup.exe',
+            size: autoBytes.length,
           },
           windowsPortable: {
-            url: 'https://example.com/DawnTick-0.5.2-release-windows-x64-portable.zip',
-            name: 'DawnTick-0.5.2-release-windows-x64-portable.zip',
-            size: 16,
+            url: 'https://example.com/DawnTick-0.5.7-release-windows-x64-portable.zip',
+            name: 'DawnTick-0.5.7-release-windows-x64-portable.zip',
+            size: autoBytes.length,
           },
         },
       },
     });
     await flush(12);
-    const portableDownload = document.querySelector<HTMLElement>('[data-role="update-download"]');
+    const portablePrimary = document.querySelector<HTMLElement>('[data-role="update-primary"]');
     const portableKindLine = document.querySelector<HTMLElement>('[data-role="update-install-kind"]');
     check(
-      '便携版：弹窗标注版本类型并提供「下载并更新（退出后替换）」',
+      '便携版：弹窗标注版本类型，主操作仍是「立即更新」',
       (portableKindLine?.textContent ?? '').includes('便携版') &&
-        (portableDownload?.textContent ?? '').includes('下载并更新（退出后替换）'),
-      `${portableKindLine?.textContent?.trim() ?? '(无)'} / ${portableDownload?.textContent?.trim() ?? '(无)'}`,
+        (portablePrimary?.textContent ?? '').trim() === '立即更新',
+      `${portableKindLine?.textContent?.trim() ?? '(无)'} / ${portablePrimary?.textContent?.trim() ?? '(无)'}`,
     );
+    portablePrimary?.click();
+    const portablePrepared = await waitFor(() => portableCalls.exits === 1, 80);
+    await flush(6);
+    check(
+      '便携版默认 1 次点击：准备替换脚本并退出应用',
+      portablePrepared &&
+        portableCalls.writes[0] === 'DawnTick-update.zip' &&
+        portableCalls.portables[0] === 'C:\\Temp\\DawnTick-update.zip' &&
+        updateTaskSnapshot().installed === true,
+      `写盘=${portableCalls.writes.join(',') || '(无)'} 脚本=${portableCalls.portables.join(',') || '(无)'} 退出=${portableCalls.exits}`,
+    );
+    setUpdateHostFactoryForTests(null);
   } finally {
     // 先撤掉桌面桩再关弹窗：关闭会触发一次重渲染，平台判定回到 Web，
     // 否则设备页会停留在「桌面端」渲染结果上，后面的浏览器端断言会误判。
+    setUpdateHostFactoryForTests(null);
     clearUpdateTauriStub();
     closeUpdatePrompt();
     setWindowsInstallKindForTests(null);
@@ -4050,14 +4198,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     dialogProgress !== null && dialogProgressDetail.includes('速度') && dialogProgressDetail.includes('剩余'),
     dialogProgressDetail || '(无)',
   );
-  document.querySelector<HTMLElement>('[data-role="update-background"]')?.click();
+  const backgroundClicked = await clickUpdateMenuItem('update-background');
   await flush(2);
   const backgroundTask = view.container.querySelector<HTMLElement>('[data-role="update-task"]');
   const backgroundProgress = backgroundTask?.querySelector<HTMLElement>('[data-role="update-task-progress"]');
   const backgroundDetail = backgroundProgress?.querySelector('[data-role="update-progress-detail"]')?.textContent ?? '';
   check(
-    '下载中关闭弹窗后设备页仍显示后台任务与进度（含速度与剩余时间）',
-    document.querySelector('[data-role="update-dialog"]') === null &&
+    '下载中从「更多」后台下载并关闭：设备页仍显示后台任务与进度（含速度与剩余时间）',
+    backgroundClicked &&
+      document.querySelector('[data-role="update-dialog"]') === null &&
       updateTaskSnapshot().status === 'downloading' &&
       backgroundTask !== null &&
       backgroundProgress !== null &&
@@ -4078,10 +4227,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   requestUpdatePrompt(backgroundPrompt);
   await flush(2);
   check(
-    '再次打开更新弹窗：同一任务已就绪，主按钮变为「安装」',
-    (document.querySelector('[data-role="update-download"]')?.textContent ?? '').includes('安装') &&
+    '再次打开更新弹窗：同一任务已就绪，主按钮变为「安装更新」',
+    (document.querySelector('[data-role="update-primary"]')?.textContent ?? '').includes('安装更新') &&
       (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes('可以安装'),
-    document.querySelector('[data-role="update-download"]')?.textContent?.trim() ?? '(无)',
+    document.querySelector('[data-role="update-primary"]')?.textContent?.trim() ?? '(无)',
   );
   closeUpdatePrompt();
   await flush(2);
@@ -4248,7 +4397,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
 
   // —— P1-05 反馈双轨：动作结果走 toast，持续状态走带时间的 live region 状态行 ——
-  if (clickByText(view.container, '立即创建快照')) await flush(18);
+  if (clickByText(view.container, '新建快照')) await flush(18);
   const snapshotStatus = view.container.querySelector<HTMLElement>('[data-role="snapshot-message"]');
   check(
     '备份结果进 live region 状态行并带操作时间',
@@ -4685,6 +4834,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
+  // 导出/导入入口已下沉到「本地存储」分组：先进入该组再点
+  await openDeviceGroup('本地存储');
   if (clickByText(view.container, '导出备份')) await flush(10);
   check(
     '导出可选模块',
@@ -4794,7 +4945,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   };
   installTauriStub();
-  // 走设备页顶部「导出备份」→ 对话框 JSON 导出这条真实入口：系统保存对话框与写盘都用桩
+  // 走「本地存储」分组里的「导出备份」→ 对话框 JSON 导出这条真实入口：系统保存对话框与写盘都用桩
+  await openDeviceGroup('本地存储');
   if (clickByText(view.container, '导出备份')) await flush(10);
   if (clickByLabel(document.body, '导出为 JSON 文件')) await flush(6);
   const exportSubmitted = clickByText(document.body, '导出');
@@ -4938,8 +5090,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `提示=${plainToast?.textContent?.trim() ?? '(无)'}`,
   );
 
-  // 导入备份：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
-  await openDeviceGroup('备份与恢复');
+  // 导入备份：入口已下沉到「本地存储」，一个入口里既可选文件也可粘贴文本
+  await openDeviceGroup('本地存储');
   if (clickByLabel(view.container, '导入备份')) await flush(10);
   check(
     '导入备份合并文件与粘贴两种方式',
@@ -4962,7 +5114,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
 
   // —— 导入加密备份：先要口令，输错可重试，对口令后照常进入模块选择 ——
-  await openDeviceGroup('备份与恢复');
+  await openDeviceGroup('本地存储');
   if (clickByLabel(view.container, '导入备份')) await flush(10);
   const encryptedImportBox = document.querySelector<HTMLTextAreaElement>('[data-role="import-text"]');
   if (encryptedImportBox !== null) setInputValue(encryptedImportBox, encryptedText);
@@ -6644,13 +6796,41 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         mobileApp.container.querySelector('[data-role="backup-settings"]') === null,
       `nav=${navOf(mobileApp.container)?.className ?? '(无)'}`,
     );
-    // 顶部「恢复快照」沿用旧路径：直接落到备份分组看快照列表
-    if (clickByText(mobileApp.container, '恢复快照')) await flush(14);
+    // 顶部快捷动作行已整体移除：入口都在各分组内
     check(
-      '顶部「恢复快照」直接进入备份分组',
-      navItemOf(mobileApp.container, 'backup')?.getAttribute('aria-current') === 'page' &&
-        mobileApp.container.querySelector('[data-role="backup-settings"]') !== null,
-      `当前=${navItemOf(mobileApp.container, 'backup')?.getAttribute('aria-current') ?? '(无)'}`,
+      '移动端设备页顶部同样没有快捷动作行',
+      mobileApp.container.querySelector('[data-role="devices-actions"]') === null,
+      '',
+    );
+    const mobileStorageEntered = await openDeviceGroup('本地存储', mobileApp.container);
+    const mobileStorageActions = mobileApp.container.querySelector<HTMLElement>(
+      '[data-role="storage-transfer-actions"]',
+    );
+    check(
+      '移动端在「本地存储」分组内找到导出备份 / 导入备份 / ICS 入口',
+      mobileStorageEntered &&
+        mobileStorageActions !== null &&
+        ['导出备份', '导入备份', '导出课表（ICS）'].every((label) =>
+          (mobileStorageActions.textContent ?? '').includes(label),
+        ),
+      (mobileStorageActions?.textContent ?? '(无)').trim(),
+    );
+    const mobileBackupEntered = await openDeviceGroup('备份与恢复', mobileApp.container);
+    check(
+      '移动端「备份与恢复」分组保留新建快照与快照列表',
+      mobileBackupEntered &&
+        (mobileApp.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').includes('新建快照') &&
+        mobileApp.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
+      mobileApp.container.querySelector('[data-role="backup-settings"]')?.textContent?.slice(0, 50) ?? '(无)',
+    );
+    // 移动端从设备列表进入帮助页（底栏不占帮助位）
+    const mobileHelpButton = mobileApp.container.querySelector<HTMLElement>('[data-role="settings-nav-help"]');
+    mobileHelpButton?.click();
+    await flush(12);
+    check(
+      '移动端从设备列表进入帮助页',
+      mobileApp.container.querySelector('[data-role="help-view"]') !== null,
+      mobileHelpButton?.textContent?.trim() ?? '(无入口)',
     );
     mobileApp.root.unmount();
 
@@ -6700,6 +6880,102 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       writable: true,
     });
   }
+
+  // —— 帮助模块：顶部「?」入口、分类卡片、搜索过滤/空态、展开步骤与「去设置」——
+  // 前面的用例删过默认学期，这里补一个学期后单独挂载，避免主视图停在引导页
+  const helpStore = validatedStorage(await openIndexedDbStorage());
+  if ((await activeSemester(helpStore, USER_ID)) === undefined) {
+    await createSemester(helpStore, {
+      userId: USER_ID,
+      name: '帮助冒烟学期',
+      startDate: todayText,
+      totalWeeks: 20,
+      timeZone: 'Asia/Shanghai',
+    });
+    await writeSettings(helpStore, { viewDays: 7 });
+  }
+  const helpApp = mount(<App />);
+  await flush(24);
+  if (clickByText(helpApp.container, '知道了')) await flush(8);
+  const helpToolbarButton = helpApp.container.querySelector<HTMLElement>('button[aria-label="帮助"]');
+  helpToolbarButton?.click();
+  await flush(12);
+  const helpView = helpApp.container.querySelector<HTMLElement>('[data-role="help-view"]');
+  const helpSearch = helpApp.container.querySelector<HTMLInputElement>('[data-role="help-search"]');
+  const helpCategoryCards = [
+    ...helpApp.container.querySelectorAll<HTMLElement>('[data-role="help-category"]'),
+  ];
+  const helpEntries = [...helpApp.container.querySelectorAll<HTMLElement>('[data-role="help-entry"]')];
+  check(
+    '主界面顶部「?」打开帮助：引导式分类卡片与条目齐全',
+    helpToolbarButton !== null &&
+      helpView !== null &&
+      helpSearch !== null &&
+      helpCategoryCards.length === 8 &&
+      helpEntries.length >= 10 &&
+      (helpView?.textContent ?? '').includes('帮助与使用指引'),
+    `分类=${helpCategoryCards.length} 条目=${helpEntries.length} 工具栏=${
+      helpToolbarButton !== null ? '有' : '无'
+    } 帮助页=${helpView !== null ? '有' : '无'} 当前=${(
+      helpApp.container.querySelector('[data-role="view-root"]')?.textContent ?? ''
+    ).slice(0, 50)}`,
+  );
+  if (helpSearch !== null) setInputValue(helpSearch, '下载源');
+  await flush(8);
+  const filteredEntries = [...helpApp.container.querySelectorAll<HTMLElement>('[data-role="help-entry"]')];
+  const filteredCount = helpApp.container.querySelector<HTMLElement>('[data-role="help-result-count"]')?.textContent ?? '';
+  check(
+    '帮助搜索按关键词过滤并实时显示结果计数',
+    filteredEntries.length >= 1 &&
+      filteredEntries.length < helpEntries.length &&
+      filteredCount.includes('找到') &&
+      filteredEntries.some((entry) => (entry.textContent ?? '').includes('下载源')),
+    `${filteredCount.trim()} / 命中 ${filteredEntries.length} 条`,
+  );
+  if (helpSearch !== null) setInputValue(helpSearch, '绝对不存在的帮助关键词zzz');
+  await flush(8);
+  check(
+    '帮助搜索无结果时给出空态',
+    helpApp.container.querySelector('[data-role="help-empty"]') !== null &&
+      (helpApp.container.querySelector('[data-role="help-result-count"]')?.textContent ?? '').includes('找到 0 条'),
+    helpApp.container.querySelector('[data-role="help-result-count"]')?.textContent?.trim() ?? '(无)',
+  );
+  if (helpSearch !== null) setInputValue(helpSearch, '');
+  await flush(8);
+  const firstHelpEntry = helpApp.container.querySelector<HTMLDetailsElement>('[data-role="help-entry"]');
+  firstHelpEntry?.querySelector('summary')?.click();
+  await flush(6);
+  const firstHelpSteps = firstHelpEntry?.querySelectorAll('[data-role="help-steps"] li') ?? [];
+  check(
+    '帮助条目可展开，按 1/2/3 显示有序步骤',
+    firstHelpEntry !== null &&
+      firstHelpEntry.open === true &&
+      firstHelpSteps.length >= 2 &&
+      firstHelpEntry.querySelector('[data-role="help-goto"]') !== null,
+    `${firstHelpEntry?.querySelector('[data-role="help-steps"]')?.textContent?.slice(0, 40) ?? '(无)'} / 步骤 ${firstHelpSteps.length} 条`,
+  );
+  const gotoUpdate = helpApp.container.querySelector<HTMLElement>(
+    '[data-role="help-goto"][data-goto-page="devices"][data-goto-group="update"]',
+  );
+  gotoUpdate?.click();
+  await flush(16);
+  check(
+    '帮助「去设置」跳转到设备页并直接打开「更新」分组',
+    helpApp.container.querySelector('[data-role="devices-view"]') !== null &&
+      helpApp.container.querySelector('[data-role="devices-actions"]') === null &&
+      activeDeviceGroup(helpApp.container) === 'update',
+    `当前组=${activeDeviceGroup(helpApp.container) || '(无)'}`,
+  );
+  if (clickByText(helpApp.container, '设置')) await flush(12);
+  const settingsHelpButton = helpApp.container.querySelector<HTMLElement>('[data-role="settings-nav-help"]');
+  settingsHelpButton?.click();
+  await flush(12);
+  check(
+    '移动端也可从设置列表进入帮助页',
+    settingsHelpButton !== null && helpApp.container.querySelector('[data-role="help-view"]') !== null,
+    settingsHelpButton?.textContent?.trim() ?? '(无入口)',
+  );
+  helpApp.root.unmount();
 
   return results;
 }

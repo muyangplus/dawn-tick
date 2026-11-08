@@ -8,35 +8,24 @@ export interface BackupCardProps {
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
   onChanged: () => void;
-  /** 导出/导入对话框挂在设备页（顶部快捷动作也要打开导出） */
-  onOpenExport: () => void;
-  onOpenImport: () => void;
   /** 别处（WebDAV 下载前）建过快照后递增，让本卡重读快照列表 */
   snapshotsRevision: number;
 }
 
 /**
- * 备份与恢复卡：自动快照设置、立即创建、快照列表（恢复 / 删除）与导出导入入口。
+ * 备份与恢复卡：自动快照设置、新建快照与快照列表（恢复 / 删除），以及诊断日志动作。
  *
- * 快照列表由本卡持有并传给 `BackupBlock`；WebDAV 在下载前也会建快照，
- * 因此设备页在那边完成后递增 `snapshotsRevision`，这里只负责重读，不共享动作状态。
+ * 导出/导入备份与 ICS 已移到「本地存储」分组，这里只保留快照相关动作与诊断日志入口，
+ * 避免重复入口；开发者特性开关控制诊断日志按钮是否出现。
  */
-export function BackupCard({
-  storage,
-  settings,
-  onPatch,
-  onChanged,
-  onOpenExport,
-  onOpenImport,
-  snapshotsRevision,
-}: BackupCardProps) {
+export function BackupCard({ storage, settings, onPatch, onChanged, snapshotsRevision }: BackupCardProps) {
   const snapshots = useSnapshots(storage, snapshotsRevision);
 
   return (
     <>
       <BackupBlock storage={storage} settings={settings} onPatch={onPatch} snapshots={snapshots} onChanged={onChanged} />
-      <span className="text-xs text-muted">跨设备迁移用导出导入</span>
-      <TransferBlock settings={settings} onOpenExport={onOpenExport} onOpenImport={onOpenImport} />
+      <span className="text-xs text-muted">导出/导入备份与课表文件在「本地存储」分组</span>
+      <TransferBlock settings={settings} />
     </>
   );
 }

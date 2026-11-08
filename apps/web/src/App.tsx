@@ -23,6 +23,7 @@ import { LessonDetailOpener } from './screens/cards/schedule-cards.tsx';
 import { Onboarding } from './screens/onboarding.tsx';
 import { ScheduleView } from './screens/schedule-view.tsx';
 import { DevicesView } from './screens/devices-view.tsx';
+import { HelpView } from './screens/help-view.tsx';
 import { SettingsView } from './screens/settings-view.tsx';
 import { TodayView } from './screens/today-view.tsx';
 import { TodoForm } from './screens/todo-form.tsx';
@@ -35,6 +36,7 @@ import { useAppSession } from './app/use-app-session.ts';
 import { useAppEffects } from './app/use-app-effects.ts';
 import { useTimetableActions } from './app/use-timetable-actions.ts';
 import { useRecoveryActions } from './app/use-recovery.ts';
+import type { HelpTarget } from './help/help-content.ts';
 import './styles.css';
 
 // 冒烟测试与外部入口沿用 App.tsx 的导出：加载页的阈值与组件仍是同一份实现
@@ -59,6 +61,16 @@ export function App() {
   const session = useAppSession();
   const { storage, settings, data } = session;
   const [view, setView] = useState<NavId>('timetable');
+  /** 帮助页「去设置」：切页后把目标分组交给设置/设备页打开（nonce 保证重复点同一目标也生效） */
+  const [groupJump, setGroupJump] = useState<{ page: 'settings' | 'devices'; id: string; nonce: number } | null>(
+    null,
+  );
+  const groupJumpSeq = useRef(0);
+  const openHelpTarget = (target: HelpTarget): void => {
+    groupJumpSeq.current += 1;
+    setGroupJump({ page: target.page, id: target.group, nonce: groupJumpSeq.current });
+    setView(target.page);
+  };
   const actions = useTimetableActions({ session, onNavigate: setView });
   const effects = useAppEffects({ storage, screenStorage: session.uiStorage, settings, data });
   const recovery = useRecoveryActions({ fallback: session.fallback });
@@ -78,6 +90,8 @@ export function App() {
   const leftSchedule = useRef(false);
 
   useEffect(() => {
+    // 帮助页「去设置」只对这一次切页生效：清掉后手动回到设置/设备不会再次自动跳组
+    setGroupJump(null);
     // 切页时收起课程详情：桌面侧栏不跨页常驻
     actions.closeDetail();
     // 离开日程页回到今天：再进日程默认看今天（搜索命中是从别的页直接带着日期进来，不受影响）
@@ -269,6 +283,8 @@ export function App() {
           onPatch={session.patch}
           onChanged={session.refresh}
           importSignal={actions.settingsImportSignal}
+          openGroupRequest={groupJump?.page === 'settings' ? groupJump : null}
+          onOpenHelp={() => setView('help')}
         />
       )}
       {view === 'devices' && (
@@ -282,8 +298,11 @@ export function App() {
           onSettingsReplaced={session.reloadSettings}
           pendingPair={pendingPair}
           onPendingPairHandled={() => setPendingPair(null)}
+          openRequest={groupJump?.page === 'devices' ? groupJump : null}
+          onOpenHelp={() => setView('help')}
         />
       )}
+      {view === 'help' && <HelpView onOpenGroup={openHelpTarget} />}
     </div>
   );
 
@@ -356,6 +375,7 @@ export function App() {
               }}
               onToday={session.backToToday}
               onSearch={() => actions.setSearchOpen(true)}
+              onHelp={() => setView('help')}
               addActions={actions.addActions}
               onScan={isScanAvailable() ? () => setScanOpen(true) : null}
               compact={!isDesktop}

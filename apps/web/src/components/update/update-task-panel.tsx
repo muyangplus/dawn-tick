@@ -1,7 +1,6 @@
 import { fail } from '../../copy/zh.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
-  cancelUpdateTask,
   dismissUpdateTask,
   installUpdateTask,
   isUpdateTaskBusy,
@@ -27,11 +26,11 @@ const TASK_LABEL: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = {
 };
 
 const TASK_HINT: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = {
-  downloading: '关闭更新弹窗后仍会继续，可随时回到这里查看',
+  downloading: '下载会自动继续；完成后点「安装」或重新打开更新弹窗点「立即更新」',
   verifying: '校验通过后才会给出「安装」',
   ready: '点「安装」交给系统安装器；Web 渠道刷新页面即可',
-  failed: '可重试；反复失败请到发布页手动下载',
-  cancelled: '已下载的部分作废，重试会从头开始',
+  failed: '点「继续下载」重试；反复失败请到发布页手动下载',
+  cancelled: '已下载的部分作废，继续会从头开始',
 };
 
 /** 便携版没有安装向导：按钮文案与提示都要说明「退出后替换」。 */
@@ -54,13 +53,24 @@ async function installTask(): Promise<void> {
   }
   if (final.status === 'failed') {
     if (final.needsPermission) toast.info(final.error ?? '请允许安装未知应用后重试');
-    else toast.error(fail(final.target?.kind === 'portable' ? '准备便携版更新' : '启动安装程序', final.error, '请稍后重试'));
+    else
+      toast.error(
+        fail(final.target?.kind === 'portable' ? '准备便携版更新' : '启动安装程序', final.error, '请稍后重试'),
+      );
   }
 }
 
+/** ready 时主按钮的文案：与弹窗口径一致，明确装的是什么。 */
+function primaryLabel(task: UpdateTask): string {
+  if (task.target?.platform === 'web') return '刷新页面';
+  return task.target?.kind === 'portable' ? '更新并退出' : '安装';
+}
+
 /**
- * 设备页的「后台下载」分组：进度、取消、安装、重试都收在这里。
- * 任务状态来自模块级 store，所以关掉更新弹窗后这里仍在推进。
+ * 设备页的「后台下载」分组：只保留主操作（继续 / 安装）与关闭，进度自动更新。
+ *
+ * 任务状态来自模块级 store，所以关掉更新弹窗后这里仍在推进；
+ * 下载完成后点「安装」，或重新打开更新弹窗点「立即更新」都会自动进入安装。
  */
 export function UpdateTaskPanel() {
   const task = useUpdateTask();
@@ -75,6 +85,8 @@ export function UpdateTaskPanel() {
         : fail('下载更新', task.error, '请稍后重试')
       : (task.message ?? TASK_LABEL[status]);
   const showProgress = task.progress !== null;
+  const canInstall = status === 'ready' && !task.installed;
+  const canContinue = status === 'failed' || status === 'cancelled';
   return (
     <Field label="后台下载" hint={taskHint(task)}>
       <div className="flex flex-col gap-2" data-role="update-task">
@@ -93,29 +105,16 @@ export function UpdateTaskPanel() {
         {showProgress && task.progress !== null && (
           <UpdateProgress dataRole="update-task-progress" progress={task.progress} />
         )}
+        {/* 只保留主操作与关闭：下载中进度自动走，没有多余按钮 */}
         <div className="flex flex-wrap items-center gap-2">
-          {busy && (
-            <Button size="sm" variant="secondary" data-role="update-task-cancel" onClick={cancelUpdateTask}>
-              取消下载
-            </Button>
-          )}
-          {(status === 'failed' || status === 'cancelled') && (
-            <Button
-              size="sm"
-              variant="secondary"
-              data-role="update-task-retry"
-              onClick={() => void retryUpdateTask()}
-            >
-              重试
-            </Button>
-          )}
-          {status === 'ready' && !task.installed && (
+          {canInstall && (
             <Button size="sm" variant="primary" data-role="update-task-install" onClick={() => void installTask()}>
-              {task.target?.platform === 'web'
-                ? '刷新页面'
-                : task.target?.kind === 'portable'
-                  ? '更新并退出'
-                  : '安装'}
+              {primaryLabel(task)}
+            </Button>
+          )}
+          {canContinue && (
+            <Button size="sm" variant="primary" data-role="update-task-install" onClick={() => void retryUpdateTask()}>
+              继续下载
             </Button>
           )}
           {!busy && (

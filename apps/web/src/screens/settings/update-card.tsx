@@ -8,7 +8,7 @@ export interface UpdateCardProps {
   storage: Storage;
   settings: AppSettings;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
-  /** 版本检查与设备页顶部快捷动作共用一份状态 */
+  /** 版本检查状态由设备页持有，与「更新」分组共用一份 */
   update: UpdateCheckApi;
 }
 
@@ -16,7 +16,7 @@ export interface UpdateCardProps {
  * 更新卡：检查更新、渠道开关、忽略版本、回滚与后台下载任务。
  *
  * 更新区仍由 `update-actions.tsx` 呈现，本卡只补开发者特性开关与「只在应用内检查版本」说明；
- * 版本检查状态由设备页的 `useUpdateCheck` 提供，顶部快捷动作与本卡显示同一份进度。
+ * 版本检查状态由设备页的 `useUpdateCheck` 提供，与本卡显示同一份进度。
  */
 export function UpdateCard({ storage, settings, onPatch, update }: UpdateCardProps) {
   return (

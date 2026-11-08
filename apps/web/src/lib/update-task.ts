@@ -87,6 +87,8 @@ let installing = false;
 let host: UpdateDownloadHost | null = null;
 let lastManifest: UpdateManifest | null = null;
 let lastOptions: StartUpdateOptions = {};
+/** 测试/冒烟注入的下载出口工厂：正常界面不设置，弹窗点击时用它替换真实网络/原生出口。 */
+let hostFactoryForTests: ((platform: 'windows' | 'android') => UpdateDownloadHost | null) | null = null;
 const listeners = new Set<() => void>();
 let snapshot: UpdateTask = task;
 
@@ -118,6 +120,13 @@ export function useUpdateTask(): UpdateTask {
 /** 订阅任务变化：非 React 场景（冒烟、单测）用它收集状态迁移。 */
 export function subscribeUpdateTask(listener: () => void): () => void {
   return subscribe(listener);
+}
+
+/** 冒烟/单测注入下载出口：正常界面不调用，避免依赖真实网络与原生写盘。 */
+export function setUpdateHostFactoryForTests(
+  factory: ((platform: 'windows' | 'android') => UpdateDownloadHost | null) | null,
+): void {
+  hostFactoryForTests = factory;
 }
 
 function installerLabelOf(platform: UpdatePlatform, kind: UpdateTaskTarget['kind']): string {
@@ -223,7 +232,11 @@ export async function startBackgroundUpdate(
 
   const active = new AbortController();
   controller = active;
-  host = options.host ?? createUpdateHost(platform === 'android' ? 'android' : 'windows', options.fetchImpl);
+  const nativePlatform = platform === 'android' ? 'android' : 'windows';
+  host =
+    options.host ??
+    hostFactoryForTests?.(nativePlatform) ??
+    createUpdateHost(nativePlatform, options.fetchImpl);
   setTask({ ...base, status: 'downloading', message: '正在下载安装包…' });
 
   const final = await prepareUpdateDownload({
@@ -245,6 +258,29 @@ export async function startBackgroundUpdate(
     setTask(mergeState(task, final));
   }
   return task;
+}
+
+/** 一键更新的进度回调：下载完成、准备交给安装链路时通知界面显示「正在安装」。 */
+export interface AutomaticUpdateHooks {
+  onInstalling?: () => void;
+}
+
+/**
+ * 一键更新：下载 + 校验通过后自动进入安装链路，是弹窗「立即更新」的唯一实现。
+ *
+ * 安装版交给 `run_installer`；便携版 `prepare_portable_update` 后退出替换；
+ * Android 调起系统安装器；Web 标记为刷新/下载。失败或取消不进入安装。
+ */
+export async function startAutomaticUpdate(
+  manifest: UpdateManifest | null,
+  options: StartUpdateOptions = {},
+  hooks: AutomaticUpdateHooks = {},
+): Promise<UpdateTask> {
+  const final = await startBackgroundUpdate(manifest, options);
+  if (final.status !== 'ready' || final.installed) return final;
+  hooks.onInstalling?.();
+  await installUpdateTask();
+  return updateTaskSnapshot();
 }
 
 /** 取消：中止网络并回到「已取消」；已下载的部分作废，重新开始会从头下载。 */
@@ -289,7 +325,10 @@ export async function installUpdateTask(): Promise<void> {
     setTask({ ...current, status: 'failed', error: '安装包路径丢失，请重新下载', updatedAt: Date.now() });
     return;
   }
-  const installer = host ?? createUpdateHost(target.platform === 'android' ? 'android' : 'windows');
+  const installer =
+    host ??
+    hostFactoryForTests?.(target.platform === 'android' ? 'android' : 'windows') ??
+    createUpdateHost(target.platform === 'android' ? 'android' : 'windows');
   installing = true;
   try {
     if (target.kind === 'portable') {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings } from '@dawn-tick/core';
+import type { AppSettings, Storage } from '@dawn-tick/core';
 import { hasMobileWidgets, isWebApp } from '../../lib/capabilities.ts';
 import { detectPlatform } from '../../platform-detect.ts';
 import {
@@ -18,24 +18,39 @@ import { Field, Input } from '../../components/ui/input.tsx';
 import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
+import { TimetableExportActions } from './export-actions.tsx';
 import { said } from './format.ts';
 
 export interface StorageCardProps {
+  storage: Storage;
   settings: AppSettings;
   /** 浏览器持久化权限：已申请 / 已授权 / 未授权 */
   persistent: boolean | null;
   /** 存储类型的可读文案，如 IndexedDB / SQLite */
   storageKind: string;
   onPatch: (patch: Partial<AppSettings>) => Promise<void>;
+  /** 导出/导入/ICS 对话框挂在设备页，本卡只发开关意图 */
+  onOpenExport: () => void;
+  onOpenImport: () => void;
+  onOpenIcs: () => void;
 }
 
 /**
- * 本地存储卡：存储类型与位置、自定义路径、WAL 日志模式与浏览器持久化状态。
+ * 本地存储卡：存储类型与位置、自定义路径、WAL 日志模式与浏览器持久化状态，
+ * 以及从页面顶部下沉到本组的导出 / 导入入口。
  *
- * 从原「存储与同步」卡的本地存储部分拆出，动作与提示保持原样；
- * 快照、WebDAV、局域网同步与导出导入已各自独立成卡。
+ * 快照、WebDAV、局域网同步已各自独立成卡；页面顶部不再放快捷动作行。
  */
-export function StorageCard({ settings, persistent, storageKind, onPatch }: StorageCardProps) {
+export function StorageCard({
+  storage,
+  settings,
+  persistent,
+  storageKind,
+  onPatch,
+  onOpenExport,
+  onOpenImport,
+  onOpenIcs,
+}: StorageCardProps) {
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [storagePathInput, setStoragePathInput] = useState('');
   const [storageMessage, setStorageMessage] = useState<StatusMessage | null>(null);
@@ -168,6 +183,23 @@ export function StorageCard({ settings, persistent, storageKind, onPatch }: Stor
       ) : hasMobileWidgets() ? (
         <span className="text-xs text-muted">存储位置：应用私有目录（不可改）</span>
       ) : null}
+      {/* 导出/导入/ICS 从页面顶部下沉到这里：本组是数据与文件的统一入口 */}
+      <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="storage-transfer-actions">
+        <span className="text-sm font-medium text-ink">导出与导入</span>
+        <span className="text-xs text-muted">跨设备迁移用导出导入；课表可另存为 ICS、图片或 PDF</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={onOpenExport}>
+            导出备份
+          </Button>
+          <Button size="sm" variant="secondary" aria-label="导入备份" onClick={onOpenImport}>
+            导入备份
+          </Button>
+          <Button size="sm" variant="secondary" data-role="export-ics" onClick={onOpenIcs}>
+            导出课表（ICS）
+          </Button>
+          <TimetableExportActions storage={storage} settings={settings} />
+        </div>
+      </div>
       {!isWebApp() && (
         <div className="flex flex-col gap-1" data-role="wal-setting">
           <SwitchField
