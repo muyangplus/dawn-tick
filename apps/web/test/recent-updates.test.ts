@@ -63,3 +63,14 @@ test('releaseTagUrl：补 v 前缀并指向对应 Release', () => {
     'https://github.com/muyangplus/dawn-tick/releases/tag/v0.6.2',
   );
 });
+
+test('parseRecentUpdates：测试版带 beta 标记（标题标注或版本号 -beta）', () => {
+  const marked = parseRecentUpdates('## [0.6.9] - 2026-11-08（测试版）\n\n内容\n', 1);
+  assert.equal(marked[0]?.beta, true);
+  assert.equal(marked[0]?.version, '0.6.9');
+  const withSuffix = parseRecentUpdates('## [0.6.4-beta] - 2026-10-24\n\n内容\n', 1);
+  assert.equal(withSuffix[0]?.beta, true);
+  assert.equal(withSuffix[0]?.version, '0.6.4-beta');
+  const stable = parseRecentUpdates('## [0.6.3] - 2026-10-23\n\n内容\n', 1);
+  assert.equal(stable[0]?.beta, false);
+});

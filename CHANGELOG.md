@@ -5,8 +5,7 @@
 
 ## [未发布]
 
-## [0.6.9] - 2026-11-08
-
+## [0.6.9] - 2026-11-08（测试版）
 ### 修复
 
 - beta 渠道重新支持「更新到更高的正式版」：检查更新时同时比较 beta 与 release 渠道，正式版版本更高就提示正式版；release 镜像分支不存在时仍按测试版检查
@@ -15,23 +14,20 @@
 
 - 本地立即同步 Gitee 的 CD 命令：`node tools/release/sync-gitee-assets.mjs` 把 assets 仓库的 dev/beta/release 分支直接推到 Gitee，绕开镜像拉取延迟（token 放环境变量或 `tools/release/.gitee-token`）
 
-## [0.6.8] - 2026-11-08
-
+## [0.6.8] - 2026-11-08（测试版）
 ### 修复
 
 - 下载源探测改为按当前更新渠道读取 assets 仓库对应分支（dev/beta/release），不再固定读 release 分支，避免 beta 版用户把两个源都误判成「镜像未同步」
 - 探测降级文案改为「该源暂无该渠道镜像」，正式版镜像尚未生成时说明会回退另一个源
 
-## [0.6.7] - 2026-11-08
-
+## [0.6.7] - 2026-11-08（测试版）
 ### 变更
 
 - 清单合并为 `version.json` v2：GitHub Release 与 assets 仓库共用同一份，旧字段（channel / version / tag / notes / artifacts）保留，新增 `schema: 2`、`commit`、`releasedAt`、四个平台的 `files`（名字 / 体积 / SHA256）与 `checksums`
 - 不再生成 `mirror.json`：客户端检查更新、下载源探测与同源下载都改读 assets 仓库对应分支的 `version.json`，发布脚本只校验并原样复制它（schema 不是 2、缺产物或体积 / SHA256 不符都直接报错）
 - Gitee Releases 手动兜底保留策略改为 `release` / `beta` 各保留最近 8 个发布 + `dev-latest`，总容量超限时再删最旧
 
-## [0.6.6] - 2026-11-07
-
+## [0.6.6] - 2026-11-07（测试版）
 ### 新增
 
 - 下载源选择：设置里可选「自动检测 / 国内 Gitee / 国际 GitHub」，自动从两源真实安装包读取 256KB 测速取低（version.json 太小，已改为资产分块探测）；应用更新与预设更新共用，失败自动回退另一源
@@ -41,8 +37,7 @@
 - Gitee 附件限额与网络问题随之绕开；旧的 Gitee Releases 同步脚本保留为手动兜底
 - Gitee 附件保留策略：默认保留最近 6 个发布 + `dev-latest`，总量超过 800MB 时自动删除最旧构建
 
-## [0.6.5] - 2026-11-07
-
+## [0.6.5] - 2026-11-07（测试版）
 ### 新增
 
 - 安卓原生日志：教务窗口、外部链接、小组件读取失败会记录到 `filesDir/diag/native.log`，并随「导出诊断日志」一起导出；启动时记录插件注册自检

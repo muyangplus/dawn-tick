@@ -13,9 +13,11 @@ export interface RecentUpdate {
   date: string;
   /** 该版本段落的 Markdown 正文（`### 新增` 等小节） */
   body: string;
+  /** 测试版：版本号带 `-beta`，或标题里标注了「（测试版）」 */
+  beta: boolean;
 }
 
-const HEADING = /^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})\s*$/;
+const HEADING = /^## \[([^\]]+)\] - (\d{4}-\d{2}-\d{2})(?:\s*（测试版）)?\s*$/;
 
 /**
  * 解析 CHANGELOG 文本，返回最近 `limit` 个已发布版本。
@@ -39,7 +41,9 @@ export function parseRecentUpdates(changelog: string, limit = 5): RecentUpdate[]
     if (matched !== null) {
       flush();
       body.length = 0;
-      current = { version: matched[1] ?? '', date: matched[2] ?? '', body: '' };
+      const version = matched[1] ?? '';
+      const beta = version.includes('-beta') || /（测试版）/.test(line);
+      current = { version, date: matched[2] ?? '', body: '', beta };
       continue;
     }
     // 下一个二级标题（如「## 约定」「## [未发布]」）结束当前段

@@ -37,7 +37,17 @@ export function RecentUpdatesDialog() {
               RECENT_UPDATES.map((item) => (
                 <section key={item.version} data-role="recent-update-item" className="flex flex-col gap-1">
                   <header className="flex flex-wrap items-baseline justify-between gap-2">
-                    <span className="tabular text-sm font-semibold text-ink">v{item.version}</span>
+                    <span className="flex items-center gap-2">
+                      <span className="tabular text-sm font-semibold text-ink">v{item.version}</span>
+                      {item.beta && (
+                        <span
+                          data-role="recent-update-beta"
+                          className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
+                        >
+                          测试版
+                        </span>
+                      )}
+                    </span>
                     <span className="flex items-center gap-2 text-xs text-muted">
                       <span className="tabular">{item.date}</span>
                       <ExternalLink

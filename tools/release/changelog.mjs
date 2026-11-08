@@ -54,7 +54,7 @@ export function checkChangelog(text) {
   }
   if (!UNRELEASED_PATTERN.test(text)) problems.push('缺少「未发布」段');
   for (const version of releasedVersions(text)) {
-    const heading = new RegExp(`^##\\s+\\[?${version.replace(/\./g, '\\.')}\\]?\\s+-\\s+(\\d{4}-\\d{2}-\\d{2})\\s*$`, 'm');
+    const heading = new RegExp(`^##\\s+\\[?${version.replace(/\./g, '\\.')}\\]?\\s+-\\s+(\\d{4}-\\d{2}-\\d{2})(?:\\s*（测试版）)?\\s*$`, 'm');
     if (!heading.test(text)) problems.push(`${version} 缺少发布日期（应为「## [${version}] - YYYY-MM-DD」）`);
   }
   return problems;
