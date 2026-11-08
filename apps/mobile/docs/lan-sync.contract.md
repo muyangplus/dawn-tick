@@ -16,7 +16,7 @@
 | 平台 | 开配对（服务端） | 连接对方（客户端） | UDP 发现 | 相机扫码 | 实现 |
 |---|---|---|---|---|---|
 | Windows（Tauri） | 是 | 是 | 是（广播 + 扫描） | **否** | `apps/desktop/src-tauri/src/lan_sync.rs`、`lan_discovery.rs` + `apps/web/src/lan-sync*.ts` |
-| Android（Capacitor） | 是 | 是 | 是（广播 + 扫描） | **是** | `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/` + `apps/web/src/lan-pair-scan.ts` |
+| Android（Capacitor） | 是 | 是 | 是（广播 + 扫描） | **是**（通用「扫一扫」+ 配对面板扫码） | `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/` + `apps/web/src/lib/scan.ts` |
 | Web / PWA | **否** | 是（需要对方回 CORS 头） | **否**（只能手输/粘贴） | **否** | `apps/web/src/lan-sync*.ts` |
 
 - 服务端的原生层只做传输：监听、最小 HTTP 解析、只接受局域网来源、请求体上限、排队与超时；
@@ -41,11 +41,14 @@
   172.16–31.\* > 100.64/10 > 169.254/16 → 地址数值**。
 - 设备页显示「网络：`<地址> · <分类>`」与「切换网络」下拉；选中的地址写入
   `localStorage` 的 `dt.lan.host`（只存地址，不存凭据），下次开配对优先使用。
-  切换后需要**重启配对**（停止再开启），广播地址随之变化。
+  **Android 上网络行始终显示**：没有候选时给出「未发现局域网地址：请确认已连接 Wi-Fi/热点」
+  空态与「刷新」按钮，不把权限 / ROM 失败伪装成没有网络；`networks()` reject 时界面显示
+  「读取本机网络失败：<异常类: message>」。选择新地址后若正在监听，会**自动停止并用新地址
+  重启**（广播地址随之变化）。
 - `lan_sync_start({host})` / `LanSync.start({host})` 的 `host` 只决定对外展示/广播地址；
-  缺省时自动选首选局域网。安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 另有
-  **8 秒超时**。失败文案统一为 `开启配对失败：<原因>`，原因可以是原生异常 message 或超时文案，
-  设备页提供「重试」。
+  缺省或该地址已不在本机网卡上时回退 `LanNetworks.preferredAddress()`（通配绑定）。
+  安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 另有 **8 秒超时**。失败文案统一为
+  `开启配对失败：<异常类: message>`，设备页提供「重试」。
 - 发现使用 **UDP 8766**（`LAN_DISCOVERY_PORT`）；广播目标是选中地址**所属网段的广播地址**
   （桌面按 `ipconfig` 的子网掩码计算，Android 取 `InterfaceAddress.broadcast`），
   同时保留 `255.255.255.255:8766` 兜底，同机自测额外发一份到 `127.0.0.1:8766`。
@@ -132,28 +135,34 @@ dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC
 
 - 二维码由本地编码器（`apps/web/src/lan-sync-qr.ts`）生成：字节模式、纠错 M、版本 1–6
   （最多 106 字节；标准链接约 72–90 字节）。超过上限时退回可读提示，不阻断页面。
-- **Android 应用内扫码**：`apps/web/src/lan-pair-scan.ts` 动态 `import`
-  `@capacitor-mlkit/barcode-scanning@8.2.1`（Capacitor 8 兼容）：
-  - `isScanAvailable()` 仅 Android 原生返回 true；
-  - `scanPairPayload()`：`isSupported()` → `requestPermissions()` → `startScan()` +
-    `barcodesScanned` 监听，**扫到第一条即 `stopScan`**；用户取消返回 `null`；
-    权限被拒 / 组件缺失 / 相机被占用都抛出可读原因；
-  - `stopScan()` 幂等，离开页面时关闭相机；
+- **Android 应用内扫码**：通用实现在 `apps/web/src/lib/scan.ts`（`scanCodeOnce()` /
+  `parseScannedPayload()`），UI 在 `apps/web/src/components/scan/`：
+  - 主界面顶部工具区有通用「扫一扫」图标入口（仅 Android 原生显示，Web / 桌面隐藏）；
+  - `scanCodeOnce()` 动态 `import` `@capacitor-mlkit/barcode-scanning@8.2.1`：
+    `isSupported()` → `requestPermissions()` → `startScan()` + `barcodesScanned` 监听，
+    **扫到第一条即 `stopScan`**；用户取消返回 `null`；权限被拒 / 组件缺失 / 相机被占用
+    都抛出可读原因；
+  - `parseScannedPayload()` 把 `dawn-tick://pair?…` 归为 `pair`，其它 `dawn-tick://…`、
+    http(s)、纯文本归为 `text`（未知 scheme 附带说明）；配对结果跳转「设备与同步 →
+    局域网同步」自动填入并配对，普通文本进结果面板（显示 / 复制 / 关闭）；
+  - 配对面板原有「扫码配对」按钮保留，调用同一个 `scanCodeOnce()`；
+  - `stopScanCode()` 幂等，离开页面时关闭相机；
   - 选择 `startScan`（打包进 APK 的 ML Kit 模型）而不是 `scan()`（依赖 Google Play 服务），
     无 GMS 的国产 ROM 也能扫码。
 - Android 权限：`AndroidManifest.xml` 声明 `android.permission.CAMERA`；
   `<uses-feature android:name="android.hardware.camera" android:required="false"/>`。
   `cap sync android` 后 `capacitor.plugins.json` 会注册
   `io.capawesome.capacitorjs.plugins.mlkit.barcodescanning.BarcodeScannerPlugin`。
-- Web / 桌面不显示「扫码配对」，保留「粘贴配对信息」入口，解析同一套格式。
+- Web / 桌面不显示「扫一扫」，保留「粘贴配对信息」入口，解析同一套格式。
 
 ## 5. HTTP 接口
 
-服务端实现六个入口，其它路径 404，方法不符 405。请求/响应均为 UTF-8 JSON。
+服务端实现七个入口，其它路径 404，方法不符 405。请求/响应均为 UTF-8 JSON。
 预览复用 `GET /export`，在客户端本地统计；重连复用 `POST /pair/refresh`。
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
+| `GET` | `/ping` | 无 | 可达性预检：确认对方端口是晓刻局域网服务；返回 `{"ok":true,"app":"dawn-tick","schemaVersion":1}`，不含任何业务数据 |
 | `POST` | `/pair` | 无（配对码） | 配对码换 180 天长期令牌 |
 | `POST` | `/pair/refresh` | `Authorization: Bearer <token>` | 换新令牌并顺延有效期（自动重连） |
 | `POST` | `/pair/revoke` | `Authorization: Bearer <token>` | 吊销当前令牌（移除配对） |
@@ -161,6 +170,11 @@ dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC
 | `POST` | `/import?scope=…&mode=merge\|overwrite` | `Authorization: Bearer <token>` | 导入（合并/覆盖） |
 | `OPTIONS` | 任意 | 无 | CORS 预检，原生层直接 204 |
 
+- 客户端配对前先 `GET /ping`（3 秒超时）做可达性预检：失败时提示「无法连接对方：请确认
+  两端在同一个 Wi-Fi，关闭 VPN/代理，并确认路由器没有开启 AP 隔离」，并保留服务端返回的
+  原始错误；预检不通过不会发 `/pair`。
+- `POST /pair` 本身有 **8 秒**超时（`LAN_PAIR_TIMEOUT_MS`）；失败原因会写 `logWarn`
+  （地址 → 请求路径 → 状态码 / 服务端 error 文本），配对面板与状态行显示同一句原因。
 - `scope` 取值 `timetable` / `todos` / `settings`，逗号分隔；未知值忽略，空范围 400。
 - **范围由发起方决定**：拉取方在 `/export` 里选，推送方在 `/import` 里选；
   接收方卡片上的勾选只影响它自己发起的请求。导入时生效范围再与信封里的 `scope` 取交集。
@@ -318,8 +332,8 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 - `lan_network_list` / `lan_discovery_scan` 的 `host` 都是**选中地址**：
   前者只用于枚举；后者按该地址所属网段过滤扫描结果。
 - 队列上限 32 条，满了直接 503；每个连接线程等自己的响应，10 秒超时 504 并清掉队列项。
-- 原生层**不校验**配对码/令牌，`Authorization` 原样带给 TS；`/pair`、`/pair/refresh`、
-  `/pair/revoke` 也照常入队（三者都在原生路径白名单里）。
+- 原生层**不校验**配对码/令牌，`Authorization` 原样带给 TS；`/ping`、`/pair`、`/pair/refresh`、
+  `/pair/revoke` 也照常入队（都在原生路径白名单里）。
 - 入队前已完成的拒绝：非局域网来源 403、路径不在白名单 404、方法不符 405、请求头过大 431、
   请求体超过 5MB 413、请求不是合法 UTF-8/HTTP 400。
 - 轮询间隔由 TS 决定（`LAN_SYNC_POLL_INTERVAL_MS = 400`）；停止配对后不再轮询。
@@ -333,7 +347,9 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 |---|---|
 | `apps/web/src/lan-sync-protocol.ts` | 范围、地址、配对码、长期令牌（哈希/签发/校验/刷新/吊销/序列化）纯函数 |
 | `apps/web/src/lan-pair-payload.ts` | 标准连接格式 `formatPairPayload` / 宽容解析 `parsePairPayload` / 人类可读文本 |
-| `apps/web/src/lan-pair-scan.ts` | Android 相机扫码（动态加载 `@capacitor-mlkit/barcode-scanning`）与可读错误 |
+| `apps/web/src/lib/scan.ts` | 通用扫一扫：`scanCodeOnce()` / `parseScannedPayload()`（pair / text / 未知 scheme）与可读错误 |
+| `apps/web/src/components/scan/` | 通用扫码 UI：工具区图标入口、相机覆盖层、文本结果面板（显示 / 复制 / 关闭） |
+| `apps/web/src/lan-pair-scan.ts` | 配对面板沿用的扫码入口，转发到 `lib/scan.ts`（保留旧名字） |
 | `apps/web/src/lan-pairings.ts` | 客户端配对持久化（meta/localStorage）、自动重连状态机与探测 |
 | `apps/web/src/lan-trust-store.ts` | 服务端可信令牌读写 `lan_trusted_tokens_v1`（只存哈希） |
 | `apps/web/src/lan-sync-payload.ts` | 信封编解码、`importBackup` 应用与 `handleLanRequest`（服务端纯函数） |
@@ -346,13 +362,14 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | `apps/web/src/lan-sync-auto.ts` | 自动同步配置编解码、启动/30 分钟策略、失败重试一次 |
 | `apps/web/src/lan-sync-qr.ts` | 二维码矩阵（字节模式、纠错 M、版本 1–6）与人类可读文本 |
 | `apps/web/src/screens/settings/lan-sync-block.tsx` | 设备页卡片：服务端状态、令牌哈希落盘、发起方入口 |
-| `apps/web/src/screens/settings/lan-sync-server-panel.tsx` | 网络切换、开/停配对、新配对码、二维码与复制 |
-| `apps/web/src/screens/settings/lan-sync-pair-panel.tsx` | 手输/扫码/粘贴配对、全屏扫码覆盖层 |
+| `apps/web/src/screens/settings/lan-sync-server-panel.tsx` | Android 始终显示网络行（空态 / 刷新 / 切换后重启）、开/停配对、新配对码、二维码与复制 |
+| `apps/web/src/screens/settings/lan-sync-pair-panel.tsx` | 手输/扫码/粘贴配对、配对失败原因、通用扫码覆盖层 |
 | `apps/web/src/screens/settings/lan-sync-devices-panel.tsx` | 已配对设备列表、在线状态、立即同步与移除 |
 | `apps/web/src/screens/settings/lan-sync-client-panel.tsx` | 发现、配对、范围、自动同步、预览与拉取/推送 |
 | `apps/web/test/lan-sync.test.ts` | 配对码/长期令牌/刷新/吊销/范围/状态机/HTTP 处理/双端收发模拟 |
 | `apps/web/test/lan-pair-payload.test.ts` | 标准格式生成、四类输入解析与错误原因 |
 | `apps/web/test/lan-pair-scan.test.ts` | 扫码可用性、取消返回 null、扫码文本走同一解析器、错误文案 |
+| `apps/web/test/scan.test.ts` | 通用扫码：pair / text / 未知 scheme 解析、扫码桩取消与不可用原因 |
 | `apps/web/test/lan-pairings.test.ts` | 配对记录持久化（meta/localStorage）、自动重连状态机、探测分支 |
 | `apps/web/test/lan-sync-network.test.ts` | 网段优先级、候选排序与默认选择、切换地址、文案与 `dt.lan.host` |
 | `apps/web/test/lan-sync-start.test.ts` | 选中地址透传、8 秒超时、原生异常透传与「重试」文案 |
@@ -361,7 +378,7 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | `apps/web/test/lan-sync-preview.test.ts` | 预览统计口径、只读、确认后合并 |
 | `apps/web/test/lan-sync-auto.test.ts` | 启动/30 分钟策略、重试一次、配置往返 |
 | `apps/web/test/lan-sync-qr.test.ts` | 二维码尺寸（v1–6）、定位/时序图案、确定性与超长报错 |
-| `apps/web/smoke/entry.tsx` | 设备页卡片、发现列表与填入、预览说明、自动同步；Android 扫码桩 → 已配对列表 → 移除 |
+| `apps/web/smoke/entry.tsx` | 局域网卡片、发现列表与填入、预览说明、自动同步；通用扫一扫入口 / 配对 / 文本结果；Android 网络空态与切换；扫码桩 → 已配对列表 → 移除 |
 
 ## 11. 安全清单
 
@@ -372,6 +389,8 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
   不进入备份导出、不写日志、不出现在 UI 文本里。
 - 自动同步配置只落 `mode` / `scopes` / `lastRunAt`，不落任何凭据。
 - UDP 广播只含设备名 / 局域网地址 / HTTP 端口；**不含配对码与令牌**。
+- `GET /ping` 无鉴权但只返回固定标识（`ok` / `app` / `schemaVersion`），不读数据库、
+  不返回设备名或任何业务数据；它只用于配对前判断端口是否可达。
 - 二维码与标准链接包含配对码，只在开配对期间展示；拍照/截屏风险由用户自行控制。
 - 监听 socket 绑定通配地址，但**逐请求校验来源地址**；只接受局域网目标（客户端侧同样校验）。
 - 配对设备可长期访问本机同步接口（180 天），可在「已配对设备」里随时移除；
@@ -387,9 +406,14 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 - Android 构建在打包机（`pnpm android:dev`）上验证；本仓库本地用
   `gradlew.bat :app:compileDebugKotlin --no-daemon` 做编译检查（已通过）。
 - **安卓真机开配对**：确认 `start` 返回 `listening:true` 且另一台设备能连上；
-  验证无 GMS / 国产 ROM 与有 GMS 设备各一台。
+  验证无 GMS / 国产 ROM 与有 GMS 设备各一台；在 `filesDir/diag/native.log` 的
+  `DawnTickLanSync` 标签确认 `start 入口` / `监听成功` / `networks 结果` 有记录。
+- **安卓多网络**：Wi-Fi 与热点/有线并存时网络行始终显示、刷新可更新候选、切换地址后
+  自动重启监听；无 Wi-Fi 时显示空态而不是把失败伪装成没有网络。
 - **相机扫码**：首次请求 CAMERA 权限、拒绝后提示、扫到即停、取消返回空、
   微信/系统相机扫同一二维码也可读；验证 `startScan` 相机预览与 WebView 透明覆盖层。
+  另测主界面「扫一扫」：配对链接 → 自动跳设备页配对；普通文本 → 结果面板复制/关闭；
+  未知 scheme 有说明。
 - 重启应用 / 切换 Wi-Fi / 飞行模式恢复后，「已配对设备」自动回到在线，不需要重输配对码。
 - 移除配对后，对方设备再请求应得 401；服务端 `app_meta` 的
   `lan_trusted_tokens_v1` 不再包含该哈希。
@@ -399,4 +423,4 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
   `apps/web/test/native-commands.test.ts` 覆盖 Tauri 命令注册。
 - Rust 侧 `lan_network` 的网段排序 / 网卡分类 / 广播地址、`lan_http` 的 URL / 头 /
   Content-Length / chunked / 超限 / 非局域网拒绝、`lan_discovery` 的编解码与回环广播，
-  以及 `lan_sync` 的通配绑定、路径白名单（含 refresh/revoke）都由 `cargo test` 覆盖。
+  以及 `lan_sync` 的通配绑定、路径白名单（含 `/ping`、refresh/revoke）都由 `cargo test` 覆盖。
