@@ -3060,10 +3060,10 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const giteeVersionRelease = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/version.json';
   const githubVersionDev = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/version.json';
   const githubVersionRelease = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/version.json';
-  const giteePortableRelease =
-    `https://gitee.com/muyangplus/dawn-tick-assets/raw/release/DawnTick-${newerVersion}-release-windows-x64-portable.zip`;
-  const githubPortableRelease =
-    `https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-${newerVersion}-release-windows-x64-portable.zip`;
+  const giteePortableDev =
+    `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-windows-x64-portable.zip`;
+  const githubPortableDev =
+    `https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/DawnTick-${newerVersion}-dev-windows-x64-portable.zip`;
   const versionJson = (channel: string, version: string): Record<string, unknown> => {
     const prefix = `DawnTick-${version}-${channel}`;
     return {
@@ -3095,7 +3095,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       if (url === giteeVersionDev) return Promise.resolve(presetJsonResponse(versionJson('dev', newerVersion)));
       if (url === githubVersionRelease) return Promise.resolve(presetJsonResponse(versionJson('release', newerVersion)));
       if (url === githubVersionDev) return Promise.resolve(presetJsonResponse(versionJson('dev', newerVersion)));
-      if (url === giteePortableRelease || url === githubPortableRelease) return Promise.resolve(assetChunkResponse());
+      if (url === giteePortableDev || url === githubPortableDev) return Promise.resolve(assetChunkResponse());
       return Promise.resolve(presetJsonResponse({}, false, 404));
     },
   });
@@ -3196,7 +3196,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     dismissUpdateTask();
     await flush(8);
 
-    // 重新检测：强制重新探测两个源并回到自动选择（探测读 release 分支的 version.json + 便携包）
+    // 重新检测：强制重新探测两个源并回到自动选择（探测读当前渠道 dev 分支的 version.json + 便携包）
     if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
     await flush(8);
     const autoOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
@@ -3210,19 +3210,19 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     redetect?.click();
     await waitFor(
       () =>
-        sourceCalls.includes(giteeVersionRelease) &&
-        sourceCalls.includes(githubVersionRelease) &&
-        sourceCalls.includes(giteePortableRelease) &&
-        sourceCalls.includes(githubPortableRelease),
+        sourceCalls.includes(giteeVersionDev) &&
+        sourceCalls.includes(githubVersionDev) &&
+        sourceCalls.includes(giteePortableDev) &&
+        sourceCalls.includes(githubPortableDev),
       40,
     );
     check(
-      '「重新检测」探测两个源的 release 分支 version.json 与真实便携包，并显示自动选择结果',
+      '「重新检测」探测两个源的当前渠道 version.json 与真实便携包，并显示自动选择结果',
       sourceResultLine().includes('自动：') &&
-        sourceCalls.includes(giteeVersionRelease) &&
-        sourceCalls.includes(githubVersionRelease) &&
-        sourceCalls.includes(giteePortableRelease) &&
-        sourceCalls.includes(githubPortableRelease),
+        sourceCalls.includes(giteeVersionDev) &&
+        sourceCalls.includes(githubVersionDev) &&
+        sourceCalls.includes(giteePortableDev) &&
+        sourceCalls.includes(githubPortableDev),
       `${sourceResultLine()} / ${sourceCalls.join(' / ') || '(无请求)'}`,
     );
   } finally {

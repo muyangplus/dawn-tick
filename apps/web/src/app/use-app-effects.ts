@@ -8,7 +8,7 @@ import { applyDevFeatures } from '../dev-features.ts';
 import { ensureStartupPermissions } from '../permissions.ts';
 import { markNotifyAsked } from '../notify.ts';
 import { isFallbackStorage } from '../db/fallback.ts';
-import { checkForUpdate, resolveReceiveBeta } from '../update.ts';
+import { checkForUpdate, resolveFeed, resolveReceiveBeta } from '../update.ts';
 import { resolveDownloadSource } from '../lib/download-selection.ts';
 import { updateFetch } from '../lib/update-fetch.ts';
 import { CHANNEL, appVersion } from '../channel.ts';
@@ -138,7 +138,9 @@ export function useAppEffects(input: {
       const doFetch = updateFetch();
       const resolved =
         typeof doFetch === 'function'
-          ? await resolveDownloadSource(settings.downloadSource, doFetch)
+          ? await resolveDownloadSource(settings.downloadSource, doFetch, {
+              feed: resolveFeed(CHANNEL, resolveReceiveBeta(settings.receiveBeta, CHANNEL)),
+            })
           : null;
       if (cancelled) return;
       const status = await checkForUpdate({

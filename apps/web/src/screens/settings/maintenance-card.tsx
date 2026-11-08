@@ -9,6 +9,8 @@ import {
   writeCachedSnapshot,
   type PresetSource,
 } from '../../preset-update.ts';
+import { CHANNEL } from '../../channel.ts';
+import { resolveFeed, resolveReceiveBeta } from '../../update.ts';
 import { DOWNLOAD_SOURCE_LABEL, MIRRORS, type DownloadSource } from '../../lib/download-source.ts';
 import { resolveDownloadSource } from '../../lib/download-selection.ts';
 import { updateFetch } from '../../lib/update-fetch.ts';
@@ -111,7 +113,9 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         const doFetch = updateFetch();
         const resolved =
           typeof doFetch === 'function'
-            ? await resolveDownloadSource(settings.downloadSource, doFetch)
+            ? await resolveDownloadSource(settings.downloadSource, doFetch, {
+                feed: resolveFeed(CHANNEL, resolveReceiveBeta(settings.receiveBeta, CHANNEL)),
+              })
             : null;
         const source: DownloadSource = resolved?.source ?? 'github';
         const fallback = settings.downloadSource === 'auto';

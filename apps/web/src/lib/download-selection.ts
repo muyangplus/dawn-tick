@@ -26,6 +26,7 @@ export interface DownloadSourceResolution {
 
 interface CacheEntry {
   at: number;
+  feed: string;
   resolution: DownloadSourceResolution;
 }
 
@@ -65,7 +66,13 @@ export async function resolveDownloadSource(
   if (preference !== 'auto') {
     return { preference, source: preference, reason: 'manual', probes: [], cached: false };
   }
-  if (options.fresh !== true && cached !== null && now() - cached.at < DOWNLOAD_SOURCE_CACHE_TTL_MS) {
+  const feed = options.feed ?? 'release';
+  if (
+    options.fresh !== true &&
+    cached !== null &&
+    cached.feed === feed &&
+    now() - cached.at < DOWNLOAD_SOURCE_CACHE_TTL_MS
+  ) {
     return { ...cached.resolution, cached: true };
   }
   const probes = await probeAllSources(fetchImpl, options);
@@ -77,7 +84,7 @@ export async function resolveDownloadSource(
     probes,
     cached: false,
   };
-  cached = { at: now(), resolution };
+  cached = { at: now(), feed, resolution };
   return resolution;
 }
 

@@ -14,7 +14,7 @@ import {
 import { probeAllSources } from '../../lib/download-probe.ts';
 import { updateFetch } from '../../lib/update-fetch.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';
-import { checkForUpdate, releaseChannelOf, resolveReceiveBeta, verifyHint } from '../../update.ts';
+import { checkForUpdate, releaseChannelOf, resolveFeed, resolveReceiveBeta, verifyHint } from '../../update.ts';
 import { currentIgnoredVersion, requestUpdatePrompt } from '../../components/update-prompt.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 import type { StatusMessage } from '../../components/ui/status-line.tsx';
@@ -63,14 +63,15 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
     // 探测与取源都走原生 HTTP：桌面 Tauri，Android 由 CapacitorHttp 接管
     const doFetch = updateFetch();
     if (typeof doFetch !== 'function') return null;
+    const feed = resolveFeed(CHANNEL, resolveReceiveBeta(settings.receiveBeta, CHANNEL));
     setSourceBusy(true);
     try {
       const next =
         preference === 'auto'
-          ? await resolveDownloadSource('auto', doFetch, fresh ? { fresh: true } : {})
+          ? await resolveDownloadSource('auto', doFetch, { fresh, feed })
           : fresh
-            ? manualResolution(preference, await probeAllSources(doFetch))
-            : await resolveDownloadSource(preference, doFetch);
+            ? manualResolution(preference, await probeAllSources(doFetch, { feed }))
+            : await resolveDownloadSource(preference, doFetch, { feed });
       setDownloadSource(next);
       return next;
     } catch {

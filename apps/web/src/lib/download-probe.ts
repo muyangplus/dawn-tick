@@ -21,11 +21,13 @@ export const PROBE_TIMEOUT_MS = 2500;
 /** 资产探测读取的字节数：version.json 太小，改成从真实安装包读取 256KB 再计时。 */
 export const PROBE_ASSET_BYTES = 256 * 1024;
 
-/** 探测用哪个渠道分支：正式版分支最稳定、一定先有产物。 */
+/** 探测默认用哪个渠道分支（调用方应按当前更新渠道传入，避免正式版分支未生成时全判降级）。 */
 export const PROBE_FEED = 'release' as const;
 
 export interface ProbeOptions {
   timeoutMs?: number;
+  /** 当前更新渠道：决定读 assets 仓库的 dev/beta/release 哪个分支 */
+  feed?: 'dev' | 'beta' | 'release';
   /** 时钟注入：单测用它构造确定性的耗时 */
   now?: () => number;
 }
@@ -36,7 +38,7 @@ export interface SourceProbe {
   ok: boolean;
   /** 完成耗时（毫秒）：失败时也记录，便于界面显示「不可用」 */
   latencyMs: number;
-  /** 只确认了仓库可达、没有取到 version.json（Gitee 镜像还没同步） */
+  /** 只确认了仓库可达、没有取到该渠道的 version.json（镜像未同步/该渠道未发版） */
   degraded: boolean;
   error: string | null;
   /** 探测用到的最后一个地址（排障用） */
@@ -195,7 +197,8 @@ export async function probeSource(
   });
 
   // ① version.json + 便携包 256KB：与真实下载同一条 raw 链路
-  const versionUrl = assetsVersionUrl(source, PROBE_FEED);
+  const feed = options.feed ?? PROBE_FEED;
+  const versionUrl = assetsVersionUrl(source, feed);
   try {
     const parsed = parseAssetsVersion(await requestJson(fetchImpl, versionUrl, remainingOf(deadline, now)));
     if (!parsed.ok) {
@@ -205,7 +208,7 @@ export async function probeSource(
       if (file === null) {
         fail(versionUrl, new Error('version.json 没有可探测的产物'));
       } else {
-        const assetUrl = assetsFileUrl(source, PROBE_FEED, file.name);
+        const assetUrl = assetsFileUrl(source, feed, file.name);
         const chunk = await probeAssetChunk(assetUrl, fetchImpl, {
           timeoutMs: remainingOf(deadline, now),
           now,
