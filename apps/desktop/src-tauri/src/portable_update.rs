@@ -195,13 +195,20 @@ fn launch_script(script: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     /// `CREATE_NO_WINDOW`：不弹控制台窗口。
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    std::process::Command::new("cmd.exe")
+    // GUI 程序没有控制台，继承的标准句柄可能是无效句柄；必须显式给 null 句柄，
+    // 否则 CreateProcess 会以 ERROR_INVALID_HANDLE（os error 6）失败（用户实际报错）。
+    let mut command = std::process::Command::new("cmd.exe");
+    command
         .arg("/C")
         .arg(script)
-        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+    command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动更新脚本失败: {error}"))
+        .map_err(|error| format!("启动更新脚本失败: {error}（脚本已保存在 {}，可手动运行）", script.to_string_lossy()))
 }
 
 #[cfg(not(windows))]
