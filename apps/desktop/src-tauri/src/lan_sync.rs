@@ -258,7 +258,7 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
     }
 }
 
-/// 入口白名单：只接受这三个路径，别的一律 404/405。
+/// 入口白名单：只接受这几个路径，别的一律 404/405。
 enum Endpoint {
     Match,
     MethodNotAllowed,
@@ -267,6 +267,7 @@ enum Endpoint {
 
 fn endpoint(method: &str, path: &str) -> Endpoint {
     let expected = match path {
+        "/ping" => "GET",
         "/pair" => "POST",
         "/pair/refresh" => "POST",
         "/pair/revoke" => "POST",
@@ -680,11 +681,13 @@ mod tests {
 
     #[test]
     fn endpoint_allowlist() {
+        assert!(matches!(endpoint("GET", "/ping"), Endpoint::Match));
         assert!(matches!(endpoint("POST", "/pair"), Endpoint::Match));
         assert!(matches!(endpoint("POST", "/pair/refresh"), Endpoint::Match));
         assert!(matches!(endpoint("POST", "/pair/revoke"), Endpoint::Match));
         assert!(matches!(endpoint("GET", "/export"), Endpoint::Match));
         assert!(matches!(endpoint("POST", "/import"), Endpoint::Match));
+        assert!(matches!(endpoint("POST", "/ping"), Endpoint::MethodNotAllowed));
         assert!(matches!(endpoint("GET", "/pair"), Endpoint::MethodNotAllowed));
         assert!(matches!(endpoint("GET", "/pair/refresh"), Endpoint::MethodNotAllowed));
         assert!(matches!(endpoint("GET", "/pair/revoke"), Endpoint::MethodNotAllowed));

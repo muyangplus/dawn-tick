@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LAN_SERVER_START_ERROR_PREFIX,
+  LAN_SERVER_START_HINT,
   LAN_SERVER_START_TIMEOUT_MESSAGE,
   LAN_SERVER_START_TIMEOUT_MS,
   setLanServerStarterForTests,
@@ -34,6 +35,8 @@ test('生产超时是 8 秒，失败文案带统一前缀', () => {
     '开启配对失败：原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
   );
   assert.equal(startLanServerError('开启配对失败：原因'), '开启配对失败：原因');
+  assert.match(LAN_SERVER_START_HINT, /Wi-Fi/);
+  assert.match(LAN_SERVER_START_HINT, /VPN/);
 });
 
 test('withTimeout：按时返回或抛可读超时错误', async () => {

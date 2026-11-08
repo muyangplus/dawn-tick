@@ -1,6 +1,7 @@
 import type { Storage } from '@dawn-tick/core';
 import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { errorMessage } from './lib/errors.ts';
+import { withTimeout } from './lib/timeout.ts';
 import { logInfo, logWarn } from './log.ts';
 import {
   LAN_PAIRING_TTL_MS,
@@ -49,6 +50,65 @@ export interface PairPeerResult {
   error: string | null;
 }
 
+/** 配对请求超时：比通用局域网 HTTP 的 15 秒短，失败后用户能尽快重试。 */
+export const LAN_PAIR_TIMEOUT_MS = 8_000;
+
+/** 配对前可达性预检超时：只判断「对方端口有没有人应答」。 */
+export const LAN_PING_TIMEOUT_MS = 3_000;
+
+/** 配对超时文案：前半句是原因，后半句是可操作提示。 */
+export const LAN_PAIR_TIMEOUT_MESSAGE = '配对请求超时：请确认两端在同一 Wi-Fi';
+
+/** 连不上对方时的统一提示（AP 隔离 / VPN / 代理是局域网互连最常见的三个原因）。 */
+export const LAN_PEER_UNREACHABLE_HINT =
+  '无法连接对方：请确认两端在同一个 Wi-Fi，关闭 VPN/代理，并确认路由器没有开启 AP 隔离';
+
+/** 配对前预检结果：`status === 0` 表示网络层失败，非 0 是服务端 HTTP 状态。 */
+export interface PeerReachability {
+  ok: boolean;
+  status: number;
+  error: string | null;
+  hint: string | null;
+}
+
+/**
+ * 配对前先 `GET /ping`：扫到地址后确认对方端口真的可达，避免把「AP 隔离 / VPN /
+ * 不在同一网段」误报成配对码错误。返回可读原因与统一提示，交给配对面板展示。
+ */
+export async function checkPeerReachable(
+  peer: PeerAddress,
+  timeoutMs = LAN_PING_TIMEOUT_MS,
+): Promise<PeerReachability> {
+  const target = `${peer.host}:${peer.port}`;
+  const path = '/ping';
+  logInfo('lan-sync', '配对前检查对方可达性', { peer: target, path });
+  try {
+    const response = await withTimeout(
+      lanFetch(`${peerBaseUrl(peer)}${path}`, { method: 'GET' }),
+      timeoutMs,
+      '连接对方超时',
+    );
+    const text = await response.text();
+    if (!response.ok) {
+      // 旧版本没有 /ping（原生白名单直接 404）：端口能回 HTTP 就说明可达，继续配对，
+      // 让服务端在 /pair 上给出真正的业务错误，避免新客户端把旧版本判成「连不上」。
+      if (response.status === 404) {
+        logWarn('lan-sync', '对方不支持 /ping，按可达继续配对', { peer: target, path, status: 404 });
+        return { ok: true, status: 404, error: null, hint: null };
+      }
+      const error = lanResponseError(response.status, text, '连接对方');
+      logWarn('lan-sync', '对方可达性预检失败', { peer: target, path, status: response.status, error });
+      return { ok: false, status: response.status, error, hint: LAN_PEER_UNREACHABLE_HINT };
+    }
+    logInfo('lan-sync', '对方可达性预检通过', { peer: target, path, status: response.status });
+    return { ok: true, status: response.status, error: null, hint: null };
+  } catch (cause: unknown) {
+    const error = errorMessage(cause);
+    logWarn('lan-sync', '对方可达性预检异常', { peer: target, path, error });
+    return { ok: false, status: 0, error, hint: LAN_PEER_UNREACHABLE_HINT };
+  }
+}
+
 /** 客户端配对：`POST /pair` 换长期令牌；`name` 是写给服务端「已配对设备」的设备名。 */
 export async function pairWithPeer(
   peer: PeerAddress,
@@ -56,31 +116,56 @@ export async function pairWithPeer(
   now = Date.now(),
   name?: string,
 ): Promise<PairPeerResult> {
-  if (!/^\d{6}$/.test(code.trim())) {
+  const target = `${peer.host}:${peer.port}`;
+  const path = '/pair';
+  const trimmed = code.trim();
+  // 诊断日志只记地址、路径、设备名与码长度；配对码与令牌本身不进日志。
+  logInfo('lan-sync', '开始配对', {
+    peer: target,
+    path,
+    name: name?.trim() ?? '',
+    codeLength: trimmed.length,
+  });
+  if (!/^\d{6}$/.test(trimmed)) {
     return { ok: false, session: null, error: '配对码应为 6 位数字' };
   }
   try {
-    const response = await lanFetch(`${peerBaseUrl(peer)}/pair`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code: code.trim(),
-        name: name?.trim() || defaultDeviceName(),
-        schemaVersion: LAN_SYNC_PROTOCOL_VERSION,
+    const response = await withTimeout(
+      lanFetch(`${peerBaseUrl(peer)}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: trimmed,
+          name: name?.trim() || defaultDeviceName(),
+          schemaVersion: LAN_SYNC_PROTOCOL_VERSION,
+        }),
       }),
-    });
+      LAN_PAIR_TIMEOUT_MS,
+      LAN_PAIR_TIMEOUT_MESSAGE,
+    );
     const text = await response.text();
-    if (!response.ok) return { ok: false, session: null, error: lanResponseError(response.status, text, '配对') };
+    if (!response.ok) {
+      const error = lanResponseError(response.status, text, '配对');
+      logWarn('lan-sync', '配对被对方拒绝', {
+        peer: target,
+        path,
+        status: response.status,
+        error,
+        body: text.slice(0, 200),
+      });
+      return { ok: false, session: null, error };
+    }
     const body = JSON.parse(text) as { token?: unknown; expiresAt?: unknown };
     if (typeof body.token !== 'string' || body.token === '') {
+      logWarn('lan-sync', '配对响应缺少令牌', { peer: target, path, status: response.status });
       return { ok: false, session: null, error: '配对响应缺少配对令牌' };
     }
     const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : now + LAN_PAIRING_TTL_MS;
-    logInfo('lan-sync', '已与对方配对', { peer: `${peer.host}:${peer.port}` });
+    logInfo('lan-sync', '已与对方配对', { peer: target, path });
     return { ok: true, session: { peer, token: body.token, expiresAt }, error: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '配对失败', { peer: `${peer.host}:${peer.port}`, error });
+    logWarn('lan-sync', '配对请求失败', { peer: target, path, error });
     return { ok: false, session: null, error };
   }
 }

@@ -185,6 +185,15 @@ export async function handleLanRequest(
     return errorReply(413, 'payload_too_large', '请求体超过 5MB 上限');
   }
   if (method === 'OPTIONS') return { status: 204, body: '' };
+  if (request.path === '/ping') {
+    if (method !== 'GET') return errorReply(405, 'method_not_allowed', '可达性检查只接受 GET');
+    // 无鉴权、无业务数据：只确认「对方端口是晓刻局域网服务」且能应答
+    return jsonReply(200, {
+      ok: true,
+      app: 'dawn-tick',
+      schemaVersion: LAN_SYNC_PROTOCOL_VERSION,
+    });
+  }
   if (request.path === '/pair') {
     if (method !== 'POST') return errorReply(405, 'method_not_allowed', '配对只接受 POST');
     return handlePair(context, request, now);

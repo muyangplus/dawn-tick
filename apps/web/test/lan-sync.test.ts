@@ -4,6 +4,7 @@ import type { Storage } from '@dawn-tick/core';
 import {
   LAN_CLIENT_IDLE,
   LAN_PAIRING_TTL_MS,
+  LAN_PAIR_TIMEOUT_MS,
   LAN_SCOPE_MODULES,
   LAN_SYNC_KIND,
   LAN_SYNC_PORT,
@@ -12,6 +13,7 @@ import {
   applyLanEnvelope,
   applyLanReply,
   buildLanEnvelope,
+  checkPeerReachable,
   createPairing,
   findTrustedToken,
   formatScope,
@@ -220,6 +222,20 @@ test('服务端处理：长期令牌、刷新/吊销、鉴权、范围、错误�
   });
   assert.equal(wrong.status, 401);
   assert.match(wrong.body, /配对码不正确/);
+
+  // 可达性预检：无鉴权、无业务数据，只确认对方是晓刻局域网服务
+  const ping = await server.handle({ method: 'GET', path: '/ping', query: '', authorization: null, body: '' });
+  assert.equal(ping.status, 200);
+  assert.match(ping.body, /"ok":true/);
+  assert.match(ping.body, /"app":"dawn-tick"/);
+  const pingWrongMethod = await server.handle({
+    method: 'POST',
+    path: '/ping',
+    query: '',
+    authorization: null,
+    body: '{}',
+  });
+  assert.equal(pingWrongMethod.status, 405);
 
   const paired = await server.handle({
     method: 'POST',
@@ -465,6 +481,47 @@ test('双端收发模拟：配对 → 拉取 → 推送（含较旧一份跳过�
     assert.equal(kept?.title, '交作业（已改）');
   } finally {
     restore();
+  }
+});
+
+test('配对前预检 GET /ping：成功放行、失败保留服务端原文并给可操作提示', async () => {
+  const original = globalThis.fetch;
+  const calls: string[] = [];
+  try {
+    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(typeof input === 'string' ? input : String(input));
+      calls.push(`${(init.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+      if (url.pathname !== '/ping') return new Response('{}', { status: 200 });
+      return new Response(
+        JSON.stringify({ error: { code: 'internal', message: '服务端错误' } }),
+        { status: 500 },
+      );
+    }) as typeof fetch;
+    assert.equal(LAN_PAIR_TIMEOUT_MS, 8_000);
+    const failed = await checkPeerReachable({ host: '192.168.1.9', port: 8765 });
+    assert.equal(failed.ok, false);
+    assert.equal(failed.status, 500);
+    assert.match(failed.error ?? '', /服务端错误/);
+    assert.match(failed.hint ?? '', /同一个 Wi-Fi/);
+
+    // 旧版本没有 /ping：404 仍算可达，继续走 /pair，不把版本差异误报成连不上
+    globalThis.fetch = (async () => new Response('', { status: 404 })) as typeof fetch;
+    const legacy = await checkPeerReachable({ host: '192.168.1.9', port: 8765 });
+    assert.equal(legacy.ok, true);
+    assert.equal(legacy.status, 404);
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(typeof input === 'string' ? input : String(input));
+      calls.push(`${(init.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+      return new Response(JSON.stringify({ ok: true, app: 'dawn-tick' }), { status: 200 });
+    }) as typeof fetch;
+    const ok = await checkPeerReachable({ host: '192.168.1.9', port: 8765 });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.error, null);
+    assert.ok(calls.includes('GET /ping'));
+  } finally {
+    globalThis.fetch = original;
   }
 });
 
