@@ -5,6 +5,13 @@
 
 ## [未发布]
 
+## [0.6.12] - 2026-11-09（测试版）
+
+### 修复
+
+- 安卓多个带 loading 的功能卡死（导出日志、检查更新、下载安装包、打开外部浏览器、打开教务窗口等）：全局 busy 增加 60 秒看门狗，超时主动报错并释放蒙版，不再因为某一个原生调用/请求不返回而锁死后续所有操作；原生日志读取 8 秒超时、教务窗口 5 分钟超时、更新/预设清单 15 秒超时、分片下载 30 秒请求 / 180 秒数据超时
+- 安卓局域网「未发现局域网地址」：`NetworkInterface` 枚举不到时改用 `ConnectivityManager` 的链路地址（LinkProperties）兜底，这是部分机型系统能看到 Wi-Fi IPv4、应用却枚举为空的情况；仍为空时空态会区分「没有 Wi-Fi/有线」「已连 Wi-Fi 但没有 IPv4」「只有移动数据」，并显示网卡摘要与「复制诊断信息」
+
 ## [0.6.11] - 2026-11-09（测试版）
 
 ### 新增
@@ -328,7 +335,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.11...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.6.12...dev
+[0.6.12]: https://github.com/muyangplus/dawn-tick/compare/v0.6.11...v0.6.12
 [0.6.11]: https://github.com/muyangplus/dawn-tick/compare/v0.6.10...v0.6.11
 [0.6.10]: https://github.com/muyangplus/dawn-tick/compare/v0.6.9...v0.6.10
 [0.6.9]: https://github.com/muyangplus/dawn-tick/compare/v0.6.8...v0.6.9
