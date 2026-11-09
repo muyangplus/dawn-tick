@@ -34,6 +34,19 @@ data class LanNetwork(
         .put("preferred", preferred)
 }
 
+/**
+ * 一块网卡的全部信息（诊断用，不做过滤）：名称、是否 up、是否虚拟、全部地址。
+ *
+ * 与 [LanNetwork] 的区别：后者只保留可做局域网同步的 IPv4，前者包含 IPv6 / 回环 / down 的网卡，
+ * 用来区分「系统里根本没有网卡」和「只有 IPv6 / 移动数据网卡」。
+ */
+data class LanInterface(
+    val name: String,
+    val isUp: Boolean,
+    val virtual: Boolean,
+    val addresses: List<String>,
+)
+
 object LanNetworks {
     const val KIND_WIFI = "wifi"
     const val KIND_ETHERNET = "ethernet"
@@ -139,6 +152,51 @@ object LanNetworks {
         return networks.joinToString("; ") { network ->
             val flag = if (network.isLan) "" else "(非局域网)"
             "${network.address}/${network.name}/${network.kind}$flag"
+        }
+    }
+
+    /**
+     * 枚举**所有**网卡（名称 / isUp / 是否虚拟 / 全部地址），不过滤回环、IPv6 或 down 的网卡。
+     *
+     * 只用于诊断：`networks` 返回空数组时，日志里能看出是「系统没有网卡」还是
+     * 「只有 IPv6 / 移动数据 / 回环」。枚举失败返回空列表，不抛异常（诊断不能让主流程失败）。
+     */
+    fun interfaces(): List<LanInterface> {
+        val interfaces = runCatching { NetworkInterface.getNetworkInterfaces() }.getOrNull() ?: return emptyList()
+        val result = mutableListOf<LanInterface>()
+        for (network in Collections.list(interfaces)) {
+            val addresses = runCatching { network.inetAddresses }.getOrNull()
+                ?.let { list -> Collections.list(list).mapNotNull { address -> address.hostAddress } }
+                .orEmpty()
+            result.add(
+                LanInterface(
+                    name = runCatching { network.name }.getOrNull().orEmpty().ifBlank { "?" },
+                    isUp = runCatching { network.isUp }.getOrDefault(false),
+                    virtual = runCatching { network.isVirtual }.getOrDefault(false),
+                    addresses = addresses.sorted(),
+                ),
+            )
+        }
+        return result.sortedBy { it.name }
+    }
+
+    /** 界面上的一行网卡摘要：`wlan0(up,3 个地址); rmnet0(up,2 个地址)`；没有网卡写数量。 */
+    fun interfaceSummary(interfaces: List<LanInterface>): String {
+        if (interfaces.isEmpty()) return "0 块网卡"
+        return interfaces.joinToString("; ") { item ->
+            val state = if (item.isUp) "up" else "down"
+            val virtual = if (item.virtual) ",虚拟" else ""
+            "${item.name}($state$virtual,${item.addresses.size} 个地址)"
+        }
+    }
+
+    /** 写日志用的完整网卡信息：名称、isUp、是否虚拟与全部地址（含 IPv6 / 回环）。 */
+    fun describeInterfaces(interfaces: List<LanInterface>): String {
+        if (interfaces.isEmpty()) return "0 块网卡"
+        return interfaces.joinToString("; ") { item ->
+            val state = if (item.isUp) "up" else "down"
+            val addresses = item.addresses.joinToString(",").ifEmpty { "无" }
+            "${item.name}(isUp=$state,virtual=${item.virtual}) 地址=$addresses"
         }
     }
 

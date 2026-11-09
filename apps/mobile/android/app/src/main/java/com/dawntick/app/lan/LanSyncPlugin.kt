@@ -20,7 +20,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - `start` 用通配地址监听，resolve 前确认 socket 已 bind，返回 `{host, port, listening:true}`；
  *   `host` 未传或已失效时回退 `LanNetworks.preferredAddress()`；仍失败时 reject
  *   「异常类: message」，界面拼「开启配对失败：<原因>」；
- * - `networks` 失败不再返回空数组，而是 reject 可读原因，界面显示「读取本机网络失败：…」。
+ * - `networks` 返回 `{networks, status}`：`networks` 是可配对的 IPv4 候选，`status` 是
+ *   `ConnectivityManager` 的传输类型快照（`wifi/ethernet/mobile/vpn/ipv4Count/interfaceSummary`），
+ *   供界面解释「为什么没有候选地址」；枚举失败仍 reject 可读原因，
+ *   界面显示「读取本机网络失败：…」。候选为空时把全部网卡写日志（含 IPv6 / 回环），
+ *   区分「没有网卡」与「只有 IPv6 / 移动数据」。
  *
  * 诊断：入口参数、网络摘要、bind 成功/失败、广播启动失败都写 `filesDir/diag/native.log`
  * （标签 `DawnTickLanSync`），真机没有 logcat 时也能导出定位。
@@ -132,17 +136,24 @@ class LanSyncPlugin : Plugin() {
         call.resolve()
     }
 
-    /** 列出本机候选网络（地址 / 网卡名 / 分类 / 首选优先级），供「切换网络」下拉。 */
+    /** 列出本机候选网络（地址 / 网卡名 / 分类 / 首选优先级）与当前网络状态，供「切换网络」下拉与空态文案。 */
     @PluginMethod
     fun networks(call: PluginCall) {
         diagInfo("networks 入口")
         Thread {
             try {
                 val list = LanNetworks.list()
-                diagInfo("networks 结果 ${list.size} 个：${LanNetworks.summary(list)}")
+                val interfaces = LanNetworks.interfaces()
+                val summary = LanNetworks.interfaceSummary(interfaces)
+                val status = LanNetworkStatusReader.read(context, list.size, summary)
+                diagInfo("networks 结果 ${list.size} 个：${LanNetworks.summary(list)}；状态 ${status.summary()}")
+                if (list.isEmpty()) {
+                    // 空候选时把全部网卡写日志：能看出是「没有网卡」还是「只有 IPv6 / 移动数据」
+                    diagWarn("networks 为空，全部网卡：${LanNetworks.describeInterfaces(interfaces)}")
+                }
                 val array = JSArray()
                 for (network in list) array.put(network.toJsObject())
-                call.resolve(JSObject().put("networks", array))
+                call.resolve(JSObject().put("networks", array).put("status", status.toJsObject()))
             } catch (error: Throwable) {
                 val reason = NativeLog.describe(error)
                 diagError("networks 失败", error)
