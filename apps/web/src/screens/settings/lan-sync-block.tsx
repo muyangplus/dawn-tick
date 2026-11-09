@@ -29,11 +29,13 @@ import {
 } from '../../lan-pair-payload.ts';
 import {
   defaultLanNetwork,
+  formatLanNetworkDiagnostics,
   readLanNetworks,
   readStoredLanHost,
   resolveLanHost,
   saveStoredLanHost,
   type LanNetwork,
+  type LanNetworkStatus,
 } from '../../lan-sync-network.ts';
 import {
   createPairing,
@@ -84,6 +86,8 @@ export function LanSyncBlock({
   /** 本机候选网络与选中地址：多网卡 / VPN 时让用户切到真正的局域网。 */
   const [networks, setNetworks] = useState<LanNetwork[]>([]);
   const [selectedHost, setSelectedHost] = useState<string | null>(null);
+  /** 原生报告的当前网络状态：空态文案按 Wi-Fi / 有线 / 移动数据区分原因。 */
+  const [networkStatus, setNetworkStatus] = useState<LanNetworkStatus | null>(null);
   /** 读取网络失败的可读原因；Android 上仍显示网络行并允许重试 */
   const [networkError, setNetworkError] = useState<string | null>(null);
   /** 服务端内存态：轮询回调里读，不触发重渲染 */
@@ -96,6 +100,7 @@ export function LanSyncBlock({
   const refreshNetworks = async (): Promise<void> => {
     const result = await readLanNetworks();
     setNetworks(result.networks);
+    setNetworkStatus(result.status);
     setNetworkError(result.error);
     setSelectedHost((current) => resolveLanHost(result.networks, current ?? readStoredLanHost()));
     if (result.error !== null) {
@@ -112,6 +117,7 @@ export function LanSyncBlock({
       const result = await readLanNetworks();
       if (cancelled) return;
       setNetworks(result.networks);
+      setNetworkStatus(result.status);
       setNetworkError(result.error);
       setSelectedHost(resolveLanHost(result.networks, readStoredLanHost()));
     })();
@@ -255,6 +261,18 @@ export function LanSyncBlock({
     else toast.error('复制失败，请手动抄写地址与配对码');
   }
 
+  /** 复制网络诊断：网卡 / 状态 / 读取错误，不含配对码或令牌。 */
+  async function copyNetworkDiagnostics(): Promise<void> {
+    const text = formatLanNetworkDiagnostics({
+      networks,
+      status: networkStatus,
+      error: networkError,
+    });
+    const ok = await copyText(text);
+    if (ok) toast.success('网络诊断信息已复制');
+    else toast.error('复制失败，请截图「诊断信息」发回');
+  }
+
   return (
     <div className="flex flex-col gap-1" data-role="lan-sync">
       <span className="text-sm font-medium text-ink" data-role="lan-sync-title">
@@ -271,6 +289,7 @@ export function LanSyncBlock({
           networks={networks}
           selectedHost={selectedHost}
           alwaysShowNetwork={isAndroidApp()}
+          networkStatus={networkStatus}
           networkError={networkError}
           failed={startFailed}
           busy={action.busy}
@@ -280,6 +299,7 @@ export function LanSyncBlock({
           onNewCode={newPairingCode}
           onChangeNetwork={(address) => void changeNetwork(address)}
           onRefreshNetworks={() => void refreshNetworks()}
+          onCopyDiagnostics={() => void copyNetworkDiagnostics()}
           onCopy={() => void copyPairing()}
         />
       ) : (

@@ -11,7 +11,10 @@ import {
   defaultLanNetwork,
   formatLanNetworkLabel,
   formatLanNetworkLine,
+  lanNetworkEmptyHint,
+  shouldShowLanNetworkDiagnostics,
   type LanNetwork,
+  type LanNetworkStatus,
 } from '../../lan-sync-network.ts';
 import { formatPairPayload, formatPairingText } from '../../lan-pair-payload.ts';
 import type { LanServerInfo } from '../../lan-sync.ts';
@@ -27,6 +30,8 @@ export interface LanSyncServerPanelProps {
   selectedHost: string | null;
   /** Android 上始终显示网络行：即使没有候选也给出空态与刷新 */
   alwaysShowNetwork?: boolean;
+  /** 原生报告的当前网络状态（Wi-Fi / 有线 / 移动数据 / VPN）；null 表示原生层没提供 */
+  networkStatus?: LanNetworkStatus | null;
   /** 读取网络失败的可读原因；有值时显示在刷新按钮下方 */
   networkError?: string | null;
   /** 上一次开启失败：按钮文案改成「重试」 */
@@ -40,6 +45,8 @@ export interface LanSyncServerPanelProps {
   onChangeNetwork: (address: string) => void;
   /** 重新枚举本机网络（Wi-Fi / 热点切换后无需退出页面） */
   onRefreshNetworks?: (() => void) | undefined;
+  /** 复制网络诊断（父组件负责剪贴板与提示）：不含配对码 / 令牌 */
+  onCopyDiagnostics?: (() => void) | undefined;
   onCopy: () => void;
 }
 
@@ -49,8 +56,10 @@ export interface LanSyncServerPanelProps {
  * 二维码内容使用标准链接（`apps/web/src/lan-pair-payload.ts`），下方同时显示
  * `IP:端口 配对码` 人类可读文本；复制按钮复制标准链接，便于粘贴到另一端。
  *
- * Android 上网络行始终存在：候选为空时给出「未发现局域网地址」空态和刷新按钮，
- * 不让「没有切换网络选项」看起来像功能缺失。
+ * Android 上网络行始终存在：候选为空时按原生 `status` 给出能照做的空态——
+ * 有 Wi-Fi / 有线但没有 IPv4 提示重新连接或检查 DHCP；只有移动数据提示先连同一 Wi-Fi；
+ * 其余情况保留「未发现局域网地址」并附网卡摘要；旁边可复制诊断信息。
+ * 刷新按钮始终在，Wi-Fi / 热点切换后不用退出页面。
  */
 export function LanSyncServerPanel({
   server,
@@ -59,6 +68,7 @@ export function LanSyncServerPanel({
   networks,
   selectedHost,
   alwaysShowNetwork = false,
+  networkStatus = null,
   networkError = null,
   failed,
   busy,
@@ -68,6 +78,7 @@ export function LanSyncServerPanel({
   onNewCode,
   onChangeNetwork,
   onRefreshNetworks,
+  onCopyDiagnostics,
   onCopy,
 }: LanSyncServerPanelProps) {
   const [refreshing, setRefreshing] = useState(false);
@@ -77,6 +88,9 @@ export function LanSyncServerPanel({
     defaultLanNetwork(networks);
   const showNetwork = alwaysShowNetwork || selectedNetwork !== null;
   const showSelect = lanCandidates.length > 0 && (alwaysShowNetwork || lanCandidates.length > 1);
+  /** 空态文案按原生状态区分：没连 / 只有移动数据 / 有 Wi-Fi 但没有 IPv4。 */
+  const emptyHint = lanNetworkEmptyHint(networkStatus);
+  const showDiagnostics = shouldShowLanNetworkDiagnostics(networkStatus);
   const payload =
     server !== null && pairing !== null
       ? formatPairPayload({
@@ -146,9 +160,32 @@ export function LanSyncServerPanel({
             </div>
           )}
           {lanCandidates.length === 0 && (
-            <span className="text-xs text-muted" data-role="lan-sync-network-empty">
-              未发现局域网地址：请确认已连接 Wi-Fi/热点
-            </span>
+            <div className="flex flex-col gap-1" data-role="lan-sync-network-empty-block">
+              <span className="text-xs text-muted" data-role="lan-sync-network-empty">
+                {emptyHint}
+              </span>
+              {showDiagnostics && networkStatus !== null && (
+                <span
+                  className="break-all text-xs text-muted"
+                  data-role="lan-sync-network-diagnostics"
+                >
+                  诊断信息：{networkStatus.interfaceSummary}
+                </span>
+              )}
+              {onCopyDiagnostics !== undefined && (
+                <div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="复制诊断信息"
+                    data-role="lan-sync-network-copy-diagnostics"
+                    onClick={onCopyDiagnostics}
+                  >
+                    复制诊断信息
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}

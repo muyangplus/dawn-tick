@@ -11,6 +11,7 @@ import { isLanAddress } from './lan-sync-protocol.ts';
  * 边界：
  * - 排序、默认选择、地址合法性、文案都是纯函数，可直接单测；
  * - 枚举只在原生层（Rust `lan_network_list` / Android `LanSync.networks`），这里只归一数据；
+ *   安卓的 `status` 快照用于解释空态（没连 / 只有移动数据 / 有 Wi-Fi 但没有 IPv4）；
  * - 选中地址存 `localStorage` 的 `dt.lan.host`（只存地址，不存配对码或令牌）；
  * - 网段优先级与 `apps/desktop/src-tauri/src/lan_network.rs`、Android `LanNetworks.kt` 一致：
  *   192.168.* > 10.* > 172.16–31.* > 100.64/10 > 169.254/16；VPN 降级但不排除。
@@ -26,6 +27,25 @@ export interface LanNetwork {
   kind: LanNetworkKind;
   /** 越小越优先；原生层按网段算好，TS 只用于排序与展示。 */
   preferred: number;
+}
+
+/**
+ * 当前网络状态快照（Android `networks()` 的 `status`）：只用于解释空态，不参与配对。
+ *
+ * 字段与 Kotlin `LanNetworkStatus`、`apps/mobile/docs/lan-sync.contract.md` 逐字一致。
+ * 旧版本原生层不返回这个字段，界面按 `null` 处理并保留原文案。
+ */
+export interface LanNetworkStatus {
+  /** 当前至少有一个 Wi-Fi 网络（含只有 IPv6 的 Wi-Fi）。 */
+  wifi: boolean;
+  ethernet: boolean;
+  /** 移动数据（蜂窝）。 */
+  mobile: boolean;
+  vpn: boolean;
+  /** 可做局域网同步的 IPv4 候选数；与 `networks.length` 一致。 */
+  ipv4Count: number;
+  /** 一行网卡摘要，供「诊断信息」与复制使用；原生层保证非空（没有网卡时为「0 块网卡」）。 */
+  interfaceSummary: string;
 }
 
 /** 选中地址的存储键：只存「网络地址」，不存任何凭据。 */
@@ -119,6 +139,77 @@ export function formatLanNetworkLine(network: LanNetwork): string {
   return `网络：${formatLanNetworkLabel(network)}`;
 }
 
+/** 没有候选地址时的默认文案：不知道网络状态（桌面 / 旧版本原生层）时继续用它。 */
+export const LAN_NETWORK_EMPTY_HINT = '未发现局域网地址：请确认已连接 Wi-Fi/热点';
+
+/** 有 Wi-Fi 但没有 IPv4：最常见的真机问题（Wi-Fi 只分到 IPv6 或 DHCP 没给地址）。 */
+export const LAN_NETWORK_WIFI_IPV6_HINT =
+  '已连接 Wi-Fi，但没有拿到 IPv4 地址（可能是仅 IPv6 网络），请尝试重新连接 Wi-Fi';
+
+/** 有线同理：有线只拿到 IPv6 时给出与 Wi-Fi 不同的可操作建议。 */
+export const LAN_NETWORK_ETHERNET_IPV6_HINT =
+  '已连接有线网络，但没有拿到 IPv4 地址（可能是仅 IPv6 网络），请检查网线或路由器的 DHCP';
+
+/** 只有移动数据：开配对必须与对方在同一 Wi-Fi / 局域网。 */
+export const LAN_NETWORK_MOBILE_HINT =
+  '当前没有 Wi-Fi/有线连接：开配对需要两台设备在同一 Wi-Fi，请先连接';
+
+/**
+ * 空态文案：先看原生报告的当前传输类型，再看有没有候选 IPv4。
+ *
+ * 调用前提是候选列表本来就是空的；`status` 为 null 表示原生层没提供状态（桌面或旧版本），
+ * 此时保留原文案。只有 Wi-Fi / 有线时才提示「没拿到 IPv4」，避免把「没连 Wi-Fi」
+ * 误报成「Wi-Fi 连上了但没地址」。
+ */
+export function lanNetworkEmptyHint(status: LanNetworkStatus | null): string {
+  if (status === null) return LAN_NETWORK_EMPTY_HINT;
+  if (status.wifi) return LAN_NETWORK_WIFI_IPV6_HINT;
+  if (status.ethernet) return LAN_NETWORK_ETHERNET_IPV6_HINT;
+  if (status.mobile) return LAN_NETWORK_MOBILE_HINT;
+  return LAN_NETWORK_EMPTY_HINT;
+}
+
+/** 空态附加诊断信息是否显示：只有「状态里什么传输都没有」时展开网卡摘要。 */
+export function shouldShowLanNetworkDiagnostics(status: LanNetworkStatus | null): boolean {
+  if (status === null) return false;
+  if (status.wifi || status.ethernet || status.mobile) return false;
+  return status.interfaceSummary.trim() !== '';
+}
+
+/** 「复制诊断信息」的文本：只含网卡 / 状态，不含配对码、令牌或任何业务数据。 */
+export interface LanNetworkDiagnosticsInput {
+  networks: readonly LanNetwork[];
+  status: LanNetworkStatus | null;
+  error?: string | null;
+}
+
+export function formatLanNetworkDiagnostics(input: LanNetworkDiagnosticsInput): string {
+  const yes = (value: boolean): string => (value ? '是' : '否');
+  const lines: string[] = ['晓刻局域网诊断'];
+  lines.push(`候选 IPv4：${input.networks.length} 个`);
+  if (input.networks.length === 0) {
+    lines.push('候选列表：（空）');
+  } else {
+    for (const network of input.networks) {
+      const flag = network.isLan ? '' : '（非局域网）';
+      lines.push(`- ${network.address} / ${network.name} / ${network.kind}${flag}`);
+    }
+  }
+  if (input.status === null) {
+    lines.push('网络状态：（原生层未返回）');
+  } else {
+    lines.push(
+      `网络状态：Wi-Fi=${yes(input.status.wifi)} 有线=${yes(input.status.ethernet)} ` +
+        `移动数据=${yes(input.status.mobile)} VPN=${yes(input.status.vpn)} ` +
+        `IPv4=${input.status.ipv4Count}`,
+    );
+    lines.push(`网卡摘要：${input.status.interfaceSummary.trim() || '（空）'}`);
+  }
+  const error = (input.error ?? '').trim();
+  if (error !== '') lines.push(`读取错误：${error}`);
+  return lines.join('\n');
+}
+
 /**
  * 决定实际使用的地址：存储的地址仍在本机候选里就用它，否则退回默认首选。
  * 返回 null 表示没有可用局域网（交给调用方按「自动选择」处理）。
@@ -164,6 +255,48 @@ export function parseLanNetworks(raw: unknown): LanNetwork[] {
   return sortLanNetworks(result);
 }
 
+/** 原生返回的原始结构：桌面是数组，Android 是 `{networks, status}`。 */
+export interface LanNetworkRawResult {
+  networks?: unknown;
+  status?: unknown;
+}
+
+/**
+ * 归一原生 `status`：不是对象就当「未提供」（旧版本 / 桌面返回 null），
+ * 字段缺失或类型不对按 false / 0 / 空串处理，避免一行坏数据让整个空态异常。
+ */
+export function parseLanNetworkStatus(raw: unknown): LanNetworkStatus | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const record = raw as Partial<LanNetworkStatus>;
+  const ipv4Count =
+    typeof record.ipv4Count === 'number' && Number.isFinite(record.ipv4Count)
+      ? Math.max(0, Math.trunc(record.ipv4Count))
+      : 0;
+  return {
+    wifi: record.wifi === true,
+    ethernet: record.ethernet === true,
+    mobile: record.mobile === true,
+    vpn: record.vpn === true,
+    ipv4Count,
+    interfaceSummary:
+      typeof record.interfaceSummary === 'string' ? record.interfaceSummary.trim() : '',
+  };
+}
+
+/** 归一原生返回：兼容桌面数组与 Android `{networks, status}` 两种形状。 */
+export function parseLanNetworkResult(raw: unknown): {
+  networks: LanNetwork[];
+  status: LanNetworkStatus | null;
+} {
+  if (Array.isArray(raw)) return { networks: parseLanNetworks(raw), status: null };
+  if (typeof raw !== 'object' || raw === null) return { networks: [], status: null };
+  const record = raw as LanNetworkRawResult;
+  return {
+    networks: parseLanNetworks(record.networks),
+    status: parseLanNetworkStatus(record.status),
+  };
+}
+
 /** `localStorage` 的最小接口；单测可传内存实现。 */
 export interface LanHostStorage {
   getItem(key: string): string | null;
@@ -205,17 +338,25 @@ export function saveStoredLanHost(
   }
 }
 
-/** 冒烟 / 单测用固定候选列表，避免依赖真实网卡。 */
-type LanNetworkLister = () => Promise<LanNetwork[]>;
+/**
+ * 冒烟 / 单测用的固定网络源，避免依赖真实网卡。
+ * 可以返回旧形状（只有数组），也可以返回原生新形状 `{networks, status}`。
+ */
+type LanNetworkLister = () => Promise<LanNetwork[] | LanNetworkRawResult>;
 let listOverride: LanNetworkLister | null = null;
 
 export function setLanNetworkListerForTests(lister: LanNetworkLister | null): void {
   listOverride = lister;
 }
 
-/** 候选网络 + 可读错误：Android 在权限/ROM 异常时不再把失败伪装成「没有网络」。 */
+/**
+ * 候选网络 + 当前网络状态 + 可读错误：
+ * Android 在权限/ROM 异常时不再把失败伪装成「没有网络」，空态也能按状态给出原因。
+ */
 export interface LanNetworkListResult {
   networks: LanNetwork[];
+  /** 原生提供的传输类型快照；桌面 / 旧版本为 null（界面保留原文案）。 */
+  status: LanNetworkStatus | null;
   error: string | null;
 }
 
@@ -226,29 +367,33 @@ export interface LanNetworkListResult {
 export async function readLanNetworks(): Promise<LanNetworkListResult> {
   if (listOverride !== null) {
     try {
-      return { networks: parseLanNetworks(await listOverride()), error: null };
+      return { ...parseLanNetworkResult(await listOverride()), error: null };
     } catch (cause: unknown) {
       const message = errorMessage(cause, '读取本机网络失败');
       logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
-      return { networks: [], error: message };
+      return { networks: [], status: null, error: message };
     }
   }
   try {
     if (isDesktopApp()) {
-      return { networks: parseLanNetworks(await invokeNative<unknown>('lan_network_list')), error: null };
+      return {
+        ...parseLanNetworkResult(await invokeNative<unknown>('lan_network_list')),
+        error: null,
+      };
     }
     if (isAndroidApp()) {
       const plugin = await loadPlugin<LanSyncPlugin>('LanSync');
-      if (plugin === null) return { networks: [], error: '没有可用的局域网插件，请重新安装应用' };
-      const result = await plugin.networks();
-      return { networks: parseLanNetworks(result?.networks), error: null };
+      if (plugin === null) {
+        return { networks: [], status: null, error: '没有可用的局域网插件，请重新安装应用' };
+      }
+      return { ...parseLanNetworkResult(await plugin.networks()), error: null };
     }
   } catch (cause: unknown) {
     const message = errorMessage(cause, '读取本机网络失败');
     logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
-    return { networks: [], error: message };
+    return { networks: [], status: null, error: message };
   }
-  return { networks: [], error: null };
+  return { networks: [], status: null, error: null };
 }
 
 /**

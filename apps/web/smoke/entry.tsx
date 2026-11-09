@@ -56,9 +56,11 @@ import { LanSyncServerPanel } from '../src/screens/settings/lan-sync-server-pane
 import {
   defaultLanNetwork,
   formatLanNetworkLine,
+  readLanNetworks,
   readStoredLanHost,
   resolveLanHost,
   saveStoredLanHost,
+  setLanNetworkListerForTests,
   sortLanNetworks,
   type LanHostStorage,
   type LanNetwork,
@@ -4636,6 +4638,172 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     // localStorage 不可用：无需清理
   }
 
+  // —— Android 网络空态：原生 status 区分「Wi-Fi 无 IPv4」/「只有移动数据」/ 其它 ——
+  const wifiNoIpv4Status = {
+    wifi: true,
+    ethernet: false,
+    mobile: false,
+    vpn: false,
+    ipv4Count: 0,
+    interfaceSummary: 'wlan0(up,1 个地址); rmnet0(up,2 个地址)',
+  };
+  setLanNetworkListerForTests(async () => ({ networks: [], status: wifiNoIpv4Status }));
+  let emptyDiagnosticsCopied = 0;
+  try {
+    const wifiStatusResult = await readLanNetworks();
+    check(
+      'readLanNetworks 解析原生 status：空候选 + 已连接 Wi-Fi',
+      wifiStatusResult.networks.length === 0 &&
+        wifiStatusResult.error === null &&
+        wifiStatusResult.status?.wifi === true &&
+        wifiStatusResult.status?.ipv4Count === 0,
+      `status=${JSON.stringify(wifiStatusResult.status)}`,
+    );
+    const wifiEmptyView = mount(
+      <LanSyncServerPanel
+        server={null}
+        pairing={null}
+        tokens={[]}
+        networks={[]}
+        selectedHost={null}
+        alwaysShowNetwork
+        networkStatus={wifiStatusResult.status}
+        failed={false}
+        busy={false}
+        deviceName="测试手机"
+        onStart={() => {}}
+        onStop={() => {}}
+        onNewCode={() => {}}
+        onChangeNetwork={() => {}}
+        onRefreshNetworks={() => {}}
+        onCopyDiagnostics={() => {
+          emptyDiagnosticsCopied += 1;
+        }}
+        onCopy={() => {}}
+      />,
+    );
+    await flush(6);
+    const wifiEmpty = wifiEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
+    const copyDiagnostics = wifiEmptyView.container.querySelector<HTMLElement>(
+      'button[aria-label="复制诊断信息"]',
+    );
+    copyDiagnostics?.click();
+    await flush(4);
+    check(
+      'Android 空态：已连接 Wi-Fi 但没有 IPv4 时提示重新连接 Wi-Fi',
+      (wifiEmpty?.textContent ?? '').includes('已连接 Wi-Fi，但没有拿到 IPv4 地址') &&
+        (wifiEmpty?.textContent ?? '').includes('仅 IPv6'),
+      wifiEmpty?.textContent?.trim() ?? '(无空态)',
+    );
+    check(
+      '空态旁「复制诊断信息」按钮可点击',
+      copyDiagnostics !== null && emptyDiagnosticsCopied === 1,
+      `按钮=${copyDiagnostics !== null} 复制次数=${emptyDiagnosticsCopied}`,
+    );
+    wifiEmptyView.root.unmount();
+  } finally {
+    setLanNetworkListerForTests(null);
+  }
+
+  const mobileOnlyStatus = {
+    wifi: false,
+    ethernet: false,
+    mobile: true,
+    vpn: false,
+    ipv4Count: 0,
+    interfaceSummary: 'rmnet0(up,2 个地址)',
+  };
+  setLanNetworkListerForTests(async () => ({ networks: [], status: mobileOnlyStatus }));
+  try {
+    const mobileResult = await readLanNetworks();
+    check(
+      'readLanNetworks 解析原生 status：只有移动数据',
+      mobileResult.status?.wifi === false && mobileResult.status?.mobile === true,
+      `status=${JSON.stringify(mobileResult.status)}`,
+    );
+    const mobileEmptyView = mount(
+      <LanSyncServerPanel
+        server={null}
+        pairing={null}
+        tokens={[]}
+        networks={[]}
+        selectedHost={null}
+        alwaysShowNetwork
+        networkStatus={mobileResult.status}
+        failed={false}
+        busy={false}
+        deviceName="测试手机"
+        onStart={() => {}}
+        onStop={() => {}}
+        onNewCode={() => {}}
+        onChangeNetwork={() => {}}
+        onRefreshNetworks={() => {}}
+        onCopyDiagnostics={() => {}}
+        onCopy={() => {}}
+      />,
+    );
+    await flush(6);
+    const mobileEmpty = mobileEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
+    check(
+      'Android 空态：只有移动数据时提示先连同一 Wi-Fi',
+      (mobileEmpty?.textContent ?? '').includes('当前没有 Wi-Fi/有线连接'),
+      mobileEmpty?.textContent?.trim() ?? '(无空态)',
+    );
+    mobileEmptyView.root.unmount();
+  } finally {
+    setLanNetworkListerForTests(null);
+  }
+
+  // 其它状态（无 Wi-Fi / 有线 / 移动数据，只有 VPN 或没有网卡）：原文案 + 诊断信息 + 刷新
+  let fallbackRefreshed = false;
+  const fallbackEmptyView = mount(
+    <LanSyncServerPanel
+      server={null}
+      pairing={null}
+      tokens={[]}
+      networks={[]}
+      selectedHost={null}
+      alwaysShowNetwork
+      networkStatus={{
+        wifi: false,
+        ethernet: false,
+        mobile: false,
+        vpn: false,
+        ipv4Count: 0,
+        interfaceSummary: '0 块网卡',
+      }}
+      failed={false}
+      busy={false}
+      deviceName="测试手机"
+      onStart={() => {}}
+      onStop={() => {}}
+      onNewCode={() => {}}
+      onChangeNetwork={() => {}}
+      onRefreshNetworks={() => {
+        fallbackRefreshed = true;
+      }}
+      onCopyDiagnostics={() => {}}
+      onCopy={() => {}}
+    />,
+  );
+  await flush(6);
+  const fallbackEmpty = fallbackEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
+  const fallbackDiagnostics = fallbackEmptyView.container.querySelector(
+    '[data-role="lan-sync-network-diagnostics"]',
+  );
+  fallbackEmptyView.container
+    .querySelector<HTMLElement>('button[aria-label="刷新本机网络"]')
+    ?.click();
+  await flush(4);
+  check(
+    'Android 空态：其它状态保留原文案并附诊断信息与刷新',
+    (fallbackEmpty?.textContent ?? '').includes('未发现局域网地址') &&
+      (fallbackDiagnostics?.textContent ?? '').includes('诊断信息：0 块网卡') &&
+      fallbackRefreshed,
+    `空态=${fallbackEmpty?.textContent?.trim() ?? '(无)'} 诊断=${fallbackDiagnostics?.textContent?.trim() ?? '(无)'} 刷新=${fallbackRefreshed}`,
+  );
+  fallbackEmptyView.root.unmount();
+
   // —— Android 网络行：没有候选也显示空态与刷新；多候选可切换并触发重启 ——
   let networkRefreshed = false;
   let networkPicked = '';
@@ -4682,6 +4850,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     { name: 'WLAN', address: '192.168.1.23', isLan: true, kind: 'wifi', preferred: 0 },
     { name: '以太网', address: '10.0.0.8', isLan: true, kind: 'ethernet', preferred: 1 },
   ];
+  let optionsRefreshed = false;
   const switchNetworkView = mount(
     <LanSyncServerPanel
       server={null}
@@ -4690,6 +4859,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       networks={networkOptions}
       selectedHost="192.168.1.23"
       alwaysShowNetwork
+      networkStatus={{ wifi: true, ethernet: true, mobile: false, vpn: false, ipv4Count: 2, interfaceSummary: 'wlan0(up,1 个地址); eth0(up,1 个地址)' }}
       failed={false}
       busy={false}
       deviceName="测试手机"
@@ -4699,7 +4869,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       onChangeNetwork={(address) => {
         networkPicked = address;
       }}
-      onRefreshNetworks={() => {}}
+      onRefreshNetworks={() => {
+        optionsRefreshed = true;
+      }}
       onCopy={() => {}}
     />,
   );
@@ -4718,13 +4890,18 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   ethernetOption?.click();
   await flush(8);
+  switchNetworkView.container
+    .querySelector<HTMLElement>('button[aria-label="刷新本机网络"]')
+    ?.click();
+  await flush(4);
   check(
     'Android 网络下拉可看到多块网卡并切换地址',
     networkTrigger !== null &&
       networkOptionLabels.some((label) => label.includes('192.168.1.23 · Wi-Fi')) &&
       networkOptionLabels.some((label) => label.includes('10.0.0.8 · 有线网络')) &&
-      networkPicked === '10.0.0.8',
-    `候选=${networkOptionLabels.join(' / ') || '(无)'} 选择=${networkPicked || '(无)'}`,
+      networkPicked === '10.0.0.8' &&
+      optionsRefreshed,
+    `候选=${networkOptionLabels.join(' / ') || '(无)'} 选择=${networkPicked || '(无)'} 刷新=${optionsRefreshed}`,
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(4);

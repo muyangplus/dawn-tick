@@ -165,9 +165,21 @@ export interface LanSyncPlugin {
   start(options?: { host?: string }): Promise<{ host?: string; port?: number; listening?: boolean }>;
   /** 关监听并让内存里的令牌全部失效；幂等。 */
   stop(): Promise<void>;
-  /** 本机候选网络（地址 / 网卡名 / 分类 / 首选优先级），供「切换网络」下拉。 */
+  /**
+   * 本机候选网络（地址 / 网卡名 / 分类 / 首选优先级），供「切换网络」下拉；
+   * `status` 是当前传输类型快照，供界面解释「为什么没有候选地址」。
+   * 旧版本原生层可能不返回 `status`，TS 按 null 处理。
+   */
   networks(): Promise<{
     networks?: { name?: string; address?: string; isLan?: boolean; kind?: string; preferred?: number }[];
+    status?: {
+      wifi?: boolean;
+      ethernet?: boolean;
+      mobile?: boolean;
+      vpn?: boolean;
+      ipv4Count?: number;
+      interfaceSummary?: string;
+    };
   }>;
   /** 取一条待处理请求；队列空时无字段，调用方按 null 处理。 */
   poll(): Promise<LanSyncRequest | null>;
