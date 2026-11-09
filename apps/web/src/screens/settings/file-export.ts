@@ -1,4 +1,5 @@
 import { isAndroidApp } from '../../lib/capabilities.ts';
+import { withTimeout } from '../../lib/timeout.ts';
 import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from '../../lib/plugins.ts';
 import { dayStampUtc } from '../../lib/dates.ts';
 import { revealExportedFile, savedFileActions, shareExportedFile } from '../../lib/export-files.ts';
@@ -95,7 +96,12 @@ async function androidNativeLog(): Promise<string> {
   if (!isAndroidApp()) return '';
   try {
     const plugin = await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
-    const result = await plugin?.readNativeLog?.({ maxBytes: 256 * 1024 });
+    // 原生调用可能卡住不回调：超时按「没有原生日志」处理，不能因此锁死导出按钮
+    const result = await withTimeout(
+      plugin?.readNativeLog?.({ maxBytes: 256 * 1024 }) ?? Promise.resolve(undefined),
+      8_000,
+      '读取原生日志超时',
+    );
     const text = typeof result?.text === 'string' ? result.text.trim() : '';
     return text === '' ? '' : `\n===== 安卓原生日志 =====\n${text}`;
   } catch {

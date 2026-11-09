@@ -2,6 +2,7 @@ import { canOpenImportWindow, isAndroidApp, isDesktopApp } from './lib/capabilit
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { PLUGIN_NAMES, loadPlugin, type SchoolWindowPlugin } from './lib/plugins.ts';
 import { logInfo, logWarn } from './log.ts';
+import { withTimeout } from './lib/timeout.ts';
 import type { SchoolEntry } from '@dawn-tick/core';
 
 const URL_KEY = 'dt.import.url';
@@ -50,7 +51,8 @@ export async function openImportWindow(url: string): Promise<ImportWindowResult>
     try {
       const plugin = await loadPlugin<SchoolWindowPlugin>(PLUGIN_NAMES.schoolWindow);
       if (plugin === null) return { ok: false, error: '当前平台不支持内嵌窗口' };
-      const result = await plugin.open({ url });
+      // 窗口要等用户浏览/导入结束才返回，给 5 分钟上限；插件不回调时也不能永久卡住
+      const result = await withTimeout(plugin.open({ url }), 300_000, '打开教务窗口超时，请关闭后重试');
       rememberImportUrl(url);
       const payload = typeof result?.payload === 'string' ? result.payload : '';
       logInfo('import-window', '移动端教务窗口结束', { url, bytes: payload.length });

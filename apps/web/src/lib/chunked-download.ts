@@ -1,3 +1,4 @@
+import { withTimeout } from './timeout.ts';
 /**
  * 并发分片下载引擎（HTTP Range）：把一个安装包切成若干片并发拉取，按序拼接后交给校验。
  *
@@ -205,7 +206,12 @@ async function fetchRange(
   onBytes: (bytes: number) => void,
 ): Promise<RangeRead | { kind: 'full'; response: Response }> {
   const headers = new Headers({ range: `bytes=${range.start}-${range.end}` });
-  const response = await fetchImpl(url, signal === undefined ? { headers } : { headers, signal });
+  // 分片请求卡住（原生 HTTP/代理不回调）时不能让整次下载悬着：30s 超时交给重试
+  const response = await withTimeout(
+    fetchImpl(url, signal === undefined ? { headers } : { headers, signal }),
+    30_000,
+    '下载分片超时',
+  );
   if (isCancelled(signal)) throw cancelled();
   // 200 = 服务器（或中间代理）忽略了 Range：这是「不支持分片」的可靠信号。
   // 206 即使没带 `Accept-Ranges: bytes` 也证明按范围返回了局部内容，按支持处理。
@@ -214,7 +220,7 @@ async function fetchRange(
     discardResponse(response);
     throw new Error(`更新源返回 ${response.status}`);
   }
-  const bytes = await readBody(response, onBytes, signal);
+  const bytes = await withTimeout(readBody(response, onBytes, signal), 180_000, '下载数据超时');
   return { kind: 'partial', bytes };
 }
 
@@ -260,7 +266,11 @@ async function downloadSingleStream(
   declaredTotal: number | null,
   startedAt: number,
 ): Promise<Uint8Array> {
-  const response = await fetchImpl(request.url, request.signal === undefined ? {} : { signal: request.signal });
+  const response = await withTimeout(
+    fetchImpl(request.url, request.signal === undefined ? {} : { signal: request.signal }),
+    30_000,
+    '下载请求超时',
+  );
   if (isCancelled(request.signal)) throw cancelled();
   if (!response.ok) throw new Error(`更新源返回 ${response.status}`);
   const headerTotal = normalizeHeaderTotal(response.headers?.get('content-length'));

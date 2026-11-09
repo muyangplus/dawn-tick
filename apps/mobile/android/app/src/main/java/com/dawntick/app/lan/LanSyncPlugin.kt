@@ -142,9 +142,18 @@ class LanSyncPlugin : Plugin() {
         diagInfo("networks 入口")
         Thread {
             try {
-                val list = LanNetworks.list()
+                var list = LanNetworks.list()
                 val interfaces = LanNetworks.interfaces()
-                val summary = LanNetworks.interfaceSummary(interfaces)
+                var summary = LanNetworks.interfaceSummary(interfaces)
+                if (list.isEmpty()) {
+                    // 部分 ROM 下 NetworkInterface 枚举为空但系统能拿到链路地址：用 ConnectivityManager 兜底
+                    val fallback = LanNetworkStatusReader.linkCandidates(context)
+                    if (fallback.isNotEmpty()) {
+                        diagWarn("NetworkInterface 未枚举到候选，改用 ConnectivityManager 链路：${LanNetworks.summary(fallback)}")
+                        list = fallback
+                        summary = "ConnectivityManager 链路：${LanNetworks.summary(fallback)}"
+                    }
+                }
                 val status = LanNetworkStatusReader.read(context, list.size, summary)
                 diagInfo("networks 结果 ${list.size} 个：${LanNetworks.summary(list)}；状态 ${status.summary()}")
                 if (list.isEmpty()) {

@@ -21,6 +21,7 @@ import {
 } from './lib/download-source.ts';
 import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { errorMessage } from './lib/errors.ts';
+import { withTimeout } from './lib/timeout.ts';
 
 /** 哈希口径与预设仓库 scripts/snapshot.mjs 一致，实现只有一份：core 的 packages/core/src/config/preset-hash.ts。 */
 /** 这里只是转出，不重复实现。 */
@@ -272,11 +273,19 @@ async function readPresetJson(
   let lastError: string | null = null;
   for (const source of sources) {
     try {
-      const response = await doFetch(source.url, {
-        headers: { accept: source.kind === 'api' ? GITHUB_API_ACCEPT : 'application/json' },
-      });
+      const response = await withTimeout(
+        doFetch(source.url, {
+          headers: { accept: source.kind === 'api' ? GITHUB_API_ACCEPT : 'application/json' },
+        }),
+        15_000,
+        '读取预设清单超时',
+      );
       if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
-      const payload: unknown = await response.json();
+      const payload: unknown = await withTimeout(
+        response.json() as Promise<unknown>,
+        15_000,
+        '读取预设清单超时',
+      );
       const value = source.kind === 'api' ? parseContentsPayload(payload) : payload;
       return { value, source: source.kind, downloadSource: source.downloadSource };
     } catch (cause: unknown) {

@@ -9,6 +9,7 @@ import {
 } from './lib/download-source.ts';
 import { manifestFromAssetsVersion, parseAssetsVersion } from './lib/assets-mirror.ts';
 import { errorMessage } from './lib/errors.ts';
+import { withTimeout } from './lib/timeout.ts';
 import {
   compareVersions,
   isPrereleaseOrDraft,
@@ -168,14 +169,18 @@ async function queryAssetsVersion(
   const url = assetsVersionUrl(source, feed);
   let response: Response;
   try {
-    response = await doFetch(url, { headers: { accept: 'application/json' } });
+    response = await withTimeout(
+      doFetch(url, { headers: { accept: 'application/json' } }),
+      15_000,
+      '读取更新清单超时',
+    );
   } catch (cause: unknown) {
     return { manifest: null, error: errorMessage(cause), canFallback: true };
   }
   if (!response.ok) return { manifest: null, error: describeApiStatus(source, response.status), canFallback: true };
   let parsed: unknown;
   try {
-    parsed = await response.json();
+    parsed = await withTimeout(response.json() as Promise<unknown>, 15_000, '读取更新清单超时');
   } catch {
     return { manifest: null, error: '更新清单格式不正确', canFallback: false };
   }
@@ -214,7 +219,11 @@ async function queryLegacyGitHub(
   const base = emptyStatus(feed, currentVersion, source);
   let networkError: string | null = null;
   try {
-    const response = await doFetch(releaseApiUrl(source, feed), { headers: { accept: GITHUB_API_ACCEPT } });
+    const response = await withTimeout(
+      doFetch(releaseApiUrl(source, feed), { headers: { accept: GITHUB_API_ACCEPT } }),
+      15_000,
+      '查询更新发布超时',
+    );
     if (!response.ok) return { status: null, error: describeApiStatus(source, response.status) };
     let parsed: unknown;
     try {
@@ -241,7 +250,11 @@ async function queryLegacyGitHub(
   const fallbackUrl = versionJsonUrlOf(feed, source);
   if (fallbackUrl === null) return { status: null, error: networkError };
   try {
-    const response = await doFetch(fallbackUrl, { headers: { accept: 'application/json' } });
+    const response = await withTimeout(
+      doFetch(fallbackUrl, { headers: { accept: 'application/json' } }),
+      15_000,
+      '读取更新清单超时',
+    );
     if (!response.ok) return { status: null, error: networkError };
     const parsed: unknown = await response.json();
     if (!isUpdateManifest(parsed)) return { status: null, error: networkError };

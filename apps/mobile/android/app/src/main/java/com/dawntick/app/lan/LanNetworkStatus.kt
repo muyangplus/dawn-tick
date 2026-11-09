@@ -3,6 +3,7 @@ package com.dawntick.app.lan
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import java.net.Inet4Address
 import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSObject
 
@@ -86,5 +87,51 @@ object LanNetworkStatusReader {
             ipv4Count = ipv4Count.coerceAtLeast(0),
             interfaceSummary = interfaceSummary,
         )
+    }
+
+    /**
+     * `NetworkInterface` 枚举不到 IPv4 时的兜底：从 `ConnectivityManager` 的链路地址里取。
+     *
+     * 个别 ROM / 网络栈组合下 `NetworkInterface.getNetworkInterfaces()` 返回空或只回环，
+     * 但系统设置里能看到 IPv4（用户真机截图就是这种情况）。这里直接读当前 Wi-Fi/有线的
+     * `LinkProperties`，把链路 IPv4 补成候选，避免界面误报「未发现局域网地址」。
+     */
+    @Suppress("DEPRECATION") // Network.interfaceName / getAllNetworks 的过时用于一次性同步读取，见上
+    fun linkCandidates(context: Context): List<LanNetwork> {
+        val result = mutableListOf<LanNetwork>()
+        val seen = mutableSetOf<String>()
+        try {
+            val manager = (context.applicationContext ?: context)
+                .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return emptyList()
+            for (network in manager.allNetworks) {
+                val capabilities = manager.getNetworkCapabilities(network) ?: continue
+                val properties = manager.getLinkProperties(network) ?: continue
+                val kind = when {
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> LanNetworks.KIND_WIFI
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> LanNetworks.KIND_ETHERNET
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> LanNetworks.KIND_VPN
+                    else -> LanNetworks.KIND_OTHER
+                }
+                val name = runCatching { properties.interfaceName }.getOrNull()?.takeIf { it.isNotBlank() } ?: kind
+                for (link in properties.linkAddresses) {
+                    val address = link.address
+                    if (address !is Inet4Address || address.isLoopbackAddress) continue
+                    val host = address.hostAddress ?: continue
+                    if (!seen.add(host)) continue
+                    result.add(
+                        LanNetwork(
+                            name = name,
+                            address = host,
+                            isLan = LanDiscoveryCodec.isLanAddress(address),
+                            kind = kind,
+                            preferred = LanNetworks.addressRank(address),
+                        ),
+                    )
+                }
+            }
+        } catch (error: Throwable) {
+            NativeLog.warn(context, TAG, "ConnectivityManager 兜底读取失败：${NativeLog.describe(error)}")
+        }
+        return LanNetworks.sort(result)
     }
 }
