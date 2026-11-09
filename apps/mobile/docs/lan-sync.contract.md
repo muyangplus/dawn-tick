@@ -39,12 +39,28 @@
   推断（`wifi` / `ethernet` / `vpn` / `other`）。排序规则三端一致：
   **局域网地址优先 → 有线/无线优先于其它、VPN 降级到最后 → 192.168.\* > 10.\* >
   172.16–31.\* > 100.64/10 > 169.254/16 → 地址数值**。
+- **网络状态**：Android `networks()` 额外返回
+  `status: {wifi, ethernet, mobile, vpn, ipv4Count, interfaceSummary}`。
+  `wifi/ethernet/mobile/vpn` 由 `ConnectivityManager.getAllNetworks()` +
+  `NetworkCapabilities.hasTransport` 判断（遍历全部网络，不只默认网络：Wi-Fi 无 IPv4 而移动数据
+  是默认网络时仍能报告 `wifi:true`）；`ipv4Count` 等于候选数；`interfaceSummary` 是一行网卡摘要
+  （名称 / up-down / 是否虚拟 / 地址数）。读取只需 `ACCESS_NETWORK_STATE`，**没有运行时权限**；
+  读取失败时四个布尔全为 false 并把原因写入 `native.log`（标签 `DawnTickLanSync`）。
+  桌面端没有这个字段，TS 归一为 `null`。
+- **候选为空时**：Android 把**所有网卡**（名称、`isUp`、是否虚拟、全部地址含 IPv6 / 回环）
+  写入 `native.log`（标签 `DawnTickLanSync`），用来区分「系统里没有网卡」与「只有 IPv6 /
+  移动数据 / 回环网卡」。JS 侧 `readLanNetworks()` 返回 `{networks, status, error}`，界面按状态
+  分文案：有 Wi-Fi 但没有 IPv4 → 「已连接 Wi-Fi，但没有拿到 IPv4 地址（可能是仅 IPv6 网络），
+  请尝试重新连接 Wi-Fi」；有有线但没有 IPv4 → 提示检查网线 / 路由器 DHCP；只有移动数据 →
+  「当前没有 Wi-Fi/有线连接：开配对需要两台设备在同一 Wi-Fi，请先连接」；其它（没有状态、
+  只有 VPN、没有网卡）保留「未发现局域网地址：请确认已连接 Wi-Fi/热点」并附
+  「诊断信息：`<interfaceSummary>`」。空态旁有「复制诊断信息」文本按钮（候选 / 状态 / 网卡摘要 /
+  读取错误，不含配对码或令牌）与「刷新」按钮。
 - 设备页显示「网络：`<地址> · <分类>`」与「切换网络」下拉；选中的地址写入
   `localStorage` 的 `dt.lan.host`（只存地址，不存凭据），下次开配对优先使用。
-  **Android 上网络行始终显示**：没有候选时给出「未发现局域网地址：请确认已连接 Wi-Fi/热点」
-  空态与「刷新」按钮，不把权限 / ROM 失败伪装成没有网络；`networks()` reject 时界面显示
-  「读取本机网络失败：<异常类: message>」。选择新地址后若正在监听，会**自动停止并用新地址
-  重启**（广播地址随之变化）。
+  **Android 上网络行始终显示**：没有候选时给出上面的空态，不把权限 / ROM 失败伪装成没有网络；
+  `networks()` reject 时界面显示「读取本机网络失败：<异常类: message>」。选择新地址后若正在监听，
+  会**自动停止并用新地址重启**（广播地址随之变化）。
 - `lan_sync_start({host})` / `LanSync.start({host})` 的 `host` 只决定对外展示/广播地址；
   缺省或该地址已不在本机网卡上时回退 `LanNetworks.preferredAddress()`（通配绑定）。
   安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 另有 **8 秒超时**。失败文案统一为
@@ -318,7 +334,7 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 
 | 动作 | Windows（Tauri 命令） | Android（Capacitor 插件 `LanSync`） |
 |---|---|---|
-| 列网络 | `lan_network_list()` → `[{name, address, isLan, kind, preferred}]` | `networks()` → `{networks:[…]}` |
+| 列网络 | `lan_network_list()` → `[{name, address, isLan, kind, preferred}]`（无 `status`） | `networks()` → `{networks:[…], status:{wifi, ethernet, mobile, vpn, ipv4Count, interfaceSummary}}` |
 | 开服务 | `lan_sync_start({host?})` → `{host, port, listening}` | `start({host?})` → `{host, port, listening}` |
 | 停服务 | `lan_sync_stop()` | `stop()`（幂等） |
 | 取请求 | `lan_sync_poll()` → `{id, method, path, query, authorization, body, receivedAt}` 或 `null` | `poll()` → 同字段 |
@@ -356,13 +372,13 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | `apps/web/src/lan-sync.ts` | 服务端生命周期（开/停监听、轮询、回写、运行时令牌） |
 | `apps/web/src/lan-sync-client.ts` | 客户端配对、刷新/吊销、拉取/推送与客户端状态机 |
 | `apps/web/src/lan-sync-http.ts` | 桌面原生直连 / Android CapacitorHttp / 浏览器 fetch 分支与错误体归一 |
-| `apps/web/src/lan-sync-network.ts` | 候选排序、默认选择、地址文案与 `dt.lan.host` 读写（纯函数 + 原生桥） |
+| `apps/web/src/lan-sync-network.ts` | 候选排序、默认选择、地址文案、网络状态归一 / 空态文案 / 诊断文本与 `dt.lan.host` 读写（纯函数 + 原生桥） |
 | `apps/web/src/lan-sync-discovery.ts` | 发现包编解码、去重、TTL、扫描调用（纯函数 + 原生桥） |
 | `apps/web/src/lan-sync-preview.ts` | 预览统计、拉取信封、确认后合并 |
 | `apps/web/src/lan-sync-auto.ts` | 自动同步配置编解码、启动/30 分钟策略、失败重试一次 |
 | `apps/web/src/lan-sync-qr.ts` | 二维码矩阵（字节模式、纠错 M、版本 1–6）与人类可读文本 |
 | `apps/web/src/screens/settings/lan-sync-block.tsx` | 设备页卡片：服务端状态、令牌哈希落盘、发起方入口 |
-| `apps/web/src/screens/settings/lan-sync-server-panel.tsx` | Android 始终显示网络行（空态 / 刷新 / 切换后重启）、开/停配对、新配对码、二维码与复制 |
+| `apps/web/src/screens/settings/lan-sync-server-panel.tsx` | Android 始终显示网络行（按 `status` 分支的空态 / 刷新 / 复制诊断 / 切换后重启）、开/停配对、新配对码、二维码与复制 |
 | `apps/web/src/screens/settings/lan-sync-pair-panel.tsx` | 手输/扫码/粘贴配对、配对失败原因、通用扫码覆盖层 |
 | `apps/web/src/screens/settings/lan-sync-devices-panel.tsx` | 已配对设备列表、在线状态、立即同步与移除 |
 | `apps/web/src/screens/settings/lan-sync-client-panel.tsx` | 发现、配对、范围、自动同步、预览与拉取/推送 |
@@ -371,7 +387,7 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | `apps/web/test/lan-pair-scan.test.ts` | 扫码可用性、取消返回 null、扫码文本走同一解析器、错误文案 |
 | `apps/web/test/scan.test.ts` | 通用扫码：pair / text / 未知 scheme 解析、扫码桩取消与不可用原因 |
 | `apps/web/test/lan-pairings.test.ts` | 配对记录持久化（meta/localStorage）、自动重连状态机、探测分支 |
-| `apps/web/test/lan-sync-network.test.ts` | 网段优先级、候选排序与默认选择、切换地址、文案与 `dt.lan.host` |
+| `apps/web/test/lan-sync-network.test.ts` | 网段优先级、候选排序与默认选择、切换地址、文案、`status` 归一 / 空态分支 / 诊断文本与 `dt.lan.host` |
 | `apps/web/test/lan-sync-start.test.ts` | 选中地址透传、8 秒超时、原生异常透传与「重试」文案 |
 | `apps/web/test/lan-sync-http.test.ts` | 桌面走 `lan_http_request`、Android CapacitorHttp、失败回退 fetch |
 | `apps/web/test/lan-sync-discovery.test.ts` | 发现包编解码、去重、超时、Web 端不发现 |
@@ -409,7 +425,10 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
   验证无 GMS / 国产 ROM 与有 GMS 设备各一台；在 `filesDir/diag/native.log` 的
   `DawnTickLanSync` 标签确认 `start 入口` / `监听成功` / `networks 结果` 有记录。
 - **安卓多网络**：Wi-Fi 与热点/有线并存时网络行始终显示、刷新可更新候选、切换地址后
-  自动重启监听；无 Wi-Fi 时显示空态而不是把失败伪装成没有网络。
+  自动重启监听；无 Wi-Fi 时显示空态而不是把失败伪装成没有网络。空态三支文案
+  （Wi-Fi 无 IPv4 / 只有移动数据 / 其它 + 诊断信息）与「复制诊断信息」在真机各验一次；
+  `native.log` 的 `DawnTickLanSync` 标签应能看到 `networks 结果 … 状态 wifi=…`，
+  候选为空时还有 `networks 为空，全部网卡：…`（含 IPv6 / 回环）。
 - **相机扫码**：首次请求 CAMERA 权限、拒绝后提示、扫到即停、取消返回空、
   微信/系统相机扫同一二维码也可读；验证 `startScan` 相机预览与 WebView 透明覆盖层。
   另测主界面「扫一扫」：配对链接 → 自动跳设备页配对；普通文本 → 结果面板复制/关闭；
