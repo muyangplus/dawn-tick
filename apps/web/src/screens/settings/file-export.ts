@@ -1,4 +1,6 @@
 import { isAndroidApp } from '../../lib/capabilities.ts';
+import { collectDiagnosticsLog } from '../../lib/diagnostics-log.ts';
+import { copyText } from '../../system-actions.ts';
 import { withTimeout } from '../../lib/timeout.ts';
 import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from '../../lib/plugins.ts';
 import { dayStampUtc } from '../../lib/dates.ts';
@@ -110,6 +112,17 @@ async function androidNativeLog(): Promise<string> {
 }
 
 export async function exportLogs(): Promise<void> {
+  // 安卓上文件导出依赖 Filesystem/分享插件，部分机型会失败；改成复制到剪贴板，直接粘贴即可发送
+  if (isAndroidApp()) {
+    const collected = await collectDiagnosticsLog();
+    const done = await copyText(collected.text === '' ? '（暂无日志）' : collected.text);
+    if (done) {
+      toastSaved(`已复制诊断日志 ${collected.text === '' ? 0 : collected.text.split('\n').length} 行`, null);
+      return;
+    }
+    toast.error('复制失败：请到「诊断与维护 → 查看日志」长按选择复制');
+    return;
+  }
   const native = await androidNativeLog();
   const entries = logsText() + native;
   const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;

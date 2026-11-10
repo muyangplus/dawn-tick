@@ -27,6 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SwitchField } from '.
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { exportLogs } from './file-export.ts';
+import { isAndroidApp } from '../../lib/capabilities.ts';
+import { DiagnosticsLogDialog } from '../../components/diagnostics-log-dialog.tsx';
 import { said } from './format.ts';
 
 /** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
@@ -65,6 +67,8 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
   const logAction = useAction();
   const [presetSource, setPresetSource] = useState<PresetSource | null>(null);
   const [presetResult, setPresetResult] = useState<StatusMessage | null>(null);
+  /** 诊断日志弹窗：安卓导出文件不可靠，查看/复制是主要路径 */
+  const [logDialogOpen, setLogDialogOpen] = useState(false);
   /** 最近一次预设检查实际用的下载源：null 表示还没检查过 */
   const [presetRemote, setPresetRemote] = useState<DownloadSource | null>(null);
   const [elevated, setElevated] = useState<boolean | null>(null);
@@ -186,12 +190,23 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           <Button
             size="sm"
             variant="secondary"
-            aria-label="打开日志"
-            onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
+            aria-label="查看诊断日志"
+            data-role="diagnostics-open"
+            onClick={() => setLogDialogOpen(true)}
           >
-            打开日志
+            查看日志
           </Button>
-          <span className="text-xs text-muted">导出当前缓冲区</span>
+          {!isAndroidApp() && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="导出日志文件"
+              onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
+            >
+              导出文件
+            </Button>
+          )}
+          <span className="text-xs text-muted">查看/复制当前缓冲区（安卓导出失败时用这个）</span>
         </div>
         <SwitchField
           label="启用应用诊断日志"
@@ -275,6 +290,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           </Button>
         </div>
       )}
+      <DiagnosticsLogDialog open={logDialogOpen} onClose={() => setLogDialogOpen(false)} />
     </>
   );
 }

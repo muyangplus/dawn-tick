@@ -3376,6 +3376,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
   await openDeviceGroup('诊断与维护');
   const logBlock = view.container.querySelector('[data-role="log-settings"]');
+  // 诊断日志弹窗：直接查看/复制，不依赖文件导出（安卓导出失败时的兜底）
+  const diagnosticsOpen = view.container.querySelector<HTMLElement>('[data-role="diagnostics-open"]');
+  diagnosticsOpen?.click();
+  await flush(10);
+  const diagnosticsDialog = document.querySelector<HTMLElement>('[data-role="diagnostics-log-dialog"]');
+  check(
+    '诊断日志弹窗可查看与复制',
+    diagnosticsDialog !== null &&
+      diagnosticsDialog.querySelector('[data-role="diagnostics-log-copy"]') !== null &&
+      diagnosticsDialog.querySelector('[data-role="diagnostics-log-text"]') !== null,
+    diagnosticsDialog === null ? '(未打开弹窗)' : '',
+  );
+  const diagnosticsClose = [...(diagnosticsDialog?.querySelectorAll<HTMLElement>('button') ?? [])].find((item) =>
+    (item.textContent ?? '').includes('关闭'),
+  );
+  diagnosticsClose?.click();
+  await flush(8);
+
   const logLevelTrigger = view.container.querySelector('[aria-label="日志级别"]');
   if (logLevelTrigger instanceof window.HTMLElement) logLevelTrigger.click();
   await flush(10);
@@ -3384,7 +3402,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '应用诊断日志：开关、级别五档且 dev 默认 trace',
     logBlock !== null &&
       view.container.querySelector('[aria-label="启用应用诊断日志"]')?.getAttribute('aria-checked') === 'true' &&
-      view.container.querySelector('[aria-label="打开日志"]') !== null &&
+      view.container.querySelector('[aria-label="查看诊断日志"]') !== null &&
       logLevels.length === 5 &&
       logLevels.some((item) => item.startsWith('trace')) &&
       (logLevelTrigger?.textContent ?? '').trim() === 'trace',
