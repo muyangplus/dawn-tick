@@ -13,6 +13,7 @@ import android.os.PowerManager;
 import android.provider.Settings;
 
 import com.dawntick.app.diag.NativeLog;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -20,6 +21,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Locale;
 
 /**
@@ -102,6 +104,20 @@ public class SystemActionsPlugin extends Plugin {
         NativeLog.clear(getContext());
         NativeLog.info(getContext(), TAG, "原生诊断日志已清空");
         call.resolve(new JSObject().put("cleared", true));
+    }
+
+    /**
+     * 设备支持的 ABI：`Build.SUPPORTED_ABIS` 按系统优先级原序返回，`primary` 取第一个。
+     * 更新下载据此在 arm64-v8a / armeabi-v7a 两个 APK 之间选择；旧安装包没有本方法时
+     * Web 层会把调用失败按 arm64-v8a 处理，不阻塞更新检查。
+     */
+    @PluginMethod
+    public void abi(PluginCall call) {
+        String[] supported = Build.SUPPORTED_ABIS == null ? new String[0] : Build.SUPPORTED_ABIS;
+        JSObject result = new JSObject();
+        result.put("primary", supported.length == 0 ? "" : supported[0]);
+        result.put("abis", new JSArray(Arrays.asList(supported)));
+        call.resolve(result);
     }
 
     /** 是否已在电池优化白名单里（false 表示后台可能被系统掐掉，提醒会晚）。 */

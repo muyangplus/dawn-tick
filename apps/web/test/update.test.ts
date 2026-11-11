@@ -13,6 +13,7 @@ import {
   resolveReceiveBeta,
 } from '../src/update.ts';
 import { assetsVersionUrl } from '../src/lib/download-source.ts';
+import { setAndroidAbiForTests } from '../src/lib/android-abi.ts';
 import { CHANNEL_LABEL } from '../src/channel.ts';
 
 const VERSION_RELEASE = assetsVersionUrl('github', 'release');
@@ -47,7 +48,8 @@ function versionBody(overrides: Record<string, unknown> = {}): Record<string, un
     files: {
       windowsSetup: fileSuffix('-windows-x64-setup.exe', version, channel, 120, 'a'.repeat(64)),
       windowsPortable: fileSuffix('-windows-x64-portable.zip', version, channel, 90, 'b'.repeat(64)),
-      android: fileSuffix('-android.apk', version, channel, 60, 'c'.repeat(64)),
+      android: fileSuffix('-android-arm64-v8a.apk', version, channel, 60, 'c'.repeat(64)),
+      android32: fileSuffix('-android-armeabi-v7a.apk', version, channel, 55, 'e'.repeat(64)),
       web: fileSuffix('-web.zip', version, channel, 30, 'd'.repeat(64)),
     },
     checksums: 'SHA256SUMS.txt',
@@ -177,7 +179,7 @@ test('发现新版本：版本 / 渠道 / 说明 / 时间来自清单，下载�
   );
   assert.equal(
     status.manifest?.assets?.android?.url,
-    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-android.apk',
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-android-arm64-v8a.apk',
   );
   assert.equal(
     status.manifest?.assets?.web?.url,
@@ -189,6 +191,22 @@ test('发现新版本：版本 / 渠道 / 说明 / 时间来自清单，下载�
     '校验文件与产物同源同分支',
   );
   assert.equal(status.manifest?.assets?.windows?.sha256, 'a'.repeat(64), '清单直接带摘要');
+});
+
+test('armeabi-v7a 设备检查更新时选 v7 包', async () => {
+  try {
+    setAndroidAbiForTests('armeabi-v7a');
+    const status = await checkForUpdate({
+      channel: 'release',
+      receiveBeta: false,
+      currentVersion: '0.1.0',
+      fetchImpl: async () => manifestResponse(versionBody()),
+    });
+    assert.match(String(status.manifest?.assets?.android?.url), /-android-armeabi-v7a\.apk$/);
+    assert.equal(status.manifest?.assets?.android?.size, 55);
+  } finally {
+    setAndroidAbiForTests(null);
+  }
 });
 
 test('只有便携包时 windows 退回便携 zip，windowsPortable 仍单独保留', async () => {
@@ -363,6 +381,41 @@ test('GitHub 的 version.json 不可达时退回旧 Releases 接口（兼容兜�
   assert.equal(status.latest, '0.2.0');
   assert.equal(status.manifest?.assets?.windows?.url, 'https://example.com/setup.exe');
   assert.equal(status.manifest?.commit, '4f2a1cd');
+});
+
+test('旧 Releases 兜底也按设备 ABI 选拆分包', async () => {
+  const splitAssets = [
+    {
+      name: 'DawnTick-0.2.0-release-android-arm64-v8a.apk',
+      size: 60,
+      browser_download_url: 'https://example.com/android-arm64.apk',
+    },
+    {
+      name: 'DawnTick-0.2.0-release-android-armeabi-v7a.apk',
+      size: 55,
+      browser_download_url: 'https://example.com/android-v7.apk',
+    },
+  ];
+  const read = async (): Promise<string | undefined> => {
+    const status = await checkForUpdate({
+      channel: 'release',
+      receiveBeta: false,
+      currentVersion: '0.1.0',
+      fetchImpl: async (input) => {
+        if (String(input) === VERSION_RELEASE) throw new Error('fetch failed');
+        return manifestResponse(releaseBody({ assets: splitAssets }));
+      },
+    });
+    return status.manifest?.assets?.android?.url;
+  };
+  try {
+    setAndroidAbiForTests('armeabi-v7a');
+    assert.equal(await read(), 'https://example.com/android-v7.apk');
+    setAndroidAbiForTests('arm64-v8a');
+    assert.equal(await read(), 'https://example.com/android-arm64.apk');
+  } finally {
+    setAndroidAbiForTests(null);
+  }
 });
 
 test('旧 Releases 接口也异常时再回退同源 version.json 直连', async () => {

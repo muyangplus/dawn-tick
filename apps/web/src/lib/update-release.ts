@@ -5,6 +5,7 @@
  */
 
 import type { UpdateAsset, UpdateChannel, UpdateManifest } from '../update.ts';
+import { preferredAndroidAbi } from './android-abi.ts';
 
 /** beta 预发布标签与正式版标签。 */
 const BETA_RELEASE_TAG = /^v?\d+\.\d+\.\d+-beta(?:\.\d+)?$/;
@@ -142,7 +143,14 @@ function assetsFromRelease(
   const assets: NonNullable<UpdateManifest['assets']> = {};
   const windowsPortable = pick('-windows-x64-portable.zip');
   const windows = pick('-windows-x64-setup.exe') ?? windowsPortable;
-  const android = pick('-android.apk');
+  // Android 拆包后旧兜底也要按设备 ABI 选；仍接受拆包前的 `-android.apk` 老资产
+  const androidArm64 = pick('-android-arm64-v8a.apk');
+  const androidV7 = pick('-android-armeabi-v7a.apk');
+  const androidLegacy = pick('-android.apk');
+  const android =
+    preferredAndroidAbi() === 'armeabi-v7a'
+      ? (androidV7 ?? androidArm64 ?? androidLegacy)
+      : (androidArm64 ?? androidLegacy ?? androidV7);
   const web = pick('-web.zip');
   if (windows !== undefined) assets.windows = windows;
   if (windowsPortable !== undefined) assets.windowsPortable = windowsPortable;

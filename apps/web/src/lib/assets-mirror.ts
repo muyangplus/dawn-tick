@@ -7,7 +7,9 @@
  *
  * 清单只有一份：GitHub Release 与 assets 仓库里的 `version.json` 是同一个文件，
  * schema=2 —— 旧字段（channel / version / tag / notes / artifacts）之外补上
- * commit / releasedAt / files（四个平台的名字、体积、SHA256）/ checksums。
+ * commit / releasedAt / files（各产物的名字、体积、SHA256）/ checksums。
+ * Android 两个 ABI 包分别占 `android`（arm64-v8a）与 `android32`（armeabi-v7a）：
+ * 旧客户端只认识 `android`，所以它永远拿到 arm64；新客户端按设备 ABI 二选一。
  * 客户端只读两条 raw 链路（Gitee 侧由镜像同步后同样可读）：
  *
  *   GitHub: https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/<branch>/version.json
@@ -18,6 +20,7 @@
 
 import type { UpdateAsset, UpdateChannel, UpdateManifest } from '../update.ts';
 import type { DownloadSource } from './download-source.ts';
+import { preferredAndroidAbi } from './android-abi.ts';
 
 /** 产物仓库：与主仓库分开，避免产物把主仓库撑大，也绕开 Gitee Releases 限制。 */
 export const ASSETS_REPO = 'muyangplus/dawn-tick-assets';
@@ -32,7 +35,7 @@ export const ASSETS_BRANCH: Record<UpdateChannel, string> = {
   release: 'release',
 };
 
-export const VERSION_FILE_KEYS = ['windowsSetup', 'windowsPortable', 'android', 'web'] as const;
+export const VERSION_FILE_KEYS = ['windowsSetup', 'windowsPortable', 'android', 'android32', 'web'] as const;
 
 export type VersionFileKey = (typeof VERSION_FILE_KEYS)[number];
 
@@ -183,9 +186,22 @@ function assetOf(manifest: AssetsVersion, source: DownloadSource, file: VersionF
 }
 
 /**
+ * 按设备首选 ABI 选 Android 包：
+ * - arm64-v8a → `android`（arm64 包；缺失时退回 `android32`，至少还有包可下）；
+ * - armeabi-v7a → `android32`（v7 包；缺失时退回 `android`，老清单只有 `android`）。
+ */
+function pickAndroidFile(files: VersionFiles): VersionFile | undefined {
+  const arm64 = files.android;
+  const v7 = files.android32;
+  return preferredAndroidAbi() === 'armeabi-v7a' ? (v7 ?? arm64) : (arm64 ?? v7);
+}
+
+/**
  * 转成客户端既有的取源清单：
  * - `windows` = 安装包（没有安装包时退回便携 zip，向后兼容老清单）；
  * - `windowsPortable` 单独保留便携 zip：便携版自动更新要它，不能被安装包挤掉；
+ * - `android` 按设备首选 ABI 选包：arm64 用 `android`，armeabi-v7a 用 `android32`；
+ *   `android32` 只用于挑选，不进入最终清单（旧逻辑只看 `assets.android`）；
  * - 所有 URL 都是同源 raw 的绝对地址，`checksumsUrl` 指向同一分支的 `SHA256SUMS.txt`。
  */
 export function manifestFromAssetsVersion(manifest: AssetsVersion, source: DownloadSource): UpdateManifest {
@@ -194,7 +210,8 @@ export function manifestFromAssetsVersion(manifest: AssetsVersion, source: Downl
   const windows = manifest.files.windowsSetup ?? portable;
   if (windows !== undefined) assets.windows = assetOf(manifest, source, windows);
   if (portable !== undefined) assets.windowsPortable = assetOf(manifest, source, portable);
-  if (manifest.files.android !== undefined) assets.android = assetOf(manifest, source, manifest.files.android);
+  const android = pickAndroidFile(manifest.files);
+  if (android !== undefined) assets.android = assetOf(manifest, source, android);
   if (manifest.files.web !== undefined) assets.web = assetOf(manifest, source, manifest.files.web);
   return {
     channel: manifest.channel,

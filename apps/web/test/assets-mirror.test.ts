@@ -11,6 +11,7 @@ import {
   parseAssetsVersion,
 } from '../src/lib/assets-mirror.ts';
 import { planUpdateDownload } from '../src/lib/update-download.ts';
+import { setAndroidAbiForTests } from '../src/lib/android-abi.ts';
 
 const SHA = 'a'.repeat(64);
 
@@ -27,7 +28,16 @@ function versionJson(overrides: Record<string, unknown> = {}): Record<string, un
     files: {
       windowsSetup: { name: 'DawnTick-0.6.6-beta-windows-x64-setup.exe', size: 7_300_000, sha256: SHA },
       windowsPortable: { name: 'DawnTick-0.6.6-beta-windows-x64-portable.zip', size: 7_500_000, sha256: 'b'.repeat(64) },
-      android: { name: 'DawnTick-0.6.6-beta-android.apk', size: 12_800_000, sha256: 'c'.repeat(64) },
+      android: {
+        name: 'DawnTick-0.6.6-beta-android-arm64-v8a.apk',
+        size: 12_800_000,
+        sha256: 'c'.repeat(64),
+      },
+      android32: {
+        name: 'DawnTick-0.6.6-beta-android-armeabi-v7a.apk',
+        size: 11_900_000,
+        sha256: 'e'.repeat(64),
+      },
       web: { name: 'DawnTick-0.6.6-beta-web.zip', size: 2_200_000, sha256: 'd'.repeat(64) },
     },
     checksums: CHECKSUMS_FILE,
@@ -67,8 +77,15 @@ test('parseAssetsVersion：完整 v2 清单通过，渠道 / 版本 / 文件表�
   assert.equal(manifest.commit, 'abcdef1');
   assert.equal(manifest.releasedAt, 1_760_000_000_000);
   assert.equal(manifest.checksums, CHECKSUMS_FILE);
-  assert.deepEqual(Object.keys(manifest.files), ['windowsSetup', 'windowsPortable', 'android', 'web']);
+  assert.deepEqual(Object.keys(manifest.files), [
+    'windowsSetup',
+    'windowsPortable',
+    'android',
+    'android32',
+    'web',
+  ]);
   assert.equal(manifest.files.android?.size, 12_800_000);
+  assert.equal(manifest.files.android32?.size, 11_900_000);
 });
 
 test('parseAssetsVersion：缺字段 / 类型不对 / 旧 schema 都给出可读错误', () => {
@@ -133,7 +150,8 @@ test('manifestFromAssetsVersion：版本 / 渠道 / 说明来自清单，URL 指
   );
   assert.equal(
     manifest.assets?.android?.url,
-    'https://gitee.com/muyangplus/dawn-tick-assets/raw/beta/DawnTick-0.6.6-beta-android.apk',
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/beta/DawnTick-0.6.6-beta-android-arm64-v8a.apk',
+    '默认（arm64）拿 android 键',
   );
   assert.equal(
     manifest.checksumsUrl,
@@ -142,6 +160,46 @@ test('manifestFromAssetsVersion：版本 / 渠道 / 说明来自清单，URL 指
   );
   assert.equal(manifest.assets?.windows?.sha256, SHA, '清单直接给摘要，下载后不必先拉 SHA256SUMS');
   assert.equal(manifest.assets?.windows?.size, 7_300_000);
+});
+
+test('manifestFromAssetsVersion：Android 按设备 ABI 选包，android32 不进入最终清单', () => {
+  try {
+    setAndroidAbiForTests('arm64-v8a');
+    const arm64 = manifestFromAssetsVersion(parseOk(versionJson()), 'github');
+    assert.match(String(arm64.assets?.android?.url), /-android-arm64-v8a\.apk$/);
+    assert.equal(arm64.assets?.android?.size, 12_800_000);
+
+    setAndroidAbiForTests('armeabi-v7a');
+    const v7 = manifestFromAssetsVersion(parseOk(versionJson()), 'github');
+    assert.match(String(v7.assets?.android?.url), /-android-armeabi-v7a\.apk$/);
+    assert.equal(v7.assets?.android?.size, 11_900_000);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(v7.assets, 'android32'),
+      false,
+      'android32 只用于挑选，最终清单仍只有 assets.android',
+    );
+    const plan = planUpdateDownload(v7, 'android');
+    assert.equal(plan.kind, 'download');
+    if (plan.kind === 'download') {
+      assert.equal(plan.target.assetName, 'DawnTick-0.6.6-beta-android-armeabi-v7a.apk');
+      assert.match(plan.target.url, /-android-armeabi-v7a\.apk$/);
+    }
+  } finally {
+    setAndroidAbiForTests(null);
+  }
+});
+
+test('manifestFromAssetsVersion：老清单只有 android 时 v7 设备也退回 arm64 包', () => {
+  const files = versionJson().files as Record<string, unknown>;
+  const withoutAndroid32 = { ...files };
+  delete withoutAndroid32['android32'];
+  try {
+    setAndroidAbiForTests('armeabi-v7a');
+    const manifest = manifestFromAssetsVersion(parseOk(versionJson({ files: withoutAndroid32 })), 'github');
+    assert.match(String(manifest.assets?.android?.url), /-android-arm64-v8a\.apk$/);
+  } finally {
+    setAndroidAbiForTests(null);
+  }
 });
 
 test('manifestFromAssetsVersion：GitHub 源用 raw.githubusercontent，便携版单独保留', () => {
@@ -176,6 +234,6 @@ test('便携版选择：installKind 决定下 zip 还是 exe，两者互不串�
   // Android 取 APK，Web 只提示刷新
   const android = planUpdateDownload(manifest, 'android');
   assert.equal(android.kind, 'download');
-  if (android.kind === 'download') assert.match(android.target.url, /-android\.apk$/);
+  if (android.kind === 'download') assert.match(android.target.url, /-android-arm64-v8a\.apk$/);
   assert.deepEqual(planUpdateDownload(manifest, 'web'), { kind: 'refresh' });
 });

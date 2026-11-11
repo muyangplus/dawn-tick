@@ -29,9 +29,10 @@ import { SemesterStatsCard } from '../src/screens/cards/semester-stats-card.tsx'
 import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
 import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
 import { checkForUpdate, type UpdateManifest, type UpdateStatus } from '../src/update.ts';
-import { sha256Hex, type UpdateDownloadHost } from '../src/lib/update-download.ts';
+import { sha256Hex, type UpdateDownloadHost, planUpdateDownload } from '../src/lib/update-download.ts';
 import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
 import { dismissUpdateTask, setUpdateHostFactoryForTests, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
+import { setAndroidAbiForTests, preferredAndroidAbi } from '../src/lib/android-abi.ts';
 import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
 import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
@@ -3118,7 +3119,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       files: {
         windowsSetup: { name: `${prefix}-windows-x64-setup.exe`, size: 12, sha256: 'a'.repeat(64) },
         windowsPortable: { name: `${prefix}-windows-x64-portable.zip`, size: 12, sha256: 'b'.repeat(64) },
-        android: { name: `${prefix}-android.apk`, size: 12, sha256: 'c'.repeat(64) },
+        android: { name: `${prefix}-android-arm64-v8a.apk`, size: 12, sha256: 'c'.repeat(64) },
+        android32: { name: `${prefix}-android-armeabi-v7a.apk`, size: 11, sha256: 'e'.repeat(64) },
         web: { name: `${prefix}-web.zip`, size: 12, sha256: 'd'.repeat(64) },
       },
       checksums: 'SHA256SUMS.txt',
@@ -3210,6 +3212,37 @@ export async function runSmoke(): Promise<SmokeResult[]> {
           'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/SHA256SUMS.txt',
       `${giteeStatus.manifest?.assets?.windows?.url ?? '(无)'} / ${giteeStatus.manifest?.checksumsUrl ?? '(无)'}`,
     );
+    const defaultAndroidPlan = planUpdateDownload(giteeStatus.manifest, 'android');
+    check(
+      '非 Android / 探测不出 ABI 时按 arm64 选 -android-arm64-v8a.apk',
+      preferredAndroidAbi() === 'arm64-v8a' &&
+        defaultAndroidPlan.kind === 'download' &&
+        defaultAndroidPlan.target.url ===
+          `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-android-arm64-v8a.apk` &&
+        defaultAndroidPlan.target.assetName === `DawnTick-${newerVersion}-dev-android-arm64-v8a.apk`,
+      defaultAndroidPlan.kind === 'download' ? defaultAndroidPlan.target.url : '(无 Android 包)',
+    );
+    try {
+      // 桩设备 ABI：v7 设备应当拿 android32 对应的包，下载 URL 与清单包名都指向 -android-armeabi-v7a.apk
+      setAndroidAbiForTests('armeabi-v7a');
+      const v7Status = await checkForUpdate({
+        channel: 'dev',
+        receiveBeta: false,
+        currentVersion: '0.0.1',
+        source: 'gitee',
+      });
+      const v7Plan = planUpdateDownload(v7Status.manifest, 'android');
+      check(
+        'armeabi-v7a 设备选 android32：下载 URL 与包名都指向 -android-armeabi-v7a.apk',
+        v7Plan.kind === 'download' &&
+          v7Plan.target.url ===
+            `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-android-armeabi-v7a.apk` &&
+          v7Plan.target.assetName === `DawnTick-${newerVersion}-dev-android-armeabi-v7a.apk`,
+        v7Plan.kind === 'download' ? v7Plan.target.url : '(无 Android 包)',
+      );
+    } finally {
+      setAndroidAbiForTests(null);
+    }
     closeUpdatePrompt();
     dismissUpdateTask();
     await flush(8);

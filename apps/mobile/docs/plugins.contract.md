@@ -49,6 +49,7 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 | `openNotificationSettings` | `channelId?: string` | `opened: boolean` | 有渠道 id 时直达该渠道 |
 | `readNativeLog` | `maxBytes?: number` | `text?: string`、`path?: string`、`bytes?: number` | 读 `filesDir/diag/native.log` 最近约 200 行；默认读尾部 256KB，`maxBytes` 限制读取字节数 |
 | `clearNativeLog` | 无 | `cleared: boolean` | 清空当前日志与滚动文件 `native.log.1` |
+| `abi` | 无 | `primary?: string`、`abis?: string[]` | Android 更新拆包的设备 ABI：`Build.SUPPORTED_ABIS` 原序返回，`primary` 取第一个；客户端据此在 arm64-v8a / armeabi-v7a 包中选择（见 `apps/web/src/lib/android-abi.ts`）。旧安装包没有本方法时调用失败，Web 层按 arm64-v8a 回退 |
 
 ### 1.1 原生诊断日志
 

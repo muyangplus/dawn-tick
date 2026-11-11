@@ -50,6 +50,7 @@ export const PLUGIN_METHODS = {
     'openNotificationSettings',
     'readNativeLog',
     'clearNativeLog',
+    'abi',
   ],
   [PLUGIN_NAMES.schoolWindow]: ['open', 'available'],
   [PLUGIN_NAMES.widgetPin]: ['requestPin', 'readStates'],
@@ -98,6 +99,14 @@ export interface SystemActionsPlugin {
   }>;
   /** 清空原生诊断日志（当前文件与滚动文件）；`cleared` 为 true 表示已执行。 */
   clearNativeLog(): Promise<{ cleared: boolean }>;
+  /**
+   * 设备支持的 ABI（`Build.SUPPORTED_ABIS`，按系统优先级排序）。
+   *
+   * `primary` 是第一个 ABI，`abis` 原样返回；客户端据此在 arm64-v8a / armeabi-v7a
+   * 两个更新包之间选择（`lib/android-abi.ts`）。旧安装包没有该方法时调用会失败，
+   * 更新逻辑按 arm64-v8a 回退。
+   */
+  abi(): Promise<{ primary?: string; abis?: string[] }>;
 }
 
 /** 内嵌教务窗口插件：打开页面并带回页面内容。 */

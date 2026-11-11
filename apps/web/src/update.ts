@@ -8,6 +8,7 @@ import {
   type DownloadSource,
 } from './lib/download-source.ts';
 import { manifestFromAssetsVersion, parseAssetsVersion } from './lib/assets-mirror.ts';
+import { ensureAndroidAbi } from './lib/android-abi.ts';
 import { errorMessage } from './lib/errors.ts';
 import { withTimeout } from './lib/timeout.ts';
 import {
@@ -340,6 +341,8 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
   const base = emptyStatus(feed, options.currentVersion, requested);
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   if (typeof doFetch !== 'function') return { ...base, error: '当前环境无法联网检查更新' };
+  // Android 按设备 ABI 选包：拉清单之前先探测一次（3 秒超时，失败默认 arm64，不阻塞更新）
+  await ensureAndroidAbi();
 
   const first = await queryBestForFeed(feed, requested, options.currentVersion, doFetch);
   if (first.status !== null) return first.status;
