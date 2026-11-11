@@ -1,58 +1,77 @@
-import type { Storage } from '@dawn-tick/core';
-import { isWebApp } from './lib/capabilities.ts';
-import { readMetaJson, writeMetaJson } from './lib/meta.ts';
-import { LAN_PAIRINGS_META_KEY } from './lib/meta-keys.ts';
-import { logWarn } from './log.ts';
 import { parsePeerAddress, type PeerAddress } from './lan-sync-protocol.ts';
 import {
+  pingLanPeer,
   refreshPairing,
   type LanSession,
   type RefreshPairResult,
 } from './lan-sync-client.ts';
 
 /**
- * 局域网同步：客户端**配对持久化**与**自动重连**。
+ * 局域网同步：客户端**配对持久化**（含对端元信息）与单次重连探测。
  *
  * 数据模型（`app_meta` 键 `lan_pairings_v1`；Web 端降级到 `localStorage`）：
- * `{ id, name, host, port, token, pairedAt, lastSyncAt }[]`。
+ * `{ id, deviceId, name, host, port, token, pairedAt, lastSeen, lastSyncAt }[]`。
  * 令牌是服务端签发的 180 天长期令牌，明文只在本机保存；服务端只保存它的 SHA-256 哈希。
  *
- * 重连策略：
- * - 页面打开、浏览器 `online` 事件与每 30 秒各探测一次（`POST /pair/refresh`）；
- * - 在线：换新令牌并顺延有效期；离线：保留配对、显示「离线，仍在重试」；
- * - 服务端返回 401：标记「配对已失效」，不自动删除，用户可在设备页移除后重新配对。
+ * 设备身份：协议没有对端设备 id，首次配对时由本机生成稳定的 `deviceId`（等于 `id`），
+ * 端口变化、重新配对或 UDP 发现到新地址时都复用同一个 id，否则旧地址会不断堆叠。
+ *
+ * 重连状态机、指数退避与 UDP 发现更新在 `lan-sync-reconnect.ts`；本模块只做
+ * 记录读写、去重与一次 `/pair/refresh` 探测。
  */
 
 /** 客户端配对记录。 */
 export interface LanPairing {
-  /** 稳定标识：`host:port` */
+  /** 本机记录 id：首次配对生成，IP / 端口变化时保留（旧记录沿用 `host:port`） */
   id: string;
+  /**
+   * 对端稳定设备标识：优先使用对方广播/协议提供的 id；没有时由本机生成。
+   * `host` / `port` 只是「最近一次已知地址」，不参与设备身份判断。
+   */
+  deviceId: string;
   name: string;
+  /** UDP 广播里的设备名（可能与二维码展示名不同）；换 IP 后靠它认回同一台 */
+  discoveryName: string | null;
   host: string;
   port: number;
   /** 长期令牌明文（只在本机） */
   token: string;
+  /** 首次配对时间；重新配对不会重置 */
   pairedAt: number;
-  /** 最近一次成功拉取/推送的时间；从未同步为 null */
+  /** 最近一次成功同步（拉取/推送）的时间；从未同步为 null */
   lastSyncAt: number | null;
+  /** 最近一次探测在线或 UDP 发现到对方的时间；从未在线为 null */
+  lastSeen: number | null;
 }
 
-/** Web 端 localStorage 键：与 `app_meta` 同语义，只是存储位置不同。 */
-export const LAN_PAIRINGS_STORAGE_KEY = 'dt.lan.pairings.v1';
-/** 自动重连探测间隔：30 秒。 */
-export const LAN_RECONNECT_INTERVAL_MS = 30_000;
-/** 探测失败后最多多久重试（实际就是每个间隔都重试）。 */
-export const LAN_PAIRING_OFFLINE_HINT = '离线，仍在重试';
-
-/** localStorage 的最小接口；单测可传内存实现。 */
-export interface LanLocalStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem?(key: string): void;
+/** `IP:端口` 形态的兜底名称：重新配对时不能拿它当设备身份。 */
+export function isAddressLikeName(name: string): boolean {
+  return /^\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}$/.test(name.trim());
 }
 
 function tokenLooksValid(token: unknown): token is string {
   return typeof token === 'string' && /^[0-9a-f]{16,128}$/i.test(token);
+}
+
+function validTime(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+/** 设备 id：字母数字与 `-_.:`，4–64 字符；不合法返回 null。 */
+export function normalizeLanDeviceId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!/^[A-Za-z0-9._:-]{4,64}$/.test(text)) return null;
+  return text;
+}
+
+/** 生成本机为对端保存的设备 id（不依赖对端协议）。 */
+export function newLanDeviceId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi !== undefined && typeof cryptoApi.randomUUID === 'function') {
+    return `peer-${cryptoApi.randomUUID()}`;
+  }
+  return `peer-${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
 }
 
 /** 归一一条记录；结构不合法返回 null。 */
@@ -63,38 +82,44 @@ function parseOne(value: unknown): LanPairing | null {
     `${typeof record.host === 'string' ? record.host : ''}:${typeof record.port === 'number' ? record.port : ''}`,
   );
   if (peer === null || !tokenLooksValid(record.token)) return null;
-  const pairedAt =
-    typeof record.pairedAt === 'number' && Number.isFinite(record.pairedAt) && record.pairedAt > 0
-      ? record.pairedAt
-      : 0;
+  const pairedAt = validTime(record.pairedAt) ? record.pairedAt : 0;
   const name =
     typeof record.name === 'string' && record.name.trim() !== ''
       ? record.name.trim().slice(0, 48)
       : `${peer.host}:${peer.port}`;
-  const id = `${peer.host}:${peer.port}`;
+  // 旧记录只有 id（host:port）；新记录 id 是本地记录键，deviceId 是设备身份
+  const recordId = normalizeLanDeviceId(record.id);
+  const deviceId = normalizeLanDeviceId(record.deviceId) ?? recordId ?? `${peer.host}:${peer.port}`;
+  const id = recordId ?? deviceId;
+  const discoveryName =
+    typeof record.discoveryName === 'string' && record.discoveryName.trim() !== ''
+      ? record.discoveryName.trim().slice(0, 48)
+      : null;
   return {
     id,
+    deviceId,
     name,
+    discoveryName,
     host: peer.host,
     port: peer.port,
     token: record.token,
     pairedAt,
-    lastSyncAt:
-      typeof record.lastSyncAt === 'number' && Number.isFinite(record.lastSyncAt) && record.lastSyncAt > 0
-        ? record.lastSyncAt
-        : null,
+    lastSyncAt: validTime(record.lastSyncAt) ? record.lastSyncAt : null,
+    lastSeen: validTime(record.lastSeen) ? record.lastSeen : null,
   };
 }
 
 /** 解析 `app_meta` 值：结构不合法返回 `null`（读取层据此回退空列表）。 */
 export function parseLanPairings(value: unknown): LanPairing[] | null {
   if (!Array.isArray(value)) return null;
-  const seen = new Set<string>();
+  const seenIds = new Set<string>();
+  const seenDevices = new Set<string>();
   const result: LanPairing[] = [];
   for (const item of value) {
     const pairing = parseOne(item);
-    if (pairing === null || seen.has(pairing.id)) continue;
-    seen.add(pairing.id);
+    if (pairing === null || seenIds.has(pairing.id) || seenDevices.has(pairing.deviceId)) continue;
+    seenIds.add(pairing.id);
+    seenDevices.add(pairing.deviceId);
     result.push(pairing);
   }
   return result.sort((left, right) => right.pairedAt - left.pairedAt);
@@ -115,43 +140,86 @@ export function serializeLanPairings(pairings: readonly LanPairing[]): string {
   return JSON.stringify(
     pairings.map((item) => ({
       id: item.id,
+      deviceId: item.deviceId,
       name: item.name,
+      discoveryName: item.discoveryName,
       host: item.host,
       port: item.port,
       token: item.token,
       pairedAt: item.pairedAt,
+      lastSeen: item.lastSeen,
       lastSyncAt: item.lastSyncAt,
     })),
   );
 }
 
-/** 新建记录：id 由地址决定，同一台设备重复配对时覆盖而不是堆叠。 */
+/** 新建记录：设备 id 由调用方给（发现/重连复用）或本地生成。 */
 export function createLanPairing(input: {
   peer: PeerAddress;
   token: string;
   name?: string;
+  deviceId?: string;
   now?: number;
 }): LanPairing {
   const peer = input.peer;
+  const deviceId = normalizeLanDeviceId(input.deviceId) ?? newLanDeviceId();
   const name = input.name?.trim() ?? '';
+  const now = input.now ?? Date.now();
   return {
-    id: `${peer.host}:${peer.port}`,
+    id: deviceId,
+    deviceId,
     name: name === '' ? `${peer.host}:${peer.port}` : name.slice(0, 48),
+    discoveryName: null,
     host: peer.host,
     port: peer.port,
     token: input.token,
-    pairedAt: input.now ?? Date.now(),
+    pairedAt: now,
     lastSyncAt: null,
+    lastSeen: now,
   };
 }
 
-/** 新增或替换同地址记录，按配对时间倒序。 */
+/** 找到同一条设备记录：先按 id/deviceId，再按唯一设备名（端口变化后的重新配对）。 */
+export function findSameLanPairing(
+  pairings: readonly LanPairing[],
+  pairing: LanPairing,
+): LanPairing | null {
+  const sameId = pairings.find(
+    (item) => item.id === pairing.id || item.deviceId === pairing.deviceId,
+  );
+  if (sameId !== undefined) return sameId;
+  if (isAddressLikeName(pairing.name)) return null;
+  const sameName = pairings.filter((item) => item.name === pairing.name);
+  if (sameName.length === 1) return sameName[0] ?? null;
+  // 同名多台设备时只认同地址，避免把另一台同名设备合并掉
+  return sameName.find((item) => item.host === pairing.host) ?? null;
+}
+
+/**
+ * 新增或替换同一设备的记录：端口变化覆盖旧地址，保留原 `id`/`deviceId` 与首次配对时间。
+ * 按配对时间倒序。
+ */
 export function upsertLanPairing(
   pairings: readonly LanPairing[],
   pairing: LanPairing,
 ): LanPairing[] {
-  const next = pairings.filter((item) => item.id !== pairing.id);
-  next.push(pairing);
+  const same = findSameLanPairing(pairings, pairing);
+  const record: LanPairing =
+    same === null
+      ? pairing
+      : {
+          ...pairing,
+          id: same.id,
+          deviceId: same.deviceId,
+          discoveryName: pairing.discoveryName ?? same.discoveryName,
+          pairedAt: same.pairedAt > 0 ? same.pairedAt : pairing.pairedAt,
+          lastSyncAt: same.lastSyncAt,
+          lastSeen: pairing.lastSeen ?? same.lastSeen,
+        };
+  const next = pairings.filter(
+    (item) => item.id !== record.id && item.deviceId !== record.deviceId,
+  );
+  next.push(record);
   return next.sort((left, right) => right.pairedAt - left.pairedAt);
 }
 
@@ -160,13 +228,45 @@ export function removeLanPairing(pairings: readonly LanPairing[], id: string): L
   return pairings.filter((item) => item.id !== id);
 }
 
-/** 更新最近同步时间。 */
+/** 按地址找记录：拉取/推送成功时用来回写 `lastSyncAt`（会话里没有设备 id）。 */
+export function findLanPairingByPeer(
+  pairings: readonly LanPairing[],
+  peer: PeerAddress,
+): LanPairing | null {
+  return pairings.find((item) => item.host === peer.host && item.port === peer.port) ?? null;
+}
+
+/** 更新最近同步时间：同步成功也算「见到了对方」。 */
 export function markLanPairingSynced(
   pairings: readonly LanPairing[],
   id: string,
   now = Date.now(),
 ): LanPairing[] {
-  return pairings.map((item) => (item.id === id ? { ...item, lastSyncAt: now } : item));
+  return pairings.map((item) =>
+    item.id === id ? { ...item, lastSyncAt: now, lastSeen: now } : item,
+  );
+}
+
+/** 更新最近在线时间（探测成功 / UDP 发现）。 */
+export function markLanPairingSeen(
+  pairings: readonly LanPairing[],
+  id: string,
+  now = Date.now(),
+): LanPairing[] {
+  return pairings.map((item) => (item.id === id ? { ...item, lastSeen: now } : item));
+}
+
+/** 记下 UDP 广播里的设备名：二维码展示名可能只是「Windows 电脑」，换 IP 后靠它认设备。 */
+export function markLanPairingDiscoveryName(
+  pairings: readonly LanPairing[],
+  id: string,
+  discoveryName: string,
+): LanPairing[] {
+  const name = discoveryName.trim().slice(0, 48);
+  if (name === '') return [...pairings];
+  return pairings.map((item) =>
+    item.id === id && item.discoveryName !== name ? { ...item, discoveryName: name } : item,
+  );
 }
 
 /** 更新长期令牌（刷新/换新后）。 */
@@ -176,6 +276,27 @@ export function updateLanPairingToken(
   token: string,
 ): LanPairing[] {
   return pairings.map((item) => (item.id === id ? { ...item, token } : item));
+}
+
+/** 端口 / 地址变化：同一个 `id` 原地覆盖，不新增记录。 */
+export function updateLanPairingAddress(
+  pairings: readonly LanPairing[],
+  id: string,
+  peer: PeerAddress,
+  now = Date.now(),
+  name?: string,
+): LanPairing[] {
+  return pairings.map((item) =>
+    item.id === id
+      ? {
+          ...item,
+          host: peer.host,
+          port: peer.port,
+          lastSeen: now,
+          ...(name === undefined || name.trim() === '' ? {} : { name: name.trim().slice(0, 48) }),
+        }
+      : item,
+  );
 }
 
 /** 配对记录 → 传输会话。 */
@@ -193,124 +314,27 @@ export function formatLanPairingLabel(pairing: LanPairing): string {
   return `${pairing.name} · ${pairing.host}:${pairing.port}`;
 }
 
-/** `上次同步：2026-10-25 21:30` / `尚未同步`。 */
-export function formatLanPairingLastSync(pairing: LanPairing): string {
-  if (pairing.lastSyncAt === null) return '尚未同步';
-  const date = new Date(pairing.lastSyncAt);
+function formatTime(at: number): string {
+  const date = new Date(at);
   const pad = (value: number): string => String(value).padStart(2, '0');
-  return `上次同步：${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours(),
   )}:${pad(date.getMinutes())}`;
 }
 
-/** 读 / 写配对列表的统一出口；Web 用 localStorage，桌面与安卓用 `app_meta`。 */
-export interface LanPairingStore {
-  load(): Promise<LanPairing[]>;
-  save(pairings: readonly LanPairing[]): Promise<void>;
+/** `上次同步：2026-10-25 21:30` / `尚未同步`。 */
+export function formatLanPairingLastSync(pairing: LanPairing): string {
+  if (pairing.lastSyncAt === null) return '尚未同步';
+  return `上次同步：${formatTime(pairing.lastSyncAt)}`;
 }
 
-function localStore(local: LanLocalStorage | null): LanPairingStore | null {
-  if (local === null) return null;
-  return {
-    async load() {
-      try {
-        return parseLanPairingsJson(local.getItem(LAN_PAIRINGS_STORAGE_KEY));
-      } catch {
-        return [];
-      }
-    },
-    async save(pairings) {
-      try {
-        local.setItem(LAN_PAIRINGS_STORAGE_KEY, serializeLanPairings(pairings));
-      } catch (cause: unknown) {
-        logWarn('lan-sync', '写入配对列表失败', {
-          message: cause instanceof Error ? cause.message : String(cause),
-        });
-      }
-    },
-  };
+/** `最近在线：2026-10-25 21:30` / `尚未在线`。 */
+export function formatLanPairingLastSeen(pairing: LanPairing): string {
+  if (pairing.lastSeen === null) return '尚未在线';
+  return `最近在线：${formatTime(pairing.lastSeen)}`;
 }
 
-/**
- * 创建持久化出口：Web 端优先 localStorage；localStorage 不可用（隐私模式等）时
- * 退回 `app_meta`，桌面与安卓始终用 `app_meta`。
- */
-export function createLanPairingStore(
-  storage: Storage,
-  options: { localStorage?: LanLocalStorage | null } = {},
-): LanPairingStore {
-  const local =
-    options.localStorage !== undefined
-      ? options.localStorage
-      : isWebApp()
-        ? safeLocalStorage()
-        : null;
-  const localBacked = localStore(local);
-  if (localBacked !== null && (options.localStorage !== undefined || isWebApp())) {
-    return {
-      async load() {
-        const fromLocal = await localBacked.load();
-        if (fromLocal.length > 0) return fromLocal;
-        // localStorage 为空时读一次 app_meta：兼容从桌面/安卓带过来的数据
-        return readMetaPairings(storage);
-      },
-      async save(pairings) {
-        await localBacked.save(pairings);
-      },
-    };
-  }
-  return {
-    load: () => readMetaPairings(storage),
-    save: async (pairings) => {
-      await writeMetaJson(storage, LAN_PAIRINGS_META_KEY, JSON.parse(serializeLanPairings(pairings)), {
-        scope: 'lan-sync',
-      });
-    },
-  };
-}
-
-async function readMetaPairings(storage: Storage): Promise<LanPairing[]> {
-  return readMetaJson(storage, LAN_PAIRINGS_META_KEY, {
-    parse: parseLanPairings,
-    fallback: [],
-    scope: 'lan-sync',
-  });
-}
-
-function safeLocalStorage(): LanLocalStorage | null {
-  try {
-    return typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-/* ── 自动重连状态机 ───────────────────────────────────────────── */
-
-/** `unknown` 未探测；`online` 可同步；`offline` 网络不可达；`expired` 服务端拒绝令牌。 */
-export type LanPairingState = 'unknown' | 'online' | 'offline' | 'expired';
-
-export interface LanPairingStatus {
-  state: LanPairingState;
-  checkedAt: number;
-  error: string | null;
-}
-
-export type LanPairingStatuses = Record<string, LanPairingStatus>;
-
-/** 状态文案：界面直接展示。 */
-export function lanPairingStatusText(status: LanPairingStatus | undefined): string {
-  switch (status?.state) {
-    case 'online':
-      return '在线';
-    case 'offline':
-      return LAN_PAIRING_OFFLINE_HINT;
-    case 'expired':
-      return '配对已失效，可移除后重新配对';
-    default:
-      return '未检测';
-  }
-}
+/* ── 单次重连探测 ─────────────────────────────────────────────── */
 
 export interface LanPairProbe {
   id: string;
@@ -321,11 +345,19 @@ export interface LanPairProbe {
   expiresAt?: number;
 }
 
-/** 一次探测：`/pair/refresh` 成功即在线，401 即失效，其它（断网/超时）都算离线。 */
+/**
+ * 一次探测：先 `GET /ping`（3 秒）快速判断旧地址是否还可达；可达再 `POST /pair/refresh`
+ * 换新令牌。401 即失效，其它（ECONNREFUSED / 超时 / 断网）都算离线，交给
+ * `lan-sync-reconnect.ts` 退避并尝试 UDP 发现新地址。
+ */
 export async function probeLanPairing(
   pairing: LanPairing,
   now = Date.now(),
 ): Promise<LanPairProbe> {
+  const ping = await pingLanPeer({ host: pairing.host, port: pairing.port });
+  if (!ping.ok) {
+    return { id: pairing.id, state: 'offline', error: ping.error ?? '网络不可达' };
+  }
   const result: RefreshPairResult = await refreshPairing(pairingSession(pairing), now);
   if (result.ok && result.token !== null) {
     return {
@@ -342,37 +374,11 @@ export async function probeLanPairing(
   return { id: pairing.id, state: 'offline', error: result.error ?? '网络不可达' };
 }
 
-/** 纯状态机：把一批探测结果折进状态表；`checkedAt` 取本次时间。 */
-export function reduceLanPairingStatuses(
-  current: LanPairingStatuses,
-  probes: readonly LanPairProbe[],
-  now = Date.now(),
-): LanPairingStatuses {
-  const next: LanPairingStatuses = { ...current };
-  for (const probe of probes) {
-    next[probe.id] = {
-      state: probe.state,
-      checkedAt: now,
-      error: probe.error,
-    };
-  }
-  return next;
-}
-
-/** 是否该探测：从未探测过、或距上次探测已满间隔。 */
-export function shouldProbePairing(
-  status: LanPairingStatus | undefined,
-  now = Date.now(),
-  intervalMs = LAN_RECONNECT_INTERVAL_MS,
-): boolean {
-  if (status === undefined || status.checkedAt <= 0) return true;
-  return now - status.checkedAt >= intervalMs;
-}
-
-/** 把探测结果应用到配对列表：在线时换新令牌（离线/失效不动记录）。 */
+/** 把在线探测结果应用到配对列表：换新令牌并更新 `lastSeen`；离线/失效不动记录。 */
 export function applyLanPairProbes(
   pairings: readonly LanPairing[],
   probes: readonly LanPairProbe[],
+  now = Date.now(),
 ): LanPairing[] {
   const tokens = new Map<string, string>();
   for (const probe of probes) {
@@ -381,11 +387,6 @@ export function applyLanPairProbes(
   if (tokens.size === 0) return [...pairings];
   return pairings.map((item) => {
     const token = tokens.get(item.id);
-    return token === undefined ? item : { ...item, token };
+    return token === undefined ? item : { ...item, token, lastSeen: now };
   });
-}
-
-/** 需要探测的条目：全量探测最简单，但无配对时返回空数组。 */
-export function pairingsToProbe(pairings: readonly LanPairing[]): LanPairing[] {
-  return [...pairings];
 }
