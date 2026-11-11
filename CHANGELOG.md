@@ -5,6 +5,10 @@
 
 ## [未发布]
 
+### 修复
+
+- 安卓插件调用报 `"SystemActions.then()" is not implemented on android`：Capacitor 插件代理被 async 函数直接返回时会被 Promise 当成 thenable，统一包一层「then 为 undefined」的安全代理；修复由此导致的 ABI 探测超时、原生日志读取超时、局域网开启失败、通知/小组件刷新报错
+
 ### 新增
 
 - 安卓安装包按 ABI 拆分为 arm64 与 arm32 两个 APK（约 11MB / 8MB），客户端按设备 ABI 自动选；`version.json` 用 `android`（arm64）与 `android32`（v7）区分，旧客户端仍拿 arm64

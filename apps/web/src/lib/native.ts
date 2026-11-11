@@ -170,5 +170,24 @@ export async function invokeNative<T = void>(
 export async function loadCapacitorPlugin<T>(name: string): Promise<T | null> {
   if (!isAndroidApp()) return null;
   const { registerPlugin } = await import('@capacitor/core');
-  return registerPlugin<T>(name);
+  return thenableSafePlugin(registerPlugin<T>(name));
+}
+
+/**
+ * Capacitor 插件代理对**任意**属性都返回函数，包括 `then`；一旦被 async 函数 return，
+ * Promise 解析会把它当 thenable 去调 `plugin.then()`，于是报
+ * `"Xxx.then()" is not implemented on android`（安卓真机日志里 SystemActions /
+ * ReminderActions / WidgetRefresh / LanSync 全中）。
+ *
+ * 这里包一层普通 Proxy：`then` 固定返回 undefined，其它属性照常转发并绑定到原代理，
+ * 既保留插件方法调用，又让 `await loadPlugin()` 能正常 resolve。
+ */
+export function thenableSafePlugin<T>(plugin: T): T {
+  return new Proxy(plugin as object, {
+    get(target, property, receiver) {
+      if (property === 'then') return undefined;
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  }) as T;
 }
