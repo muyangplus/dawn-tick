@@ -321,8 +321,8 @@ jobs:
             find artifacts/android -name '*.apk' >&2 || true
             exit 1
           fi
-          cp "$apk_arm64" "out/${SUFFIX}-android-arm64-v8a.apk"
-          cp "$apk_v7" "out/${SUFFIX}-android-armeabi-v7a.apk"
+          cp "$apk_arm64" "out/${SUFFIX}-android-arm64.apk"
+          cp "$apk_v7" "out/${SUFFIX}-android-arm32.apk"
 
           (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 

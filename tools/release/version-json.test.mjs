@@ -22,8 +22,8 @@ const PREFIX = `DawnTick-${VERSION}-${CHANNEL}`;
 const PRODUCTS = {
   windowsSetup: `${PREFIX}-windows-x64-setup.exe`,
   windowsPortable: `${PREFIX}-windows-x64-portable.zip`,
-  android: `${PREFIX}-android-arm64-v8a.apk`,
-  android32: `${PREFIX}-android-armeabi-v7a.apk`,
+  android: `${PREFIX}-android-arm64.apk`,
+  android32: `${PREFIX}-android-arm32.apk`,
   web: `${PREFIX}-web.zip`,
 };
 
@@ -83,8 +83,8 @@ test('v2 清单：旧字段保留，新增 schema / commit / releasedAt / files 
       assert.equal(entry.sha256, digest(fileContent(entry.name)), `${key} 的摘要来自 out/ 实际文件`);
       assert.match(entry.sha256, /^[0-9a-f]{64}$/, key);
     }
-    assert.match(manifest.files.android.name, /-android-arm64-v8a\.apk$/, 'android 固定是 arm64 包');
-    assert.match(manifest.files.android32.name, /-android-armeabi-v7a\.apk$/, 'android32 是 v7 包');
+    assert.match(manifest.files.android.name, /-android-arm64\.apk$/, 'android 固定是 arm64 包');
+    assert.match(manifest.files.android32.name, /-android-arm32\.apk$/, 'android32 是 v7 包');
 
     const written = readFileSync(join(dir, VERSION_JSON_FILE), 'utf8');
     assert.ok(written.endsWith('\n'), '文件以换行结尾');
@@ -102,8 +102,8 @@ test('v2 清单：旧字段保留，新增 schema / commit / releasedAt / files 
 test('dev 版本带构建时间戳时原样写入，内容与标签一致', () => {
   const dir = tempDir();
   try {
-    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android-arm64-v8a.apk'), 'dev\n');
-    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android-armeabi-v7a.apk'), 'dev\n');
+    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android-arm64.apk'), 'dev\n');
+    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android-arm32.apk'), 'dev\n');
     writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-windows-x64-setup.exe'), 'dev\n');
     writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-windows-x64-portable.zip'), 'dev\n');
     writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-web.zip'), 'dev\n');

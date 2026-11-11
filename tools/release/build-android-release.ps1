@@ -74,10 +74,13 @@ $apkDir = 'apps/mobile/android/app/build/outputs/apk/release'
 $outDir = Join-Path $root 'out-local'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 $apksigner = Join-Path $env:ANDROID_HOME 'build-tools/35.0.0/apksigner.bat'
-foreach ($abi in @('arm64-v8a', 'armeabi-v7a')) {
+# 发布名用 arm64 / arm32（用户易懂），Gradle 产物目录名仍是 arm64-v8a / armeabi-v7a
+foreach ($item in @(@('arm64-v8a', 'arm64'), @('armeabi-v7a', 'arm32'))) {
+  $abi = $item[0]
+  $label = $item[1]
   $source = Get-ChildItem $apkDir -Filter "*$abi-*.apk" | Select-Object -First 1
   if ($null -eq $source) { throw "没有找到 $abi 的 APK：$apkDir" }
-  $target = Join-Path $outDir "DawnTick-$version-$($env:DT_CHANNEL)-android-$abi.apk"
+  $target = Join-Path $outDir "DawnTick-$version-$($env:DT_CHANNEL)-android-$label.apk"
   Copy-Item $source.FullName $target -Force
   Get-Item $target | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }, FullName
   if (Test-Path $apksigner) {

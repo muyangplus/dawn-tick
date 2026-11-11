@@ -7,7 +7,7 @@
 
 ### 新增
 
-- 安卓安装包按 ABI 拆分为 arm64-v8a 与 armeabi-v7a 两个 APK（约 10.5MB / 7.8MB），客户端按设备 ABI 自动选；`version.json` 用 `android`（arm64）与 `android32`（v7）区分，旧客户端仍拿 arm64
+- 安卓安装包按 ABI 拆分为 arm64 与 arm32 两个 APK（约 11MB / 8MB），客户端按设备 ABI 自动选；`version.json` 用 `android`（arm64）与 `android32`（v7）区分，旧客户端仍拿 arm64
 
 ### 新增
 

@@ -20,8 +20,8 @@ export const CHANNELS = ['release', 'beta', 'dev'];
 export const PLATFORM_SUFFIXES = {
   windowsSetup: '-windows-x64-setup.exe',
   windowsPortable: '-windows-x64-portable.zip',
-  android: '-android-arm64-v8a.apk',
-  android32: '-android-armeabi-v7a.apk',
+  android: '-android-arm64.apk',
+  android32: '-android-arm32.apk',
   web: '-web.zip',
 };
 

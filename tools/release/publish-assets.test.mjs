@@ -28,8 +28,8 @@ const RELEASED_AT = 1_760_000_000_000;
 const PRODUCTS = [
   `${PREFIX}-windows-x64-setup.exe`,
   `${PREFIX}-windows-x64-portable.zip`,
-  `${PREFIX}-android-arm64-v8a.apk`,
-  `${PREFIX}-android-armeabi-v7a.apk`,
+  `${PREFIX}-android-arm64.apk`,
+  `${PREFIX}-android-arm32.apk`,
   `${PREFIX}-web.zip`,
 ];
 
@@ -40,8 +40,8 @@ function seed({ channel = CHANNEL, omit = [], extra = [] } = {}) {
   const names = [
     `${prefix}-windows-x64-setup.exe`,
     `${prefix}-windows-x64-portable.zip`,
-    `${prefix}-android-arm64-v8a.apk`,
-    `${prefix}-android-armeabi-v7a.apk`,
+    `${prefix}-android-arm64.apk`,
+    `${prefix}-android-arm32.apk`,
     `${prefix}-web.zip`,
   ];
   for (const name of names) writeFileSync(join(dir, name), `内容：${name}\n`);
@@ -79,8 +79,8 @@ test('selectAssets：只挑五个产物（Android 两个 ABI）与 version.json 
   try {
     const names = selectAssets(dir).map((file) => file.name);
     assert.deepEqual(names, [
-      `${PREFIX}-android-arm64-v8a.apk`,
-      `${PREFIX}-android-armeabi-v7a.apk`,
+      `${PREFIX}-android-arm32.apk`,
+      `${PREFIX}-android-arm64.apk`,
       `${PREFIX}-web.zip`,
       `${PREFIX}-windows-x64-portable.zip`,
       `${PREFIX}-windows-x64-setup.exe`,
@@ -110,8 +110,8 @@ test('loadVersionJson：v2 清单与 out/ 文件一致时通过，保留旧字�
     assert.equal(manifest.notes, '发布说明');
     assert.deepEqual(Object.keys(manifest.files), ['windowsSetup', 'windowsPortable', 'android', 'android32', 'web']);
     assert.equal(manifest.files.windowsSetup.name, `${PREFIX}-windows-x64-setup.exe`);
-    assert.equal(manifest.files.android.name, `${PREFIX}-android-arm64-v8a.apk`);
-    assert.equal(manifest.files.android32.name, `${PREFIX}-android-armeabi-v7a.apk`);
+    assert.equal(manifest.files.android.name, `${PREFIX}-android-arm64.apk`);
+    assert.equal(manifest.files.android32.name, `${PREFIX}-android-arm32.apk`);
     assert.equal(manifest.checksums, CHECKSUMS_FILE);
     for (const key of ['windowsSetup', 'windowsPortable', 'android', 'android32', 'web']) {
       assert.equal(manifest.files[key].sha256, selectAssets(dir).find((f) => f.name === manifest.files[key].name).sha256);
@@ -150,7 +150,7 @@ test('loadVersionJson：缺文件 / 哈希或体积不符 / schema 不是 2 都�
     rmSync(corrupt, { recursive: true, force: true });
   }
 
-  const missing = seed({ omit: [`${PREFIX}-android-arm64-v8a.apk`] });
+  const missing = seed({ omit: [`${PREFIX}-android-arm64.apk`] });
   try {
     assert.throws(() => loadVersionJson(missing), /缺少发布产物：android/);
   } finally {
@@ -233,8 +233,8 @@ test('publishAssets：把 5 产物 + SHA256SUMS.txt + version.json force-push �
     const commit = calls.find((call) => call.args.includes('commit'));
     const staged = readdirSync(commit.options.cwd).sort();
     assert.deepEqual(staged, [
-      `${PREFIX}-android-arm64-v8a.apk`,
-      `${PREFIX}-android-armeabi-v7a.apk`,
+      `${PREFIX}-android-arm32.apk`,
+      `${PREFIX}-android-arm64.apk`,
       `${PREFIX}-web.zip`,
       `${PREFIX}-windows-x64-portable.zip`,
       `${PREFIX}-windows-x64-setup.exe`,
