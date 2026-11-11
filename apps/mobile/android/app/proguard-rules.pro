@@ -1,3 +1,12 @@
+
+# Capacitor / 插件：桥按类名反射注册，R8 不能删/改名
+-keep class com.getcapacitor.** { *; }
+-keep class com.capacitorjs.** { *; }
+-keep public class * extends com.getcapacitor.Plugin { *; }
+-keep class com.dawntick.app.** { *; }
+-keepclassmembers class * { @com.getcapacitor.PluginMethod public *; }
+-keepattributes *Annotation*
+-dontwarn org.apache.**
 # Add project specific ProGuard rules here.
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.

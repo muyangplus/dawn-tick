@@ -26,21 +26,31 @@ export interface DiagnosticsLog {
   readAt: number;
 }
 
-/** 读安卓原生日志：8 秒超时，失败返回原因而不是抛错。 */
+/** 只读 Web 端内存日志：同步、必然有结果，用于弹窗首屏立即显示。 */
+export function webOnlyLog(): DiagnosticsLog {
+  const text = logsText().trim();
+  return { text, nativePath: null, nativeError: null, readAt: Date.now() };
+}
+
+/**
+ * 读安卓原生日志：整个流程（含插件加载）8 秒超时。
+ *
+ * 只包插件方法不够：`loadPlugin` 本身在个别机型/桥上也可能不回调，
+ * 那会让弹窗永久停在「正在读取」——用户真机反馈的「打开日志一直转圈」。
+ */
 async function androidNativeLog(): Promise<{ text: string; path: string | null; error: string | null }> {
   if (!isAndroidApp()) return { text: '', path: null, error: null };
   try {
-    const plugin = await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
-    const result = await withTimeout(
-      plugin?.readNativeLog?.({ maxBytes: 256 * 1024 }) ?? Promise.resolve(undefined),
-      8_000,
-      '读取原生日志超时',
-    );
-    return {
-      text: typeof result?.text === 'string' ? result.text.trim() : '',
-      path: typeof result?.path === 'string' ? result.path : null,
-      error: null,
-    };
+    const task = (async () => {
+      const plugin = await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
+      const result = await (plugin?.readNativeLog?.({ maxBytes: 256 * 1024 }) ?? Promise.resolve(undefined));
+      return {
+        text: typeof result?.text === 'string' ? result.text.trim() : '',
+        path: typeof result?.path === 'string' ? result.path : null,
+        error: null as string | null,
+      };
+    })();
+    return await withTimeout(task, 8_000, '读取原生日志超时（可能存储/原生桥异常）');
   } catch (cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause);
     logWarn('log', '读取原生日志失败', { message });

@@ -41,6 +41,10 @@ android {
         versionCode 612
         versionName "0.6.12"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // 只打包真机 ABI：x86/x86_64 只有模拟器用，白白多带 MLKit/sqlcipher 的 .so
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -81,8 +85,10 @@ android {
             }
         }
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // 体积：R8 压缩 + 资源裁剪；插件通过反射注册，保号规则见 proguard-rules.pro
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (hasReleaseKeystore) {
                 signingConfig signingConfigs.release
             }

@@ -203,16 +203,15 @@ jobs:
         run: |
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.key"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.key" >> "$GITHUB_ENV"
-      - name: 打包（dev 渠道为 debug 版）
+      - name: 打包
         working-directory: apps/mobile/android
         run: |
           set -euo pipefail
-          if [ "${{ needs.plan.outputs.channel }}" = "dev" ]; then
-            sh ./gradlew assembleDebug --no-daemon
-          elif [ -n "${KEYSTORE_BASE64:-}" ]; then
+          # 所有渠道都优先 release 构建：R8 + 资源裁剪 + ABI 过滤后 APK 显著更小（dev 也不例外）
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
             sh ./gradlew assembleRelease --no-daemon
           else
-            echo "未配置签名材料，降级为 debug 版" >&2
+            echo "未配置签名材料，降级为 debug 版（体积更大）" >&2
             sh ./gradlew assembleDebug --no-daemon
           fi
       - uses: actions/upload-artifact@v7

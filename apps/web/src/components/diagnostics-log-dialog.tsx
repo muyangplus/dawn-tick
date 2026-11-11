@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { clearDiagnosticsLog, collectDiagnosticsLog, type DiagnosticsLog } from '../lib/diagnostics-log.ts';
+import { clearDiagnosticsLog, collectDiagnosticsLog, webOnlyLog, type DiagnosticsLog } from '../lib/diagnostics-log.ts';
 import { copyText } from '../system-actions.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
@@ -19,14 +19,20 @@ export function DiagnosticsLogDialog({ open, onClose }: DiagnosticsLogDialogProp
   const [data, setData] = useState<DiagnosticsLog | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** 原生日志是否仍在读取：Web 日志先显示，原生日志到达后合并，避免整页一直「正在读取」 */
+  const [nativeLoading, setNativeLoading] = useState(false);
 
   const reload = useCallback(async (): Promise<void> => {
     setBusy(true);
+    setNativeLoading(true);
     try {
-      setData(await collectDiagnosticsLog());
+      // 先渲染 Web 日志（同步可得），原生读取失败/超时也不会让弹窗空转
+      setData(webOnlyLog());
       setCopied(false);
+      setData(await collectDiagnosticsLog());
     } finally {
       setBusy(false);
+      setNativeLoading(false);
     }
   }, []);
 
@@ -63,7 +69,13 @@ export function DiagnosticsLogDialog({ open, onClose }: DiagnosticsLogDialogProp
       <DialogContent
         data-role="diagnostics-log-dialog"
         title="诊断日志"
-        description={data === null ? '正在读取…' : `共 ${data.text.split('\n').length} 行，可直接复制发给开发者`}
+        description={
+          nativeLoading
+            ? '正在读取原生日志…'
+            : data === null
+              ? '正在读取…'
+              : `共 ${data.text.split('\n').length} 行，可直接复制发给开发者`
+        }
         className="max-w-3xl"
       >
         <div className="flex flex-col gap-2">
