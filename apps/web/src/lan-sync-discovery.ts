@@ -34,14 +34,24 @@ export interface LanDiscoveryAnnounce {
   name: string;
   host: string;
   port: number;
+  /** 可选稳定设备 id：新版本原生层会带上；旧版本没有，只能按设备名认 */
+  deviceId?: string;
 }
 
 export interface LanDiscoveryPeer {
   name: string;
   host: string;
   port: number;
+  /** 可选稳定设备 id：有它时优先按 id 认同一台设备，IP/端口变化不影响 */
+  deviceId?: string;
   /** 本机收到广播的时间；只用于去重与过期，不参与网络包 */
   seenAt: number;
+}
+
+function normalizeDiscoveryDeviceId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  return /^[A-Za-z0-9._:-]{4,64}$/.test(text) ? text : undefined;
 }
 
 /** 设备名 / 地址 / 端口的统一校验；不合法返回 null。 */
@@ -62,23 +72,35 @@ export function parseDiscoveryAnnounce(text: string): LanDiscoveryAnnounce | nul
   if (name === '' || name.length > 48) return null;
   if (!isLanAddress(host)) return null;
   if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-  return { kind: LAN_DISCOVERY_KIND, schemaVersion: LAN_DISCOVERY_SCHEMA_VERSION, name, host, port };
+  const deviceId = normalizeDiscoveryDeviceId(packet.deviceId);
+  return {
+    kind: LAN_DISCOVERY_KIND,
+    schemaVersion: LAN_DISCOVERY_SCHEMA_VERSION,
+    name,
+    host,
+    port,
+    ...(deviceId === undefined ? {} : { deviceId }),
+  };
 }
 
 /** 生成广播正文；字段顺序固定，便于两端对照与测试。 */
-export function encodeDiscoveryAnnounce(announce: Omit<LanDiscoveryAnnounce, 'kind' | 'schemaVersion'>): string {
+export function encodeDiscoveryAnnounce(
+  announce: Omit<LanDiscoveryAnnounce, 'kind' | 'schemaVersion'>,
+): string {
   const name = announce.name.trim();
   if (name === '' || name.length > 48) throw new Error('设备名应为 1–48 个字符');
   if (!isLanAddress(announce.host)) throw new Error('广播地址必须是局域网地址');
   if (!Number.isInteger(announce.port) || announce.port < 1 || announce.port > 65535) {
     throw new Error('广播端口不合法');
   }
+  const deviceId = normalizeDiscoveryDeviceId(announce.deviceId);
   return JSON.stringify({
     kind: LAN_DISCOVERY_KIND,
     schemaVersion: LAN_DISCOVERY_SCHEMA_VERSION,
     name,
     host: announce.host,
     port: announce.port,
+    ...(deviceId === undefined ? {} : { deviceId }),
   });
 }
 
@@ -140,7 +162,14 @@ function toPeer(raw: unknown): LanDiscoveryPeer | null {
   if (typeof item.name !== 'string' || typeof item.host !== 'string') return null;
   if (typeof item.port !== 'number' || !Number.isInteger(item.port)) return null;
   if (!isLanAddress(item.host)) return null;
-  return { name: item.name, host: item.host, port: item.port, seenAt: Date.now() };
+  const deviceId = normalizeDiscoveryDeviceId(item.deviceId);
+  return {
+    name: item.name,
+    host: item.host,
+    port: item.port,
+    ...(deviceId === undefined ? {} : { deviceId }),
+    seenAt: Date.now(),
+  };
 }
 
 /** 扫描一段时间，返回原生层收到的广播；失败只记日志并返回空列表。 */

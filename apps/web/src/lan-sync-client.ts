@@ -109,8 +109,44 @@ export async function checkPeerReachable(
   }
 }
 
-/** 客户端配对：`POST /pair` 换长期令牌；`name` 是写给服务端「已配对设备」的设备名。 */
-export async function pairWithPeer(
+/** `/ping` 结果：`status === 0` 表示网络层失败，非 0 是服务端 HTTP 状态。 */
+export interface LanPingResult {
+  ok: boolean;
+  status: number;
+  error: string | null;
+}
+
+/**
+ * 自动重连前的快速可达性探测：先打 3 秒超时的 `GET /ping`，失败就立即交给 UDP
+ * 发现找当前局域网里的新地址，避免在旧端口上等完整的刷新超时。
+ * 旧服务端没有 `/ping`（404）时按可达处理，让后续刷新给出真正的业务错误。
+ */
+export async function pingLanPeer(
+  peer: PeerAddress,
+  timeoutMs = LAN_PING_TIMEOUT_MS,
+): Promise<LanPingResult> {
+  const target = `${peer.host}:${peer.port}`;
+  try {
+    const response = await withTimeout(
+      lanFetch(`${peerBaseUrl(peer)}/ping`, { method: 'GET' }),
+      timeoutMs,
+      '连接对方超时',
+    );
+    const text = await response.text();
+    if (response.ok || response.status === 404) return { ok: true, status: response.status, error: null };
+    return {
+      ok: false,
+      status: response.status,
+      error: lanResponseError(response.status, text, '连接对方'),
+    };
+  } catch (cause: unknown) {
+    const error = errorMessage(cause);
+    logInfo('lan-sync', '快速探测失败，将尝试 UDP 发现', { peer: target, error });
+    return { ok: false, status: 0, error };
+  }
+}
+
+/** 客户端配对：`POST /pair` 换长期令牌；`name` 是写给服务端「已配对设备」的设备名。 */export async function pairWithPeer(
   peer: PeerAddress,
   code: string,
   now = Date.now(),
