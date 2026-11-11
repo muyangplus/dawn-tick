@@ -312,12 +312,21 @@ jobs:
             > portable/README-portable.txt
           (cd portable && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-windows-x64-portable.zip" .)
 
-          apk=$(find artifacts/android -name '*.apk' | head -n 1)
-          cp "$apk" "out/${SUFFIX}-android.apk"
+          # Android 按 ABI 拆成两个 APK（arm64-v8a / armeabi-v7a），两个都得发；
+          # 缺任何一个都直接失败，避免只在部分设备上看似「有新版本」却下不到包
+          apk_arm64=$(find artifacts/android -name '*-arm64-v8a*.apk' | head -n 1)
+          apk_v7=$(find artifacts/android -name '*-armeabi-v7a*.apk' | head -n 1)
+          if [[ -z "$apk_arm64" || -z "$apk_v7" ]]; then
+            echo "缺少 Android 拆分包：arm64=${apk_arm64:-无}，v7=${apk_v7:-无}" >&2
+            find artifacts/android -name '*.apk' >&2 || true
+            exit 1
+          fi
+          cp "$apk_arm64" "out/${SUFFIX}-android-arm64-v8a.apk"
+          cp "$apk_v7" "out/${SUFFIX}-android-armeabi-v7a.apk"
 
           (cd artifacts/web && zip -qr "$GITHUB_WORKSPACE/out/${SUFFIX}-web.zip" .)
 
-          # 更新清单（v2）：渠道、版本、标签、提交、发布说明与四个平台的 files / checksums，
+          # 更新清单（v2）：渠道、版本、标签、提交、发布说明与五个产物（Android 两个 ABI）的 files / checksums，
           # GitHub Release 与 assets 仓库放同一份，客户端只维护一份清单
           # 版本取标签里的语义化值（beta 带预发布号）；dev 的滚动标签没有版本，用构建版本
           if [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then

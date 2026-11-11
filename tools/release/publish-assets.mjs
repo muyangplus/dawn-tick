@@ -10,7 +10,8 @@
  * 每条分支固定包含：
  *   DawnTick-<版本>-<渠道>-windows-x64-setup.exe
  *   DawnTick-<版本>-<渠道>-windows-x64-portable.zip
- *   DawnTick-<版本>-<渠道>-android.apk
+ *   DawnTick-<版本>-<渠道>-android-arm64-v8a.apk
+ *   DawnTick-<版本>-<渠道>-android-armeabi-v7a.apk
  *   DawnTick-<版本>-<渠道>-web.zip
  *   SHA256SUMS.txt（发布步骤已生成）
  *   version.json（发布步骤已生成：v2，客户端取源、下载与校验的唯一清单）
@@ -100,8 +101,8 @@ function asRecord(value) {
 
 /**
  * 校验 version.json v2 与 out/ 中的实际文件一致：
- * schema=2、四个平台齐全、名字后缀对应平台、体积与 SHA256 和本地文件相同、校验清单存在。
- * 返回归一化后的清单（供调用方读 version / tag）。
+ * schema=2、五个产物齐全（Android 两个 ABI 包）、名字后缀对应平台、体积与 SHA256
+ * 和本地文件相同、校验清单存在。返回归一化后的清单（供调用方读 version / tag）。
  */
 export function validateVersionJson(manifest, files) {
   const record = asRecord(manifest);

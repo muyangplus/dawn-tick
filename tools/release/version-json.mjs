@@ -6,8 +6,10 @@ import { join } from 'node:path';
  * 产物里的更新清单：`version.json` 升到 v2，同时承载发布信息与平台文件表。
  *
  * v2 字段：沿用旧字段（channel / version / tag / notes / artifacts），新增
- * schema=2、commit / releasedAt、files（四个平台的名字 / 体积 / SHA256）与
- * checksums。GitHub Release 与独立 assets 仓库放同一份，客户端只维护一份清单。
+ * schema=2、commit / releasedAt、files（各产物名字 / 体积 / SHA256）与
+ * checksums。Android 从 0.6.12 起按 ABI 拆成两个 APK：`android` 是 arm64-v8a
+ * （旧客户端仍读这个键，永远拿到 arm64 包），`android32` 是 armeabi-v7a。
+ * GitHub Release 与独立 assets 仓库放同一份，客户端只维护一份清单。
  */
 export const VERSION_JSON_FILE = 'version.json';
 export const CHECKSUMS_FILE = 'SHA256SUMS.txt';
@@ -18,7 +20,8 @@ export const CHANNELS = ['release', 'beta', 'dev'];
 export const PLATFORM_SUFFIXES = {
   windowsSetup: '-windows-x64-setup.exe',
   windowsPortable: '-windows-x64-portable.zip',
-  android: '-android.apk',
+  android: '-android-arm64-v8a.apk',
+  android32: '-android-armeabi-v7a.apk',
   web: '-web.zip',
 };
 
@@ -48,7 +51,7 @@ export function listArtifacts(outDir) {
     .sort();
 }
 
-/** 从目录里按后缀挑出四个平台的文件名；缺的键为 null。 */
+/** 从目录里按后缀挑出各产物文件名（Android 两个 ABI 各一个）；缺的键为 null。 */
 export function collectPlatformFileNames(outDir) {
   const names = readdirSync(outDir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
@@ -62,14 +65,16 @@ export function collectPlatformFileNames(outDir) {
 }
 
 /**
- * 读 out/ 里四个平台产物的名字、体积与 SHA256。
- * 缺任一平台都报错：半套产物发出去，该平台的更新会直接不可用。
+ * 读 out/ 里各平台产物的名字、体积与 SHA256。
+ * 缺任一产物都报错：半套产物发出去，该平台的更新会直接不可用。
  */
 export function readPlatformFiles(outDir) {
   const names = collectPlatformFileNames(outDir);
   const missing = PLATFORM_KEYS.filter((key) => names[key] === null);
   if (missing.length > 0) {
-    throw new Error(`缺少发布产物：${missing.join('、')}（${outDir} 里需要四个平台各一个产物）`);
+    throw new Error(
+      `缺少发布产物：${missing.join('、')}（${outDir} 里需要五个产物：Windows 安装包 / 便携包、Android arm64-v8a / armeabi-v7a、Web 包）`,
+    );
   }
   const files = {};
   for (const key of PLATFORM_KEYS) {
@@ -99,8 +104,9 @@ function checkFileEntry(key, value) {
 /**
  * 生成 v2 清单：旧字段原样保留，新增 schema / files / checksums。
  *
- * `files` 由 `readPlatformFiles(outDir)` 或调用方按同一结构提供；四个平台缺一
- * 不可。`commit` 有值时按 7 位短哈希写入（与旧 mirror.json 同一口径）。
+ * `files` 由 `readPlatformFiles(outDir)` 或调用方按同一结构提供；五个产物缺一
+ * 不可（`android` 固定是 arm64-v8a，`android32` 是 armeabi-v7a）。`commit` 有值时
+ * 按 7 位短哈希写入（与旧 mirror.json 同一口径）。
  */
 export function buildVersionManifest({
   channel,
@@ -119,7 +125,7 @@ export function buildVersionManifest({
   if (typeof releasedAt !== 'number' || !Number.isFinite(releasedAt) || releasedAt <= 0) {
     throw new Error('releasedAt 不是有效毫秒时间戳');
   }
-  if (typeof files !== 'object' || files === null) throw new Error('缺少 files（四个平台产物）');
+  if (typeof files !== 'object' || files === null) throw new Error('缺少 files（五个产物，含两个 Android ABI 包）');
   const missing = PLATFORM_KEYS.filter((key) => files[key] === undefined || files[key] === null);
   if (missing.length > 0) throw new Error(`缺少发布产物：${missing.join('、')}`);
   const platformFiles = {};
@@ -181,6 +187,6 @@ if (invokedDirectly) {
     releasedAt,
   });
   process.stdout.write(
-    `写入 ${join(outDir, VERSION_JSON_FILE)}（v2，${manifest.artifacts.length} 个产物，${PLATFORM_KEYS.length} 个平台）\n`,
+    `写入 ${join(outDir, VERSION_JSON_FILE)}（v2，${manifest.artifacts.length} 个产物，${PLATFORM_KEYS.length} 个平台文件）\n`,
   );
 }

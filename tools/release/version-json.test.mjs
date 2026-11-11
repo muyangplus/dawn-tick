@@ -22,7 +22,8 @@ const PREFIX = `DawnTick-${VERSION}-${CHANNEL}`;
 const PRODUCTS = {
   windowsSetup: `${PREFIX}-windows-x64-setup.exe`,
   windowsPortable: `${PREFIX}-windows-x64-portable.zip`,
-  android: `${PREFIX}-android.apk`,
+  android: `${PREFIX}-android-arm64-v8a.apk`,
+  android32: `${PREFIX}-android-armeabi-v7a.apk`,
   web: `${PREFIX}-web.zip`,
 };
 
@@ -38,7 +39,7 @@ function digest(text) {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** 造出 out/：四个平台产物 + 派生的 `.sha256` 与校验清单（都应被清单排除）。 */
+/** 造出 out/：五个产物（Android 两个 ABI）+ 派生的 `.sha256` 与校验清单（都应被清单排除）。 */
 function seedProducts(dir, { omit = [] } = {}) {
   for (const key of PLATFORM_KEYS) {
     if (omit.includes(key)) continue;
@@ -82,6 +83,8 @@ test('v2 清单：旧字段保留，新增 schema / commit / releasedAt / files 
       assert.equal(entry.sha256, digest(fileContent(entry.name)), `${key} 的摘要来自 out/ 实际文件`);
       assert.match(entry.sha256, /^[0-9a-f]{64}$/, key);
     }
+    assert.match(manifest.files.android.name, /-android-arm64-v8a\.apk$/, 'android 固定是 arm64 包');
+    assert.match(manifest.files.android32.name, /-android-armeabi-v7a\.apk$/, 'android32 是 v7 包');
 
     const written = readFileSync(join(dir, VERSION_JSON_FILE), 'utf8');
     assert.ok(written.endsWith('\n'), '文件以换行结尾');
@@ -99,7 +102,8 @@ test('v2 清单：旧字段保留，新增 schema / commit / releasedAt / files 
 test('dev 版本带构建时间戳时原样写入，内容与标签一致', () => {
   const dir = tempDir();
   try {
-    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android.apk'), 'dev\n');
+    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android-arm64-v8a.apk'), 'dev\n');
+    writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-android-armeabi-v7a.apk'), 'dev\n');
     writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-windows-x64-setup.exe'), 'dev\n');
     writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-windows-x64-portable.zip'), 'dev\n');
     writeFileSync(join(dir, 'DawnTick-0.2.0.202610192243-dev-web.zip'), 'dev\n');
@@ -123,12 +127,15 @@ test('dev 版本带构建时间戳时原样写入，内容与标签一致', () =
 test('缺任一平台产物时报可读错误，并列出缺哪个', () => {
   const dir = tempDir();
   try {
-    seedProducts(dir, { omit: ['windowsPortable', 'android', 'web'] });
-    assert.throws(() => readPlatformFiles(dir), /缺少发布产物：windowsPortable、android、web/);
+    seedProducts(dir, { omit: ['windowsPortable', 'android', 'android32', 'web'] });
+    assert.throws(() => readPlatformFiles(dir), /缺少发布产物：windowsPortable、android、android32、web/);
     assert.throws(
       () => writeVersionJson({ outDir: dir, channel: CHANNEL, version: VERSION, tag: `v${VERSION}`, notes: '说明' }),
-      /缺少发布产物：windowsPortable、android、web/,
+      /缺少发布产物：windowsPortable、android、android32、web/,
     );
+    // 只缺 v7 包也要报错：只发一个 ABI 会让 32 位设备更新不可用
+    seedProducts(dir, { omit: ['android32'] });
+    assert.throws(() => readPlatformFiles(dir), /缺少发布产物：android32/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
