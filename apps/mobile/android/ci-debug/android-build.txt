@@ -1,0 +1,44 @@
+Downloading https://mirrors.cloud.tencent.com/gradle/gradle-8.14.3-all.zip
+.....................10%.....................20%......................30%.....................40%......................50%.....................60%.....................70%......................80%.....................90%......................100%
+
+Welcome to Gradle 8.14.3!
+
+Here are the highlights of this release:
+ - Java 24 support
+ - GraalVM Native Image toolchain selection
+ - Enhancements to test reporting
+ - Build Authoring improvements
+
+For more details see https://docs.gradle.org/8.14.3/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+
+[Incubating] Problems report is available at: file:///home/runner/work/dawn-tick/dawn-tick/apps/mobile/android/build/reports/problems/problems-report.html
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+A problem occurred configuring root project 'android'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not resolve com.android.tools.build:gradle-settings-api:8.13.0.
+     Required by:
+         root project : > com.android.tools.build:gradle:8.13.0
+      > Could not resolve com.android.tools.build:gradle-settings-api:8.13.0.
+         > Could not get resource 'https://maven.aliyun.com/repository/public/com/android/tools/build/gradle-settings-api/8.13.0/gradle-settings-api-8.13.0.pom'.
+            > Could not GET 'https://maven.aliyun.com/repository/public/com/android/tools/build/gradle-settings-api/8.13.0/gradle-settings-api-8.13.0.pom'. Received status code 502 from server: Bad Gateway
+> There are 63 more failures with identical causes.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 20s
