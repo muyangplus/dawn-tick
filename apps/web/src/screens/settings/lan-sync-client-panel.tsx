@@ -17,8 +17,10 @@ import {
 import { loadAutoConfig, saveAutoConfig, type LanAutoConfig, type LanAutoMode } from '../../lan-sync-auto.ts';
 import { applyLanPreview, previewPullFromPeer, type LanPreviewResult } from '../../lan-sync-preview.ts';
 import {
-  createLanPairingStore, createLanPairing, markLanPairingSynced, upsertLanPairing,
-} from '../../lan-pairings.ts';
+  createLanPairingStore,
+  markLanSessionSynced,
+  rememberLanPairing,
+} from '../../lan-sync-pairing-store.ts';
 import { LanAutoPanel } from './lan-sync-auto-panel.tsx';
 import { LanDiscoveryPanel } from './lan-sync-discovery-panel.tsx';
 import { LanSyncDevicesPanel } from './lan-sync-devices-panel.tsx';
@@ -39,11 +41,8 @@ export interface LanSyncClientPanelProps {
 }
 
 /**
- * 局域网同步的发起方：发现设备 / 扫码或手输配对 / 范围 / 预览后拉取 / 推送 / 自动同步 /
- * 已配对设备与自动重连。
- *
- * 服务端与二维码在父组件；配对成功后长期令牌写入 `app_meta`（Web 用 localStorage），
- * 由 `lan-pairings.ts` 负责持久化与 30 秒探测，本组件只管界面状态。
+ * 局域网同步发起方：配对 / 发现 / 预览拉取 / 推送 / 自动同步 / 已配对设备与自动重连。
+ * 服务端与二维码在父组件；配对记录持久化在 `lan-sync-pairing-store.ts`。
  */
 export function LanSyncClientPanel({
   storage,
@@ -87,6 +86,15 @@ export function LanSyncClientPanel({
     dispatch({ type: 'expire', now: Date.now() });
   }, []);
 
+  const rememberSynced = useCallback(
+    async (session: LanSession): Promise<void> => {
+      if (await markLanSessionSynced(pairingStore, session)) {
+        setPairingsRevision((value) => value + 1);
+      }
+    },
+    [pairingStore],
+  );
+
   // 后台自动同步：只在已配对且令牌有效时跑；失败静默重试一次，仍失败只记日志
   useLanAutoSync({
     storage,
@@ -96,6 +104,7 @@ export function LanSyncClientPanel({
     onConfig: applyAuto,
     onNote: setAutoNote,
     onExpired: expireSession,
+    onSynced: rememberSynced,
     onSettingsReplaced,
     onChanged,
   });
@@ -123,26 +132,21 @@ export function LanSyncClientPanel({
     setStatus(said(`已填入 ${peer.name} 的地址，请扫码或填对方显示的配对码`));
   }
 
-  /** 配对成功：写入 `app_meta`（Web 为 localStorage），列表随之刷新。 */
   async function rememberPairing(session: LanSession, name?: string): Promise<void> {
-    const pairing = createLanPairing({
-      peer: session.peer,
-      token: session.token,
-      name: name ?? '对方设备',
-      now: Date.now(),
-    });
-    const existing = await pairingStore.load();
-    await pairingStore.save(upsertLanPairing(existing, pairing));
+    await rememberLanPairing(pairingStore, session, name);
     setPairingsRevision((value) => value + 1);
   }
 
-  /** 拉取/推送成功后更新「上次同步时间」；不是本机保存的配对时忽略。 */
-  async function rememberSynced(session: LanSession): Promise<void> {
-    const id = `${session.peer.host}:${session.peer.port}`;
-    const existing = await pairingStore.load();
-    if (!existing.some((item) => item.id === id)) return;
-    await pairingStore.save(markLanPairingSynced(existing, id));
-    setPairingsRevision((value) => value + 1);
+  /** 离线设备的「重新配对」：把保存的（可能已由发现更新的）地址填回配对面板。 */
+  function repairPairing(pairing: { name: string; host: string; port: number }): void {
+    setPeerInput(formatPeerAddress({ host: pairing.host, port: pairing.port }));
+    setCodeInput('');
+    setPreview(null);
+    setStatus(
+      said(
+        `请让对方重新开启配对，再输入新配对码与 ${pairing.name} 配对（地址 ${pairing.host}:${pairing.port}）`,
+      ),
+    );
   }
 
   async function pairPeer(peerText: string, codeText: string, name?: string): Promise<void> {
@@ -322,6 +326,7 @@ export function LanSyncClientPanel({
         onSettingsReplaced={onSettingsReplaced}
         onChanged={onChanged}
         onNote={note}
+        onRepair={repairPairing}
         onTokenRefreshed={(id, token, expiresAt) => {
           const current = client.session;
           if (current === null) return;

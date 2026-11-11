@@ -22,6 +22,8 @@ export interface UseLanAutoSyncOptions {
   onNote: (note: string | null) => void;
   /** 会话已过期：父组件把客户端状态机退回空闲 */
   onExpired: () => void;
+  /** 自动同步成功：父组件回写「上次同步时间」并持久化 */
+  onSynced?: ((session: LanSession) => Promise<void>) | undefined;
   onSettingsReplaced: () => Promise<void>;
   onChanged: () => void;
 }
@@ -39,6 +41,7 @@ export function useLanAutoSync({
   onConfig,
   onNote,
   onExpired,
+  onSynced,
   onSettingsReplaced,
   onChanged,
 }: UseLanAutoSyncOptions): void {
@@ -81,6 +84,7 @@ export function useLanAutoSync({
       const skipped = result.value?.skipped ?? 0;
       logInfo('lan-sync', '自动同步完成', { imported, skipped });
       onNote(`自动同步完成：写入 ${imported} 条，跳过 ${skipped} 条`);
+      if (onSynced !== undefined) await onSynced(session);
       if (current.scopes.includes('settings')) await onSettingsReplaced();
       if (imported > 0) onChanged();
     };
@@ -92,5 +96,5 @@ export function useLanAutoSync({
       cancelled = true;
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [session, mode, storage, onConfig, onNote, onExpired, onSettingsReplaced, onChanged]);
+  }, [session, mode, storage, onConfig, onNote, onExpired, onSynced, onSettingsReplaced, onChanged]);
 }
