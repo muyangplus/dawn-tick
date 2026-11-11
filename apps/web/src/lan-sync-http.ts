@@ -1,5 +1,5 @@
 import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
-import { invokeNative, type NativeCommand } from './lib/native.ts';
+import { invokeNative, thenableSafePlugin, type NativeCommand } from './lib/native.ts';
 import { logWarn } from './log.ts';
 
 /**
@@ -100,7 +100,8 @@ export function setLanCapacitorHttpForTests(next: LanCapacitorHttp | null): void
 async function loadCapacitorHttp(): Promise<LanCapacitorHttp | null> {
   if (capacitorHttpOverride !== null) return capacitorHttpOverride;
   const { CapacitorHttp } = await import('@capacitor/core');
-  return CapacitorHttp as unknown as LanCapacitorHttp;
+  // 与 loadPlugin 同样的坑：CapacitorHttp 也是插件代理，async 函数直接返回会被当 thenable
+  return thenableSafePlugin(CapacitorHttp as unknown as LanCapacitorHttp);
 }
 
 async function androidFetch(url: string, init: RequestInit): Promise<Response> {

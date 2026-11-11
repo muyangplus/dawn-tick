@@ -7,7 +7,7 @@
 
 ### 修复
 
-- 安卓插件调用报 `"SystemActions.then()" is not implemented on android`：Capacitor 插件代理被 async 函数直接返回时会被 Promise 当成 thenable，统一包一层「then 为 undefined」的安全代理；修复由此导致的 ABI 探测超时、原生日志读取超时、局域网开启失败、通知/小组件刷新报错
+- 安卓插件调用报 `"SystemActions.then()" is not implemented on android`：Capacitor 插件代理被 async 函数直接返回时会被 Promise 当成 thenable，统一包一层「then 为 undefined」的安全代理；修复由此导致的 ABI 探测超时、原生日志读取超时、局域网开启失败、通知/小组件刷新报错；`lan-sync-http` 的 CapacitorHttp 也做同样包装，修复扫码/配对时「连接对方超时」
 
 ### 新增
 
