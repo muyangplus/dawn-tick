@@ -4689,6 +4689,168 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     // localStorage 不可用：无需清理
   }
 
+  // —— 局域网同步：持久化配对 → 换 IP / 换端口靠 UDP 发现自动重连、离线退避 ——
+  const lanPersistedKey = 'dt.lan.pairings.v1';
+  const lanOldHost = '192.168.1.9';
+  const lanOldPort = 37993;
+  const lanNewPort = 38739;
+  const lanPairingRecord = {
+    id: 'peer-smoke',
+    deviceId: 'pc-smoke',
+    name: 'Windows 电脑',
+    discoveryName: '书房电脑',
+    host: lanOldHost,
+    port: lanOldPort,
+    token: 'a'.repeat(32),
+    pairedAt: Date.now() - 7 * 24 * 60 * 60_000,
+    lastSeen: null,
+    lastSyncAt: null,
+  };
+  const lanOldRequests: string[] = [];
+  let lanRecoveredView: ReturnType<typeof mount> | null = null;
+  try {
+    window.localStorage.setItem(lanPersistedKey, JSON.stringify([lanPairingRecord]));
+    setLanDiscoveryScannerForTests(async () => [
+      { name: '书房电脑', host: '10.0.0.8', port: lanNewPort, deviceId: 'pc-smoke', seenAt: Date.now() },
+    ]);
+    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input));
+      if (url.host === `${lanOldHost}:${lanOldPort}`) lanOldRequests.push(url.pathname);
+      if (url.pathname === '/ping') {
+        if (url.host === `${lanOldHost}:${lanOldPort}`) {
+          throw new Error('由于目标计算机积极拒绝 (os error 10061)');
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.pathname === '/pair/refresh') {
+        return new Response(
+          JSON.stringify({ token: 'c'.repeat(32), expiresAt: Date.now() + 86_400_000, schemaVersion: 1 }),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    const view = mount(
+      <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
+    );
+    lanRecoveredView = view;
+    const lanRecovered = await waitFor(
+      () => {
+        const persisted = window.localStorage.getItem(lanPersistedKey) ?? '';
+        return (
+          view.container.querySelector('[data-role="lan-paired-item"]')?.getAttribute('data-state') ===
+            'online' &&
+          persisted.includes('"host":"10.0.0.8"') &&
+          persisted.includes(`"port":${lanNewPort}`)
+        );
+      },
+      80,
+    );
+    const recoveredRecord = (JSON.parse(window.localStorage.getItem(lanPersistedKey) ?? '[]') as {
+      id?: string;
+      deviceId?: string;
+      name?: string;
+      discoveryName?: string;
+      host?: string;
+      port?: number;
+      token?: string;
+    }[])[0];
+    check(
+      '保存的配对换 IP/端口后：UDP 发现同一 deviceId，地址静默更新且只保留一条记录',
+      lanRecovered &&
+        recoveredRecord?.id === 'peer-smoke' &&
+        recoveredRecord?.deviceId === 'pc-smoke' &&
+        recoveredRecord?.name === 'Windows 电脑' &&
+        recoveredRecord?.discoveryName === '书房电脑' &&
+        recoveredRecord?.host === '10.0.0.8' &&
+        recoveredRecord?.port === lanNewPort &&
+        recoveredRecord?.token === 'c'.repeat(32) &&
+        (view.container.querySelectorAll('[data-role="lan-paired-item"]').length ?? 0) === 1 &&
+        (view.container.querySelector('[data-role="lan-paired-state"]')?.textContent ?? '').includes(
+          '在线',
+        ),
+      `存储=${JSON.stringify(recoveredRecord)} 旧地址请求=${lanOldRequests.join(',')}`,
+    );
+  } finally {
+    lanRecoveredView?.root.unmount();
+    globalThis.fetch = originalLanFetch;
+    setLanDiscoveryScannerForTests(null);
+    try {
+      window.localStorage.removeItem(lanPersistedKey);
+    } catch {
+      // localStorage 不可用：无需清理
+    }
+  }
+
+  // 发现不到新地址：显示离线 + 退避提示，提供「重新配对 / 移除」，且不对旧地址反复重试
+  const lanOfflineRecord = {
+    ...lanPairingRecord,
+    deviceId: 'pc-offline',
+    id: 'peer-offline',
+    name: '客厅电脑',
+    discoveryName: null,
+  };
+  const lanOfflineRequests: string[] = [];
+  let lanOfflineView: ReturnType<typeof mount> | null = null;
+  try {
+    window.localStorage.setItem(lanPersistedKey, JSON.stringify([lanOfflineRecord]));
+    setLanDiscoveryScannerForTests(async () => []);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      // 只统计旧地址：上一个场景卸载时可能还有发往新地址的在途探测
+      if (url.host === `${lanOldHost}:${lanOldPort}`) {
+        lanOfflineRequests.push(`${url.host}${url.pathname}`);
+      }
+      throw new Error('由于目标计算机积极拒绝 (os error 10061)');
+    }) as typeof fetch;
+    const view = mount(
+      <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
+    );
+    lanOfflineView = view;
+    const lanOfflineShown = await waitFor(
+      () =>
+        view.container
+          .querySelector('[data-role="lan-paired-state"]')
+          ?.textContent?.includes('离线（端口可能已变化）') === true,
+      80,
+    );
+    const repairButton = view.container.querySelector<HTMLElement>('button[aria-label^="重新配对"]');
+    const removeButton = view.container.querySelector<HTMLElement>('button[aria-label^="移除配对"]');
+    await flush(20);
+    const offlineAttempts = [...lanOfflineRequests];
+    await flush(30);
+    const stillOffline = view.container.querySelector('[data-role="lan-paired-item"]');
+    check(
+      '离线设备显示「离线（端口可能已变化）」与重新配对/移除，重连失败不无限刷旧地址',
+      lanOfflineShown &&
+        (stillOffline?.textContent ?? '').includes('请让对方重新开启配对或重新扫码') &&
+        repairButton !== null &&
+        removeButton !== null &&
+        lanOfflineRequests.length === offlineAttempts.length &&
+        offlineAttempts.length <= 2,
+      `状态=${stillOffline?.textContent?.trim().slice(0, 60) ?? '(无)'} 旧地址请求=${lanOfflineRequests.join(',') || '(无)'}`,
+    );
+    repairButton?.click();
+    await flush(6);
+    const repairedPeer = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+    check(
+      '离线设备点「重新配对」把最近地址填回配对面板，等待新配对码',
+      repairedPeer?.value === `${lanOldHost}:${lanOldPort}` &&
+        (view.container.querySelector('[data-role="lan-sync-pair-code"]') as HTMLInputElement | null)
+          ?.value === '',
+      repairedPeer?.value ?? '(未填入)',
+    );
+  } finally {
+    lanOfflineView?.root.unmount();
+    globalThis.fetch = originalLanFetch;
+    setLanDiscoveryScannerForTests(null);
+    try {
+      window.localStorage.removeItem(lanPersistedKey);
+    } catch {
+      // localStorage 不可用：无需清理
+    }
+  }
+
   // —— Android 网络空态：原生 status 区分「Wi-Fi 无 IPv4」/「只有移动数据」/ 其它 ——
   const wifiNoIpv4Status = {
     wifi: true,
