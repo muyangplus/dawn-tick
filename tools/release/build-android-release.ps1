@@ -1,4 +1,4 @@
-﻿# 打 Android 签名包（dev 渠道为 debug 变体，但同样用正式密钥签名，保证能覆盖安装）
+# 打 Android 签名包（所有渠道统一 release 变体：R8 + 资源裁剪 + ABI 拆包，dev 也用 release）
 # 用法：powershell -File tools/release/build-android-release.ps1 [-Channel dev|beta|release]
 # 密钥来自属性文件（优先）或现有环境变量；两者都没有则明确报错。
 # 属性文件候选：apps/mobile/android/keystore.properties 与 <仓库根>/keys/keystore.properties；
@@ -50,8 +50,7 @@ $env:DT_VERSION = $version
 $env:DT_VERSION_CODE = [string]$stampInfo.versionCode
 Write-Output "Android 包：渠道 $($env:DT_CHANNEL)，版本 $version（构建时间戳 $($stampInfo.stamp)，versionCode $($env:DT_VERSION_CODE)）"
 
-$buildDebug = $env:DT_CHANNEL -ne 'release'
-$task = if ($buildDebug) { 'assembleDebug' } else { 'assembleRelease' }
+$task = 'assembleRelease'
 
 Push-Location (Join-Path $root 'apps/mobile')
 try {
@@ -69,20 +68,21 @@ try {
   Pop-Location
 }
 
-$apkDir = if ($buildDebug) { 'apps/mobile/android/app/build/outputs/apk/debug' } else { 'apps/mobile/android/app/build/outputs/apk/release' }
-$source = Get-ChildItem $apkDir -Filter '*.apk' | Select-Object -First 1
-if ($null -eq $source) { throw "没有找到 APK：$apkDir" }
-
-# 产物名与发布一致：DawnTick-<version>-<channel>-android.apk（dev 的 version 带构建时间戳）
+$apkDir = 'apps/mobile/android/app/build/outputs/apk/release'
+# 发布按 ABI 拆成两个包（arm64-v8a / armeabi-v7a），名称与 version.json 的 files 键对应：
+# android = arm64-v8a，android32 = armeabi-v7a。
 $outDir = Join-Path $root 'out-local'
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-$target = Join-Path $outDir "DawnTick-$version-$($env:DT_CHANNEL)-android.apk"
-Copy-Item $source.FullName $target -Force
-Get-Item $target | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }, FullName
-
 $apksigner = Join-Path $env:ANDROID_HOME 'build-tools/35.0.0/apksigner.bat'
-if (Test-Path $apksigner) {
-  & $apksigner verify --print-certs $target 2>&1 | Select-String -Pattern 'certificate DN' | Select-Object -First 1
-} else {
-  Write-Output '校验签名：apksigner verify --print-certs <apk>'
+foreach ($abi in @('arm64-v8a', 'armeabi-v7a')) {
+  $source = Get-ChildItem $apkDir -Filter "*$abi-*.apk" | Select-Object -First 1
+  if ($null -eq $source) { throw "没有找到 $abi 的 APK：$apkDir" }
+  $target = Join-Path $outDir "DawnTick-$version-$($env:DT_CHANNEL)-android-$abi.apk"
+  Copy-Item $source.FullName $target -Force
+  Get-Item $target | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } }, FullName
+  if (Test-Path $apksigner) {
+    & $apksigner verify --print-certs $target 2>&1 | Select-String -Pattern 'certificate DN' | Select-Object -First 1
+  } else {
+    Write-Output "校验签名：apksigner verify --print-certs $target"
+  }
 }

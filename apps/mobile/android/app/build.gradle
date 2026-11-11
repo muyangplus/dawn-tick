@@ -41,10 +41,8 @@ android {
         versionCode 612
         versionName "0.6.12"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        // 只打包真机 ABI：x86/x86_64 只有模拟器用，白白多带 MLKit/sqlcipher 的 .so
-        ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a'
-        }
+        // 只处理真机 ABI（x86/x86_64 只有模拟器用）：ABI 过滤与拆包统一由下面的
+        // android.splits.abi.include 负责；两处同时配置会被 AGP 判为冲突。
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -59,6 +57,16 @@ android {
     def dtVersionCode = System.getenv('DT_VERSION_CODE')
     if (dtVersionCode != null && !dtVersionCode.trim().isEmpty()) {
         defaultConfig.versionCode = dtVersionCode.trim().toInteger()
+    }
+    // 按 ABI 拆包：只发 arm64-v8a（现代真机）与 armeabi-v7a（32 位老设备）两个包，
+    // 不发 universal。客户端按设备首选 ABI 下载对应包（见 apps/web/src/lib/android-abi.ts）。
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk false
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
