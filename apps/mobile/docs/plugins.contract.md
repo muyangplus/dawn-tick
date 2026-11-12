@@ -149,12 +149,12 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 
 | 方法 | 参数 | 返回字段 | 说明 |
 |---|---|---|---|
-| `start` | `host?: string` | `host?: string`、`port?: number`、`listening?: boolean` | 用通配地址 + 系统分配端口监听，`host` 只决定对外展示/广播地址；resolve 前确认 socket 已 bind，返回 `listening:true`。`host` 未传或已不在本机网卡上时回退 `LanNetworks.preferredAddress()`；仍失败时 reject **异常类: message**（界面显示 `开启配对失败：<原因>`）。成功后开始 UDP 广播（不含配对码）；广播 / multicast lock 失败只记日志，不影响 resolve。后台线程另有 **10 秒看门狗** |
+| `start` | `host?: string`、`deviceId?: string` | `host?: string`、`port?: number`、`listening?: boolean` | 用通配地址 + 系统分配端口监听，`host` 只决定对外展示/广播地址；`deviceId` 是本机稳定设备 id，写进 UDP 广播（非法值只丢字段，不影响开配对）。resolve 前确认 socket 已 bind，返回 `listening:true`。`host` 未传或已不在本机网卡上时回退 `LanNetworks.preferredAddress()`；仍失败时 reject **异常类: message**（界面显示 `开启配对失败：<原因>`）。成功后开始 UDP 广播（不含配对码）；广播 / multicast lock 失败只记日志，不影响 resolve。后台线程另有 **10 秒看门狗** |
 | `stop` | 无 | 无（resolve 空） | 关监听、停广播并释放 multicast lock；**幂等**，重复调用仍 resolve |
 | `networks` | 无 | `networks?: { name?: string; address?: string; isLan?: boolean; kind?: string; preferred?: number }[]`、`status?: { wifi?: boolean; ethernet?: boolean; mobile?: boolean; vpn?: boolean; ipv4Count?: number; interfaceSummary?: string }` | 枚举本机 IPv4：排除回环，`kind` 取 `wifi` / `ethernet` / `vpn` / `other`；VPN 与虚拟网卡降级排序。`status` 由 `ConnectivityManager` + `NetworkCapabilities` 判断当前传输类型（只需 `ACCESS_NETWORK_STATE`，无运行时权限），读取失败时全为 false 并写 `native.log`。枚举失败时 reject 可读原因（不再返回空数组），界面显示「读取本机网络失败：…」；候选为空时把全部网卡（含 IPv6 / 回环）写日志 |
 | `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
 | `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
-| `scanDiscovery` | `timeoutMs?: number` | `peers?: { name?: string; host?: string; port?: number }[]` | UDP 短超时扫描同网设备；只返回设备名 / 地址 / 端口，按 host:port 去重 |
+| `scanDiscovery` | `timeoutMs?: number` | `peers?: { name?: string; host?: string; port?: number; deviceId?: string }[]` | UDP 短超时扫描同网设备；返回设备名 / 地址 / 端口 / 稳定 `deviceId`，按 host:port 去重。旧版本广播没有 `deviceId`，字段可缺省 |
 
 HTTP 路径白名单（原生层只放行这些，其余 404/405）：`/ping`、`/pair`、`/pair/refresh`、
 `/pair/revoke`、`/export`、`/import`，另有 `OPTIONS` 预检。

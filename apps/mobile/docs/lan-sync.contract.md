@@ -61,7 +61,8 @@
   **Android 上网络行始终显示**：没有候选时给出上面的空态，不把权限 / ROM 失败伪装成没有网络；
   `networks()` reject 时界面显示「读取本机网络失败：<异常类: message>」。选择新地址后若正在监听，
   会**自动停止并用新地址重启**（广播地址随之变化）。
-- `lan_sync_start({host})` / `LanSync.start({host})` 的 `host` 只决定对外展示/广播地址；
+- `lan_sync_start({host, deviceId?})` / `LanSync.start({host, deviceId?})` 的 `host` 只决定对外展示/广播地址，
+  `deviceId` 是本机稳定设备 id（见 §3.3），缺省时广播不带该字段（旧版本行为）；
   缺省或该地址已不在本机网卡上时回退 `LanNetworks.preferredAddress()`（通配绑定）。
   安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 另有 **8 秒超时**。失败文案统一为
   `开启配对失败：<异常类: message>`，设备页提供「重试」。
@@ -83,13 +84,17 @@
   "schemaVersion": 1,
   "name": "书房电脑",
   "host": "192.168.1.5",
-  "port": 8765
+  "port": 8765,
+  "deviceId": "123e4567-e89b-42d3-a456-426614174000"
 }
 ```
 
 - `kind` / `schemaVersion` 必须精确匹配（`dawn-tick-lan-discover` / `1`），否则丢弃；
 - `name` 为设备名（1–48 字符；Windows 取计算机名，Android 取机型）；
 - `host` 只广播局域网 IPv4，`port` 是 HTTP 监听端口（不是 8766）；
+- `deviceId` **可选**（1–64 位安全字符 `[A-Za-z0-9._:-]`）：本机首次生成 UUID 后持久化，
+  换 IP / 换 Wi-Fi / 重启应用都不变，只有卸载重装或清除数据才变。旧版本没有该字段，
+  新版本解析时非法值只丢字段、保留整包；没有它时按 `name` 兜底；
 - **广播包不含配对码、令牌、范围或任何业务数据**。发现只负责填地址，配对码仍需
   对方界面上显示的 6 位数字。
 
@@ -101,7 +106,20 @@
   多网卡时不会把别的网段设备混进来。
 - 列表每行显示「设备名 · IP:端口」；点击即把 `IP:端口` 填入「对方地址」。
 - 收到后 10 秒没有再广播的条目视为过期；本机自己的地址会被过滤。
+- 设备列表优先按 `deviceId` 去重（同一台设备可能从环回与局域网地址各收到一份广播）；
+  没有 `deviceId` 的旧版本按 `host:port` 去重。
 - Web 端没有原生 UDP：按钮禁用并提示手输地址；冒烟测试用固定扫描桩验证「发现 → 填入」。
+
+### 3.3 稳定设备 id（`deviceId`）
+
+- 生成：本机第一次需要时 `crypto.randomUUID()` 生成，写 `localStorage['dt.lan.deviceId']`；
+  存储不可用（隐私模式 / 清除数据）时只留内存，本次会话内稳定。**只有卸载重装 /
+  清除应用数据才会变**，换 IP、双方一起换 Wi-Fi、重启应用都不变。
+- 广播：`lan_sync_start` / `LanSync.start` 接受可选 `deviceId`，原生层原样放进发现包；
+  非法值丢弃字段、保留整包。
+- 二维码：标准链接带可选 `deviceId` 参数（见 §4.1）；旧码没有它仍能配对。
+- 配对记录：对端 `deviceId` 优先取二维码 / UDP 广播；都没有时本机生成临时 `peer-*`，
+  后续发现到真实 id 时原地替换。重连与去重都先按 `deviceId`，再按设备名 / 地址兜底。
 
 ## 4. 配对与长期令牌
 
@@ -122,7 +140,9 @@
    鉴权成功会刷新 `lastUsedAt`。到期令牌在配对/刷新时顺手清理。
 8. 客户端配对记录持久化：`app_meta` 键 **`lan_pairings_v1`**，Web 端降级到
    `localStorage` 键 `dt.lan.pairings.v1`：
-   `{ id, name, host, port, token, pairedAt, lastSyncAt }[]`（`id` 为 `host:port`）。
+   `{ id, deviceId, name, discoveryName, host, port, token, pairedAt, lastSeen, lastSyncAt }[]`。
+   `deviceId` 是对端稳定设备身份（来自二维码 / UDP 广播，没有时本机生成临时 id）；
+   `host` / `port` 只是最近一次已知地址，换 IP / 端口时原地更新，同 `deviceId` 只保留一条。
    桌面 / 安卓用现有 meta 助手读写；localStorage 不可用时退回 `app_meta`。
 9. 自动重连：对每条记录调 `POST /pair/refresh`。在线→换新令牌并显示「在线」；
    断网/超时→显示「离线，仍在重试」并保留记录；401→显示「配对已失效」但不自动删除。
@@ -133,24 +153,27 @@
 标准载荷（二维码与「复制配对信息」都用它）：
 
 ```
-dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC
+dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC&deviceId=123e4567-e89b-42d3-a456-426614174000
 ```
 
-- 纯函数：`formatPairPayload({host, port, code, name?})` → 上面的链接；
-  `name` 只用于展示，去空白并截断到 48 字符（避免二维码溢出）。
-- 解析 `parsePairPayload(text)` 宽容支持四类输入，返回 `{host, port, code, name?}` 或可读错误：
+- 纯函数：`formatPairPayload({host, port, code, name?, deviceId?})` → 上面的链接；
+  `name` 只用于展示，去空白并截断到 48 字符（避免二维码溢出）；
+  `deviceId` 可选（1–64 位安全字符），URL 编码后写入；非法值不进链接。
+- 解析 `parsePairPayload(text)` 宽容支持四类输入，返回 `{host, port, code, name?, deviceId?}`
+  或可读错误：
   1. 标准链接（也接受 `dawn-tick:pair?…`、`http(s)://<host>:port/pair?…`）；
   2. `192.168.1.23:8765 123456`；
   3. `192.168.1.23:8765#123456`；
   4. 整段被 URL 编码过的文本（`encodeURIComponent(链接)`，扫码/聊天工具二次编码）。
 - 统一校验：地址必须是局域网 IPv4（`parsePeerAddress` 同口径）、端口 1–65535、
-  配对码 6 位数字；`name` 可选。
+  配对码 6 位数字；`name` / `deviceId` 可选，旧码没有 `deviceId` 仍可用。
 - 二维码下方同时显示人类可读文本 `IP:端口 配对码`，扫码失败时仍可手输。
 
 ### 4.2 二维码与相机扫码
 
-- 二维码由本地编码器（`apps/web/src/lan-sync-qr.ts`）生成：字节模式、纠错 M、版本 1–6
-  （最多 106 字节；标准链接约 72–90 字节）。超过上限时退回可读提示，不阻断页面。
+- 二维码由本地编码器（`apps/web/src/lan-sync-qr.ts`）生成：字节模式、纠错 M、版本 1–10
+  （最多 213 字节；带 `deviceId` 的标准链接约 110–150 字节，走版本 7/8）。版本 7+
+  按规范绘制版本信息区；超过上限时退回可读提示，不阻断页面。
 - **Android 应用内扫码**：通用实现在 `apps/web/src/lib/scan.ts`（`scanCodeOnce()` /
   `parseScannedPayload()`），UI 在 `apps/web/src/components/scan/`：
   - 主界面顶部工具区有通用「扫一扫」图标入口（仅 Android 原生显示，Web / 桌面隐藏）；
@@ -335,11 +358,11 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | 动作 | Windows（Tauri 命令） | Android（Capacitor 插件 `LanSync`） |
 |---|---|---|
 | 列网络 | `lan_network_list()` → `[{name, address, isLan, kind, preferred}]`（无 `status`） | `networks()` → `{networks:[…], status:{wifi, ethernet, mobile, vpn, ipv4Count, interfaceSummary}}` |
-| 开服务 | `lan_sync_start({host?})` → `{host, port, listening}` | `start({host?})` → `{host, port, listening}` |
+| 开服务 | `lan_sync_start({host?, deviceId?})` → `{host, port, listening}` | `start({host?, deviceId?})` → `{host, port, listening}` |
 | 停服务 | `lan_sync_stop()` | `stop()`（幂等） |
 | 取请求 | `lan_sync_poll()` → `{id, method, path, query, authorization, body, receivedAt}` 或 `null` | `poll()` → 同字段 |
 | 回响应 | `lan_sync_respond(id, status, body)` | `respond({id, status, body})` |
-| 扫描设备 | `lan_discovery_scan({timeoutMs, host?})` → `[{name, host, port}]` | `scanDiscovery({timeoutMs})` → `{peers:[…]}` |
+| 扫描设备 | `lan_discovery_scan({timeoutMs, host?})` → `[{name, host, port, deviceId?}]` | `scanDiscovery({timeoutMs})` → `{peers:[{name, host, port, deviceId?}]}` |
 | 客户端请求 | `lan_http_request({method, url, headers, body, timeoutMs})` → `{status, body}` | CapacitorHttp（TS 直调，无独立插件方法） |
 
 - `host` 只决定对外展示/广播地址；socket 绑定通配地址（`0.0.0.0` / 不指定网卡）。
@@ -362,7 +385,8 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | 文件 | 职责 |
 |---|---|
 | `apps/web/src/lan-sync-protocol.ts` | 范围、地址、配对码、长期令牌（哈希/签发/校验/刷新/吊销/序列化）纯函数 |
-| `apps/web/src/lan-pair-payload.ts` | 标准连接格式 `formatPairPayload` / 宽容解析 `parsePairPayload` / 人类可读文本 |
+| `apps/web/src/lan-pair-payload.ts` | 标准连接格式 `formatPairPayload` / 宽容解析 `parsePairPayload` / 人类可读文本（含可选 `deviceId`） |
+| `apps/web/src/lib/lan-device-id.ts` | 本机稳定设备 id：`crypto.randomUUID()` 生成、`dt.lan.deviceId` 持久化、存储不可用时内存回退 |
 | `apps/web/src/lib/scan.ts` | 通用扫一扫：`scanCodeOnce()` / `parseScannedPayload()`（pair / text / 未知 scheme）与可读错误 |
 | `apps/web/src/components/scan/` | 通用扫码 UI：工具区图标入口、相机覆盖层、文本结果面板（显示 / 复制 / 关闭） |
 | `apps/web/src/lan-pair-scan.ts` | 配对面板沿用的扫码入口，转发到 `lib/scan.ts`（保留旧名字） |
