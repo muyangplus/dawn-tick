@@ -541,10 +541,14 @@ fn lock_server() -> std::sync::MutexGuard<'static, Option<LanSyncServer>> {
 /// 开启配对服务（幂等）：返回选中网卡地址与系统分配的端口。
 ///
 /// `host` 是用户在「切换网络」里选中的本机地址；缺省时自动选首选局域网。
+/// `device_id` 是本机稳定设备 id，原样进 UDP 广播（非法值由发现层丢弃字段）。
 /// socket 始终绑定通配地址，`host` 决定对外广播与展示的地址：
 /// 已在监听且地址相同直接返回；地址不同则先停旧监听再按新地址重启。
 #[tauri::command]
-pub fn lan_sync_start(host: Option<String>) -> Result<LanSyncListen, String> {
+pub fn lan_sync_start(
+    host: Option<String>,
+    device_id: Option<String>,
+) -> Result<LanSyncListen, String> {
     let requested = parse_listen_host(host.as_deref())?;
     let mut guard = lock_server();
     if let Some(server) = guard.as_ref() {
@@ -567,9 +571,13 @@ pub fn lan_sync_start(host: Option<String>) -> Result<LanSyncListen, String> {
     let directed_broadcast = crate::lan_network::netmask_for(bind)
         .and_then(|netmask| crate::lan_network::broadcast_address(bind, netmask));
     let device_name = crate::lan_discovery::device_name();
-    if let Err(error) =
-        crate::lan_discovery::start_local(&info.host, info.port, &device_name, directed_broadcast)
-    {
+    if let Err(error) = crate::lan_discovery::start_local(
+        &info.host,
+        info.port,
+        &device_name,
+        device_id.as_deref(),
+        directed_broadcast,
+    ) {
         crate::append_log(&format!("局域网发现广播启动失败：{error}"));
     }
     crate::append_log(&format!(

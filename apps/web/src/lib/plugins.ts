@@ -168,10 +168,15 @@ export interface FileSharePlugin {
 export interface LanSyncPlugin {
   /**
    * 起监听；`port` 由系统分配。`host` 是用户在「切换网络」里选中的本机局域网地址，
-   * 缺省时原生层自动选首选局域网；socket 绑定通配地址，`listening === true` 表示已 bind。
+   * 缺省时原生层自动选首选局域网；`deviceId` 是本机稳定设备 id，放进 UDP 广播。
+   * socket 绑定通配地址，`listening === true` 表示已 bind。
    * 绑定失败会 reject，`message` 原样透传给 TS。
    */
-  start(options?: { host?: string }): Promise<{ host?: string; port?: number; listening?: boolean }>;
+  start(options?: { host?: string; deviceId?: string }): Promise<{
+    host?: string;
+    port?: number;
+    listening?: boolean;
+  }>;
   /** 关监听并让内存里的令牌全部失效；幂等。 */
   stop(): Promise<void>;
   /**
@@ -195,11 +200,11 @@ export interface LanSyncPlugin {
   /** 回应 `poll` 取到的请求；原生层写回 HTTP 响应。 */
   respond(options: { id: number; status: number; body: string }): Promise<void>;
   /**
-   * 扫描同网设备（UDP 广播，短超时）：只返回设备名 / 地址 / 端口，
-   * 不含配对码或令牌；Web 端不调用。
+   * 扫描同网设备（UDP 广播，短超时）：只返回设备名 / 地址 / 端口 / 稳定 deviceId，
+   * 不含配对码或令牌；Web 端不调用。旧版本原生层可能不带 `deviceId`。
    */
   scanDiscovery(options: { timeoutMs?: number }): Promise<{
-    peers?: { name?: string; host?: string; port?: number }[];
+    peers?: { name?: string; host?: string; port?: number; deviceId?: string }[];
   }>;
 }
 

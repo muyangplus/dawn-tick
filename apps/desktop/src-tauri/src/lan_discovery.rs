@@ -37,6 +37,9 @@ pub struct LanDiscoveryAnnounce {
     pub name: String,
     pub host: String,
     pub port: u16,
+    /// 可选稳定设备 id：新版本会带；旧版本没有该字段，按 `None` 处理
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 /// 返回给 TS 的设备条目；不含配对码。
@@ -46,6 +49,9 @@ pub struct LanDiscoveryPeer {
     pub name: String,
     pub host: String,
     pub port: u16,
+    /// 可选稳定设备 id：有它时客户端优先按它认同一台设备
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
 }
 
 fn valid_name(name: &str) -> bool {
@@ -53,8 +59,24 @@ fn valid_name(name: &str) -> bool {
     (1..=48).contains(&length)
 }
 
-/// 组包并校验：设备名 1–48 字符、只广播局域网 IPv4、端口非 0。
-pub fn announce_packet(host: &str, port: u16, name: &str) -> Result<String, String> {
+/// 设备 id：字母数字与 `-_.:`，1–64 字节；不合法返回 None（丢弃字段但保留包）。
+fn normalize_device_id(raw: Option<&str>) -> Option<String> {
+    let text = raw?.trim();
+    if !(1..=64).contains(&text.len()) {
+        return None;
+    }
+    text.chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':'))
+        .then(|| text.to_string())
+}
+
+/// 组包并校验：设备名 1–48 字符、只广播局域网 IPv4、端口非 0；`device_id` 非法时忽略。
+pub fn announce_packet(
+    host: &str,
+    port: u16,
+    name: &str,
+    device_id: Option<&str>,
+) -> Result<String, String> {
     let name = name.trim();
     if !valid_name(name) {
         return Err("设备名应为 1–48 个字符".to_string());
@@ -69,14 +91,18 @@ pub fn announce_packet(host: &str, port: u16, name: &str) -> Result<String, Stri
     if port == 0 {
         return Err("广播端口不合法".to_string());
     }
-    Ok(serde_json::json!({
+    let device_id = normalize_device_id(device_id);
+    let mut packet = serde_json::json!({
         "kind": KIND,
         "schemaVersion": SCHEMA_VERSION,
         "name": name,
         "host": ip.to_string(),
         "port": port,
-    })
-    .to_string())
+    });
+    if let Some(device_id) = device_id {
+        packet["deviceId"] = serde_json::Value::String(device_id);
+    }
+    Ok(packet.to_string())
 }
 
 /// 解析广播包：标识、版本、设备名、局域网地址与端口逐项校验；不合法返回 None。
@@ -98,6 +124,8 @@ pub fn parse_announce(text: &str) -> Option<LanDiscoveryAnnounce> {
         name: packet.name.trim().to_string(),
         host: ip.to_string(),
         port: packet.port,
+        // 旧包没有该字段；非法值只丢字段，不影响整包可用
+        device_id: normalize_device_id(packet.device_id.as_deref()),
     })
 }
 
@@ -160,9 +188,10 @@ pub fn start_local(
     host: &str,
     port: u16,
     name: &str,
+    device_id: Option<&str>,
     directed_broadcast: Option<Ipv4Addr>,
 ) -> Result<(), String> {
-    let packet = announce_packet(host, port, name)?;
+    let packet = announce_packet(host, port, name, device_id)?;
     stop_local();
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|error| format!("创建发现广播 socket 失败：{error}"))?;
     socket
@@ -213,6 +242,7 @@ fn peer_from_packet(packet: LanDiscoveryAnnounce) -> LanDiscoveryPeer {
         name: packet.name,
         host: packet.host,
         port: packet.port,
+        device_id: packet.device_id,
     }
 }
 
@@ -288,94 +318,4 @@ fn broadcast_target(ip: &str) -> SocketAddr {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 两个网络用例会占用固定的发现端口，串行执行避免互相抢绑定。
-    static NETWORK_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn announce_roundtrip_and_validation() {
-        let packet = announce_packet("192.168.1.5", 8765, "书房电脑").expect("应能组包");
-        let parsed = parse_announce(&packet).expect("应能解析");
-        assert_eq!(parsed.name, "书房电脑");
-        assert_eq!(parsed.host, "192.168.1.5");
-        assert_eq!(parsed.port, 8765);
-        assert_eq!(parsed.schema_version, SCHEMA_VERSION);
-        assert!(parse_announce("not json").is_none());
-        assert!(parse_announce(&packet.replace(KIND, "other")).is_none());
-        assert!(parse_announce(&packet.replace("\"schemaVersion\":1", "\"schemaVersion\":2")).is_none());
-        assert!(announce_packet("8.8.8.8", 8765, "电脑").is_err());
-        assert!(announce_packet("192.168.1.5", 0, "电脑").is_err());
-        assert!(announce_packet("192.168.1.5", 8765, "  ").is_err());
-    }
-
-    #[test]
-    fn merge_peers_dedupes_sorts_and_limits() {
-        let peers = vec![
-            LanDiscoveryPeer {
-                name: "旧名字".into(),
-                host: "192.168.1.5".into(),
-                port: 8765,
-            },
-            LanDiscoveryPeer {
-                name: "新名字".into(),
-                host: "192.168.1.5".into(),
-                port: 8765,
-            },
-            LanDiscoveryPeer {
-                name: "手机".into(),
-                host: "192.168.1.8".into(),
-                port: 8765,
-            },
-        ];
-        let merged = merge_peers(peers);
-        assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].name, "手机");
-        assert_eq!(merged[1].name, "新名字");
-        assert_eq!(merged[0].name, "手机");
-        let many = (0..40).map(|index| LanDiscoveryPeer {
-            name: format!("设备{index:02}"),
-            host: format!("192.168.1.{}", index + 1),
-            port: 8765,
-        });
-        assert_eq!(merge_peers(many).len(), MAX_PEERS);
-    }
-
-    #[test]
-    fn scan_is_short_and_empty_without_announcer() {
-        let _guard = NETWORK_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        stop_local();
-        let started = Instant::now();
-        let peers = scan(100);
-        assert!(peers.is_empty());
-        assert!(started.elapsed() < Duration::from_secs(2));
-    }
-
-    #[test]
-    fn scan_receives_local_announcement() {
-        let _guard = NETWORK_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        start_local("127.0.0.1", 43210, "测试设备", None).expect("应能开始广播");
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut peers = Vec::new();
-        while Instant::now() < deadline && peers.is_empty() {
-            peers = scan(1200);
-        }
-        stop_local();
-        assert!(peers.iter().any(|peer| peer.name == "测试设备" && peer.host == "127.0.0.1" && peer.port == 43210));
-        assert_eq!(broadcast_target("127.0.0.1").port(), DISCOVERY_PORT);
-        assert_eq!(broadcast_target("192.168.1.255").ip().to_string(), "192.168.1.255");
-    }
-
-    #[test]
-    fn peer_allowed_filters_by_subnet_but_keeps_loopback() {
-        let subnet = Some((Ipv4Addr::new(192, 168, 1, 23), Ipv4Addr::new(255, 255, 255, 0)));
-        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 8)), subnet));
-        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), subnet));
-        assert!(!peer_allowed(IpAddr::V4(Ipv4Addr::new(192, 168, 2, 8)), subnet));
-        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), None));
-        assert!(!peer_allowed(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), subnet));
-        // 掩码缺失时不过滤
-        assert!(peer_allowed(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)), Some((Ipv4Addr::new(10, 0, 0, 8), Ipv4Addr::new(255, 0, 0, 0)))));
-    }
-}
+mod tests;

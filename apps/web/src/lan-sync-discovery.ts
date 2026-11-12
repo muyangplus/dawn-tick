@@ -51,7 +51,7 @@ export interface LanDiscoveryPeer {
 function normalizeDiscoveryDeviceId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
-  return /^[A-Za-z0-9._:-]{4,64}$/.test(text) ? text : undefined;
+  return /^[A-Za-z0-9._:-]{1,64}$/.test(text) ? text : undefined;
 }
 
 /** 设备名 / 地址 / 端口的统一校验；不合法返回 null。 */
@@ -104,16 +104,32 @@ export function encodeDiscoveryAnnounce(
   });
 }
 
-/** 同一设备（host:port）只留最后一条；按设备名、地址排序并截断。 */
+/**
+ * 同一台设备只留最后一条：有稳定 `deviceId` 时按它去重（同一台设备可能从环回与
+ * 局域网地址各收到一份广播），没有时按 `host:port`。按设备名、地址排序并截断。
+ */
 export function dedupeDiscoveryPeers(
   peers: readonly LanDiscoveryPeer[],
   max = LAN_DISCOVERY_MAX_PEERS,
 ): LanDiscoveryPeer[] {
   const latest = new Map<string, LanDiscoveryPeer>();
   for (const peer of peers) {
-    const key = `${peer.host}:${peer.port}`;
+    const key =
+      peer.deviceId === undefined ? `${peer.host}:${peer.port}` : `device:${peer.deviceId}`;
     const previous = latest.get(key);
-    if (previous === undefined || peer.seenAt >= previous.seenAt) latest.set(key, peer);
+    if (previous === undefined) {
+      latest.set(key, peer);
+      continue;
+    }
+    // 同一台设备已从局域网地址收到过时，忽略环回地址那份（环回只用于同机自测）
+    const previousLoopback = previous.host.startsWith('127.');
+    const peerLoopback = peer.host.startsWith('127.');
+    if (previousLoopback && !peerLoopback) {
+      latest.set(key, peer);
+      continue;
+    }
+    if (peerLoopback && !previousLoopback) continue;
+    if (peer.seenAt >= previous.seenAt) latest.set(key, peer);
   }
   return [...latest.values()]
     .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN') || left.host.localeCompare(right.host))

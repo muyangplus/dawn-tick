@@ -29,27 +29,48 @@ private const val LAN_DISCOVERY_DEFAULT_TIMEOUT_MS = 1500
 private const val LAN_DISCOVERY_MAX_TIMEOUT_MS = 5000
 private const val LAN_DISCOVERY_MAX_PEERS = 32
 
-data class LanDiscoveryPeer(val name: String, val host: String, val port: Int) {
-    fun toJsObject(): com.getcapacitor.JSObject = com.getcapacitor.JSObject()
-        .put("name", name)
-        .put("host", host)
-        .put("port", port)
+/** 稳定设备 id：与 TS / Rust 同一字符集，1–64 位安全字符；不合法返回 null。 */
+internal fun normalizeLanDeviceId(value: String?): String? {
+    val text = value?.trim() ?: return null
+    if (text.length !in 1..64) return null
+    return text.takeIf { item ->
+        item.all { char -> char in 'a'..'z' || char in 'A'..'Z' || char in '0'..'9' || char in "-_.:" }
+    }
+}
+
+data class LanDiscoveryPeer(
+    val name: String,
+    val host: String,
+    val port: Int,
+    /** 可选稳定设备 id：新版本广播会带；旧版本没有，只能按设备名认 */
+    val deviceId: String? = null,
+) {
+    fun toJsObject(): com.getcapacitor.JSObject {
+        val objectValue = com.getcapacitor.JSObject()
+            .put("name", name)
+            .put("host", host)
+            .put("port", port)
+        if (deviceId != null) objectValue.put("deviceId", deviceId)
+        return objectValue
+    }
 }
 
 /** 组包与解析：字段名与 Rust `lan_discovery` 逐字一致。 */
 object LanDiscoveryCodec {
-    fun encode(host: String, port: Int, name: String): String? {
+    fun encode(host: String, port: Int, name: String, deviceId: String? = null): String? {
         val cleanName = name.trim()
         if (cleanName.isEmpty() || cleanName.length > 48) return null
         val address = parseLanHost(host) ?: return null
         if (port !in 1..65535) return null
-        return JSONObject()
+        val cleanDeviceId = normalizeLanDeviceId(deviceId)
+        val json = JSONObject()
             .put("kind", LAN_DISCOVERY_KIND)
             .put("schemaVersion", LAN_DISCOVERY_SCHEMA_VERSION)
             .put("name", cleanName)
             .put("host", address.hostAddress)
             .put("port", port)
-            .toString()
+        if (cleanDeviceId != null) json.put("deviceId", cleanDeviceId)
+        return json.toString()
     }
 
     fun parse(text: String): LanDiscoveryPeer? {
@@ -63,7 +84,9 @@ object LanDiscoveryCodec {
             if (name.isEmpty() || name.length > 48) return null
             val address = parseLanHost(host) ?: return null
             if (port !in 1..65535) return null
-            LanDiscoveryPeer(name, address.hostAddress ?: host, port)
+            // 非法 deviceId 只丢字段、保留整包：旧版本没有该字段，发现仍要可用
+            val deviceId = normalizeLanDeviceId(json.optString("deviceId"))
+            LanDiscoveryPeer(name, address.hostAddress ?: host, port, deviceId)
         } catch (_: Exception) {
             null
         }
@@ -137,16 +160,16 @@ object LanDiscoveryAdvertiser {
     @Volatile private var thread: Thread? = null
     @Volatile private var multicastLock: WifiManager.MulticastLock? = null
 
-    fun start(context: Context, host: String, port: Int, name: String) {
-        runCatching { startInternal(context, host, port, name) }.onFailure { error ->
+    fun start(context: Context, host: String, port: Int, name: String, deviceId: String? = null) {
+        runCatching { startInternal(context, host, port, name, deviceId) }.onFailure { error ->
             Log.w(TAG, "启动局域网广播失败：${error.message ?: error.javaClass.simpleName}")
             NativeLog.warn(context, TAG, "启动局域网广播失败：${NativeLog.describe(error)}")
         }
     }
 
-    private fun startInternal(context: Context, host: String, port: Int, name: String) {
+    private fun startInternal(context: Context, host: String, port: Int, name: String, deviceId: String?) {
         stop()
-        val packet = LanDiscoveryCodec.encode(host, port, name) ?: return
+        val packet = LanDiscoveryCodec.encode(host, port, name, deviceId) ?: return
         val bytes = packet.toByteArray(Charsets.UTF_8)
         val targets = mutableListOf<InetAddress>()
         LanNetworks.broadcastAddress(host)?.let { targets.add(it) }

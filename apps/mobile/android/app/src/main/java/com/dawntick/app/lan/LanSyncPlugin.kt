@@ -39,11 +39,12 @@ class LanSyncPlugin : Plugin() {
     private val lock = Any()
     private var server: LanSyncServer? = null
 
-    /** 起监听；可选 `host` 指定本机网络地址，缺省自动选首选局域网。 */
+    /** 起监听；可选 `host` 指定本机网络地址，可选 `deviceId` 进 UDP 广播，缺省自动选首选局域网。 */
     @PluginMethod
     fun start(call: PluginCall) {
         val requested = call.getString("host")?.trim()?.takeIf { it.isNotEmpty() }
-        diagInfo("start 入口 host=${requested ?: "(自动选择)"}")
+        val requestedDeviceId = normalizeLanDeviceId(call.getString("deviceId"))
+        diagInfo("start 入口 host=${requested ?: "(自动选择)"} deviceId=${requestedDeviceId ?: "(无)"}")
         val settled = AtomicBoolean(false)
         // 绑定 socket 是网络操作：放到后台线程，避免主线程 NetworkOnMainThread
         val watchdog = Thread {
@@ -80,10 +81,16 @@ class LanSyncPlugin : Plugin() {
                         started
                     }
                 }
-                // 二期发现：开配对期间广播设备名与 HTTP 端口，不含配对码。
+                // 二期发现：开配对期间广播设备名、HTTP 端口与稳定 deviceId，不含配对码。
                 // 广播失败不影响开配对：监听与配对码已经可用。
                 runCatching {
-                    LanDiscoveryAdvertiser.start(context, active.host, active.port, LanDiscoveryCodec.deviceName())
+                    LanDiscoveryAdvertiser.start(
+                        context,
+                        active.host,
+                        active.port,
+                        LanDiscoveryCodec.deviceName(),
+                        requestedDeviceId,
+                    )
                     diagInfo("局域网发现广播已启动")
                 }.onFailure { error ->
                     Log.w(TAG, "局域网发现广播启动失败：${error.message ?: error.javaClass.simpleName}")
