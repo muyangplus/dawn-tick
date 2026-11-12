@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createStorage } from '../../../packages/core/test/helpers.ts';
 import {
-  applyLanPairProbes,
   createLanPairing,
   findLanPairingByPeer,
   formatLanPairingLabel,
@@ -14,7 +13,6 @@ import {
   pairingSession,
   parseLanPairings,
   parseLanPairingsJson,
-  probeLanPairing,
   removeLanPairing,
   serializeLanPairings,
   updateLanPairingAddress,
@@ -22,7 +20,9 @@ import {
   upsertLanPairing,
   type LanPairing,
 } from '../src/lan-pairings.ts';
-import { createLanPairingStore } from '../src/lan-sync-pairing-store.ts';
+import { applyLanPairProbes, probeLanPairing } from '../src/lan-sync-reconnect.ts';
+import { createLanPairingStore, rememberLanPairing } from '../src/lan-sync-pairing-store.ts';
+import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
 
 const NOW = 1759900000000;
 const TOKEN = 'a'.repeat(32);
@@ -248,4 +248,80 @@ test('探测结果：在线换新令牌与 lastSeen，离线/失效不动记录'
   assert.equal(applied[1]?.token, 'b'.repeat(32), '离线不删除也不改令牌');
   assert.equal(applied[1]?.lastSeen, NOW);
   assert.deepEqual(applyLanPairProbes(list, [{ ...offline, id: 'peer-a' }], NOW + 50), list);
+});
+
+test('真实 deviceId：同地址旧记录原地升级，同 deviceId 换 IP 只留一条', () => {
+  const realId = '123e4567-e89b-42d3-a456-426614174000';
+  // 旧记录只有本机临时 id（不知道对端真实身份）
+  const legacy = createLanPairing({ peer: PEER, token: TOKEN, name: '书房电脑', now: NOW });
+  assert.match(legacy.deviceId, /^peer-/);
+
+  // 重新配对 / 扫码拿到真实 deviceId：同地址合并成一条，id 保持本地记录键
+  const upgraded = upsertLanPairing([legacy], {
+    ...legacy,
+    deviceId: realId,
+    token: 'b'.repeat(32),
+    pairedAt: NOW + 100,
+  });
+  assert.equal(upgraded.length, 1);
+  assert.equal(upgraded[0]?.id, legacy.id);
+  assert.equal(upgraded[0]?.deviceId, realId);
+
+  // 同 deviceId 换 IP / 端口：原地更新，不新增
+  const moved = upsertLanPairing(upgraded, {
+    ...upgraded[0]!,
+    host: '10.0.0.8',
+    port: 38739,
+    name: '书房电脑改名',
+    pairedAt: NOW + 200,
+  });
+  assert.equal(moved.length, 1);
+  assert.equal(moved[0]?.host, '10.0.0.8');
+  assert.equal(moved[0]?.port, 38739);
+
+  // 同名但真实 id 不同的另一台设备：不按名字误合并
+  const other = createLanPairing({
+    peer: { host: '10.0.0.9', port: 40000 },
+    token: 'c'.repeat(32),
+    name: '书房电脑',
+    deviceId: 'other-device-0001',
+    now: NOW + 300,
+  });
+  assert.equal(upsertLanPairing(moved, other).length, 2);
+});
+
+test('配对成功写回：payload 的 deviceId 优先，扫描结果兜底并记广播名', async () => {
+  const storage = createStorage();
+  const store = createLanPairingStore(storage, { localStorage: null });
+  const qrId = '123e4567-e89b-42d3-a456-426614174000';
+  const scanId = 'scan-device-0001';
+  setLanDiscoveryScannerForTests(async () => [
+    { name: 'DESKTOP-ABC', host: PEER.host, port: PEER.port, deviceId: scanId, seenAt: NOW },
+  ]);
+  try {
+    // 扫码 / 粘贴带了 deviceId：直接写对端身份，同时记下 UDP 广播名
+    await rememberLanPairing(
+      store,
+      { peer: PEER, token: TOKEN, expiresAt: NOW + 1000 },
+      { name: 'Windows 电脑', deviceId: qrId, now: NOW },
+    );
+    let list = await store.load();
+    assert.equal(list.length, 1);
+    assert.equal(list[0]?.deviceId, qrId, '优先使用二维码里的对端 deviceId');
+    assert.equal(list[0]?.id, qrId);
+    assert.equal(list[0]?.discoveryName, 'DESKTOP-ABC');
+
+    // 没有 payload deviceId（手输地址 / 旧二维码）：用同一地址的扫描结果兜底
+    await store.save([]);
+    await rememberLanPairing(
+      store,
+      { peer: PEER, token: TOKEN, expiresAt: NOW + 1000 },
+      { name: 'Windows 电脑', now: NOW + 10 },
+    );
+    list = await store.load();
+    assert.equal(list.length, 1);
+    assert.equal(list[0]?.deviceId, scanId, '扫描到的真实 deviceId 兜底');
+  } finally {
+    setLanDiscoveryScannerForTests(null);
+  }
 });

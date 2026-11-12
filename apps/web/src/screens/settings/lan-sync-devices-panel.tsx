@@ -8,13 +8,11 @@ import {
   sessionExpired,
 } from '../../lan-sync-client.ts';
 import {
-  applyLanPairProbes,
   formatLanPairingLabel,
   formatLanPairingLastSeen,
   formatLanPairingLastSync,
   markLanPairingSynced,
   pairingSession,
-  probeLanPairing,
   removeLanPairing,
   updateLanPairingToken,
   type LanPairing,
@@ -22,10 +20,12 @@ import {
 import { createLanPairingStore } from '../../lan-sync-pairing-store.ts';
 import {
   LAN_RECONNECT_TICK_MS,
+  applyLanPairProbes,
   discoverPairingAddresses,
   formatLanPairingRetry,
   lanPairingStatusText,
   markLanDiscoveryAttempted,
+  probeLanPairing,
   reduceLanPairingStatuses,
   shouldProbePairing,
   type LanPairingStatuses,

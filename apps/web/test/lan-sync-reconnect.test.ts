@@ -13,8 +13,9 @@ import {
   nextRetryDelayMs,
   reduceLanPairingStatuses,
   shouldProbePairing,
+  type LanPairProbe,
 } from '../src/lan-sync-reconnect.ts';
-import { createLanPairing, type LanPairing, type LanPairProbe } from '../src/lan-pairings.ts';
+import { createLanPairing, type LanPairing } from '../src/lan-pairings.ts';
 
 const NOW = 1759900000000;
 const TOKEN = 'a'.repeat(32);

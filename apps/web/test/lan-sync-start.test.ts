@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { setLanDeviceIdForTests } from '../src/lib/lan-device-id.ts';
 import {
   LAN_SERVER_START_ERROR_PREFIX,
   LAN_SERVER_START_HINT,
@@ -81,6 +82,26 @@ test('自动选择（不传 host）时原生返回的地址就是界面地址', 
     assert.equal(result.info?.host, '172.20.1.2');
   } finally {
     setLanServerStarterForTests(null);
+    restorePlatform();
+  }
+});
+
+test('startLanServer 把稳定 deviceId 一起透传给原生（二维码与广播同源）', async () => {
+  const restorePlatform = installTauriPlatform();
+  let captured: { host?: string; deviceId?: string } = {};
+  setLanServerStarterForTests(async (host, deviceId) => {
+    captured = { ...(host === undefined ? {} : { host }), ...(deviceId === undefined ? {} : { deviceId }) };
+    return { host: host ?? '192.168.1.23', port: 8765 };
+  });
+  try {
+    setLanDeviceIdForTests('test-device-1234');
+    const result = await startLanServer({ host: '10.0.0.8', now: NOW });
+    assert.equal(captured.host, '10.0.0.8');
+    assert.equal(captured.deviceId, 'test-device-1234');
+    assert.equal(result.ok, true);
+  } finally {
+    setLanServerStarterForTests(null);
+    setLanDeviceIdForTests(null);
     restorePlatform();
   }
 });

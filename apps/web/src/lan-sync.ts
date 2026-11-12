@@ -1,6 +1,7 @@
 import type { Storage } from '@dawn-tick/core';
 import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { errorMessage } from './lib/errors.ts';
+import { getOrCreateLanDeviceId } from './lib/lan-device-id.ts';
 import { invokeNative, type LanSyncListen, type LanSyncRequest } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { withTimeout } from './lib/timeout.ts';
@@ -77,29 +78,46 @@ export function startLanServerError(reason: string | null | undefined): string {
 /** 给任意 Promise 加超时；超时后底层调用可能仍在进行，调用方按可重试处理。 */
 // `withTimeout` 实现在 `lib/timeout.ts`，这里保留再导出，旧调用方与单测不用改路径。
 
-/** 起监听的统一形状：桌面与安卓都归一到 `{host, port}`。 */
-export type LanServerStarter = (host?: string) => Promise<LanSyncListen | null>;
+/** 起监听的统一形状：桌面与安卓都归一到 `{host, port}`；`deviceId` 进 UDP 广播。 */
+export type LanServerStarter = (
+  host?: string,
+  deviceId?: string,
+) => Promise<LanSyncListen | null>;
 
-/** 冒烟 / 单测注入：替代原生调用，验证超时与地址透传。 */
+/** 冒烟 / 单测注入：替代原生调用，验证超时与地址 / deviceId 透传。 */
 let starterOverride: LanServerStarter | null = null;
 
 export function setLanServerStarterForTests(next: LanServerStarter | null): void {
   starterOverride = next;
 }
 
-async function defaultLanServerStarter(host?: string): Promise<LanSyncListen | null> {
+function listenArgs(host: string | undefined, deviceId: string | undefined): {
+  host?: string;
+  deviceId?: string;
+} {
+  const args: { host?: string; deviceId?: string } = {};
+  if (host !== undefined) args.host = host;
+  if (deviceId !== undefined && deviceId !== '') args.deviceId = deviceId;
+  return args;
+}
+
+async function defaultLanServerStarter(
+  host?: string,
+  deviceId?: string,
+): Promise<LanSyncListen | null> {
   const selected = host === undefined || host.trim() === '' ? undefined : host.trim();
+  const args = listenArgs(selected, deviceId);
   if (isDesktopApp()) {
     return (
       (await invokeNative<LanSyncListen>(
         'lan_sync_start',
-        selected === undefined ? undefined : { host: selected },
+        Object.keys(args).length === 0 ? undefined : args,
       )) ?? null
     );
   }
   const plugin = await loadPlugin<LanSyncPlugin>('LanSync');
   if (plugin === null) return null;
-  const result = await plugin.start(selected === undefined ? undefined : { host: selected });
+  const result = await plugin.start(Object.keys(args).length === 0 ? undefined : args);
   if (typeof result.host !== 'string' || result.host === '' || typeof result.port !== 'number') {
     throw new Error('原生层没有返回监听地址与端口');
   }
@@ -110,11 +128,12 @@ async function defaultLanServerStarter(host?: string): Promise<LanSyncListen | n
 }
 
 async function startNativeServer(
-  host?: string,
+  host: string | undefined,
+  deviceId: string | undefined,
   timeoutMs = LAN_SERVER_START_TIMEOUT_MS,
 ): Promise<LanSyncListen | null> {
   const starter = starterOverride ?? defaultLanServerStarter;
-  return withTimeout(starter(host), timeoutMs, LAN_SERVER_START_TIMEOUT_MESSAGE);
+  return withTimeout(starter(host, deviceId), timeoutMs, LAN_SERVER_START_TIMEOUT_MESSAGE);
 }
 
 export interface StartLanServerOptions {
@@ -132,7 +151,9 @@ export async function startLanServer(options: StartLanServerOptions = {}): Promi
     return { ok: false, info: null, error: startLanServerError('浏览器端不能开配对，请在桌面版或安卓版上操作') };
   }
   try {
-    const listen = await startNativeServer(options.host, options.timeoutMs);
+    // 稳定设备 id：首次生成后持久化；广播与二维码都用它，换 IP / 重启后仍认同一台
+    const deviceId = getOrCreateLanDeviceId();
+    const listen = await startNativeServer(options.host, deviceId, options.timeoutMs);
     if (listen === null) {
       return { ok: false, info: null, error: startLanServerError('当前平台不支持开启局域网配对') };
     }

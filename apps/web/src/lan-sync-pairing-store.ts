@@ -1,5 +1,6 @@
 import type { Storage } from '@dawn-tick/core';
 import { isWebApp } from './lib/capabilities.ts';
+import { normalizeLanDeviceId } from './lib/lan-device-id.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { LAN_PAIRINGS_META_KEY } from './lib/meta-keys.ts';
 import { logWarn } from './log.ts';
@@ -117,31 +118,53 @@ function safeLocalStorage(): LanLocalStorage | null {
   }
 }
 
-/** 配对成功：立即写回令牌与对端元信息（同名/同 deviceId 覆盖，不堆叠旧地址）。 */
+/** 配对成功要写回的对端元信息：`name` 来自二维码/发现，`deviceId` 来自二维码或 UDP 广播。 */
+export interface RememberLanPairingOptions {
+  name?: string | undefined;
+  /** 对端稳定设备 id：优先级高于本机扫描结果 */
+  deviceId?: string | undefined;
+  now?: number | undefined;
+}
+
+/**
+ * 配对成功：立即写回令牌与对端元信息（同 deviceId / 同地址覆盖，不堆叠旧地址）。
+ *
+ * 先用 payload / 发现提供的真实 `deviceId` 建记录；都没给时本机生成临时 id，
+ * 后续 UDP 发现拿到真实 id 会原地替换。顺带记下广播设备名，换 IP 后靠它兜底。
+ */
 export async function rememberLanPairing(
   store: LanPairingStore,
   session: LanSession,
-  name?: string,
-  now = Date.now(),
+  options: RememberLanPairingOptions = {},
 ): Promise<void> {
-  const displayName = name?.trim() ?? '';
+  const now = options.now ?? Date.now();
+  const displayName = options.name?.trim() ?? '';
+  const explicitDeviceId = normalizeLanDeviceId(options.deviceId) ?? undefined;
+  // 配对时对方正在广播：顺手记下真实 deviceId 与广播名，换 IP/换局域网后靠它认回同一台
+  const peers = await scanLanPeers();
+  const found =
+    peers.find(
+      (peer) => explicitDeviceId !== undefined && peer.deviceId === explicitDeviceId,
+    ) ??
+    peers.find((peer) => peer.host === session.peer.host && peer.port === session.peer.port) ??
+    null;
+  const deviceId = explicitDeviceId ?? found?.deviceId;
   const pairing = createLanPairing({
     peer: session.peer,
     token: session.token,
     ...(displayName === '' ? {} : { name: displayName }),
+    ...(deviceId === undefined ? {} : { deviceId }),
     now,
   });
   const next = upsertLanPairing(await store.load(), pairing);
-  await store.save(next);
-  // 配对时对方正在广播：顺手记下 UDP 广播名，换 IP/换局域网后靠它认回同一台
-  const saved = next.find((item) => item.host === session.peer.host && item.port === session.peer.port);
-  if (saved === undefined) return;
-  const found = (await scanLanPeers()).find(
-    (peer) => peer.host === saved.host && peer.port === saved.port,
+  const saved =
+    next.find((item) => item.deviceId === pairing.deviceId) ??
+    next.find((item) => item.host === session.peer.host && item.port === session.peer.port);
+  await store.save(
+    saved === undefined || found === null
+      ? next
+      : markLanPairingDiscoveryName(next, saved.id, found.name),
   );
-  if (found !== undefined) {
-    await store.save(markLanPairingDiscoveryName(next, saved.id, found.name));
-  }
 }
 
 /** 同步成功：按「最近地址」找回记录并回写 `lastSyncAt` / `lastSeen`；未保存返回 false。 */

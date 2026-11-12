@@ -132,11 +132,6 @@ export function LanSyncClientPanel({
     setStatus(said(`已填入 ${peer.name} 的地址，请扫码或填对方显示的配对码`));
   }
 
-  async function rememberPairing(session: LanSession, name?: string): Promise<void> {
-    await rememberLanPairing(pairingStore, session, name);
-    setPairingsRevision((value) => value + 1);
-  }
-
   /** 离线设备的「重新配对」：把保存的（可能已由发现更新的）地址填回配对面板。 */
   function repairPairing(pairing: { name: string; host: string; port: number }): void {
     setPeerInput(formatPeerAddress({ host: pairing.host, port: pairing.port }));
@@ -149,12 +144,15 @@ export function LanSyncClientPanel({
     );
   }
 
-  async function pairPeer(peerText: string, codeText: string, name?: string): Promise<void> {
+  async function pairPeer(peerText: string, codeText: string, name?: string, deviceId?: string): Promise<void> {
     const peer = parsePeerAddress(peerText);
     if (peer === null) {
       note('对方地址应为局域网 IP 与端口，例如 192.168.1.5:8765');
       return;
     }
+    // 手输地址时也能从发现列表认出同一台：deviceId 优先，其次按地址匹配
+    const discovered = peers.find((item) => formatPeerAddress(item) === peerText.trim());
+    const peerDeviceId = deviceId ?? discovered?.deviceId;
     dispatch({ type: 'pairing' });
     setPreview(null);
     await action.run({
@@ -181,7 +179,8 @@ export function LanSyncClientPanel({
           return;
         }
         dispatch({ type: 'paired', session: result.session });
-        await rememberPairing(result.session, name);
+        await rememberLanPairing(pairingStore, result.session, { name, deviceId: peerDeviceId });
+        setPairingsRevision((value) => value + 1);
         note(`已与 ${formatPeerAddress(peer)} 建立配对，可以预览后拉取或推送`);
         toast.success('已配对');
       },
@@ -305,7 +304,7 @@ export function LanSyncClientPanel({
         error={client.phase === 'failed' ? client.error : null}
         onPeerChange={setPeerInput}
         onCodeChange={setCodeInput}
-        onPair={(peer, code, name) => void pairPeer(peer, code, name)}
+        onPair={(peer, code, name, deviceId) => void pairPeer(peer, code, name, deviceId)}
         onNote={note}
         pendingPair={pendingPair}
         onPendingPairHandled={onPendingPairHandled}

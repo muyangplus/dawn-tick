@@ -1,23 +1,22 @@
+import { normalizeLanDeviceId } from './lib/lan-device-id.ts';
 import { parsePeerAddress, type PeerAddress } from './lan-sync-protocol.ts';
-import {
-  pingLanPeer,
-  refreshPairing,
-  type LanSession,
-  type RefreshPairResult,
-} from './lan-sync-client.ts';
+import type { LanSession } from './lan-sync-client.ts';
+
+// 设备 id 的归一逻辑在 `lib/lan-device-id.ts`（本机生成与协议校验共用一份）；旧导入路径继续可用。
+export { normalizeLanDeviceId } from './lib/lan-device-id.ts';
 
 /**
- * 局域网同步：客户端**配对持久化**（含对端元信息）与单次重连探测。
+ * 局域网同步：客户端**配对持久化**（含对端元信息）、去重与地址更新。
  *
  * 数据模型（`app_meta` 键 `lan_pairings_v1`；Web 端降级到 `localStorage`）：
  * `{ id, deviceId, name, host, port, token, pairedAt, lastSeen, lastSyncAt }[]`。
  * 令牌是服务端签发的 180 天长期令牌，明文只在本机保存；服务端只保存它的 SHA-256 哈希。
  *
- * 设备身份：协议没有对端设备 id，首次配对时由本机生成稳定的 `deviceId`（等于 `id`），
- * 端口变化、重新配对或 UDP 发现到新地址时都复用同一个 id，否则旧地址会不断堆叠。
+ * 设备身份：对端真实 `deviceId` 来自二维码 / UDP 广播；没有时本机生成临时 `peer-*`，
+ * 后续发现到真实 id 会原地替换。换 IP / 端口 / 重新配对都复用同一个身份，不堆叠记录。
  *
- * 重连状态机、指数退避与 UDP 发现更新在 `lan-sync-reconnect.ts`；本模块只做
- * 记录读写、去重与一次 `/pair/refresh` 探测。
+ * 重连状态机、指数退避、UDP 发现更新与单次探测在 `lan-sync-reconnect.ts`；本模块只做
+ * 记录读写、去重与持久化。
  */
 
 /** 客户端配对记录。 */
@@ -57,21 +56,23 @@ function validTime(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
-/** 设备 id：字母数字与 `-_.:`，4–64 字符；不合法返回 null。 */
-export function normalizeLanDeviceId(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  if (!/^[A-Za-z0-9._:-]{4,64}$/.test(text)) return null;
-  return text;
-}
+/** 设备 id：字母数字与 `-_.:`，4–64 字符；不合法返回 null（实现见 `lib/lan-device-id.ts`）。 */
 
-/** 生成本机为对端保存的设备 id（不依赖对端协议）。 */
+/** 生成本机为对端保存的临时设备 id（对端还没提供真实 deviceId 时使用）。 */
 export function newLanDeviceId(): string {
   const cryptoApi = globalThis.crypto;
   if (cryptoApi !== undefined && typeof cryptoApi.randomUUID === 'function') {
     return `peer-${cryptoApi.randomUUID()}`;
   }
   return `peer-${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+}
+
+/**
+ * 临时设备 id：本机生成的 `peer-*` 或旧记录的 `host:port`。
+ * 遇到对端广播 / 二维码给出的真实 id 时应替换，真实 id 之间不会被它误判为同一台。
+ */
+export function isEphemeralLanDeviceId(deviceId: string): boolean {
+  return deviceId.startsWith('peer-') || isAddressLikeName(deviceId);
 }
 
 /** 归一一条记录；结构不合法返回 null。 */
@@ -179,7 +180,12 @@ export function createLanPairing(input: {
   };
 }
 
-/** 找到同一条设备记录：先按 id/deviceId，再按唯一设备名（端口变化后的重新配对）。 */
+/**
+ * 找到同一条设备记录：
+ * 1. 先按 id / 对端真实 `deviceId`（稳定身份，IP 变化不影响）；
+ * 2. 再按唯一设备名（旧记录没有真实 id 时的回退）；
+ * 3. 最后按同地址合并临时 id 的旧记录（首次拿到真实 id 时不新增一条）。
+ */
 export function findSameLanPairing(
   pairings: readonly LanPairing[],
   pairing: LanPairing,
@@ -188,29 +194,52 @@ export function findSameLanPairing(
     (item) => item.id === pairing.id || item.deviceId === pairing.deviceId,
   );
   if (sameId !== undefined) return sameId;
-  if (isAddressLikeName(pairing.name)) return null;
-  const sameName = pairings.filter((item) => item.name === pairing.name);
-  if (sameName.length === 1) return sameName[0] ?? null;
-  // 同名多台设备时只认同地址，避免把另一台同名设备合并掉
-  return sameName.find((item) => item.host === pairing.host) ?? null;
+  // 已知两台设备的真实 id 不同时，同名也不合并
+  const knownDevice = !isEphemeralLanDeviceId(pairing.deviceId);
+  if (!isAddressLikeName(pairing.name)) {
+    const sameName = pairings.filter(
+      (item) =>
+        item.name === pairing.name &&
+        (!knownDevice || isEphemeralLanDeviceId(item.deviceId) || item.deviceId === pairing.deviceId),
+    );
+    if (sameName.length === 1) return sameName[0] ?? null;
+    // 同名多台设备时只认同地址，避免把另一台同名设备合并掉
+    const sameHost = sameName.find((item) => item.host === pairing.host);
+    if (sameHost !== undefined) return sameHost;
+  }
+  // 旧记录只有临时 id（本机生成 / host:port）：同地址就是同一台，借这次配对补上真实 id
+  return (
+    pairings.find(
+      (item) =>
+        item.host === pairing.host &&
+        item.port === pairing.port &&
+        isEphemeralLanDeviceId(item.deviceId),
+    ) ?? null
+  );
 }
 
 /**
- * 新增或替换同一设备的记录：端口变化覆盖旧地址，保留原 `id`/`deviceId` 与首次配对时间。
- * 按配对时间倒序。
+ * 新增或替换同一设备的记录：端口变化覆盖旧地址，保留原 `id` 与首次配对时间。
+ * 对端提供真实 `deviceId` 时优先记下它（覆盖本机临时 id），按配对时间倒序。
  */
 export function upsertLanPairing(
   pairings: readonly LanPairing[],
   pairing: LanPairing,
 ): LanPairing[] {
   const same = findSameLanPairing(pairings, pairing);
+  const adoptedDeviceId =
+    same !== null &&
+    pairing.deviceId !== same.deviceId &&
+    !isEphemeralLanDeviceId(pairing.deviceId)
+      ? pairing.deviceId
+      : (same?.deviceId ?? pairing.deviceId);
   const record: LanPairing =
     same === null
       ? pairing
       : {
           ...pairing,
           id: same.id,
-          deviceId: same.deviceId,
+          deviceId: adoptedDeviceId,
           discoveryName: pairing.discoveryName ?? same.discoveryName,
           pairedAt: same.pairedAt > 0 ? same.pairedAt : pairing.pairedAt,
           lastSyncAt: same.lastSyncAt,
@@ -332,61 +361,4 @@ export function formatLanPairingLastSync(pairing: LanPairing): string {
 export function formatLanPairingLastSeen(pairing: LanPairing): string {
   if (pairing.lastSeen === null) return '尚未在线';
   return `最近在线：${formatTime(pairing.lastSeen)}`;
-}
-
-/* ── 单次重连探测 ─────────────────────────────────────────────── */
-
-export interface LanPairProbe {
-  id: string;
-  state: 'online' | 'offline' | 'expired';
-  error: string | null;
-  /** 在线时服务端换发的新令牌与到期时间 */
-  token?: string;
-  expiresAt?: number;
-}
-
-/**
- * 一次探测：先 `GET /ping`（3 秒）快速判断旧地址是否还可达；可达再 `POST /pair/refresh`
- * 换新令牌。401 即失效，其它（ECONNREFUSED / 超时 / 断网）都算离线，交给
- * `lan-sync-reconnect.ts` 退避并尝试 UDP 发现新地址。
- */
-export async function probeLanPairing(
-  pairing: LanPairing,
-  now = Date.now(),
-): Promise<LanPairProbe> {
-  const ping = await pingLanPeer({ host: pairing.host, port: pairing.port });
-  if (!ping.ok) {
-    return { id: pairing.id, state: 'offline', error: ping.error ?? '网络不可达' };
-  }
-  const result: RefreshPairResult = await refreshPairing(pairingSession(pairing), now);
-  if (result.ok && result.token !== null) {
-    return {
-      id: pairing.id,
-      state: 'online',
-      error: null,
-      token: result.token,
-      ...(result.expiresAt === null ? {} : { expiresAt: result.expiresAt }),
-    };
-  }
-  if (result.status === 401) {
-    return { id: pairing.id, state: 'expired', error: result.error ?? '配对已失效，请重新配对' };
-  }
-  return { id: pairing.id, state: 'offline', error: result.error ?? '网络不可达' };
-}
-
-/** 把在线探测结果应用到配对列表：换新令牌并更新 `lastSeen`；离线/失效不动记录。 */
-export function applyLanPairProbes(
-  pairings: readonly LanPairing[],
-  probes: readonly LanPairProbe[],
-  now = Date.now(),
-): LanPairing[] {
-  const tokens = new Map<string, string>();
-  for (const probe of probes) {
-    if (probe.state === 'online' && probe.token !== undefined) tokens.set(probe.id, probe.token);
-  }
-  if (tokens.size === 0) return [...pairings];
-  return pairings.map((item) => {
-    const token = tokens.get(item.id);
-    return token === undefined ? item : { ...item, token, lastSeen: now };
-  });
 }

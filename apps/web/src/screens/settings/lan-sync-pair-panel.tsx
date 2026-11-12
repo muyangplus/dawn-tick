@@ -19,8 +19,8 @@ export interface LanSyncPairPanelProps {
   error?: string | null;
   onPeerChange: (value: string) => void;
   onCodeChange: (value: string) => void;
-  /** 地址 / 配对码文本交给父组件校验并发起配对；`name` 来自扫码或粘贴 */
-  onPair: (peerText: string, codeText: string, name?: string) => void;
+  /** 地址 / 配对码文本交给父组件校验并发起配对；`name` / `deviceId` 来自扫码或粘贴 */
+  onPair: (peerText: string, codeText: string, name?: string, deviceId?: string) => void;
   /** 扫码 / 粘贴过程中的提示（父组件的状态行统一展示） */
   onNote: (text: string) => void;
   /** 通用扫一扫交来的配对请求：自动填入并发起配对，只消费一次 */
@@ -63,7 +63,7 @@ export function LanSyncPairPanel({
     onPeerChange(peerText);
     onCodeChange(payload.code);
     onNote(`已从${source}填入 ${peerText} 与配对码 ${payload.code}`);
-    if (autoPair) onPair(peerText, payload.code, payload.name);
+    if (autoPair) onPair(peerText, payload.code, payload.name, payload.deviceId);
   }
 
   // 通用扫一扫把配对信息交进来：填入并自动配对，然后通知父组件已消费

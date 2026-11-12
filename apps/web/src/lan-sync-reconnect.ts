@@ -1,6 +1,11 @@
 import { scanLanPeers, type LanDiscoveryPeer } from './lan-sync-discovery.ts';
-import type { LanPairing, LanPairProbe } from './lan-pairings.ts';
-import { isAddressLikeName } from './lan-pairings.ts';
+import { pingLanPeer, refreshPairing, type RefreshPairResult } from './lan-sync-client.ts';
+import type { LanPairing } from './lan-pairings.ts';
+import {
+  isAddressLikeName,
+  isEphemeralLanDeviceId,
+  pairingSession,
+} from './lan-pairings.ts';
 
 /**
  * 局域网同步：已配对设备的**自动重连状态机**、**指数退避**与 **UDP 发现换地址**。
@@ -14,7 +19,7 @@ import { isAddressLikeName } from './lan-pairings.ts';
  *   原地更新持久化记录并立刻探测新地址；
  * - 401 标记「配对失效」并停止自动重试；找不到新地址就提示重新开启配对 / 重新扫码。
  *
- * 本模块是纯策略 + 一个扫描调用，不碰存储；写回由已配对设备面板负责。
+ * 本模块是纯策略 + 扫描 / 探测调用，不碰存储；写回由已配对设备面板负责。
  */
 
 /** 首次重试间隔：30 秒。 */
@@ -153,11 +158,6 @@ export function dueLanPairings(
   return pairings.filter((pairing) => shouldProbePairing(statuses[pairing.id], now));
 }
 
-/** 本机临时生成的设备 id / 旧地址型 id：遇到对端真实 deviceId 时应替换。 */
-function isLocalDeviceId(deviceId: string): boolean {
-  return deviceId.startsWith('peer-') || isAddressLikeName(deviceId);
-}
-
 /**
  * 在 UDP 发现结果里找同一台设备：优先稳定 `deviceId`（IP / 端口变化不影响），
  * 其次按设备名；同名多台时优先同 IP。地址型兜底名不参与匹配。
@@ -175,7 +175,7 @@ export function matchDiscoveryPeer(
   const wanted = (pairing.discoveryName ?? pairing.name).trim();
   if (wanted === '') return null;
   if (pairing.discoveryName === null && isAddressLikeName(wanted)) return null;
-  const trustedDevice = !isLocalDeviceId(pairing.deviceId);
+  const trustedDevice = !isEphemeralLanDeviceId(pairing.deviceId);
   const sameName = peers.filter(
     (peer) =>
       peer.name.trim() === wanted &&
@@ -199,7 +199,7 @@ export function applyDiscoveryAddress(
 ): LanPairing | null {
   const peer = matchDiscoveryPeer(pairing, peers);
   if (peer === null) return null;
-  const adoptDevice = peer.deviceId !== undefined && isLocalDeviceId(pairing.deviceId);
+  const adoptDevice = peer.deviceId !== undefined && isEphemeralLanDeviceId(pairing.deviceId);
   const moved = peer.host !== pairing.host || peer.port !== pairing.port;
   const discoveryName = peer.name.trim().slice(0, 48);
   const renamed = discoveryName !== '' && pairing.discoveryName !== discoveryName;
@@ -256,4 +256,61 @@ export function hasDueLanPairing(
   now = Date.now(),
 ): boolean {
   return pairings.some((pairing) => shouldProbePairing(statuses[pairing.id], now));
+}
+
+/* ── 单次重连探测 ─────────────────────────────────────────────── */
+
+export interface LanPairProbe {
+  id: string;
+  state: 'online' | 'offline' | 'expired';
+  error: string | null;
+  /** 在线时服务端换发的新令牌与到期时间 */
+  token?: string;
+  expiresAt?: number;
+}
+
+/**
+ * 一次探测：先 `GET /ping`（3 秒）快速判断旧地址是否还可达；可达再 `POST /pair/refresh`
+ * 换新令牌。401 即失效，其它（ECONNREFUSED / 超时 / 断网）都算离线，交给
+ * 本模块退避并尝试 UDP 发现新地址。
+ */
+export async function probeLanPairing(
+  pairing: LanPairing,
+  now = Date.now(),
+): Promise<LanPairProbe> {
+  const ping = await pingLanPeer({ host: pairing.host, port: pairing.port });
+  if (!ping.ok) {
+    return { id: pairing.id, state: 'offline', error: ping.error ?? '网络不可达' };
+  }
+  const result: RefreshPairResult = await refreshPairing(pairingSession(pairing), now);
+  if (result.ok && result.token !== null) {
+    return {
+      id: pairing.id,
+      state: 'online',
+      error: null,
+      token: result.token,
+      ...(result.expiresAt === null ? {} : { expiresAt: result.expiresAt }),
+    };
+  }
+  if (result.status === 401) {
+    return { id: pairing.id, state: 'expired', error: result.error ?? '配对已失效，请重新配对' };
+  }
+  return { id: pairing.id, state: 'offline', error: result.error ?? '网络不可达' };
+}
+
+/** 把在线探测结果应用到配对列表：换新令牌并更新 `lastSeen`；离线/失效不动记录。 */
+export function applyLanPairProbes(
+  pairings: readonly LanPairing[],
+  probes: readonly LanPairProbe[],
+  now = Date.now(),
+): LanPairing[] {
+  const tokens = new Map<string, string>();
+  for (const probe of probes) {
+    if (probe.state === 'online' && probe.token !== undefined) tokens.set(probe.id, probe.token);
+  }
+  if (tokens.size === 0) return [...pairings];
+  return pairings.map((item) => {
+    const token = tokens.get(item.id);
+    return token === undefined ? item : { ...item, token, lastSeen: now };
+  });
 }
