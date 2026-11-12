@@ -3,34 +3,48 @@
  *
  * 边界：
  * - 只做「生成矩阵」，不引相机 / 扫码 / 第三方二维码依赖；界面用 SVG 渲染；
- * - 字节模式、纠错等级 M、版本 1–6（最多 106 字节，足够标准配对链接）；
- * - 版本 7+ 需要版本信息区，本实现不画；配对链接超长时给出可读错误，界面仍显示人类可读文本；
- * - 纯函数，`apps/web/test/lan-sync-qr.test.ts` 覆盖尺寸、定位图案、确定性与超长报错。
+ * - 字节模式、纠错等级 M、版本 1–10（最多 213 字节，够标准配对链接 + 稳定 deviceId）；
+ * - 版本 7+ 需要版本信息区，本实现按 QR 规范绘制；配对链接超长时给出可读错误，
+ *   界面仍显示人类可读文本；
+ * - 纯函数，`apps/web/test/lan-sync-qr.test.ts` 覆盖尺寸、定位 / 版本图案、确定性与超长报错。
  */
 
 const EC_LEVEL_M = 0;
-const MAX_VERSION = 6;
+const MAX_VERSION = 10;
 
 interface QrVersion {
+  /** 模块边长：17 + 4 × 版本号 */
   size: number;
-  dataPerBlock: number;
-  eccPerBlock: number;
-  blocks: number;
+  /** 对齐图案中心（0-based 模块坐标） */
   align: number[];
+  /** 每个 RS 分块的数据码字数；块数可能不等长（版本 8–10） */
+  dataBlocks: number[];
+  /** 每个 RS 分块的纠错码字数 */
+  eccPerBlock: number;
 }
 
-/** 版本表：只收 M 级、1–6；数字来自 QR 规范 Table 9（v1–6 的 RS 分块长度一致）。 */
+/**
+ * 版本表：只收 M 级、1–10；数字来自 QR 规范 Table 9（RS 分块）。
+ * 版本 1–6 的分块等长，7+ 后开始出现短块，`dataBlocks` 按规范逐块列出。
+ */
 const VERSIONS: Record<number, QrVersion> = {
-  1: { size: 21, dataPerBlock: 16, eccPerBlock: 10, blocks: 1, align: [] },
-  2: { size: 25, dataPerBlock: 28, eccPerBlock: 16, blocks: 1, align: [6, 18] },
-  3: { size: 29, dataPerBlock: 44, eccPerBlock: 26, blocks: 1, align: [6, 22] },
-  4: { size: 33, dataPerBlock: 32, eccPerBlock: 18, blocks: 2, align: [6, 26] },
-  5: { size: 37, dataPerBlock: 43, eccPerBlock: 24, blocks: 2, align: [6, 30] },
-  6: { size: 41, dataPerBlock: 27, eccPerBlock: 16, blocks: 4, align: [6, 34] },
+  1: { size: 21, align: [], dataBlocks: [16], eccPerBlock: 10 },
+  2: { size: 25, align: [6, 18], dataBlocks: [28], eccPerBlock: 16 },
+  3: { size: 29, align: [6, 22], dataBlocks: [44], eccPerBlock: 26 },
+  4: { size: 33, align: [6, 26], dataBlocks: [32, 32], eccPerBlock: 18 },
+  5: { size: 37, align: [6, 30], dataBlocks: [43, 43], eccPerBlock: 24 },
+  6: { size: 41, align: [6, 34], dataBlocks: [27, 27, 27, 27], eccPerBlock: 16 },
+  7: { size: 45, align: [6, 22, 38], dataBlocks: [31, 31, 31, 31], eccPerBlock: 18 },
+  8: { size: 49, align: [6, 24, 42], dataBlocks: [38, 38, 39, 39], eccPerBlock: 22 },
+  9: { size: 53, align: [6, 26, 46], dataBlocks: [36, 36, 36, 37, 37], eccPerBlock: 22 },
+  10: { size: 57, align: [6, 28, 50], dataBlocks: [43, 43, 43, 43, 44], eccPerBlock: 26 },
 };
 
-/** 字节模式在版本 1–9 的字符计数位宽。 */
-const CHAR_COUNT_BITS = 8;
+/** 字节模式的字符计数位宽：版本 1–9 为 8 位，10–26 为 16 位。 */
+function charCountBits(version: number): number {
+  return version <= 9 ? 8 : 16;
+}
+
 const MODE_BYTE = 0b0100;
 
 const EXP = new Array<number>(512).fill(0);
@@ -89,17 +103,30 @@ function formatBits(mask: number): number {
   return ((data << 10) | remainder) ^ 0x5412;
 }
 
-function byteCapacity(version: QrVersion): number {
-  const bits = version.dataPerBlock * version.blocks * 8;
-  return Math.floor((bits - 4 - CHAR_COUNT_BITS) / 8);
+/** 版本信息：6 位版本号 + 12 位 BCH(18,6)，生成多项式 0x1F25；版本 7+ 才需要。 */
+function versionBits(version: number): number {
+  let remainder = version << 12;
+  for (let index = 17; index >= 12; index -= 1) {
+    if (((remainder >>> index) & 1) === 1) remainder ^= 0x1f25 << (index - 12);
+  }
+  return (version << 12) | (remainder & 0xfff);
+}
+
+function dataCodewords(info: QrVersion): number {
+  return info.dataBlocks.reduce((total, count) => total + count, 0);
+}
+
+function byteCapacity(version: number, info: QrVersion): number {
+  const bits = dataCodewords(info) * 8;
+  return Math.floor((bits - 4 - charCountBits(version)) / 8);
 }
 
 function chooseVersion(length: number): { version: number; info: QrVersion } {
   for (let version = 1; version <= MAX_VERSION; version += 1) {
     const info = VERSIONS[version]!;
-    if (length <= byteCapacity(info)) return { version, info };
+    if (length <= byteCapacity(version, info)) return { version, info };
   }
-  const limit = byteCapacity(VERSIONS[MAX_VERSION]!);
+  const limit = byteCapacity(MAX_VERSION, VERSIONS[MAX_VERSION]!);
   throw new Error(`二维码内容过长（${length} 字节，最多 ${limit} 字节）`);
 }
 
@@ -108,15 +135,16 @@ function utf8Bytes(text: string): number[] {
 }
 
 /** 数据码字 → 分块 → 纠错 → 交织；返回最终码字位流。 */
-function buildCodewords(text: string, info: QrVersion): number[] {
+function buildCodewords(text: string, version: number, info: QrVersion): number[] {
   const bytes = utf8Bytes(text);
-  const capacityBits = info.dataPerBlock * info.blocks * 8;
+  const totalData = dataCodewords(info);
+  const capacityBits = totalData * 8;
   const bits: number[] = [];
   const append = (value: number, width: number): void => {
     for (let index = width - 1; index >= 0; index -= 1) bits.push((value >>> index) & 1);
   };
   append(MODE_BYTE, 4);
-  append(bytes.length, CHAR_COUNT_BITS);
+  append(bytes.length, charCountBits(version));
   for (const byte of bytes) append(byte, 8);
   const terminator = Math.min(4, capacityBits - bits.length);
   for (let index = 0; index < terminator; index += 1) bits.push(0);
@@ -127,21 +155,26 @@ function buildCodewords(text: string, info: QrVersion): number[] {
     for (let offset = 0; offset < 8; offset += 1) byte = (byte << 1) | bits[index + offset]!;
     data.push(byte);
   }
-  for (let pad = 0; data.length < info.dataPerBlock * info.blocks; pad += 1) {
+  for (let pad = 0; data.length < totalData; pad += 1) {
     data.push(pad % 2 === 0 ? 0xec : 0x11);
   }
 
   const divisor = rsDivisor(info.eccPerBlock);
   const blocks: number[][] = [];
   const eccBlocks: number[][] = [];
-  for (let block = 0; block < info.blocks; block += 1) {
-    const chunk = data.slice(block * info.dataPerBlock, (block + 1) * info.dataPerBlock);
+  let offset = 0;
+  for (const blockLength of info.dataBlocks) {
+    const chunk = data.slice(offset, offset + blockLength);
+    offset += blockLength;
     blocks.push(chunk);
     eccBlocks.push(rsRemainder(chunk, divisor));
   }
   const codewords: number[] = [];
-  for (let index = 0; index < info.dataPerBlock; index += 1) {
-    for (const block of blocks) codewords.push(block[index]!);
+  const longestBlock = Math.max(...info.dataBlocks);
+  for (let index = 0; index < longestBlock; index += 1) {
+    for (const block of blocks) {
+      if (index < block.length) codewords.push(block[index]!);
+    }
   }
   for (let index = 0; index < info.eccPerBlock; index += 1) {
     for (const block of eccBlocks) codewords.push(block[index]!);
@@ -183,7 +216,20 @@ function drawAlignment(canvas: Canvas, centerX: number, centerY: number): void {
   }
 }
 
-function drawFunctionPatterns(canvas: Canvas, info: QrVersion): void {
+/** 版本信息区：右上 3×6 与左下 6×3，两份内容相同（版本 1–6 没有这一区）。 */
+function drawVersion(canvas: Canvas, version: number): void {
+  if (version < 7) return;
+  const bits = versionBits(version);
+  for (let index = 0; index < 18; index += 1) {
+    const dark = ((bits >>> index) & 1) === 1;
+    const offset = index % 3;
+    const row = Math.floor(index / 3);
+    paint(canvas, canvas.size - 11 + offset, row, dark);
+    paint(canvas, row, canvas.size - 11 + offset, dark);
+  }
+}
+
+function drawFunctionPatterns(canvas: Canvas, version: number, info: QrVersion): void {
   // 时序图案先铺满，定位图案随后覆盖（定位图案包含时序线上的格子）
   for (let index = 0; index < canvas.size; index += 1) {
     paint(canvas, 6, index, index % 2 === 0);
@@ -211,6 +257,7 @@ function drawFunctionPatterns(canvas: Canvas, info: QrVersion): void {
   for (let index = 9; index < 15; index += 1) reserve(14 - index, 8);
   for (let index = 0; index < 8; index += 1) reserve(canvas.size - 1 - index, 8);
   for (let index = 8; index < 15; index += 1) reserve(8, canvas.size - 15 + index);
+  drawVersion(canvas, version);
 }
 
 /** 从右下角按 2 列一组折返填入数据位。 */
@@ -257,14 +304,14 @@ function drawFormat(canvas: Canvas, mask: number): void {
 /** 生成二维码矩阵：`true` 为深色模块，行优先。 */
 export function qrMatrix(text: string): boolean[][] {
   const bytes = utf8Bytes(text);
-  const { info } = chooseVersion(bytes.length);
+  const { version, info } = chooseVersion(bytes.length);
   const canvas: Canvas = {
     size: info.size,
     modules: Array.from({ length: info.size }, () => new Array<boolean>(info.size).fill(false)),
     reserved: Array.from({ length: info.size }, () => new Array<boolean>(info.size).fill(false)),
   };
-  drawFunctionPatterns(canvas, info);
-  drawData(canvas, buildCodewords(text, info));
+  drawFunctionPatterns(canvas, version, info);
+  drawData(canvas, buildCodewords(text, version, info));
   applyMask(canvas);
   drawFormat(canvas, 0);
   return canvas.modules;

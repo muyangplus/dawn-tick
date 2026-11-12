@@ -5,6 +5,7 @@ import { toast } from '../../components/ui/toaster.tsx';
 import { errorMessage } from '../../lib/errors.ts';
 import { useAction } from '../../lib/action.ts';
 import { isAndroidApp } from '../../lib/capabilities.ts';
+import { getOrCreateLanDeviceId } from '../../lib/lan-device-id.ts';
 import type { ScannedPairRequest } from '../../lib/scan.ts';
 import { logWarn } from '../../log.ts';
 import { copyText } from '../../system-actions.ts';
@@ -95,6 +96,8 @@ export function LanSyncBlock({
   const started = useRef(false);
   const savedTokens = useRef<readonly TrustedToken[]>([]);
   const deviceName = useMemo(() => defaultDeviceName(), []);
+  /** 本机稳定设备 id：二维码 / 复制信息带它；监听时也由 `startLanServer` 取同一份 */
+  const deviceId = useMemo(() => getOrCreateLanDeviceId(), []);
 
   /** 读候选网络：Android 失败时把可读原因留在网络行，不静默当成「没有网络」。 */
   const refreshNetworks = async (): Promise<void> => {
@@ -256,7 +259,7 @@ export function LanSyncBlock({
       port: server.port,
       code: pairing.code,
     };
-    const ok = await copyText(formatPairPayload({ ...payload, name: deviceName }));
+    const ok = await copyText(formatPairPayload({ ...payload, name: deviceName, deviceId }));
     if (ok) toast.success('已复制配对信息');
     else toast.error('复制失败，请手动抄写地址与配对码');
   }
@@ -294,6 +297,7 @@ export function LanSyncBlock({
           failed={startFailed}
           busy={action.busy}
           deviceName={deviceName}
+          deviceId={deviceId}
           onStart={() => void startPairing()}
           onStop={() => void stopPairing()}
           onNewCode={newPairingCode}

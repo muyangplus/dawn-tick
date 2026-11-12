@@ -1,3 +1,4 @@
+import { normalizeLanDeviceId } from './lib/lan-device-id.ts';
 import {
   LAN_SYNC_PORT,
   TRUSTED_TOKEN_NAME_MAX,
@@ -9,7 +10,9 @@ import {
  * 局域网配对的「标准化连接格式」：纯函数，不碰网络、二维码或界面。
  *
  * 标准形态（二维码与「复制配对信息」都用它）：
- *   dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC
+ *   dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC&deviceId=<uuid>
+ *
+ * `deviceId` 是可选的稳定设备 id：新版本两端都带，旧版本没有它仍能配对（按设备名兜底）。
  *
  * 解析保持宽容，接受：
  *   1. 上面的链接（`dawn-tick://pair?…`，也接受 `dawn-tick:pair?…` 与
@@ -31,22 +34,25 @@ export const PAIR_PAYLOAD_SCHEMA = 1;
 /** 名称只用于展示，过长时截断，避免二维码溢出。 */
 export const PAIR_PAYLOAD_NAME_MAX = TRUSTED_TOKEN_NAME_MAX;
 
-/** 解析成功的载荷：`name` 是可选的展示名（扫码后写入已配对设备）。 */
+/** 解析成功的载荷：`name` / `deviceId` 都是可选元信息，旧码没有它们仍可用。 */
 export interface PairPayload extends PeerAddress {
   code: string;
   name?: string;
+  /** 对端稳定设备 id：写进配对记录，换 IP / 重启后按它认回同一台 */
+  deviceId?: string;
 }
 
 export type PairParseResult =
   | { ok: true; payload: PairPayload }
   | { ok: false; error: string };
 
-/** 标准化链接；端口缺省 8765，名称空白或超长按规则归一。 */
+/** 标准化链接；端口缺省 8765，名称空白或超长按规则归一，deviceId 可选。 */
 export function formatPairPayload(input: {
   host: string;
   port?: number;
   code: string;
   name?: string;
+  deviceId?: string;
 }): string {
   const host = input.host.trim();
   const port = normalizePort(input.port ?? LAN_SYNC_PORT) ?? LAN_SYNC_PORT;
@@ -58,6 +64,8 @@ export function formatPairPayload(input: {
   params.set('code', code);
   const name = normalizeName(input.name);
   if (name !== undefined) params.set('name', name);
+  const deviceId = normalizeLanDeviceId(input.deviceId);
+  if (deviceId !== null) params.set('deviceId', deviceId);
   return `${PAIR_LINK_PREFIX}?${params.toString()}`;
 }
 
@@ -128,7 +136,13 @@ function fromParams(params: URLSearchParams): PairParseResult {
   if (host === '') return failure('配对信息里没有对方地址（host）');
   if (code === '') return failure('配对信息里没有配对码（code）');
   const port = portText === null || portText.trim() === '' ? LAN_SYNC_PORT : normalizePort(portText);
-  return validate(host, port, code, normalizeName(params.get('name')));
+  return validate(
+    host,
+    port,
+    code,
+    normalizeName(params.get('name')),
+    normalizeLanDeviceId(params.get('deviceId')),
+  );
 }
 
 /** 链接形态：`dawn-tick://pair?…`、`dawn-tick:pair?…`、`http(s)://x/pair?…`。 */
@@ -162,7 +176,7 @@ function parseBasicText(text: string): PairParseResult | null {
   const port = normalizePort(match[2] ?? String(LAN_SYNC_PORT));
   const code = (match[3] ?? '').trim();
   if (code === '') return failure('配对信息里没有配对码：应为「IP:端口 6 位配对码」');
-  return validate(host, port, code, undefined);
+  return validate(host, port, code, undefined, undefined);
 }
 
 function validate(
@@ -170,6 +184,7 @@ function validate(
   port: number | null,
   code: string,
   name: string | undefined,
+  deviceId: string | null | undefined,
 ): PairParseResult {
   if (port === null) return failure('配对信息里的端口不正确：应为 1–65535');
   if (!/^\d{6}$/.test(code)) return failure('配对码应为 6 位数字');
@@ -181,6 +196,7 @@ function validate(
       port,
       code,
       ...(name === undefined ? {} : { name }),
+      ...(deviceId === null || deviceId === undefined ? {} : { deviceId }),
     },
   };
 }

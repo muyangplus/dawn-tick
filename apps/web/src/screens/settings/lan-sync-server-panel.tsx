@@ -39,6 +39,8 @@ export interface LanSyncServerPanelProps {
   busy: boolean;
   /** 二维码与复制信息里的展示名 */
   deviceName: string;
+  /** 本机稳定设备 id：二维码与复制信息带上，对方据此写配对记录 */
+  deviceId?: string;
   onStart: () => void;
   onStop: () => void;
   onNewCode: () => void;
@@ -73,6 +75,7 @@ export function LanSyncServerPanel({
   failed,
   busy,
   deviceName,
+  deviceId,
   onStart,
   onStop,
   onNewCode,
@@ -98,6 +101,7 @@ export function LanSyncServerPanel({
           port: server.port,
           code: pairing.code,
           name: deviceName,
+          ...(deviceId === undefined ? {} : { deviceId }),
         })
       : '';
   const humanText =

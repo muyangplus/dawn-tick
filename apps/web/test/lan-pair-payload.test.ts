@@ -121,3 +121,39 @@ test('设备名去空白、限长，避免二维码溢出', () => {
   });
   assert.equal(ok(long).name?.length, PAIR_PAYLOAD_NAME_MAX);
 });
+
+test('deviceId：可选、URL 编码，旧码没有该字段仍可解析', () => {
+  const deviceId = '123e4567-e89b-42d3-a456-426614174000';
+  const text = formatPairPayload({
+    host: '192.168.1.23',
+    port: 8765,
+    code: '123456',
+    name: 'PC',
+    deviceId,
+  });
+  assert.match(text, new RegExp(`deviceId=${deviceId}`));
+  assert.equal(ok(text).deviceId, deviceId);
+  assert.equal(ok(text).name, 'PC');
+
+  // 旧二维码（没有 deviceId）保持可用
+  assert.equal(ok(LINK).deviceId, undefined);
+  assert.equal(ok('192.168.1.23:8765 123456').deviceId, undefined);
+
+  // 非法 deviceId：生成时不写进链接，解析时丢掉字段但保留配对信息
+  const invalid = formatPairPayload({
+    host: '192.168.1.23',
+    port: 8765,
+    code: '123456',
+    name: 'PC',
+    deviceId: '非法 id 😀',
+  });
+  assert.equal(invalid, LINK);
+  const parsedInvalid = ok(
+    `dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&deviceId=${encodeURIComponent('非法 id 😀')}`,
+  );
+  assert.equal(parsedInvalid.deviceId, undefined);
+  assert.equal(parsedInvalid.host, '192.168.1.23');
+
+  // 带 deviceId 的链接仍能被整段 URL 编码后解析
+  assert.equal(ok(encodeURIComponent(text)).deviceId, deviceId);
+});
