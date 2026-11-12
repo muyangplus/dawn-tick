@@ -5,6 +5,11 @@
 
 ## [未发布]
 
+### 新增
+
+- 局域网同步：本机首次生成并持久化稳定 `deviceId`（UUID），UDP 发现广播与配对二维码都携带它；配对记录以 deviceId 为身份，换 IP/换端口静默更新，双方一起换 Wi-Fi 后可通过当前局域网广播重新认回
+- 已配对设备列表显示在线/离线、最近地址与上次同步时间，支持「重新配对 / 移除」；离线按 30s→5min 指数退避，不再无限重试旧端口；配对信息在应用重启后保留
+
 ### 修复
 
 - 安卓插件调用报 `"SystemActions.then()" is not implemented on android`：Capacitor 插件代理被 async 函数直接返回时会被 Promise 当成 thenable，统一包一层「then 为 undefined」的安全代理；修复由此导致的 ABI 探测超时、原生日志读取超时、局域网开启失败、通知/小组件刷新报错；`lan-sync-http` 的 CapacitorHttp 也做同样包装，修复扫码/配对时「连接对方超时」
