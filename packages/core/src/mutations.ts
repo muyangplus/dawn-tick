@@ -1,7 +1,7 @@
 import { normalizeRow } from './columns.ts';
 import { DEFAULT_COURSE_COLOR } from './colors.ts';
 import { DEFAULT_TIME_ZONE } from './time.ts';
-import { addMinutes, parseClock, sectionOf } from './timetable.ts';
+import { MAX_PERIODS, addMinutes, parseClock, sectionOf } from './timetable.ts';
 import { MAX_WEEKS, describeWeeks, maskToWeeks, weeksToMask } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { assertValid } from './validation.ts';
@@ -107,13 +107,40 @@ async function dropReminders(ctx: Context, targetType: ReminderTargetType, targe
   }
 }
 
-/** 删除一条排课及挂在它上面的排课级提醒与调课/停课记录：不留指向已删排课的孤儿。 */
+/** 命中的事件连同 parent_id 链上的全部子孙事件。 */
+function withDescendants(events: readonly Row[], seed: (row: Row) => boolean): Row[] {
+  const alive = events.filter((row) => row['deleted_at'] === null || row['deleted_at'] === undefined);
+  const picked = new Set(alive.filter(seed).map((row) => String(row['id'])));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const row of alive) {
+      const id = String(row['id']);
+      if (!picked.has(id) && row['parent_id'] !== null && picked.has(String(row['parent_id']))) {
+        picked.add(id);
+        grew = true;
+      }
+    }
+  }
+  return alive.filter((row) => picked.has(String(row['id'])));
+}
+
+/** 删除一批事件及挂在它们上面的提醒。 */
+async function removeEventsDeep(ctx: Context, rows: readonly Row[]): Promise<number> {
+  if (rows.length === 0) return 0;
+  const ids = new Set(rows.map((row) => String(row['id'])));
+  for (const reminder of await ctx.storage.collection<Row>('reminders').getAll()) {
+    if (reminder['deleted_at'] !== null || reminder['target_type'] !== 'event') continue;
+    if (ids.has(String(reminder['target_id']))) await remove(ctx, 'reminders', String(reminder['id']));
+  }
+  for (const id of ids) await remove(ctx, 'events', id);
+  return ids.size;
+}
+
+/** 删除一条排课及挂在它上面的排课级提醒与调课/停课记录（含其子事件与提醒）：不留指向已删排课的孤儿。 */
 async function removeScheduleDeep(ctx: Context, id: string): Promise<void> {
   await dropReminders(ctx, 'schedule', id);
-  for (const row of await ctx.storage.collection<Row>('events').getAll()) {
-    if (row['deleted_at'] !== null || row['ref_schedule_id'] !== id) continue;
-    await remove(ctx, 'events', String(row['id']));
-  }
+  const events = await ctx.storage.collection<Row>('events').getAll();
+  await removeEventsDeep(ctx, withDescendants(events, (row) => row['ref_schedule_id'] === id));
   await remove(ctx, 'course_schedules', id);
 }
 
@@ -239,7 +266,7 @@ export async function appendTimeSlot(
   const gap = Math.max(0, Math.round(breakMinutes));
   const startTime = last === undefined ? '08:00' : addMinutes(String(last['end_time']), gap);
   const periodNo = last === undefined ? 1 : Number(last['period_no']) + 1;
-  if (periodNo > 30) throw new Error('节次不能超过 30 节');
+  if (periodNo > MAX_PERIODS) throw new Error(`节次不能超过 ${MAX_PERIODS} 节`);
   return insert(ctx, 'time_slots', {
     id: ctx.id(),
     semester_id: semesterId,
@@ -397,8 +424,10 @@ export async function deleteSemesterDeep(
   const slots = (await storage.collection<Row>('time_slots').getAll()).filter(
     (row) => isAlive(row) && row['semester_id'] === id,
   );
-  const events = (await storage.collection<Row>('events').getAll()).filter(
-    (row) => isAlive(row) && row['semester_id'] === id,
+  // 本学期的事件、挂在本学期排课上的调课/停课（semester_id 可能为空），以及它们的子孙事件
+  const events = withDescendants(
+    await storage.collection<Row>('events').getAll(),
+    (row) => row['semester_id'] === id || scheduleIds.has(String(row['ref_schedule_id'])),
   );
   const eventIds = new Set(events.map((row) => String(row['id'])));
   const reminders = (await storage.collection<Row>('reminders').getAll()).filter((row) => {
@@ -888,14 +917,11 @@ export async function clearReschedules(
   return matched.length;
 }
 
-export async function deleteEvent(storage: Storage, id: string, options: WriteOptions = {}): Promise<void> {  const ctx = context(storage, options);
+/** 删除事件及其全部子孙事件，连同它们的提醒。 */
+export async function deleteEvent(storage: Storage, id: string, options: WriteOptions = {}): Promise<void> {
+  const ctx = context(storage, options);
   const events = await storage.collection<Row>('events').getAll();
-  for (const event of events) {
-    if (event['deleted_at'] !== null || event['parent_id'] !== id) continue;
-    await remove(ctx, 'events', String(event['id']));
-  }
-  await dropReminders(ctx, 'event', id);
-  await remove(ctx, 'events', id);
+  await removeEventsDeep(ctx, withDescendants(events, (row) => row['id'] === id));
 }
 
 export interface SetReminderInput {
