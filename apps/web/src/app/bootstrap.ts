@@ -135,16 +135,23 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
       if (snapshot !== null) {
         logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
       }
-      const sync = await maybeAutoSync(opened, loaded, { startup: true });
-      if (sync.action === 'remote-newer') {
-        hooks.onRemoteNewer?.({ name: sync.name, detail: sync.detail });
-      } else if (sync.action === 'uploaded') {
-        logInfo('webdav', '启动自动同步已上传', { name: sync.name });
-      } else if (sync.action === 'error') {
-        logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
-      }
     }
     await hooks.loadData(opened, loaded);
+    // WebDAV 走网络：放到首屏之后在后台跑，服务器慢或连不上都不挡住课表
+    if (!readOnly) {
+      void maybeAutoSync(opened, loaded, { startup: true })
+        .then((sync) => {
+          if (hooks.isCancelled?.() === true) return;
+          if (sync.action === 'remote-newer') {
+            hooks.onRemoteNewer?.({ name: sync.name, detail: sync.detail });
+          } else if (sync.action === 'uploaded') {
+            logInfo('webdav', '启动自动同步已上传', { name: sync.name });
+          } else if (sync.action === 'error') {
+            logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
+          }
+        })
+        .catch((cause: unknown) => logWarn('webdav', '启动自动同步失败', { detail: describeError(cause) }));
+    }
     const manager = globalThis.navigator?.storage;
     if (manager !== undefined && typeof manager.persist === 'function') {
       const granted = await manager.persist();
