@@ -1,4 +1,4 @@
-import { BACKUP_META_KEYS, moduleStores, type Storage } from '@dawn-tick/core';
+import { BACKUP_META_KEYS, LAN_EXCLUDED_KEYS, moduleStores, type Storage } from '@dawn-tick/core';
 import { errorMessage } from './lib/errors.ts';
 import { logInfo, logWarn } from './log.ts';
 import {
@@ -88,6 +88,7 @@ async function countRows(
 async function countSettings(storage: Storage, envelope: LanEnvelope): Promise<number> {
   let count = 0;
   for (const key of BACKUP_META_KEYS) {
+    if (LAN_EXCLUDED_KEYS.includes(key)) continue;
     const incoming = envelope.backup.meta[key];
     if (incoming === undefined) continue;
     const existing = await storage.readMeta(key);

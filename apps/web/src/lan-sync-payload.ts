@@ -1,5 +1,6 @@
 import {
   BACKUP_FORMAT,
+  LAN_EXCLUDED_KEYS,
   exportBackup,
   importBackup,
   parseBackup,
@@ -54,7 +55,7 @@ export async function buildLanEnvelope(
   scopes: readonly LanScope[],
   now = Date.now(),
 ): Promise<LanEnvelope> {
-  const backup = await exportBackup(storage, { modules: scopeModules(scopes), now });
+  const backup = await exportBackup(storage, { modules: scopeModules(scopes), now, excludeMeta: LAN_EXCLUDED_KEYS });
   return {
     kind: LAN_SYNC_KIND,
     schemaVersion: LAN_SYNC_PROTOCOL_VERSION,
@@ -115,6 +116,7 @@ export async function applyLanEnvelope(
     mode: options.mode ?? 'merge',
     modules,
     now: options.now ?? Date.now(),
+    excludeMeta: LAN_EXCLUDED_KEYS,
   });
 }
 

@@ -219,13 +219,13 @@ test('设置清单覆盖全部设置键', async () => {
   assert.equal(payload.meta['dev_features'], '0');
   assert.equal(payload.meta['log_enabled'], '0');
   assert.equal(payload.meta['log_level'], 'warn');
-  assert.equal(payload.meta['wal_mode'], 'off');
+  // A20：数据库日志模式、开机自启、启动隐藏只对本机有意义，不进备份
+  assert.equal(payload.meta['wal_mode'], undefined);
 
   const target = createStorage();
   await importBackup(target, payload, { modules: ['settings'], mode: 'overwrite' });
   const settings = await import('../src/settings.ts').then((module) => module.readSettings(target));
   assert.equal(settings.todoSort, 'type');
-  assert.equal(settings.walMode, 'off');
   assert.equal(settings.devFeatures, false);
 });
 
@@ -233,6 +233,9 @@ test('备份键清单由设置键清单派生', () => {
   assert.ok(BACKUP_META_KEYS.includes('week_starts_today'), '缺 week_starts_today');
   assert.ok(BACKUP_META_KEYS.includes('hide_weekends'), '缺 hide_weekends');
   assert.equal(BACKUP_META_KEYS.includes('webdav_password'), false, '密码不应进备份');
+  for (const key of ['wal_mode', 'auto_start', 'start_hidden']) {
+    assert.equal(BACKUP_META_KEYS.includes(key), false, `${key} 是本机设置，不进备份`);
+  }
   for (const key of SETTING_META_KEYS) {
     if (EXPORT_EXCLUDED_KEYS.includes(key)) continue;
     assert.ok(BACKUP_META_KEYS.includes(key), `备份键清单缺少设置键 ${key}`);
