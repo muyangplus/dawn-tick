@@ -24,7 +24,7 @@ import { createUpdateHost, joinPath } from '../src/lib/update-install.ts';
 const CHECKSUMS_URL = 'https://example.com/download/SHA256SUMS.txt';
 
 /** 发布清单：资产名与发布流程一致（`DawnTick-<版本>-<渠道>-…`）。 */
-function manifestWith(assets: UpdateManifest['assets'], checksumsUrl = CHECKSUMS_URL): UpdateManifest {
+function manifestWith(assets: NonNullable<UpdateManifest['assets']>, checksumsUrl = CHECKSUMS_URL): UpdateManifest {
   return { channel: 'release', version: '0.5.0', assets, checksumsUrl };
 }
 

@@ -22,6 +22,7 @@ import {
   type Occurrence,
   type SemesterRow,
   type Storage,
+  type TimeSlotRow,
 } from '@dawn-tick/core';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
@@ -385,7 +386,7 @@ test('buildGrid：主课次、停课、调课落点、虚线与实验各就各�
     events: await storage.collection<EventRow>('events').getAll(),
   };
   const slots = await storage
-    .collection<{ period_no: number; start_time: string; end_time: string }>('time_slots')
+    .collection<TimeSlotRow>('time_slots')
     .getAll();
   const events = rows.events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
   const holidays = loadHolidays(events);

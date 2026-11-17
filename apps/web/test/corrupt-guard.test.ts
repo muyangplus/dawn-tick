@@ -23,14 +23,26 @@ function corruptError(): Error {
 /** 让 `getAll` 抛指定错误的存储：模拟读到一半才发现损坏。 */
 function failingStorage(message: string): Storage {
   const base = new MemoryStorage();
+  // MemoryStorage 的方法在原型上，展开会丢失，这里逐个委托
   return {
-    ...base,
-    collection: <T,>(name: Parameters<Storage['collection']>[0]): Collection<T> => ({
-      ...base.collection<T>(name),
-      getAll: async () => {
-        throw new Error(message);
-      },
-    }),
+    kind: base.kind,
+    readMeta: (key) => base.readMeta(key),
+    writeMeta: (key, value) => base.writeMeta(key, value),
+    close: () => base.close(),
+    collection: <T,>(name: Parameters<Storage['collection']>[0]): Collection<T> => {
+      const inner = base.collection<T>(name);
+      return {
+        name: inner.name,
+        get: (key) => inner.get(key),
+        getAll: async () => {
+          throw new Error(message);
+        },
+        put: (value) => inner.put(value),
+        putMany: (values) => inner.putMany(values),
+        delete: (key) => inner.delete(key),
+        clear: () => inner.clear(),
+      };
+    },
   };
 }
 

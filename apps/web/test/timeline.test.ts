@@ -10,6 +10,7 @@ import {
 import { formatCountdown, formatDayCountdown, formatRemaining, formatShortCountdown } from '../src/lib/format.ts';
 import { buildTimeline, splitTimeline } from '../src/screens/cards/timeline.ts';
 import type { AppData } from '../src/data.ts';
+import { appDataOf } from './kit/app-data.ts';
 import type { EventRow, Occurrence } from '@dawn-tick/core';
 
 const LESSON: Occurrence = {
@@ -45,7 +46,7 @@ const CANCEL_EVENT = {
 } as unknown as EventRow;
 
 function makeData(overrides: Partial<AppData> = {}): AppData {
-  return {
+  return appDataOf({
     timeZone: 'Asia/Shanghai',
     today: '2026-10-13',
     todayOfWeek: 2,
@@ -71,7 +72,7 @@ function makeData(overrides: Partial<AppData> = {}): AppData {
     countdowns: [],
     reschedules: [],
     ...overrides,
-  };
+  });
 }
 
 const SLOTS = [

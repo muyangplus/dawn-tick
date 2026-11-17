@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {
   addDays,
   dayOfWeek,
-  type AppData,
   type EventRow,
   type ManagedCourse,
   type Occurrence,
   type SemesterRow,
 } from '@dawn-tick/core';
+import type { AppData } from '../src/data.ts';
 import { buildSemesterStats, semesterWeekText } from '../src/lib/semester-stats.ts';
 
 const TIME_ZONE = 'Asia/Shanghai';

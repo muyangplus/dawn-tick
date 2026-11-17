@@ -733,7 +733,7 @@ function fakePresetContent(version: string): CachedPresetContent {
         name: '正方教务（缓存）',
         entryPath: '/jwglxt/xtgl/login_slogin.html',
         hint: '缓存正文',
-        detect: { markers: ['jwglxt'] },
+        detect: { markers: ['jwglxt'], timetableTableIds: [], timetableTableClasses: [], gridCellIdPatterns: [] },
       },
     ],
   };
@@ -757,13 +757,11 @@ function fakePresetSnapshot(version: string): PresetSnapshot {
     generatedAt: '2026-02-01T00:00:00.000Z',
     sources: {
       timetables: content.timetables.map((preset) => ({
-        id: preset.id,
         path: `presets/schools/${preset.id}/timetable.json`,
         sha256: `sha256:${sha256HexSync(canonicalPresetJson(preset))}`,
         ...preset,
       })),
       systems: content.systems.map((system) => ({
-        id: system.id,
         path: `presets/systems/${system.id}/system.json`,
         sha256: `sha256:${sha256HexSync(canonicalPresetJson(system))}`,
         ...system,
@@ -830,7 +828,7 @@ function installCanvas2dStub(): () => void {
             });
           }
           if (property === 'createLinearGradient') return () => gradient;
-          if (property in target) return target[property];
+          if (property in target) return (target as unknown as Record<string | symbol, unknown>)[property];
           return () => {};
         },
         set(target, property, value) {
@@ -1111,7 +1109,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '课程卡播报星期、节次、课程名与周次',
     namedLessonCard !== null &&
-      /^周[一二三四五六日] 第 \d+(?:–\d+)? 节 .+ 第 \d+ 周/.test(namedLessonCard.getAttribute('aria-label') ?? ''),
+      /^周[一二三四五六日] 第 \d+(?:–\d+)? 节 .+ 第 \d+ 周/.test(namedLessonCard!.getAttribute('aria-label') ?? ''),
     namedLessonCard?.getAttribute('aria-label') ?? '(无)',
   );
   // 卡片无论是可点击的 button 还是只读 div，都要带 data-role：行高自适应靠它量布局
@@ -1392,20 +1390,20 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '课前提醒为区块标题且全局配置是子项开关',
     reminderSection !== null &&
       (reminderSection.textContent ?? '').includes('课前提醒') &&
-      globalSwitch !== null &&
+      globalSwitch != null &&
       globalSwitch.getAttribute('aria-checked') === 'true' &&
       reminderSection.querySelector('input[type="checkbox"][aria-label="使用全局配置"]') === null &&
       (reminderSection.textContent ?? '').includes('跟随全局设置'),
     `switch=${globalSwitch?.getAttribute('aria-checked') ?? '(无)'}`,
   );
-  if (globalSwitch !== null) {
+  if (globalSwitch != null) {
     globalSwitch.click();
     await flush(8);
     check(
       '关掉全局配置后出现本课程单独设置',
-      (reminderSection.textContent ?? '').includes('本课程单独设置') &&
-        (reminderSection.textContent ?? '').includes('保存提醒'),
-      (reminderSection.textContent ?? '').slice(-40),
+      (reminderSection?.textContent ?? '').includes('本课程单独设置') &&
+        (reminderSection?.textContent ?? '').includes('保存提醒'),
+      (reminderSection?.textContent ?? '').slice(-40),
     );
     globalSwitch.click();
     await flush(8);
@@ -1502,7 +1500,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '弹层有高度上限且正文区可滚动',
     tallDialog !== null &&
-      tallBody !== null &&
+      tallBody != null &&
       tallCapped &&
       tallBody.className.includes('overflow-y-auto'),
     `弹层=${tallCapped ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
@@ -1921,7 +1919,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     { date: addDays(seededMonday, 10), range: '16:00–17:40', course: '线性代数' },
     { date: addDays(seededMonday, 7), range: '08:00–09:40', course: '高等数学' },
   ];
-  const picked = timelinePicks.find((item) => !seededHolidays.has(item.date)) ?? timelinePicks[0];
+  const picked = timelinePicks.find((item) => !seededHolidays.has(item.date)) ?? timelinePicks[0]!;
   const dateBox = view.container.querySelector('input[aria-label="查看日期"]');
   if (dateBox instanceof window.HTMLInputElement) setInputValue(dateBox, picked.date);
   await flush(10);
@@ -2914,7 +2912,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '确认后交给浏览器打开并关闭确认框',
     openedUrls.length === 1 &&
-      openedUrls[0].includes('template=request-school.yml') &&
+      openedUrls[0]!.includes('template=request-school.yml') &&
       linkUrlBox() === null &&
       (document.body.textContent ?? '').includes('已在默认浏览器打开'),
     `已打开 ${openedUrls.join('、') || '(无)'}`,
@@ -3094,8 +3092,8 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   // 版本必须高于当前构建，否则更新检查判定「无更新」不会弹窗（版本号随发布变动，这里按 appVersion 递推）
   const newerVersion = (() => {
     const parts = appVersion().split('.').map((item) => Number(item));
-    const major = Number.isFinite(parts[0]) ? parts[0] : 0;
-    const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
+    const major = Number.isFinite(parts[0]) ? parts[0]! : 0;
+    const minor = Number.isFinite(parts[1]) ? parts[1]! : 0;
     return `${major}.${minor + 1}.0`;
   })();
   const giteeVersionDev = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/version.json';
@@ -3996,6 +3994,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       available: true,
       error: null,
       feed: 'release',
+      source: 'github',
       current: appVersion(),
       latest: '0.5.1',
       manifest: {
@@ -4069,6 +4068,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       available: true,
       error: null,
       feed: 'release',
+      source: 'github',
       current: appVersion(),
       latest: '0.5.6',
       manifest: {
@@ -4127,6 +4127,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       available: true,
       error: null,
       feed: 'release',
+      source: 'github',
       current: appVersion(),
       latest: '0.5.7',
       manifest: {
@@ -4269,7 +4270,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   const backgroundSource = backgroundTask?.querySelector('[data-role="update-task-source"]')?.textContent ?? '';
   check('后台任务显示下载来源（Gitee）', backgroundSource.includes('来源 Gitee'), backgroundSource || '(无)');
-  releaseSlowChunk?.();
+  (releaseSlowChunk as (() => void) | null)?.();
   await flush(8);
   check(
     '后台下载完成后设备页给出「安装」入口',
@@ -6668,7 +6669,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         filterBox()?.checked === true &&
         (previewBox()?.querySelectorAll('[data-role="import-row"], [data-role="import-conflict-row"]').length ??
           -1) === 0 &&
-        emptyHint !== null &&
+        emptyHint != null &&
         (emptyHint.textContent ?? '').includes('没有冲突项'),
       `提示=${emptyHint?.textContent?.trim() ?? '(无)'} 行=${
         previewBox()?.querySelectorAll('[data-role="import-row"], [data-role="import-conflict-row"]').length ?? -1

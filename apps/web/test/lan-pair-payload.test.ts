@@ -15,7 +15,6 @@ const LINK =
 function ok(text: string) {
   const result = parsePairPayload(text);
   assert.equal(result.ok, true, `应能解析：${text} → ${result.ok ? '' : result.error}`);
-  if (!result.ok) throw new Error(result.error);
   return result.payload;
 }
 

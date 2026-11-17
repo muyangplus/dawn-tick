@@ -10,31 +10,12 @@ import {
   withAlpha,
 } from '../src/widget-snapshot.ts';
 import { PRESETS } from '../src/design/tokens.ts';
-import type { AppData, LessonCell } from '../src/data.ts';
+import type { LessonCell } from '../src/data.ts';
+import { appDataOf, eventRowOf, lessonCellOf, occurrenceOf } from './kit/app-data.ts';
 
-function appData(overrides: Partial<AppData> = {}): AppData {
-  return {
-    timeZone: 'Asia/Shanghai',
-    today: '2026-09-21',
-    todayOfWeek: 1,
-    week: 3,
-    viewWeek: 3,
-    weekStartDate: '2026-09-21',
-    semester: null,
-    semesters: [],
-    slots: [],
-    grid: new Map(),
-    todayLessons: [],
-    currentLesson: undefined,
-    nextLesson: undefined,
-    exams: [],
-    todos: [],
-    reschedules: [],
-    ...overrides,
-  };
-}
+const appData = appDataOf;
 
-const lesson = {
+const lesson = occurrenceOf({
   scheduleId: 's-1',
   courseId: 'c-1',
   courseName: '高等数学',
@@ -46,9 +27,9 @@ const lesson = {
   startAt: 1790000000000,
   endAt: 1790003600000,
   cancelled: false,
-};
+});
 
-const cell: LessonCell = {
+const cell = lessonCellOf({
   scheduleId: 's-1',
   courseId: 'c-1',
   name: '高数',
@@ -63,7 +44,7 @@ const cell: LessonCell = {
   inWeek: true,
   holiday: false,
   cancelled: false,
-};
+});
 
 test('无课时的快照', () => {
   const snapshot = buildWidgetSnapshot(appData(), DEFAULT_SETTINGS, 42);
@@ -112,38 +93,7 @@ test('有课时快照包含下一节、今日列表与周网格', () => {
 test('考试写入快照', () => {
   const data = appData({
     exams: [
-      {
-        id: 'e-1',
-        user_id: 'u1',
-        semester_id: 'sem-1',
-        parent_id: null,
-        type: 'exam',
-        title: '高等数学期末',
-        on_date: '2027-01-05',
-        start_at: 1790000000000,
-        end_at: null,
-        all_day: 0,
-        location: '教三-201',
-        note: null,
-        done: 0,
-        priority: null,
-        due_at: null,
-        subject: '高等数学',
-        seat_no: null,
-        ref_schedule_id: null,
-        action: null,
-        new_date: null,
-        new_period_start: null,
-        new_period_end: null,
-        new_room: null,
-        as_day_of_week: null,
-        source: null,
-        created_at: 1,
-        updated_at: 1,
-        deleted_at: null,
-        rev: 0,
-        dirty: 0,
-      },
+      eventRowOf({ id: 'e-1', type: 'exam', title: '高等数学期末', on_date: '2027-01-05', start_at: 1790000000000, location: '教三-201', subject: '高等数学' }),
     ],
   });
   const snapshot = buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1);
