@@ -21,6 +21,7 @@ node tools/release/version.mjs --check  # version consistency across apps (CI ru
 ```
 
 - The product's home time zone is `Asia/Shanghai`; the smoke pins it. CI also runs `pnpm test` under `Asia/Kolkata` and `America/New_York`, so time assertions must not depend on the local offset.
+- `pnpm test` also reruns the core suite on node:sqlite (`pnpm -C packages/core test:sqlite`, via `DT_TEST_STORAGE=sqlite` in `test/sqlite.env`) so FK/CHECK semantics are covered; SQLite-only known failures use `{ todo: sqliteTodo(...) }` from `test/kit`.
 - Test files are discovered by glob (`node --test "test/**/*.test.ts"` per package, `"tools/**/*.test.mjs"` at the root). Keep the double quotes so Node, not the shell, expands the pattern (works under Windows cmd too).
 - Other checks from `tools/verify/verify-all.ps1` (Windows/PowerShell, also covers builds, APK and cargo): `node tools/design/check-a11y.mjs`, `node --test tools/design/check-a11y.test.mjs` (tokens.ts ↔ styles.css consistency), `node tools/legal/collect-licenses.mjs --check`, `node tools/release/changelog.mjs --check`, `python tools/verify/check-workflows.py`.
 - Desktop shell: `cargo check --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml` / `cargo test ...` (the Rust tests include DDL checks). Android: `pnpm -C apps/web build && pnpm -C apps/mobile exec cap sync android`, then `sh ./gradlew assembleDebug` in `apps/mobile/android`.
