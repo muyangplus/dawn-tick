@@ -201,3 +201,21 @@ async function seededForSnapshot(): Promise<{ storage: Storage; semesterId: stri
   await events.put({ ...(await events.get(String(reschedule['id']))), semester_id: null });
   return { storage, semesterId };
 }
+
+test('没有来源的判定（界面上手设）与 manual 同级：学校与内置都不覆盖', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const events = storage.collection<EventRow>('events');
+  await events.put(eventRow('e-null', 'workday', { on_date: '2026-10-03', source: null }));
+  const result = await applyDayKind(storage, {
+    id: 'e-school',
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    onDate: '2026-10-03',
+    type: 'holiday',
+    source: 'from_school',
+    title: '教务校历',
+  });
+  assert.equal(result, 'skip');
+  assert.equal((await dayKindForDate(storage, SEMESTER_ID, '2026-10-03'))?.type, 'workday');
+});
