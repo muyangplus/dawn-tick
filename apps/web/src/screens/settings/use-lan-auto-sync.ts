@@ -11,6 +11,9 @@ import {
 } from '../../lan-sync-auto.ts';
 import { pullFromPeer, sessionExpired, type LanSession } from '../../lan-sync-client.ts';
 
+/** 应用本次启动的时刻：「每次启动」按应用启动算，而不是按打开设置面板算 */
+const APP_LAUNCHED_AT = Date.now();
+
 export interface UseLanAutoSyncOptions {
   storage: Storage;
   session: LanSession | null;
@@ -46,7 +49,10 @@ export function useLanAutoSync({
   onChanged,
 }: UseLanAutoSyncOptions): void {
   const configRef = useRef(config);
-  const launchAt = useRef(Date.now());
+  // 回调放进 ref：父组件每次渲染都会给出新函数，若作为 effect 依赖，进行中的拉取会被中途取消，
+  // 取消后已写入的数据不再触发刷新，lastRunAt 也没记上，下次又整份重拉
+  const callbacks = useRef({ onConfig, onNote, onExpired, onSynced, onSettingsReplaced, onChanged });
+  callbacks.current = { onConfig, onNote, onExpired, onSynced, onSettingsReplaced, onChanged };
 
   useEffect(() => {
     configRef.current = config;
@@ -58,8 +64,9 @@ export function useLanAutoSync({
     let timer: number | undefined;
     const run = async (): Promise<void> => {
       if (cancelled) return;
+      const { onConfig, onNote, onExpired, onSynced, onSettingsReplaced, onChanged } = callbacks.current;
       const current = configRef.current;
-      if (!shouldAutoSync(current, Date.now(), launchAt.current)) return;
+      if (!shouldAutoSync(current, Date.now(), APP_LAUNCHED_AT)) return;
       if (sessionExpired(session)) {
         onExpired();
         onNote('自动同步已暂停：配对过期，请重新配对');
@@ -70,7 +77,7 @@ export function useLanAutoSync({
         (value) => value.ok,
         1000,
       );
-      if (cancelled) return;
+      // 拉取已经写进本机：即使面板在这期间卸载，也要记下运行时间并通知刷新
       const next = { ...current, lastRunAt: Date.now() };
       configRef.current = next;
       saveAutoConfig(next);
@@ -96,5 +103,5 @@ export function useLanAutoSync({
       cancelled = true;
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [session, mode, storage, onConfig, onNote, onExpired, onSynced, onSettingsReplaced, onChanged]);
+  }, [session, mode, storage]);
 }
