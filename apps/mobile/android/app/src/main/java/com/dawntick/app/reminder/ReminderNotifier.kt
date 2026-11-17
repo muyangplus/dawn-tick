@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.dawntick.app.MainActivity
+import com.dawntick.app.R
 
 /**
  * 提醒通知的构建与投递（R-07）：只接管提醒通知，A-* 的 LocalNotifications 其它用途保持原样。
@@ -34,7 +35,7 @@ internal object ReminderNotifier {
     fun show(context: Context, record: ReminderRecord) {
         ensureChannel(context)
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_popup_reminder)
+            .setSmallIcon(R.drawable.ic_stat_dawntick)
             .setContentTitle(record.title)
             .setContentText(record.body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(record.body))
