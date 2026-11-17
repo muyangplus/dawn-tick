@@ -1,6 +1,7 @@
 import { readSystemsConfig, type SchoolSystemId, type SystemConfig } from '../config/index.ts';
 import type { ImportedSchedule } from './apply.ts';
-import { looksLikeRoom, matchWeekday, parsePeriodLabel } from './csv.ts';
+import { looksLikeRoom, matchWeekday } from './csv.ts';
+import { findWeekdayHeader, parseHtmlTables, stripTags, weekdayTableCells, type HtmlTable } from './html-grid.ts';
 import { parseTimetable, parseTimetableCells } from './jwglxt.ts';
 import { looksLikeWeeks, parseWeeksText } from './weeks-text.ts';
 
@@ -123,77 +124,11 @@ function activePageHints(): PageHintsState {
  */
 const LOOSE_TABLE_ID_PATTERN = /id\s*=\s*["'][^"']*(kb|skb|timetable)/i;
 
-const ENTITIES: Record<string, string> = {
-  '&nbsp;': ' ',
-  '&amp;': '&',
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#39;': "'",
-  '&apos;': "'",
-};
-
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&nbsp;|&amp;|&lt;|&gt;|&quot;|&#39;|&apos;/g, (match) => ENTITIES[match] ?? match)
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCharCode(Number(code)));
-}
-
-function stripTags(html: string): string {
-  return decodeEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|td|th|li)>/gi, '\n')
-      .replace(/<[^>]+>/g, ' '),
-  )
-    .replace(/[ \t\u00a0]+/g, ' ')
-    .trim();
-}
-
 function cellLines(html: string): string[] {
   return stripTags(html)
     .split(/\n|@|;|\|/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-}
-
-interface RawCell {
-  html: string;
-  colspan: number;
-  rowspan: number;
-}
-
-interface RawRow {
-  cells: RawCell[];
-}
-
-function attribute(tag: string, name: string): string | null {
-  const match = new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, 'i').exec(tag);
-  return match?.[1] ?? null;
-}
-
-function parseTables(html: string): RawRow[][] {
-  const tables: RawRow[][] = [];
-  for (const table of html.match(/<table[\s\S]*?<\/table>/gi) ?? []) {
-    const rows: RawRow[] = [];
-    for (const rowHtml of table.match(/<tr[\s\S]*?<\/tr>/gi) ?? []) {
-      const cells: RawCell[] = [];
-      for (const tag of rowHtml.match(/<t[dh][^>]*>[\s\S]*?<\/t[dh]>/gi) ?? []) {
-        const open = /^<t[dh][^>]*>/i.exec(tag)?.[0] ?? '';
-        const inner = tag.slice(open.length).replace(/<\/t[dh]>$/i, '');
-        cells.push({
-          html: inner,
-          colspan: Math.max(1, Number(attribute(open, 'colspan') ?? '1') || 1),
-          rowspan: Math.max(1, Number(attribute(open, 'rowspan') ?? '1') || 1),
-        });
-      }
-      if (cells.length > 0) rows.push({ cells });
-    }
-    if (rows.length > 1) tables.push(rows);
-  }
-  return tables;
 }
 
 function pickTeacher(lines: readonly string[], used: readonly (string | null)[]): string | null {
@@ -204,12 +139,6 @@ function pickTeacher(lines: readonly string[], used: readonly (string | null)[])
     if (/^[\u4e00-\u9fa5·]{2,6}$/.test(line) || /^[A-Za-z][A-Za-z .]{1,20}$/.test(line)) return line;
   }
   return null;
-}
-
-/** 单元格里的节次只在出现「节」或时间范围时取值，避免把「3-5周」当成节次。 */
-function periodFromCell(text: string): number | null {
-  if (!/节|\d{1,2}:\d{2}/.test(text)) return null;
-  return parsePeriodLabel(text)?.periodStart ?? null;
 }
 
 function buildSchedule(
@@ -225,7 +154,8 @@ function buildSchedule(
   if (name.length === 0 || name.length > 60) return null;
   if (matchWeekday(name) !== null) return null;
 
-  const weeksLine = lines.find((line) => looksLikeWeeks(line)) ?? null;
+  // 首行是课程名（如「周易」），不当周次行
+  const weeksLine = lines.slice(1).find((line) => looksLikeWeeks(line)) ?? null;
   const weeks = weeksLine === null ? null : parseWeeksText(weeksLine, totalWeeks);
   const room = lines.find((line) => line !== name && looksLikeRoom(line)) ?? null;
   const teacher = pickTeacher(lines, [name, room, weeksLine]);
@@ -279,48 +209,42 @@ export function inspectPage(html: string, options: { limit?: number } = {}): Pag
   const limit = options.limit ?? 2;
   const page = stripPageMarkers(html);
   const tables: PageTablePreview[] = [];
-  for (const [index, rows] of parseTables(page).entries()) {
+  for (const [index, table] of parseHtmlTables(page).entries()) {
     if (tables.length >= limit) break;
     tables.push({
       index,
-      rows: rows.slice(0, 12).map((row) => row.cells.slice(0, 10).map((cell) => stripTags(cell.html))),
+      rows: table.rows.slice(0, 12).map((row) => row.cells.slice(0, 10).map((cell) => stripTags(cell.html))),
     });
   }
   return { tables, system: detectSystem(page) };
 }
 
+/** 一张星期表头表格里的课程。 */
+function schedulesOf(
+  table: HtmlTable,
+  headerRow: number,
+  days: ReadonlyMap<number, number>,
+  periodColumn: number | null,
+  totalWeeks: number,
+): ImportedSchedule[] {
+  const schedules: ImportedSchedule[] = [];
+  for (const cell of weekdayTableCells(table, headerRow, days, periodColumn)) {
+    const schedule = buildSchedule(cell.slot.cell.html, cell.dayOfWeek, cell.periodStart, cell.periodEnd, totalWeeks);
+    if (schedule !== null) schedules.push(schedule);
+  }
+  return schedules;
+}
+
 /** 按用户指定的映射解析：表头行 + 星期列区间 + 节次列。 */
 function extractByMapping(html: string, mapping: PageMapping, totalWeeks: number): ImportedSchedule[] {
-  const dayColumns = new Map<number, number>();
+  const days = new Map<number, number>();
   for (let offset = 0; offset < mapping.dayCount; offset += 1) {
-    dayColumns.set(mapping.dayStartColumn + offset, Math.min(7, offset + 1));
+    days.set(mapping.dayStartColumn + offset, Math.min(7, offset + 1));
   }
-
   let best: ImportedSchedule[] = [];
-  for (const rows of parseTables(html)) {
-    if (rows[mapping.headerRow] === undefined) continue;
-    const schedules: ImportedSchedule[] = [];
-    for (let rowIndex = mapping.headerRow + 1; rowIndex < rows.length; rowIndex += 1) {
-      const row = rows[rowIndex];
-      if (row === undefined) continue;
-      const fallbackPeriod = Math.max(1, rowIndex - mapping.headerRow);
-      let period = fallbackPeriod;
-      if (mapping.periodColumn !== null) {
-        const label = stripTags(row.cells[mapping.periodColumn]?.html ?? '');
-        period = parsePeriodLabel(label)?.periodStart ?? fallbackPeriod;
-      }
-      let column = 0;
-      for (const cell of row.cells) {
-        const day = dayColumns.get(column);
-        if (day !== undefined) {
-          const cellPeriod = periodFromCell(stripTags(cell.html));
-          const start = cellPeriod ?? period;
-          const schedule = buildSchedule(cell.html, day, start, start, totalWeeks);
-          if (schedule !== null) schedules.push(schedule);
-        }
-        column += cell.colspan;
-      }
-    }
+  for (const table of parseHtmlTables(html)) {
+    if (table.rows[mapping.headerRow] === undefined) continue;
+    const schedules = schedulesOf(table, mapping.headerRow, days, mapping.periodColumn, totalWeeks);
     if (schedules.length > best.length) best = schedules;
   }
   return best;
@@ -339,7 +263,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
 
   if (options.mapping !== undefined) {
     const mapped = extractByMapping(page, options.mapping, totalWeeks);
-    const tableCount = parseTables(page).length;
+    const tableCount = parseHtmlTables(page).length;
     if (mapped.length === 0) {
       warnings.push('按指定映射未解析到课程，请检查表头行与星期列');
       return { schedules: [], warnings, shape: 'none', tables: tableCount };
@@ -360,58 +284,23 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
         schedules: parsed.schedules,
         warnings: [...parsed.warnings, `页面形态：${system.label}「日-节」网格`],
         shape: 'grid',
-        tables: parseTables(page).length,
+        tables: parseHtmlTables(page).length,
       };
     }
   }
 
-  const tables = parseTables(page)
-    .map((rows, index) => ({
-      rows,
-      index,
-      score: tableScore(rows.map((row) => row.cells.map((cell) => cell.html).join('')).join('')),
-    }))
+  const tables = parseHtmlTables(page)
+    .map((table, index) => ({ table, index, score: tableScore(table.html) }))
     .sort((left, right) => right.score - left.score || left.index - right.index)
-    .map((item) => item.rows);
+    .map((item) => item.table);
   let best: { schedules: ImportedSchedule[]; headerRow: number } | null = null;
 
-  for (const rows of tables) {
-    for (let headerIndex = 0; headerIndex < Math.min(3, rows.length); headerIndex += 1) {
-      const header = rows[headerIndex];
-      if (header === undefined) continue;
-      const dayColumns = new Map<number, number>();
-      let column = 0;
-      for (const cell of header.cells) {
-        const day = matchWeekday(stripTags(cell.html));
-        if (day !== null) dayColumns.set(column, day);
-        column += cell.colspan;
-      }
-      if (dayColumns.size < 3) continue;
-
-      const schedules: ImportedSchedule[] = [];
-      for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
-        const row = rows[rowIndex];
-        if (row === undefined) continue;
-        const label = stripTags(row.cells[0]?.html ?? '');
-        const labelPeriod = parsePeriodLabel(label);
-        let column = 0;
-        let period = labelPeriod?.periodStart ?? null;
-        for (const cell of row.cells) {
-          const day = dayColumns.get(column);
-          if (day !== undefined) {
-            const cellPeriod = periodFromCell(stripTags(cell.html));
-            const start = cellPeriod ?? period ?? rowIndex - headerIndex;
-            const end = cellPeriod ?? period ?? start;
-            const schedule = buildSchedule(cell.html, day, start, Math.max(start, end), totalWeeks);
-            if (schedule !== null) schedules.push(schedule);
-          }
-          column += cell.colspan;
-        }
-      }
-      if (best === null || schedules.length > best.schedules.length) {
-        best = { schedules, headerRow: headerIndex };
-      }
-      break;
+  for (const table of tables) {
+    const header = findWeekdayHeader(table);
+    if (header === null) continue;
+    const schedules = schedulesOf(table, header.row, header.days, null, totalWeeks);
+    if (best === null || schedules.length > best.schedules.length) {
+      best = { schedules, headerRow: header.row };
     }
   }
 
@@ -440,18 +329,7 @@ export function extractTimetableFromHtml(html: string, options: PageExtractOptio
 /** 页面里是否出现了课表特征，用于判断用户是否已到课表页。 */
 export function looksLikeTimetablePage(html: string): boolean {
   if (looksLikeGridPage(html)) return true;
-  const tables = parseTables(html);
-  for (const rows of tables) {
-    for (const row of rows.slice(0, 3)) {
-      const days = new Set<number>();
-      for (const cell of row.cells) {
-        const day = matchWeekday(stripTags(cell.html));
-        if (day !== null) days.add(day);
-      }
-      if (days.size >= 3) return true;
-    }
-  }
-  return false;
+  return parseHtmlTables(html).some((table) => findWeekdayHeader(table) !== null);
 }
 
 /** 多帧页面之间的分隔标记，书签小工具用它拼接同源 iframe 内容。 */
