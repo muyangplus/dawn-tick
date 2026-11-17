@@ -45,16 +45,20 @@ async function runBookmarklet(outer: string, inner: string, url: string) {
     } },
     configurable: true,
   });
+  // 书签每条路径都以 alert 收尾：等到 alert 即可，不再轮询；兜底超时防止用例挂死
+  let finished: () => void = () => {};
+  const done = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
   (window as unknown as { alert: (message: string) => void }).alert = (message: string) => {
     alerted = message;
+    finished();
   };
 
   window.eval(PAGE_BOOKMARKLET.replace(/^javascript:/, ''));
-  for (let attempt = 0; attempt < 200 && captured === ''; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  // 让 writeText 之后的 alert 回调先执行
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([done, new Promise((resolve) => (timer = setTimeout(resolve, 10_000)))]);
+  clearTimeout(timer);
   return { captured, alerted, window };
 }
 

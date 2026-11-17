@@ -94,6 +94,15 @@ function scheduleFlush(): void {
   }, 400);
 }
 
+/** 立即把缓冲写入本地存储，取消已排队的延迟写入（退出前与测试用）。 */
+export async function flushLogsNow(): Promise<void> {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  await flush();
+}
+
 async function flush(): Promise<void> {
   if (storage === null) return;
   try {
