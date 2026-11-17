@@ -57,3 +57,8 @@ test('周次文本', () => {
   assert.equal(describeWeeks(weeksToMask([1, 2, 3, 5, 7]), 20), '1-3,5,7周');
   assert.equal(describeWeeks(0, 20), '');
 });
+
+test('单周显示为「N周」', () => {
+  assert.equal(describeWeeks(1 << 4, 20), '5周');
+  assert.equal(describeWeeks((1 << 4) | (1 << 6), 20), '5-7周(单)');
+});
