@@ -657,3 +657,64 @@ test('删除课程同时删除排课级提醒与停课记录', async () => {
   assert.notEqual((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
   assert.notEqual((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
 });
+
+test('删除事件连带删除子孙事件及其提醒', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  await ensureUser(storage, USER_ID, '我', options);
+  const parent = await createEvent(storage, { userId: USER_ID, type: 'todo', title: '课程设计' }, options);
+  const child = await createEvent(storage, { userId: USER_ID, type: 'todo', title: '需求', parentId: String(parent['id']) }, options);
+  const grandchild = await createEvent(
+    storage,
+    { userId: USER_ID, type: 'todo', title: '访谈', parentId: String(child['id']) },
+    options,
+  );
+  await setReminder(storage, { userId: USER_ID, targetType: 'event', targetId: String(grandchild['id']), advanceMinutes: 5 }, options);
+
+  await deleteEvent(storage, String(parent['id']), options);
+  const events = await storage.collection<Record<string, unknown>>('events').getAll();
+  assert.equal(events.length, 3);
+  assert.ok(events.every((row) => (row['deleted_at'] as number) > 0));
+  const reminders = await storage.collection<Record<string, unknown>>('reminders').getAll();
+  assert.ok(reminders.every((row) => (row['deleted_at'] as number) > 0), '孙事件的提醒也删除');
+});
+
+test('删除学期连带删除挂在其排课上的调课（即使调课没记学期）', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const course = await createCourse(storage, { semesterId: String(semester['id']), name: '高等数学' }, options);
+  const schedule = await createSchedule(
+    storage,
+    { courseId: String(course['id']), dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: weekRange(1, 16) },
+    options,
+  );
+  const reschedule = await createReschedule(
+    storage,
+    {
+      userId: USER_ID,
+      semesterId: String(semester['id']),
+      refScheduleId: String(schedule['id']),
+      onDate: START_DATE,
+      action: 'cancel',
+    },
+    options,
+  );
+  const events = storage.collection<Record<string, unknown>>('events');
+  await events.put({ ...(await events.get(String(reschedule['id']))), semester_id: null });
+
+  const report = await deleteSemesterDeep(storage, String(semester['id']), options);
+  assert.equal(report.events, 1);
+  assert.ok(((await events.get(String(reschedule['id'])))?.['deleted_at'] as number) > 0);
+});
+
+test('节次上限统一为 40', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const semesterId = String(semester['id']);
+  const before = (await listTimeSlots(storage, semesterId)).length;
+  for (let index = before; index < 40; index += 1) await appendTimeSlot(storage, semesterId, 10, 0, options);
+  assert.equal((await listTimeSlots(storage, semesterId)).length, 40);
+  await assert.rejects(appendTimeSlot(storage, semesterId, 10, 0, options), /40 节/);
+});
