@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
 import { dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
@@ -36,15 +36,11 @@ import {
   type LessonPress,
 } from './timetable/drag-session.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
-import { isHolidayRunStart, lessonsOf, measureCards, occupied } from './timetable/week-grid-helpers.ts';
+import { isHolidayRunStart, lessonsOf, occupied } from './timetable/week-grid-helpers.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
 import { weekEmptyKind } from '../lib/week-empty.ts';
-import { ROW_HEIGHT_MAX, ROW_HEIGHT_MIN, nextRowHeight, rowHeightFor } from '../lib/row-height.ts';
-import { logDebug, logWarn } from '../log.ts';
+import { useRowHeight } from './timetable/use-row-height.ts';
 
-/** 同一宽度下最多连调两次行高：滚动条出现/消失会让宽度抖动，再调就会来回跳。 */
-const MAX_ROW_HEIGHT_ADJUSTS = 2;
-const ROW_HEIGHT_ADJUST_WINDOW_MS = 3000;
 /**
  * 44px 透明命中区：视觉尺寸不变，用伪元素把命中区外扩到触控口径（见 `--spacing-tap` 的 min-h-tap / size-tap 口径）。
  * 往上多扩 28px 是因为占位块只有一节高时，向下外扩会被 overflow-hidden 裁掉；左右各 14px 只占相邻留白。
@@ -113,14 +109,6 @@ export function WeekView({
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
   const [emptyDragMode, setEmptyDragMode] = useState<EmptyDragMode | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  /** 行高：按卡片内容量一次直接定高，范围 56–96，避免个别长标题把整页撑开 */
-  const [rowHeight, setRowHeight] = useState(ROW_HEIGHT_MIN);
-  const rowHeightRef = useRef(ROW_HEIGHT_MIN);
-  /** 上次量行高时的容器宽度：宽度没变就不重复量，避免滚动条宽度抖动引起反复调整 */
-  const measuredWidth = useRef<number | null>(null);
-  /** 同一宽度下的连续调整次数与起始时刻：超过上限就停在当前值 */
-  const adjustCount = useRef(0);
-  const adjustStart = useRef(0);
   const touchStart = useRef<number | null>(null);
   const session = useRef<LessonDragSession | null>(null);
   const suppressNextClick = useRef(false);
@@ -129,6 +117,7 @@ export function WeekView({
   const emptyRef = useRef<EmptyTarget | null>(null);
   const wheelAt = useRef(0);
   const sectionRef = useRef<HTMLElement | null>(null);
+  const rowHeight = useRowHeight(sectionRef, data);
   const emptyDrag = useRef<EmptyDragState | null>(null);
   /** 是否已显示拖动中的实时反馈：pointermove 里不读 state，避免拿到过期值 */
   const emptyVisual = useRef(false);
@@ -177,88 +166,6 @@ export function WeekView({
   const nowMinute = localMinuteOfDay(nowTick, data.timeZone);
   const ratio =
     gridHeight === 0 ? null : minuteToY(nowMinute, slots, rowHeight, metrics) / gridHeight;
-
-  /** 量一次卡片内容并直接定行高：只有内容挤不下才加高，收回要留余量，不会来回跳。 */
-  const applyRowHeight = useCallback((force: boolean): void => {
-    const section = sectionRef.current;
-    if (section === null) return;
-    const width = Math.round(section.getBoundingClientRect().width);
-    if (!force && measuredWidth.current === width) return;
-    measuredWidth.current = width;
-    const cards = measureCards();
-    if (cards.length === 0) return;
-    const current = rowHeightRef.current;
-    const next = nextRowHeight(current, cards);
-    if (next === current) return;
-    const now = Date.now();
-    if (now - adjustStart.current > ROW_HEIGHT_ADJUST_WINDOW_MS) {
-      adjustStart.current = now;
-      adjustCount.current = 0;
-    }
-    adjustCount.current += 1;
-    if (adjustCount.current > MAX_ROW_HEIGHT_ADJUSTS) {
-      logWarn('layout', '行高反复调整，停在当前值', { rowHeight: current, target: next, cards: cards.length });
-      return;
-    }
-    logDebug('layout', '行高按内容定一次', { from: current, to: next, cards: cards.length });
-    rowHeightRef.current = next;
-    setRowHeight(next);
-  }, []);
-
-  // 课表数据变化后量一次（内容变了可能要加高）
-  useEffect(() => {
-    measuredWidth.current = null;
-    const handle = globalThis.requestAnimationFrame(() => applyRowHeight(true));
-    return () => globalThis.cancelAnimationFrame(handle);
-  }, [data, applyRowHeight]);
-
-  // 容器宽度变化后重量一次（窗口缩放、桌面侧栏开关都会改变换行）
-  useEffect(() => {
-    const section = sectionRef.current;
-    if (section === null || typeof globalThis.ResizeObserver !== 'function') return;
-    let frame = 0;
-    const observer = new globalThis.ResizeObserver(() => {
-      if (frame !== 0) globalThis.cancelAnimationFrame(frame);
-      frame = globalThis.requestAnimationFrame(() => {
-        frame = 0;
-        applyRowHeight(false);
-      });
-    });
-    observer.observe(section);
-    return () => {
-      observer.disconnect();
-      if (frame !== 0) globalThis.cancelAnimationFrame(frame);
-    };
-  }, [applyRowHeight]);
-
-  // 字体加载完成后重量一次：字体替换会改变换行与内容高度
-  useEffect(() => {
-    const fonts = (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts;
-    if (fonts?.ready === undefined) return;
-    let cancelled = false;
-    void fonts.ready.then(() => {
-      if (!cancelled) applyRowHeight(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [applyRowHeight]);
-
-  // 真实窗口里的行高自检：启动时日志级别还没同步到原生，等布局稳定后再量一次并留痕
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const cards = measureCards();
-      if (cards.length === 0) return;
-      const target = rowHeightFor(cards);
-      logDebug('layout', '行高自检', { rowHeight: rowHeightRef.current, target, cards: cards.length });
-      if (target !== null && target >= ROW_HEIGHT_MAX) {
-        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight: rowHeightRef.current, target, cards: cards.length });
-      }
-    }, 2500);
-    return () => clearTimeout(timer);
-    // 只在挂载后量一次：后续行高变化由上面的测量逻辑负责
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(
     () => () => {
