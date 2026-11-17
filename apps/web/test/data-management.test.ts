@@ -19,6 +19,7 @@ import {
   isEncryptedBackup,
 } from '../src/lib/backup-crypto.ts';
 import { readZipEntries } from '../src/zip-read.ts';
+import { semesterRow, userRow } from '@dawn-tick/core/testing';
 import { buildPackageBytes, readPresetExtras } from '../src/package.ts';
 
 function createStorage(): MemoryStorage {
@@ -159,6 +160,9 @@ test('导入模式文案与结果一致', async () => {
   const payload = parseImportText(BACKUP_JSON);
   assert.deepEqual(presentModules(payload), ['courses', 'settings']);
   const storage = createStorage();
+  // 课程所属学期已在本机：只导入课程模块
+  await storage.collection('users').put(userRow());
+  await storage.collection('semesters').put(semesterRow({ id: 's-1' }));
   const result = await importConfig(storage, payload, { modules: ['courses'], mode: 'clear' });
   assert.equal(result.imported, 1);
   assert.match(importResultText(result, 'clear'), /先清空所选模块/);
