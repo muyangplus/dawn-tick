@@ -110,15 +110,22 @@ test('未配置地址时直接拒绝', async () => {
 test('上传会把整包 PUT 到固定名', async () => {
   const storage = new MemoryStorage();
   await writeSettings(storage, { theme: 'dark' });
-  const { calls, restore } = stubFetch(() => new Response(null, { status: 201 }));
+  // 服务器记下的修改时间晚于本机时刻（上传耗时、时钟偏差）：以服务器为准
+  const { calls, restore } = stubFetch(
+    () => new Response(null, { status: 201, headers: { 'last-modified': 'Tue, 14 Oct 2026 02:00:07 GMT' } }),
+  );
   try {
-    const result = await uploadPackage(storage, settings, 1_793_000_000_000);
+    const result = await uploadPackage(storage, settings, Date.parse('Tue, 14 Oct 2026 02:00:00 GMT'));
     assert.equal(result.ok, true);
     assert.equal(result.name, 'DawnTick-backup.zip');
     assert.ok(result.bytes > 0);
     assert.equal(calls[0]?.method, 'PUT');
     assert.equal(calls[0]?.url, 'https://dav.example.com/DawnTick/DawnTick-backup.zip');
-    assert.equal(await storage.readMeta('webdav_last_upload'), '1793000000000');
+    assert.equal(
+      await storage.readMeta('webdav_last_upload'),
+      String(Date.parse('Tue, 14 Oct 2026 02:00:07 GMT')),
+      'A15：记服务器修改时间，下次不会把自己的上传当成远端更新',
+    );
   } finally {
     restore();
   }
