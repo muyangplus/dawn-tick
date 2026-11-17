@@ -7,6 +7,7 @@ import {
   exportIcs,
   icsToSchedules,
   parseIcs,
+  unescapeIcsText,
   type IcsCourse,
   type IcsExtraEvent,
   type IcsSchedule,
@@ -131,12 +132,10 @@ test('不规则周次用 RDATE 表达并可还原', () => {
 test('RRULE 展开支持 COUNT 与 EXDATE', () => {
   const start = dateWallClockToEpoch('2026-09-07', '08:00', 'Asia/Shanghai');
   const excluded = [dateWallClockToEpoch('2026-09-14', '08:00', 'Asia/Shanghai')];
-  const { dates, warnings } = expandWeeklyRrule(
-    start,
-    'FREQ=WEEKLY;COUNT=4;BYDAY=MO;WKST=MO',
-    [],
-    excluded,
-  );
+  const { dates, warnings } = expandWeeklyRrule(start, 'FREQ=WEEKLY;COUNT=4;BYDAY=MO;WKST=MO', {
+    exdates: excluded,
+    timeZone: 'Asia/Shanghai',
+  });
   assert.deepEqual(warnings, []);
   assert.equal(dates.length, 3);
   assert.equal(formatDate(dates[0] as number, 'Asia/Shanghai'), '2026-09-07');
@@ -179,13 +178,149 @@ test('额外单次事件按时刻与全天写入', () => {
   assert.equal(calendar.events.length, 2);
   assert.equal(calendar.events[0]?.start, start);
   assert.equal(calendar.events[0]?.location, '教三-305');
-  // DATE 值不带时区：按浮动日期读成当天零点的 UTC 时刻
-  assert.equal(formatDate(calendar.events[1]?.start ?? 0, 'UTC'), '2026-10-01');
+  // DATE 值不带时区：按默认时区（Asia/Shanghai）读成当天零点
+  assert.equal(calendar.events[1]?.allDay, true);
+  assert.equal(formatDate(calendar.events[1]?.start ?? 0, 'Asia/Shanghai'), '2026-10-01');
   assert.equal(calendar.events[1]?.summary, '国庆节');
 });
 
 test('不支持的频度给出警告', () => {
   const start = dateWallClockToEpoch('2026-09-07', '08:00', 'Asia/Shanghai');
-  const { warnings } = expandWeeklyRrule(start, 'FREQ=MONTHLY;COUNT=3', [], []);
+  const { dates, warnings } = expandWeeklyRrule(start, 'FREQ=MONTHLY;COUNT=3');
   assert.ok(warnings.some((warning) => warning.includes('MONTHLY')));
+  assert.deepEqual(dates, [start], '只保留首次');
+});
+
+function calendarOf(...events: string[]): string {
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', ...events, 'END:VCALENDAR', ''].join('\r\n');
+}
+
+const at = (date: string, time: string, zone = 'Asia/Shanghai'): number => dateWallClockToEpoch(date, time, zone);
+
+test('浮动时间按导入时给的学期时区读', () => {
+  const text = calendarOf(
+    'BEGIN:VEVENT',
+    'UID:f1',
+    'SUMMARY:线性代数',
+    'DTSTART:20260907T080000',
+    'DTEND:20260907T084500',
+    'END:VEVENT',
+  );
+  assert.equal(parseIcs(text).events[0]?.start, at('2026-09-07', '08:00'), '默认 Asia/Shanghai');
+  const newYork = parseIcs(text, { defaultTimeZone: 'America/New_York' }).events[0];
+  assert.equal(newYork?.start, at('2026-09-07', '08:00', 'America/New_York'));
+  assert.equal(newYork?.timeZone, 'America/New_York');
+});
+
+test('Windows 时区名映射，无法识别的时区告警并按默认时区读，不整文件失败', () => {
+  const text = calendarOf(
+    'BEGIN:VEVENT',
+    'UID:w1',
+    'SUMMARY:高等数学',
+    'DTSTART;TZID="China Standard Time":20260907T080000',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:w2',
+    'SUMMARY:大学物理',
+    'DTSTART;TZID=Mars/Olympus:20260907T100000',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:w3',
+    'SUMMARY:体育',
+    'DTSTART;TZID=/mozilla.org/20050126_1/Asia/Tokyo:20260907T090000',
+    'END:VEVENT',
+  );
+  const calendar = parseIcs(text);
+  assert.equal(calendar.events.length, 3);
+  assert.equal(calendar.events[0]?.start, at('2026-09-07', '08:00'));
+  assert.equal(calendar.events[1]?.start, at('2026-09-07', '10:00'));
+  assert.equal(calendar.events[2]?.start, at('2026-09-07', '09:00', 'Asia/Tokyo'));
+  assert.equal(calendar.warnings.length, 1);
+  assert.match(calendar.warnings[0] ?? '', /Mars\/Olympus/);
+});
+
+test('多行 EXDATE / RDATE 累积，DATE 值的 EXDATE 按日期排除', () => {
+  const text = calendarOf(
+    'BEGIN:VEVENT',
+    'UID:x1',
+    'SUMMARY:高等数学',
+    'DTSTART;TZID=Asia/Shanghai:20260907T080000',
+    'DTEND;TZID=Asia/Shanghai:20260907T094000',
+    'RRULE:FREQ=WEEKLY;COUNT=6;BYDAY=MO',
+    'EXDATE;TZID=Asia/Shanghai:20260914T080000',
+    'EXDATE;VALUE=DATE:20260928',
+    'RDATE;TZID=Asia/Shanghai:20261019T080000',
+    'RDATE;TZID=Asia/Shanghai:20261026T080000',
+    'END:VEVENT',
+  );
+  const { schedules: imported, warnings } = icsToSchedules(parseIcs(text), semester, timeSlots);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(imported[0]?.weeks, [1, 3, 5, 6, 7, 8]);
+});
+
+test('多值 BYDAY 拆成每个星期一条排课', () => {
+  const text = calendarOf(
+    'BEGIN:VEVENT',
+    'UID:b1',
+    'SUMMARY:英语',
+    'DTSTART;TZID=Asia/Shanghai:20260907T100000',
+    'DTEND;TZID=Asia/Shanghai:20260907T114000',
+    'RRULE:FREQ=WEEKLY;COUNT=4;BYDAY=MO,TH',
+    'END:VEVENT',
+  );
+  const { schedules: imported } = icsToSchedules(parseIcs(text), semester, timeSlots);
+  const byDay = new Map(imported.map((item) => [item.dayOfWeek, item.weeks]));
+  assert.deepEqual(byDay.get(1), [1, 2]);
+  assert.deepEqual(byDay.get(4), [1, 2]);
+  assert.equal(imported[0]?.periodStart, 3);
+  assert.equal(imported[0]?.periodEnd, 4);
+});
+
+test('仅日期的 UNTIL 含当天', () => {
+  const start = at('2026-09-07', '08:00');
+  const { dates } = expandWeeklyRrule(start, 'FREQ=WEEKLY;UNTIL=20260921;BYDAY=MO', { timeZone: 'Asia/Shanghai' });
+  assert.deepEqual(
+    dates.map((item) => formatDate(item, 'Asia/Shanghai')),
+    ['2026-09-07', '2026-09-14', '2026-09-21'],
+  );
+});
+
+test('跨夏令时逐周保持同一墙钟时刻', () => {
+  const zone = 'America/New_York';
+  const start = at('2026-10-26', '09:00', zone);
+  const { dates } = expandWeeklyRrule(start, 'FREQ=WEEKLY;COUNT=3', { timeZone: zone });
+  assert.deepEqual(
+    dates.map((item) => dateWallClockToEpoch(formatDate(item, zone), '09:00', zone)),
+    dates,
+  );
+});
+
+test('VALARM 里的 DESCRIPTION 不覆盖事件的', () => {
+  const text = calendarOf(
+    'BEGIN:VEVENT',
+    'UID:a1',
+    'SUMMARY:高等数学',
+    'DESCRIPTION:张老师',
+    'DTSTART;TZID=Asia/Shanghai:20260907T080000',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Reminder',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+    'END:VEVENT',
+  );
+  assert.equal(parseIcs(text).events[0]?.description, '张老师');
+});
+
+test('反转义单遍处理：转义的反斜杠后跟 n 不变成换行', () => {
+  assert.equal(unescapeIcsText('a\\\\nb'), 'a\\nb');
+  assert.equal(unescapeIcsText('a\\nb\\,c\;d'), 'a\nb,c;d');
+  assert.equal(unescapeIcsText(escapeIcsText('C:\\new\nline')), 'C:\\new\nline');
+});
+
+test('全天事件不当成课程', () => {
+  const text = calendarOf('BEGIN:VEVENT', 'UID:d1', 'SUMMARY:国庆节', 'DTSTART;VALUE=DATE:20261001', 'END:VEVENT');
+  const { schedules: imported, warnings } = icsToSchedules(parseIcs(text), semester, timeSlots);
+  assert.equal(imported.length, 0);
+  assert.ok(warnings.some((warning) => warning.includes('全天')));
 });
