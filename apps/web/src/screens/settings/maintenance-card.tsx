@@ -2,11 +2,10 @@ import { useEffect, useState } from 'react';
 import { LOG_LEVELS, type AppSettings, type LogLevel, type Storage } from '@dawn-tick/core';
 import {
   BUILTIN_PRESET_VERSION,
-  cacheSnapshotContent,
   checkPresetUpdate,
   fetchSnapshot,
   resolvePresetSource,
-  writeCachedSnapshot,
+  storeDownloadedSnapshot,
   type PresetSource,
 } from '../../preset-update.ts';
 import { CHANNEL } from '../../channel.ts';
@@ -151,14 +150,17 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         // 取快照优先用实际取到版本清单的源，避免再从刚失败的源重试一遍
         const snapshotSource = status.downloadSource ?? source;
         const snapshot = await fetchSnapshot(status.version, undefined, { source: snapshotSource, fallback });
-        await writeCachedSnapshot(storage, snapshot);
-        // 快照是清单；正文在这一步校验后一并落盘，不合法时只记日志、下次启动回退内置。
-        const content = await cacheSnapshotContent(storage, snapshot);
-        if (!content.ok) {
-          logWarn('preset', '预设正文校验未通过，已缓存清单但不缓存正文', {
+        // 正文校验通过才落盘：不合法时保留原有缓存，不提示「下次启动生效」
+        const stored = await storeDownloadedSnapshot(storage, snapshot);
+        if (!stored.ok) {
+          logWarn('preset', '预设正文校验未通过，未缓存', {
             version: snapshot.version,
-            message: content.reason ?? '未知原因',
+            message: stored.reason ?? '未知原因',
           });
+          const failure = fail('下载预设', `预设 ${snapshot.version} 内容校验未通过`, '已保留当前预设，可稍后再试');
+          setPresetResult(said(failure));
+          toast.error(failure);
+          return;
         }
         setPresetSource(await resolvePresetSource(storage));
         const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统，来源 ${presetSourceLabel(status.downloadSource ?? source)}），下次启动生效`;

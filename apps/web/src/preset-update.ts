@@ -611,6 +611,20 @@ export async function cacheSnapshotContent(
   }
 }
 
+/**
+ * 下载到的快照落盘：先校验并写正文，通过后才写清单。
+ * 顺序反过来时，非法正文会让清单版本领先于已缓存的正文，启动时整份退回内置——之前能用的缓存也失效了。
+ */
+export async function storeDownloadedSnapshot(
+  storage: Storage,
+  snapshot: PresetSnapshot,
+): Promise<{ ok: boolean; reason?: string }> {
+  const content = await cacheSnapshotContent(storage, snapshot);
+  if (!content.ok) return content;
+  await writeCachedSnapshot(storage, snapshot);
+  return { ok: true };
+}
+
 /** 当前应使用的预设来源：缓存比内置新且哈希可信时用缓存，否则内置。 */
 export async function resolvePresetSource(storage: Storage): Promise<PresetSource> {
   const cached = await readCachedSnapshot(storage);

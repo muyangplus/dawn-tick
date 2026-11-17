@@ -23,6 +23,7 @@ import {
   sha256Hex,
   sha256HexSync,
   verifySnapshot,
+  storeDownloadedSnapshot,
   writeCachedSnapshot,
   type PresetIndex,
   type PresetSnapshot,
@@ -1014,4 +1015,14 @@ test('fetchSnapshot：Gitee raw 失败回退 Gitee API，再失败时（自动�
     PRESET_SNAPSHOT_URL('1.1.0'),
   ]);
   assert.equal(snapshot.version, '1.1.0');
+});
+
+test('A14 下载到的快照正文不合法时不落盘，原有缓存保持不变', async () => {
+  const storage = new MemoryStorage();
+  await writeCachedSnapshot(storage, DEMO_SNAPSHOT);
+
+  const broken: PresetSnapshot = { ...DEMO_SNAPSHOT, version: '9.9.9', sources: { timetables: [{ bogus: true }], systems: [] } };
+  const result = await storeDownloadedSnapshot(storage, broken);
+  assert.equal(result.ok, false);
+  assert.equal((await readCachedSnapshot(storage))?.version, DEMO_SNAPSHOT.version, '清单仍是原来那份');
 });
