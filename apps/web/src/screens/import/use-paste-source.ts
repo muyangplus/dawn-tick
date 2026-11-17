@@ -291,7 +291,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
         const semester = await loadSemester(storage, semesterId);
         if (semester === undefined) throw new Error('学期不存在');
         if (kind === 'ics') {
-          const calendar = parseIcs(await file.text());
+          const calendar = parseIcs(await file.text(), { defaultTimeZone: semester.time_zone });
           const timeSlots = await listTimeSlots(storage, semesterId);
           const converted = icsToSchedules(
             calendar,
