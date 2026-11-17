@@ -64,6 +64,8 @@ export const IMPORT_MODE_LABEL: Record<ImportMode, string> = {
 export interface ExportBackupOptions {
   modules?: readonly BackupModule[];
   now?: number;
+  /** 另外不导出的设置键（局域网同步用 LAN_EXCLUDED_KEYS） */
+  excludeMeta?: readonly string[];
 }
 
 /**
@@ -76,6 +78,8 @@ export interface ImportBackupOptions {
   mode?: ImportMode;
   modules?: readonly BackupModule[];
   now?: number;
+  /** 另外不导入的设置键 */
+  excludeMeta?: readonly string[];
   /** 缺省：合并/跳过（含局域网同步）保留本机；覆盖/清空（显式恢复）以备份为准 */
   activeSemester?: ActiveSemesterChoice;
 }
@@ -111,6 +115,7 @@ export async function exportBackup(
   const meta: Record<string, string> = {};
   if (modules.includes('settings')) {
     for (const key of BACKUP_META_KEYS) {
+      if (options.excludeMeta?.includes(key) === true) continue;
       const value = await storage.readMeta(key);
       if (value !== undefined) meta[key] = value;
     }
@@ -332,7 +337,7 @@ export async function importBackup(
 
   if (includeSettings) {
     for (const [key, value] of Object.entries(payload.meta)) {
-      if (!BACKUP_META_KEYS.includes(key)) continue;
+      if (!BACKUP_META_KEYS.includes(key) || options.excludeMeta?.includes(key) === true) continue;
       const existing = await storage.readMeta(key);
       // 值没变不算导入：否则每次局域网同步都报告有改动并触发整页重载
       if (existing === value) continue;

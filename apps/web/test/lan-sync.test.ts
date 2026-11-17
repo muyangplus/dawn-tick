@@ -542,3 +542,27 @@ test('回复会消耗配对码并保留/替换可信令牌（applyLanReply 语�
   const afterRevoke = applyLanReply(afterPair, { status: 200, body: '{}', tokens: [] });
   assert.equal(afterRevoke.tokens.length, 0);
 });
+
+test('A20 局域网同步不带本机设置与 WebDAV 地址/用户名', async () => {
+  const source = createStorage();
+  await source.writeMeta('theme', 'dark');
+  await source.writeMeta('auto_start', '1');
+  await source.writeMeta('wal_mode', 'off');
+  await source.writeMeta('webdav_url', 'https://dav.example.com');
+  await source.writeMeta('webdav_user', 'me');
+  const envelope = await buildLanEnvelope(source, ['settings'], NOW);
+  assert.equal(envelope.backup.meta['theme'], 'dark');
+  for (const key of ['auto_start', 'wal_mode', 'webdav_url', 'webdav_user']) {
+    assert.equal(envelope.backup.meta[key], undefined, `${key} 不随局域网同步`);
+  }
+
+  // 对方（旧版本）带过来的也不写入
+  const target = createStorage();
+  await applyLanEnvelope(target, {
+    ...envelope,
+    backup: { ...envelope.backup, meta: { ...envelope.backup.meta, auto_start: '1', webdav_url: 'https://x' } },
+  });
+  assert.equal(await target.readMeta('auto_start'), undefined);
+  assert.equal(await target.readMeta('webdav_url'), undefined);
+  assert.equal(await target.readMeta('theme'), 'dark');
+});

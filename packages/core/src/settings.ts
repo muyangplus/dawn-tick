@@ -213,8 +213,14 @@ const KEYS = {
 /** 设置项的全部存储键；备份键清单由它派生，避免两处手抄漂移。 */
 export const SETTING_META_KEYS: readonly string[] = Object.values(KEYS);
 
-/** 不进备份导出的设置键：备份文件可能被分享出去。 */
-export const EXPORT_EXCLUDED_KEYS: readonly string[] = ['webdav_password'];
+/**
+ * 不进备份导出的设置键：备份文件可能被分享出去（WebDAV 密码），
+ * 以及只对本机有意义的项（数据库日志模式、开机自启、启动时隐藏）——带到另一台设备会改动那台的系统行为。
+ */
+export const DEVICE_LOCAL_KEYS: readonly string[] = [WAL_META_KEY, 'auto_start', 'start_hidden'];
+export const EXPORT_EXCLUDED_KEYS: readonly string[] = ['webdav_password', ...DEVICE_LOCAL_KEYS];
+/** 局域网同步另外不带 WebDAV 地址与用户名：密码不随行，带过去只会得到一份配不全的 WebDAV。 */
+export const LAN_EXCLUDED_KEYS: readonly string[] = ['webdav_url', 'webdav_user'];
 
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (value === '1' || value === 'true') return true;
