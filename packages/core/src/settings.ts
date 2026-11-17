@@ -170,48 +170,115 @@ export const BACKUP_KEEP_MAX = 100;
 /** 数据库日志模式的存储键；开启数据库前要先读它。 */
 export const WAL_META_KEY = 'wal_mode';
 
-const KEYS = {
-  timeZone: 'time_zone',
-  autoTimeZone: 'auto_time_zone',
-  viewDays: 'view_days',
-  weekStartsToday: 'week_starts_today',
-  hideWeekends: 'hide_weekends',
-  theme: 'theme',
-  themePreset: 'theme_preset',
-  motion: 'motion',
-  widgetBackground: 'widget_background',
-  autoStart: 'auto_start',
-  startHidden: 'start_hidden',
-  showOtherWeeks: 'show_other_weeks',
-  classReminderEnabled: 'class_reminder_enabled',
-  classReminderMinutes: 'class_reminder_minutes',
-  tomorrowPreview: 'tomorrow_preview',
-  semesterCountdown: 'semester_countdown',
-  holidayCountdown: 'holiday_countdown',
-  widgetVariant: 'widget_variant',
-  receiveBeta: 'receive_beta',
-  autoCheckUpdate: 'auto_check_update',
-  downloadSource: 'download_source',
-  todoSort: 'todo_sort',
-  devFeatures: 'dev_features',
-  logEnabled: 'log_enabled',
-  logLevel: 'log_level',
-  walMode: WAL_META_KEY,
-  autoBackup: 'auto_backup',
-  backupOnStart: 'backup_on_start',
-  backupDaily: 'backup_daily',
-  backupKeep: 'backup_keep',
-  webdavUrl: 'webdav_url',
-  webdavUser: 'webdav_user',
-  webdavPassword: 'webdav_password',
-  webdavAuto: 'webdav_auto',
-  webdavOnStart: 'webdav_on_start',
-  webdavDaily: 'webdav_daily',
-  webdavHistory: 'webdav_history',
-} as const;
+/** 一个设置项：存在 app_meta 的哪个键、怎么从字符串读回、怎么写成字符串、写之前怎么校验。 */
+interface SettingField<V> {
+  key: string;
+  /** 读回：值缺失或不合法时用默认值 */
+  parse: (raw: string | undefined, fallback: V) => V;
+  /** 写入：返回 null 表示不写（例如「跟随渠道」的 receiveBeta） */
+  encode: (value: V) => string | null;
+  /** 写之前校验，返回错误文案；所有字段校验通过后才开始写，不会只写一半 */
+  check?: (value: V) => string | null;
+}
 
-/** 设置项的全部存储键；备份键清单由它派生，避免两处手抄漂移。 */
-export const SETTING_META_KEYS: readonly string[] = Object.values(KEYS);
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === '1' || value === 'true') return true;
+  if (value === '0' || value === 'false') return false;
+  return fallback;
+}
+
+function flag(key: string): SettingField<boolean> {
+  return { key, parse: parseBoolean, encode: (value) => (value ? '1' : '0') };
+}
+
+function oneOf<V extends string>(key: string, options: readonly V[], label: string): SettingField<V> {
+  return {
+    key,
+    parse: (raw, fallback) => (raw !== undefined && (options as readonly string[]).includes(raw) ? (raw as V) : fallback),
+    encode: (value) => value,
+    check: (value) => ((options as readonly string[]).includes(value) ? null : `${label}只能是 ${options.join(' / ')}`),
+  };
+}
+
+function intRange(key: string, min: number, max: number, message: string): SettingField<number> {
+  return {
+    key,
+    parse: (raw, fallback) => {
+      const parsed = Number(raw);
+      return raw !== undefined && Number.isFinite(parsed) && parsed >= min && parsed <= max ? Math.round(parsed) : fallback;
+    },
+    encode: (value) => String(Math.round(value)),
+    check: (value) => (Number.isFinite(value) && value >= min && value <= max ? null : message),
+  };
+}
+
+function text(key: string, trim: boolean): SettingField<string> {
+  return {
+    key,
+    parse: (raw) => (trim ? (raw ?? '').trim() : (raw ?? '')),
+    encode: (value) => (trim ? value.trim() : value),
+  };
+}
+
+/** 全部设置项，顺序即 `SETTING_META_KEYS` 的顺序。 */
+const FIELDS: { readonly [K in keyof AppSettings]: SettingField<AppSettings[K]> } = {
+  timeZone: {
+    key: 'time_zone',
+    parse: (raw, fallback) => raw ?? fallback,
+    encode: (value) => value,
+    check: (value) => (value.length === 0 ? '时区不能为空' : null),
+  },
+  autoTimeZone: flag('auto_time_zone'),
+  viewDays: {
+    key: 'view_days',
+    parse: (raw, fallback) => (VIEW_DAY_OPTIONS.includes(Number(raw)) ? Number(raw) : fallback),
+    encode: (value) => String(value),
+    check: (value) => (VIEW_DAY_OPTIONS.includes(value) ? null : `周视图天数只能是 ${VIEW_DAY_OPTIONS.join(' / ')}`),
+  },
+  weekStartsToday: flag('week_starts_today'),
+  hideWeekends: flag('hide_weekends'),
+  theme: oneOf<ThemeMode>('theme', ['light', 'dark', 'system'], '主题'),
+  themePreset: oneOf('theme_preset', THEME_PRESETS, '配色'),
+  motion: oneOf('motion', MOTION_MODES, '动效'),
+  widgetBackground: oneOf('widget_background', WIDGET_BACKGROUNDS, '小组件背景'),
+  autoStart: flag('auto_start'),
+  startHidden: flag('start_hidden'),
+  showOtherWeeks: flag('show_other_weeks'),
+  classReminderEnabled: flag('class_reminder_enabled'),
+  classReminderMinutes: intRange('class_reminder_minutes', 1, 180, '提醒提前分钟数需要在 1 到 180 之间'),
+  tomorrowPreview: flag('tomorrow_preview'),
+  semesterCountdown: flag('semester_countdown'),
+  holidayCountdown: flag('holiday_countdown'),
+  widgetVariant: oneOf('widget_variant', WIDGET_VARIANTS, '悬浮窗样式'),
+  receiveBeta: {
+    key: 'receive_beta',
+    // 没设置过是 null：跟随当前渠道
+    parse: (raw) => (raw === '1' || raw === 'true' ? true : raw === '0' || raw === 'false' ? false : null),
+    encode: (value) => (value === null ? null : value ? '1' : '0'),
+  },
+  autoCheckUpdate: flag('auto_check_update'),
+  downloadSource: oneOf('download_source', DOWNLOAD_SOURCE_CHOICES, '下载源'),
+  todoSort: oneOf('todo_sort', TODO_SORTS, '待办排序'),
+  devFeatures: flag('dev_features'),
+  logEnabled: flag('log_enabled'),
+  logLevel: oneOf('log_level', LOG_LEVELS, '日志级别'),
+  walMode: oneOf(WAL_META_KEY, WAL_MODES, '数据库日志模式'),
+  autoBackup: flag('auto_backup'),
+  backupOnStart: flag('backup_on_start'),
+  backupDaily: flag('backup_daily'),
+  backupKeep: intRange('backup_keep', BACKUP_KEEP_MIN, BACKUP_KEEP_MAX, `保留份数需要在 ${BACKUP_KEEP_MIN} 到 ${BACKUP_KEEP_MAX} 之间`),
+  webdavUrl: text('webdav_url', true),
+  webdavUser: text('webdav_user', true),
+  webdavPassword: text('webdav_password', false),
+  webdavAuto: flag('webdav_auto'),
+  webdavOnStart: flag('webdav_on_start'),
+  webdavDaily: flag('webdav_daily'),
+  webdavHistory: flag('webdav_history'),
+};
+
+const FIELD_ENTRIES = Object.entries(FIELDS) as Array<[keyof AppSettings, SettingField<unknown>]>;
+
+export const SETTING_META_KEYS: readonly string[] = FIELD_ENTRIES.map(([, field]) => field.key);
 
 /**
  * 不进备份导出的设置键：备份文件可能被分享出去（WebDAV 密码），
@@ -222,305 +289,25 @@ export const EXPORT_EXCLUDED_KEYS: readonly string[] = ['webdav_password', ...DE
 /** 局域网同步另外不带 WebDAV 地址与用户名：密码不随行，带过去只会得到一份配不全的 WebDAV。 */
 export const LAN_EXCLUDED_KEYS: readonly string[] = ['webdav_url', 'webdav_user'];
 
-function parseBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === '1' || value === 'true') return true;
-  if (value === '0' || value === 'false') return false;
-  return fallback;
-}
-
 export async function readSettings(storage: Storage): Promise<AppSettings> {
-  const entries = await Promise.all([
-    storage.readMeta(KEYS.timeZone),
-    storage.readMeta(KEYS.autoTimeZone),
-    storage.readMeta(KEYS.viewDays),
-    storage.readMeta(KEYS.weekStartsToday),
-    storage.readMeta(KEYS.hideWeekends),
-    storage.readMeta(KEYS.theme),
-    storage.readMeta(KEYS.themePreset),
-    storage.readMeta(KEYS.motion),
-    storage.readMeta(KEYS.widgetBackground),
-    storage.readMeta(KEYS.autoStart),
-    storage.readMeta(KEYS.startHidden),
-    storage.readMeta(KEYS.showOtherWeeks),
-    storage.readMeta(KEYS.classReminderEnabled),
-    storage.readMeta(KEYS.classReminderMinutes),
-    storage.readMeta(KEYS.tomorrowPreview),
-    storage.readMeta(KEYS.semesterCountdown),
-    storage.readMeta(KEYS.holidayCountdown),
-    storage.readMeta(KEYS.widgetVariant),
-    storage.readMeta(KEYS.receiveBeta),
-    storage.readMeta(KEYS.autoCheckUpdate),
-    storage.readMeta(KEYS.downloadSource),
-    storage.readMeta(KEYS.todoSort),
-    storage.readMeta(KEYS.devFeatures),
-    storage.readMeta(KEYS.logEnabled),
-    storage.readMeta(KEYS.logLevel),
-    storage.readMeta(KEYS.walMode),
-    storage.readMeta(KEYS.autoBackup),
-    storage.readMeta(KEYS.backupOnStart),
-    storage.readMeta(KEYS.backupDaily),
-    storage.readMeta(KEYS.backupKeep),
-    storage.readMeta(KEYS.webdavUrl),
-    storage.readMeta(KEYS.webdavUser),
-    storage.readMeta(KEYS.webdavPassword),
-    storage.readMeta(KEYS.webdavAuto),
-    storage.readMeta(KEYS.webdavOnStart),
-    storage.readMeta(KEYS.webdavDaily),
-    storage.readMeta(KEYS.webdavHistory),
-  ]);
-  const [
-    timeZone,
-    autoTimeZone,
-    viewDays,
-    weekStartsToday,
-    hideWeekends,
-    theme,
-    themePreset,
-    motion,
-    widgetBackground,
-    autoStart,
-    startHidden,
-    showOtherWeeks,
-    classReminderEnabled,
-    classReminderMinutes,
-    tomorrowPreview,
-    semesterCountdown,
-    holidayCountdown,
-    widgetVariant,
-    receiveBeta,
-    autoCheckUpdate,
-    downloadSource,
-    todoSort,
-    devFeatures,
-    logEnabled,
-    logLevel,
-    walMode,
-    autoBackup,
-    backupOnStart,
-    backupDaily,
-    backupKeep,
-    webdavUrl,
-    webdavUser,
-    webdavPassword,
-    webdavAuto,
-    webdavOnStart,
-    webdavDaily,
-    webdavHistory,
-  ] = entries;
-  const parsedDays = Number(viewDays);
-  const parsedMinutes = Number(classReminderMinutes);
-  const parsedKeep = Number(backupKeep);
-
-  return {
-    timeZone: timeZone ?? DEFAULT_SETTINGS.timeZone,
-    autoTimeZone: parseBoolean(autoTimeZone, DEFAULT_SETTINGS.autoTimeZone),
-    viewDays: VIEW_DAY_OPTIONS.includes(parsedDays) ? parsedDays : DEFAULT_SETTINGS.viewDays,
-    weekStartsToday: parseBoolean(weekStartsToday, DEFAULT_SETTINGS.weekStartsToday),
-    hideWeekends: parseBoolean(hideWeekends, DEFAULT_SETTINGS.hideWeekends),
-    theme:
-      theme === 'light' || theme === 'dark' || theme === 'system' ? theme : DEFAULT_SETTINGS.theme,
-    themePreset:
-      themePreset !== undefined && (THEME_PRESETS as readonly string[]).includes(themePreset)
-        ? (themePreset as ThemePreset)
-        : DEFAULT_SETTINGS.themePreset,
-    motion:
-      motion !== undefined && (MOTION_MODES as readonly string[]).includes(motion)
-        ? (motion as MotionMode)
-        : DEFAULT_SETTINGS.motion,
-    widgetBackground:
-      widgetBackground !== undefined && (WIDGET_BACKGROUNDS as readonly string[]).includes(widgetBackground)
-        ? (widgetBackground as WidgetBackground)
-        : DEFAULT_SETTINGS.widgetBackground,
-    autoStart: parseBoolean(autoStart, DEFAULT_SETTINGS.autoStart),
-    startHidden: parseBoolean(startHidden, DEFAULT_SETTINGS.startHidden),
-    showOtherWeeks: parseBoolean(showOtherWeeks, DEFAULT_SETTINGS.showOtherWeeks),
-    classReminderEnabled: parseBoolean(classReminderEnabled, DEFAULT_SETTINGS.classReminderEnabled),
-    classReminderMinutes:
-      Number.isFinite(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 180
-        ? Math.round(parsedMinutes)
-        : DEFAULT_SETTINGS.classReminderMinutes,
-    tomorrowPreview: parseBoolean(tomorrowPreview, DEFAULT_SETTINGS.tomorrowPreview),
-    semesterCountdown: parseBoolean(semesterCountdown, DEFAULT_SETTINGS.semesterCountdown),
-    holidayCountdown: parseBoolean(holidayCountdown, DEFAULT_SETTINGS.holidayCountdown),
-    widgetVariant:
-      widgetVariant !== undefined && (WIDGET_VARIANTS as readonly string[]).includes(widgetVariant)
-        ? (widgetVariant as WidgetVariant)
-        : DEFAULT_SETTINGS.widgetVariant,
-    receiveBeta:
-      receiveBeta === '1' || receiveBeta === 'true' ? true : receiveBeta === '0' || receiveBeta === 'false' ? false : null,
-    autoCheckUpdate: parseBoolean(autoCheckUpdate, DEFAULT_SETTINGS.autoCheckUpdate),
-    downloadSource:
-      downloadSource !== undefined && (DOWNLOAD_SOURCE_CHOICES as readonly string[]).includes(downloadSource)
-        ? (downloadSource as DownloadSourceChoice)
-        : DEFAULT_SETTINGS.downloadSource,
-    todoSort:
-      todoSort !== undefined && (TODO_SORTS as readonly string[]).includes(todoSort)
-        ? (todoSort as TodoSort)
-        : DEFAULT_SETTINGS.todoSort,
-    devFeatures: parseBoolean(devFeatures, DEFAULT_SETTINGS.devFeatures),
-    logEnabled: parseBoolean(logEnabled, DEFAULT_SETTINGS.logEnabled),
-    logLevel:
-      logLevel !== undefined && (LOG_LEVELS as readonly string[]).includes(logLevel)
-        ? (logLevel as LogLevel)
-        : DEFAULT_SETTINGS.logLevel,
-    walMode:
-      walMode !== undefined && (WAL_MODES as readonly string[]).includes(walMode)
-        ? (walMode as WalMode)
-        : DEFAULT_SETTINGS.walMode,
-    autoBackup: parseBoolean(autoBackup, DEFAULT_SETTINGS.autoBackup),
-    backupOnStart: parseBoolean(backupOnStart, DEFAULT_SETTINGS.backupOnStart),
-    backupDaily: parseBoolean(backupDaily, DEFAULT_SETTINGS.backupDaily),
-    backupKeep:
-      Number.isFinite(parsedKeep) && parsedKeep >= BACKUP_KEEP_MIN && parsedKeep <= BACKUP_KEEP_MAX
-        ? Math.round(parsedKeep)
-        : DEFAULT_SETTINGS.backupKeep,
-    webdavUrl: (webdavUrl ?? '').trim(),
-    webdavUser: (webdavUser ?? '').trim(),
-    webdavPassword: webdavPassword ?? '',
-    webdavAuto: parseBoolean(webdavAuto, DEFAULT_SETTINGS.webdavAuto),
-    webdavOnStart: parseBoolean(webdavOnStart, DEFAULT_SETTINGS.webdavOnStart),
-    webdavDaily: parseBoolean(webdavDaily, DEFAULT_SETTINGS.webdavDaily),
-    webdavHistory: parseBoolean(webdavHistory, DEFAULT_SETTINGS.webdavHistory),
-  };
+  const values = await Promise.all(FIELD_ENTRIES.map(([, field]) => storage.readMeta(field.key)));
+  const settings: Record<string, unknown> = {};
+  FIELD_ENTRIES.forEach(([name, field], index) => {
+    settings[name] = field.parse(values[index], DEFAULT_SETTINGS[name]);
+  });
+  return settings as unknown as AppSettings;
 }
 
 export async function writeSettings(storage: Storage, patch: Partial<AppSettings>): Promise<AppSettings> {
-  if (patch.viewDays !== undefined && !VIEW_DAY_OPTIONS.includes(patch.viewDays)) {
-    throw new RangeError(`周视图天数只能是 ${VIEW_DAY_OPTIONS.join(' / ')}`);
+  const writes: Array<[string, string]> = [];
+  for (const [name, field] of FIELD_ENTRIES) {
+    const value = patch[name];
+    if (value === undefined) continue;
+    const problem = field.check?.(value) ?? null;
+    if (problem !== null) throw new RangeError(problem);
+    const encoded = field.encode(value);
+    if (encoded !== null) writes.push([field.key, encoded]);
   }
-  if (patch.timeZone !== undefined && patch.timeZone.length === 0) {
-    throw new RangeError('时区不能为空');
-  }
-  if (
-    patch.widgetBackground !== undefined &&
-    !(WIDGET_BACKGROUNDS as readonly string[]).includes(patch.widgetBackground)
-  ) {
-    throw new RangeError(`小组件背景只能是 ${WIDGET_BACKGROUNDS.join(' / ')}`);
-  }
-  if (
-    patch.widgetVariant !== undefined &&
-    !(WIDGET_VARIANTS as readonly string[]).includes(patch.widgetVariant)
-  ) {
-    throw new RangeError(`悬浮窗样式只能是 ${WIDGET_VARIANTS.join(' / ')}`);
-  }
-
-  if (patch.timeZone !== undefined) await storage.writeMeta(KEYS.timeZone, patch.timeZone);
-  if (patch.autoTimeZone !== undefined) {
-    await storage.writeMeta(KEYS.autoTimeZone, patch.autoTimeZone ? '1' : '0');
-  }
-  if (patch.viewDays !== undefined) await storage.writeMeta(KEYS.viewDays, String(patch.viewDays));
-  if (patch.weekStartsToday !== undefined) {
-    await storage.writeMeta(KEYS.weekStartsToday, patch.weekStartsToday ? '1' : '0');
-  }
-  if (patch.hideWeekends !== undefined) {
-    await storage.writeMeta(KEYS.hideWeekends, patch.hideWeekends ? '1' : '0');
-  }
-  if (patch.theme !== undefined) await storage.writeMeta(KEYS.theme, patch.theme);
-  if (patch.themePreset !== undefined) await storage.writeMeta(KEYS.themePreset, patch.themePreset);
-  if (patch.motion !== undefined) await storage.writeMeta(KEYS.motion, patch.motion);
-  if (patch.widgetBackground !== undefined) {
-    await storage.writeMeta(KEYS.widgetBackground, patch.widgetBackground);
-  }
-  if (patch.autoStart !== undefined) await storage.writeMeta(KEYS.autoStart, patch.autoStart ? '1' : '0');
-  if (patch.startHidden !== undefined) {
-    await storage.writeMeta(KEYS.startHidden, patch.startHidden ? '1' : '0');
-  }
-  if (patch.showOtherWeeks !== undefined) {
-    await storage.writeMeta(KEYS.showOtherWeeks, patch.showOtherWeeks ? '1' : '0');
-  }
-  if (patch.classReminderEnabled !== undefined) {
-    await storage.writeMeta(KEYS.classReminderEnabled, patch.classReminderEnabled ? '1' : '0');
-  }
-  if (patch.classReminderMinutes !== undefined) {
-    if (!Number.isFinite(patch.classReminderMinutes) || patch.classReminderMinutes < 1 || patch.classReminderMinutes > 180) {
-      throw new RangeError('提醒提前分钟数需要在 1 到 180 之间');
-    }
-    await storage.writeMeta(KEYS.classReminderMinutes, String(Math.round(patch.classReminderMinutes)));
-  }
-  if (patch.tomorrowPreview !== undefined) {
-    await storage.writeMeta(KEYS.tomorrowPreview, patch.tomorrowPreview ? '1' : '0');
-  }
-  if (patch.semesterCountdown !== undefined) {
-    await storage.writeMeta(KEYS.semesterCountdown, patch.semesterCountdown ? '1' : '0');
-  }
-  if (patch.holidayCountdown !== undefined) {
-    await storage.writeMeta(KEYS.holidayCountdown, patch.holidayCountdown ? '1' : '0');
-  }
-  if (patch.widgetVariant !== undefined) {
-    await storage.writeMeta(KEYS.widgetVariant, patch.widgetVariant);
-  }
-  if (patch.receiveBeta !== undefined && patch.receiveBeta !== null) {
-    await storage.writeMeta(KEYS.receiveBeta, patch.receiveBeta ? '1' : '0');
-  }
-  if (patch.autoCheckUpdate !== undefined) {
-    await storage.writeMeta(KEYS.autoCheckUpdate, patch.autoCheckUpdate ? '1' : '0');
-  }
-  if (patch.downloadSource !== undefined) {
-    if (!(DOWNLOAD_SOURCE_CHOICES as readonly string[]).includes(patch.downloadSource)) {
-      throw new RangeError(`下载源只能是 ${DOWNLOAD_SOURCE_CHOICES.join(' / ')}`);
-    }
-    await storage.writeMeta(KEYS.downloadSource, patch.downloadSource);
-  }
-  if (patch.todoSort !== undefined) {
-    if (!(TODO_SORTS as readonly string[]).includes(patch.todoSort)) {
-      throw new RangeError(`待办排序只能是 ${TODO_SORTS.join(' / ')}`);
-    }
-    await storage.writeMeta(KEYS.todoSort, patch.todoSort);
-  }
-  if (patch.devFeatures !== undefined) {
-    await storage.writeMeta(KEYS.devFeatures, patch.devFeatures ? '1' : '0');
-  }
-  if (patch.logEnabled !== undefined) {
-    await storage.writeMeta(KEYS.logEnabled, patch.logEnabled ? '1' : '0');
-  }
-  if (patch.logLevel !== undefined) {
-    if (!(LOG_LEVELS as readonly string[]).includes(patch.logLevel)) {
-      throw new RangeError(`日志级别只能是 ${LOG_LEVELS.join(' / ')}`);
-    }
-    await storage.writeMeta(KEYS.logLevel, patch.logLevel);
-  }
-  if (patch.walMode !== undefined) {
-    if (!(WAL_MODES as readonly string[]).includes(patch.walMode)) {
-      throw new RangeError(`数据库日志模式只能是 ${WAL_MODES.join(' / ')}`);
-    }
-    await storage.writeMeta(KEYS.walMode, patch.walMode);
-  }
-  if (patch.autoBackup !== undefined) {
-    await storage.writeMeta(KEYS.autoBackup, patch.autoBackup ? '1' : '0');
-  }
-  if (patch.backupOnStart !== undefined) {
-    await storage.writeMeta(KEYS.backupOnStart, patch.backupOnStart ? '1' : '0');
-  }
-  if (patch.backupDaily !== undefined) {
-    await storage.writeMeta(KEYS.backupDaily, patch.backupDaily ? '1' : '0');
-  }
-  if (patch.backupKeep !== undefined) {
-    if (
-      !Number.isFinite(patch.backupKeep) ||
-      patch.backupKeep < BACKUP_KEEP_MIN ||
-      patch.backupKeep > BACKUP_KEEP_MAX
-    ) {
-      throw new RangeError(`保留份数需要在 ${BACKUP_KEEP_MIN} 到 ${BACKUP_KEEP_MAX} 之间`);
-    }
-    await storage.writeMeta(KEYS.backupKeep, String(Math.round(patch.backupKeep)));
-  }
-  if (patch.webdavUrl !== undefined) await storage.writeMeta(KEYS.webdavUrl, patch.webdavUrl.trim());
-  if (patch.webdavUser !== undefined) await storage.writeMeta(KEYS.webdavUser, patch.webdavUser.trim());
-  if (patch.webdavPassword !== undefined) {
-    await storage.writeMeta(KEYS.webdavPassword, patch.webdavPassword);
-  }
-  if (patch.webdavAuto !== undefined) {
-    await storage.writeMeta(KEYS.webdavAuto, patch.webdavAuto ? '1' : '0');
-  }
-  if (patch.webdavOnStart !== undefined) {
-    await storage.writeMeta(KEYS.webdavOnStart, patch.webdavOnStart ? '1' : '0');
-  }
-  if (patch.webdavDaily !== undefined) {
-    await storage.writeMeta(KEYS.webdavDaily, patch.webdavDaily ? '1' : '0');
-  }
-  if (patch.webdavHistory !== undefined) {
-    await storage.writeMeta(KEYS.webdavHistory, patch.webdavHistory ? '1' : '0');
-  }
-
+  for (const [key, value] of writes) await storage.writeMeta(key, value);
   return readSettings(storage);
 }
