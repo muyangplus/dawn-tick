@@ -4,7 +4,7 @@ import { DEFAULT_TIME_ZONE } from './time.ts';
 import { MAX_PERIODS, addMinutes, parseClock, sectionOf } from './timetable.ts';
 import { MAX_WEEKS, describeWeeks, maskToWeeks, weeksToMask } from './weeks.ts';
 import type { Storage } from './storage.ts';
-import { assertValid } from './validation.ts';
+import { assertValid, isValidatedStorage } from './validation.ts';
 import type { EventNature, EventType, HolidaySource, PeriodSection, ReminderTargetType } from './types.ts';
 
 type Row = Record<string, unknown>;
@@ -48,6 +48,11 @@ function context(storage: Storage, options: WriteOptions = {}): Context {
   };
 }
 
+/** 写入前校验；存储已经由 validatedStorage 包过时由它在 put 里校验，这里不重复读表。 */
+async function check(ctx: Context, store: Parameters<Storage['collection']>[0], row: Row): Promise<void> {
+  if (!isValidatedStorage(ctx.storage)) await assertValid(ctx.storage, store, row);
+}
+
 /**
  * 写入前把对象键翻译成真实列名。
  * 对外输入是驼峰（shortName、startDate…），表里是下划线（short_name、start_date…），
@@ -55,7 +60,7 @@ function context(storage: Storage, options: WriteOptions = {}): Context {
  */
 async function insert(ctx: Context, store: Parameters<Storage['collection']>[0], row: Row): Promise<Row> {
   const values = normalizeRow(store, row);
-  await assertValid(ctx.storage, store, values);
+  await check(ctx, store, values);
   await ctx.storage.collection(store).put(values);
   return values;
 }
@@ -75,7 +80,7 @@ async function patch(
     rev: Number(existing['rev'] ?? 0) + 1,
     dirty: 1,
   };
-  await assertValid(ctx.storage, store, updated);
+  await check(ctx, store, updated);
   await ctx.storage.collection(store).put(updated);
   return updated;
 }
@@ -94,7 +99,7 @@ async function remove(
     rev: Number(existing['rev'] ?? 0) + 1,
     dirty: 1,
   };
-  await assertValid(ctx.storage, store, removed);
+  await check(ctx, store, removed);
   await ctx.storage.collection(store).put(removed);
 }
 

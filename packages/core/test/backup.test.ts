@@ -11,7 +11,9 @@ import {
 import { createSemester } from '../src/mutations.ts';
 import { EXPORT_EXCLUDED_KEYS, SETTING_META_KEYS, readSettings, writeSettings } from '../src/settings.ts';
 import { activeSemester, weekView } from '../src/repository.ts';
-import { START_DATE, USER_ID, createStorage, weekRange } from './kit/index.ts';
+import { START_DATE, USER_ID, createStorage, eventRow, weekRange } from './kit/index.ts';
+import { validatedStorage } from '../src/validation.ts';
+import { addDays } from '../src/time.ts';
 import type { Storage } from '../src/storage.ts';
 
 async function seedStorage() {
@@ -410,4 +412,38 @@ test('A10 备份解析保留导出时勾选的模块', async () => {
   const { storage } = await seedStorage();
   const payload = await exportBackup(storage, { modules: ['courses'] });
   assert.deepEqual(parseBackup(JSON.stringify(payload)).modules, ['courses']);
+});
+
+test('导入时每张表只读一次，不随行数线性增长', async () => {
+  const { storage, semesterId } = await seedStorage();
+  const source = storage.collection<Record<string, unknown>>('events');
+  const base = (await source.getAll())[0];
+  // 假期行受「同学期同日唯一」约束：旧实现每行都要整表读一遍
+  for (let index = 0; index < 200; index += 1) {
+    await source.put({
+      ...eventRow(`e-bulk-${index}`, 'holiday', { semester_id: semesterId, on_date: addDays('2027-01-01', index), source: 'manual' }),
+    });
+  }
+  const payload = await exportBackup(storage);
+
+  const target = validatedStorage(createStorage());
+  let reads = 0;
+  const counting: Storage = {
+    ...target,
+    kind: target.kind,
+    collection: <T,>(name: Parameters<Storage['collection']>[0]) => {
+      const inner = target.collection<T>(name);
+      return {
+        ...inner,
+        getAll: () => {
+          if (name === 'events') reads += 1;
+          return inner.getAll();
+        },
+      };
+    },
+  };
+  const result = await importBackup(counting, payload);
+  assert.equal(result.skipped, 0, JSON.stringify(result.warnings));
+  assert.ok(reads <= 4, `events 表读了 ${reads} 次`);
+  assert.ok(base === undefined || (await target.collection('events').get(String(base['id']))) !== undefined);
 });
