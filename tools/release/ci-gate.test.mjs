@@ -19,6 +19,10 @@ test('运行列表判定', () => {
   );
   assert.equal(
     verdictForRuns([{ status: 'completed', conclusion: 'cancelled' }]),
+    'cancelled',
+  );
+  assert.equal(
+    verdictForRuns([{ status: 'completed', conclusion: 'cancelled' }, { status: 'completed', conclusion: 'failure' }]),
     'failure',
   );
 });

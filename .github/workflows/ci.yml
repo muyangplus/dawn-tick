@@ -8,9 +8,10 @@ on:
     branches: [dev, main]
   workflow_dispatch:
 
+# PR 上新推送取消旧运行；分支与标签的每个提交都要跑完（发布闸门按提交等 CI）
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.sha }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -40,6 +41,11 @@ jobs:
           # 冒烟固定在产品主时区：runner 默认 UTC 会让「首次启动按系统时区对齐」把设置改成 UTC，时间文案全飘
           TZ: Asia/Shanghai
         run: pnpm ui:smoke
+      - name: 静态检查（可访问性、桌面挂件契约、更新日志结构）
+        run: |
+          node tools/design/check-a11y.mjs
+          node tools/verify/check-widget-contract.mjs
+          node tools/release/changelog.mjs --check
 
   timezones:
     name: 时区矩阵（${{ matrix.tz }}）
@@ -71,6 +77,10 @@ jobs:
         with:
           python-version: '3.13'
       - run: python tools/schema-check/validate_schema.py
+      - name: 工作流约束
+        run: |
+          pip install --quiet pyyaml
+          python tools/verify/check-workflows.py
 
   rust:
     name: Rust 壳与 DDL 校验
@@ -98,6 +108,17 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+      # 许可证清单要读 node_modules 与 cargo 注册表（含仅 Windows 的 crate），放在这里一起校验
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 第三方许可证声明与依赖一致
+        run: |
+          cargo fetch --manifest-path apps/desktop/src-tauri/Cargo.toml
+          node tools/legal/collect-licenses.mjs --check
 
   android:
     name: Android 编译校验
@@ -116,6 +137,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/mobile exec cap sync android
