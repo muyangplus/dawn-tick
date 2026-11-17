@@ -25,8 +25,10 @@ concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
 
+# 默认只读；只有 publish 任务写 Release
 permissions:
-  contents: write
+  contents: read
+  actions: read
 
 jobs:
   plan:
@@ -41,6 +43,7 @@ jobs:
       skip: ${{ steps.skipcheck.outputs.skip }}
       tag: ${{ steps.compute.outputs.tag }}
       buildRef: ${{ steps.compute.outputs.buildRef }}
+      buildSha: ${{ steps.compute.outputs.buildSha }}
       rolling: ${{ steps.compute.outputs.rolling }}
       prerelease: ${{ steps.compute.outputs.prerelease }}
       title: ${{ steps.compute.outputs.title }}
@@ -57,48 +60,76 @@ jobs:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_BETA_SUFFIX: ${{ inputs.beta_suffix }}
         run: |
+          set -euo pipefail
           TAGS=$(git tag --list 'v*-beta.*' | tr '\n' ',')
           # 纯版本号标签的测试版：标签说明里带 [prerelease] 即按预发布发布
           TAG_MESSAGE=""
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG_MESSAGE=$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)' 2>/dev/null || true)
           fi
-          node tools/release/plan.mjs \
-            --ref="$GITHUB_REF" \
-            --event="$GITHUB_EVENT_NAME" \
-            --run="$GITHUB_RUN_NUMBER" \
-            --channel="$INPUT_CHANNEL" \
-            --beta-suffix="${INPUT_BETA_SUFFIX:-plain}" \
-            --tag-message="$TAG_MESSAGE" \
-            --existing-tags="$TAGS" \
-            --github-output >> "$GITHUB_OUTPUT"
+          plan() {
+            node tools/release/plan.mjs \
+              --ref="$GITHUB_REF" \
+              --event="$GITHUB_EVENT_NAME" \
+              --run="$GITHUB_RUN_NUMBER" \
+              --channel="$INPUT_CHANNEL" \
+              --beta-suffix="${INPUT_BETA_SUFFIX:-plain}" \
+              --tag-message="$TAG_MESSAGE" \
+              --existing-tags="$TAGS" \
+              "$@" \
+              --github-output
+          }
+          # 构建来源只解析一次成提交号：之后各任务都检出这个提交，分支在构建期间前进也不会混用
+          BUILD_REF=$(plan | sed -n 's/^buildRef=//p')
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_NAME" == "$BUILD_REF" ]]; then
+            BUILD_SHA="$GITHUB_SHA"
+          else
+            git fetch --no-tags origin "+refs/heads/${BUILD_REF}:refs/remotes/build-ref" 2>/dev/null \
+              || git fetch --no-tags origin "+refs/tags/${BUILD_REF}:refs/remotes/build-ref"
+            BUILD_SHA=$(git rev-parse 'refs/remotes/build-ref^{commit}')
+          fi
+          # 版本号取构建提交里的 package.json，不取触发分支的
+          VERSION=$(git show "${BUILD_SHA}:package.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))')
+          plan --version="$VERSION" >> "$GITHUB_OUTPUT"
+          echo "buildSha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
       - name: 判断是否需要构建
         id: skipcheck
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ steps.compute.outputs.channel }}
+          BUILD_SHA: ${{ steps.compute.outputs.buildSha }}
         run: |
           set -euo pipefail
-          CHANNEL="${{ steps.compute.outputs.channel }}"
           if [ "$CHANNEL" != "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # 滚动渠道：dev-latest 记录的提交与本次相同就不重复构建（定时任务尤其省事）
+          # 滚动渠道：dev-latest 记录的提交与本次相同就不重复构建（定时任务尤其省事）。
+          # 正文里是短提交号，按前缀比
           body=$(gh release view dev-latest --json body --jq .body 2>/dev/null || true)
           last=$(printf '%s' "$body" | sed -n 's/.*提交 \([0-9a-f]\{7,40\}\).*/\1/p' | head -n 1)
-          if [ -n "$last" ] && [ "$last" = "$GITHUB_SHA" ]; then
+          if [ -n "$last" ] && [[ "$BUILD_SHA" == "$last"* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "dev-latest 已是提交 $last，跳过本次构建" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "将构建：dev-latest 记录 ${last:-无}，本次 $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            echo "将构建：dev-latest 记录 ${last:-无}，本次 $BUILD_SHA" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: 渠道摘要
+        env:
+          CHANNEL: ${{ steps.compute.outputs.channel }}
+          APP_VERSION: ${{ steps.compute.outputs.appVersion }}
+          STAMP: ${{ steps.compute.outputs.stamp }}
+          TAG: ${{ steps.compute.outputs.tag }}
+          BUILD_REF: ${{ steps.compute.outputs.buildRef }}
+          BUILD_SHA: ${{ steps.compute.outputs.buildSha }}
         run: |
-          echo "渠道 ${{ steps.compute.outputs.channel }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "版本 ${{ steps.compute.outputs.appVersion }}（构建时间戳 ${{ steps.compute.outputs.stamp }}）" >> "$GITHUB_STEP_SUMMARY"
-          echo "标签 ${{ steps.compute.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "构建自 ${{ steps.compute.outputs.buildRef }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "渠道 $CHANNEL"
+            echo "版本 $APP_VERSION（构建时间戳 $STAMP）"
+            echo "标签 $TAG"
+            echo "构建自 $BUILD_REF（$BUILD_SHA）"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   gate:
     name: 等待 CI 通过
@@ -111,12 +142,13 @@ jobs:
           node-version: 24
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.plan.outputs.buildRef }}
+          ref: ${{ needs.plan.outputs.buildSha }}
           fetch-depth: 1
       - name: 等待该提交的 CI
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node tools/release/ci-gate.mjs --ref="${{ needs.plan.outputs.buildRef }}" --timeout=2400
+          BUILD_SHA: ${{ needs.plan.outputs.buildSha }}
+        run: node tools/release/ci-gate.mjs --ref="$BUILD_SHA" --timeout=2400
 
   windows:
     name: Windows 安装包
@@ -130,7 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.plan.outputs.buildRef }}
+          ref: ${{ needs.plan.outputs.buildSha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -145,7 +177,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ needs.plan.outputs.channel }}" = "dev" ]; then
+          if [ "$DT_CHANNEL" = "dev" ]; then
             echo "PROFILE=debug" >> "$GITHUB_ENV"
             pnpm -C apps/desktop exec tauri build --debug
           else
@@ -166,17 +198,13 @@ jobs:
     if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
     env:
-      KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       DT_CHANNEL: ${{ needs.plan.outputs.channel }}
       DT_VERSION: ${{ needs.plan.outputs.appVersion }}
       DT_VERSION_CODE: ${{ needs.plan.outputs.versionCode }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.plan.outputs.buildRef }}
+          ref: ${{ needs.plan.outputs.buildSha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -198,17 +226,25 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/mobile exec cap sync android
+      # 签名密钥只给用到它的两步，前面的依赖安装与网页构建拿不到
       - name: 写入签名材料
-        if: env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.key"
-          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.key" >> "$GITHUB_ENV"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.key"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.key" >> "$GITHUB_ENV"
+          fi
       - name: 打包
         working-directory: apps/mobile/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           # 所有渠道都优先 release 构建：R8 + 资源裁剪 + ABI 过滤后 APK 显著更小（dev 也不例外）
-          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+          if [ -n "${ANDROID_KEYSTORE_PATH:-}" ]; then
             sh ./gradlew assembleRelease --no-daemon
           else
             echo "未配置签名材料，降级为 debug 版（体积更大）" >&2
@@ -232,7 +268,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.plan.outputs.buildRef }}
+          ref: ${{ needs.plan.outputs.buildSha }}
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -251,6 +287,12 @@ jobs:
     needs: [plan, gate, windows, android, web]
     if: needs.plan.outputs.skip != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # 同一渠道的发布排队执行：dev 推送与定时任务触发的 ref 不同，按 ref 分组挡不住它们互相覆盖
+    concurrency:
+      group: publish-channel-${{ needs.plan.outputs.channel }}
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
@@ -260,9 +302,11 @@ jobs:
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
       TITLE: ${{ needs.plan.outputs.title }}
       BUILD_REF: ${{ needs.plan.outputs.buildRef }}
+      BUILD_SHA: ${{ needs.plan.outputs.buildSha }}
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.plan.outputs.buildSha }}
           fetch-depth: 1
       - uses: actions/download-artifact@v8
         with:
@@ -273,7 +317,7 @@ jobs:
           set -euo pipefail
           # 正文首行始终是渠道行，客户端从它读提交号；CHANGELOG 段落取不到时只留这一行。
           # Full Changelog 与比较基准在 tools/release/publish.sh 里拼接（那里才拿得到 gh release list）。
-          NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${GITHUB_SHA:0:7}"
+          NOTES="渠道 ${CHANNEL} · 来源 ${BUILD_REF} · 提交 ${BUILD_SHA:0:7}"
           echo "NOTES=${NOTES}" >> "$GITHUB_ENV"
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           if [[ "$CHANNEL" == "dev" ]]; then
@@ -343,7 +387,7 @@ jobs:
             --channel="$CHANNEL" \
             --version="$MANIFEST_VERSION" \
             --tag="$TAG" \
-            --commit="$GITHUB_SHA" \
+            --commit="$BUILD_SHA" \
             "${notes_arg[@]}" \
             --out=out
 
@@ -351,11 +395,6 @@ jobs:
           # 合并校验文件：一行一个产物的 sha256，客户端下载安装包后整表取摘要校验
           sha256sum * > SHA256SUMS.txt
           ls -l
-
-      - name: 滚动渠道先删除旧发布
-        if: env.ROLLING == 'true'
-        run: |
-          gh release delete "$TAG" --yes --cleanup-tag || true
 
       - name: 发布或更新
         run: |

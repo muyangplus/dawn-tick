@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
 # 发布或更新 Release：由 .github/workflows/publish.yml 的「发布或更新」步骤调用。
 # 需要的环境变量：GH_TOKEN、GITHUB_REPOSITORY、GITHUB_SHA、RUNNER_TEMP，
-# 以及 plan 任务给出的 CHANNEL / VERSION / TAG / ROLLING / PRERELEASE / TITLE / BUILD_REF。
+# 以及 plan 任务给出的 CHANNEL / VERSION / TAG / ROLLING / PRERELEASE / TITLE / BUILD_REF / BUILD_SHA。
 set -euo pipefail
 
 REMOTE="https://github.com/${GITHUB_REPOSITORY}.git"
 
-# 打 v* 标签触发时标签已存在：此时不传 --target；标签对象要用 ^{} 解引用成提交
+# 目标固定为 plan 解析出的构建提交，不再按分支名临时取（分支可能已前进）。
+# 打 v* 标签触发时标签已存在：此时不传 --target（附注标签对象不是有效目标）
+TARGET="${BUILD_SHA:?BUILD_SHA 未设置}"
 TAG_EXISTS=false
-TARGET=$(git ls-remote "$REMOTE" "refs/heads/${BUILD_REF}" | cut -f1 || true)
-if [[ -z "$TARGET" ]]; then
-  TARGET=$(git ls-remote "$REMOTE" "refs/tags/${BUILD_REF}^{}" | cut -f1 || true)
-  if [[ -n "$TARGET" ]]; then TAG_EXISTS=true; fi
-fi
-if [[ -z "$TARGET" ]]; then TARGET="$GITHUB_SHA"; fi
+if [[ -n "$(git ls-remote "$REMOTE" "refs/tags/${TAG}" | cut -f1 || true)" ]]; then TAG_EXISTS=true; fi
 echo "构建自 ${BUILD_REF}（${TARGET}），标签已存在=${TAG_EXISTS}"
 
 # 比较基准按渠道取：滚动标签（*-latest）永远不作基准
@@ -22,7 +19,8 @@ case "$CHANNEL" in
     PREV=$(gh release list --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == false) | .tagName][]' | grep -v "^${TAG}$" | head -n 1 || true)
     ;;
   beta)
-    PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E -- '-beta\.' | grep -v "^${TAG}$" | head -n 1 || true)
+    # 测试版可能是纯版本号（标签说明带 [prerelease]）：按 isPrerelease 取，不按标签名猜
+    PREV=$(gh release list --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == true) | .tagName][]' | grep -v '^dev-latest$' | grep -v "^${TAG}$" | head -n 1 || true)
     ;;
   *)
     PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v '^dev-latest$' | head -n 1 || true)
@@ -48,11 +46,29 @@ if [[ -n "$PREV" ]]; then
 fi
 echo "发布 ${TAG}（渠道 ${CHANNEL}），比较基准 ${PREV:-无}"
 
-if gh release view "$TAG" > /dev/null 2>&1; then
+if [[ "$ROLLING" == "true" ]] && gh release view "$TAG" > /dev/null 2>&1; then
+  # 滚动渠道原地更新：先传新产物（覆盖同名），再删掉旧名字的产物，最后移动标签。
+  # 不先删整个发布，任何一步失败时客户端仍能拿到上一版完整的包
+  echo "滚动发布已存在，原地替换产物"
+  gh release upload "$TAG" out/* --clobber
+  fresh=$(cd out && ls -1)
+  gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+    if ! grep -Fxq -- "$name" <<< "$fresh"; then
+      echo "删除旧产物 $name"
+      gh release delete-asset "$TAG" "$name" --yes
+    fi
+  done
+  gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" -f sha="$TARGET" -F force=true > /dev/null
+  gh release edit "$TAG" --title "$TITLE" --prerelease="$PRERELEASE" --notes-file "$BODY_FILE"
+elif gh release view "$TAG" > /dev/null 2>&1; then
   echo "发布已存在，覆盖产物与说明"
   gh release upload "$TAG" out/* --clobber
   gh release edit "$TAG" --title "$TITLE" --prerelease="$PRERELEASE" --notes-file "$BODY_FILE"
 else
+  if [[ "$ROLLING" == "true" && "$TAG_EXISTS" == "true" ]]; then
+    # 滚动标签残留但发布不在：先把标签挪到本次提交，再在它上面建发布
+    gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG}" -f sha="$TARGET" -F force=true > /dev/null
+  fi
   args=(--title "$TITLE" --prerelease="$PRERELEASE" --notes-file "$BODY_FILE")
   if [[ "$TAG_EXISTS" != "true" ]]; then args+=(--target "$TARGET"); fi
   gh release create "$TAG" out/* "${args[@]}"

@@ -26,6 +26,11 @@ PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""']
 PUBLISH_FULL_CHANGELOG_REQUIRED = ['**Full Changelog**: https://github.com/%s/compare/%s...%s', 'BODY_FILE']
 # 标签已存在时不传 --target：附注标签对象不是有效目标
 PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
+# 构建来源只解析一次：各任务检出同一提交，发布目标也用它
+PUBLISH_BUILD_SHA_REQUIRED = ['ref: ${{ needs.plan.outputs.buildSha }}', 'TARGET="${BUILD_SHA:?BUILD_SHA 未设置}"']
+PUBLISH_BUILD_SHA_FORBIDDEN = ['ref: ${{ needs.plan.outputs.buildRef }}']
+# 滚动渠道原地更新：先删整个发布会留下一段没有可下载包的空窗
+PUBLISH_ROLLING_FORBIDDEN = ['gh release delete "$TAG"']
 # 独立 assets 仓库同步：产物推 GitHub 上的 dawn-tick-assets（按渠道分支 force-push），
 # Gitee 侧从 GitHub 镜像；CI 不再直连 Gitee API（实测超时），旧 Gitee 脚本只留手动兜底
 PUBLISH_ASSETS_REQUIRED = ['tools/release/publish-assets.mjs', 'ASSETS_TOKEN', 'ASSETS_REPO']
@@ -40,7 +45,7 @@ PUBLISH_VERSION_JSON_REQUIRED = [
     '--channel="$CHANNEL"',
     '--version="$MANIFEST_VERSION"',
     '--tag="$TAG"',
-    '--commit="$GITHUB_SHA"',
+    '--commit="$BUILD_SHA"',
     '--out=out',
     # 校验清单覆盖全部产物（含 version.json）：`sha256sum * > SHA256SUMS.txt`
     'SHA256SUMS.txt',
@@ -51,6 +56,9 @@ def check_publish_notes(text: str) -> list:
     problems = [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少 Full Changelog 链接: {item}' for item in PUBLISH_FULL_CHANGELOG_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少构建提交的约束: {item}' for item in PUBLISH_BUILD_SHA_REQUIRED if item not in text]
+    problems += [f'publish.yml 仍按分支名检出（应检出 plan 解析的提交）: {item}' for item in PUBLISH_BUILD_SHA_FORBIDDEN if item in text]
+    problems += [f'publish.yml 滚动发布不应先删除: {item}' for item in PUBLISH_ROLLING_FORBIDDEN if item in text]
     problems += [f'publish.yml 便携包说明缺少: {item}' for item in PUBLISH_PORTABLE_README_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明写错数据目录: {item}' for item in PUBLISH_PORTABLE_README_FORBIDDEN if item in text]
     problems += [f'publish.yml 缺少更新兜底清单的约束: {item}' for item in PUBLISH_VERSION_JSON_REQUIRED if item not in text]
