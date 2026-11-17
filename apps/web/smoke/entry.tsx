@@ -3970,7 +3970,8 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const updateTauriInternals = {
     invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
       if (command === 'plugin:path|resolve_directory') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\';
-      if (command === 'write_binary_file' || command === 'run_installer') return String(args?.path ?? '');
+      if (command === 'stage_update') return { name: String(args?.['name'] ?? ''), sha256: 'a'.repeat(64) };
+      if (command === 'run_installer') return String(args?.['name'] ?? '');
       if (command === 'windows_install_kind') return 'installed';
       if (command === 'prepare_portable_update') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\dawn-tick-update-stub.cmd';
       if (command === 'exit_for_update') return null;
@@ -5306,21 +5307,19 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const tauriInternals = {
     invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
       tauriCalls.push(command);
-      if (command === 'plugin:dialog|save') {
-        lastSaveOptions = (args?.['options'] ?? null) as Record<string, unknown> | null;
-        saveDefaultPaths.push(String(lastSaveOptions?.['defaultPath'] ?? ''));
+      // 导出由原生 save_file 弹「另存为」并写入：桩里同时记下对话框参数与写入内容
+      if (command === 'save_file') {
+        lastSaveOptions = {
+          defaultPath: String(args?.['defaultName'] ?? ''),
+          filters: [{ name: String(args?.['filterName'] ?? ''), extensions: [String(args?.['extension'] ?? '')] }],
+        };
+        saveDefaultPaths.push(String(args?.['defaultName'] ?? ''));
+        if (typeof args?.['text'] === 'string') {
+          writtenFiles.push({ path: stubSavePath, content: String(args['text']) });
+        } else {
+          binaryWrites.push({ path: stubSavePath, base64: String(args?.['base64'] ?? '') });
+        }
         return stubSavePath;
-      }
-      if (command === 'write_text_file') {
-        writtenFiles.push({
-          path: String(args?.['path'] ?? ''),
-          content: String(args?.['content'] ?? ''),
-        });
-        return String(args?.['path'] ?? '');
-      }
-      if (command === 'write_binary_file') {
-        binaryWrites.push({ path: String(args?.['path'] ?? ''), base64: String(args?.['base64'] ?? '') });
-        return String(args?.['path'] ?? '');
       }
       if (command === 'reveal_path') return String(args?.['path'] ?? '');
       return undefined;
@@ -5354,11 +5353,11 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '导出成功后 toast 显示保存路径并可打开所在位置',
     exportSubmitted &&
-      tauriCalls.includes('write_text_file') &&
+      tauriCalls.includes('save_file') &&
       savedToast !== undefined &&
       (savedToast.textContent ?? '').includes(stubSavePath) &&
       revealSaved !== undefined,
-    `写盘=${tauriCalls.includes('write_text_file') ? '已调用' : '未调用'}；提示=${
+    `写盘=${tauriCalls.includes('save_file') ? '已调用' : '未调用'}；提示=${
       savedToast?.textContent?.trim() ?? '(无)'
     }`,
   );

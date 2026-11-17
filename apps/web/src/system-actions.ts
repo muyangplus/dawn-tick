@@ -252,16 +252,17 @@ export async function saveTextFile(
   const extension = options.extension ?? 'txt';
   if (isDesktopApp()) {
     try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const chosen = await save({
-        defaultPath: name,
-        filters: [{ name: options.filterName ?? '文本文件', extensions: [extension] }],
+      // 由原生弹「另存为」并写入：前端不再把路径交给写文件命令
+      const path = await invokeNative<string | null>('save_file', {
+        defaultName: name,
+        filterName: options.filterName ?? '文本文件',
+        extension,
+        text: content,
       });
-      if (chosen === null) {
+      if (path === null) {
         logInfo('export', '用户取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      const path = await invokeNative<string>('write_text_file', { path: chosen, content });
       if (path === undefined) throw new Error('当前平台不支持写入文件');
       logInfo('export', '已写入文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
@@ -317,19 +318,16 @@ export async function saveBinaryFile(
   const extension = options.extension ?? 'bin';
   if (isDesktopApp()) {
     try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const chosen = await save({
-        defaultPath: name,
-        filters: [{ name: options.filterName ?? '文件', extensions: [extension] }],
+      const path = await invokeNative<string | null>('save_file', {
+        defaultName: name,
+        filterName: options.filterName ?? '文件',
+        extension,
+        base64: toBase64Bytes(content),
       });
-      if (chosen === null) {
+      if (path === null) {
         logInfo('export', '用户取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      const path = await invokeNative<string>('write_binary_file', {
-        path: chosen,
-        base64: toBase64Bytes(content),
-      });
       if (path === undefined) throw new Error('当前平台不支持写入文件');
       logInfo('export', '已写入二进制文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };

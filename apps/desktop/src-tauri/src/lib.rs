@@ -2,6 +2,7 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
+mod fs_commands;
 mod install_kind;
 mod instance_lock;
 mod lan_discovery;
@@ -1500,18 +1501,6 @@ fn open_external_url(url: String) -> Result<(), String> {
     }
 }
 
-/// 把文本写到用户选定的路径：导出备份与日志用。
-#[tauri::command]
-fn write_text_file(path: String, content: String) -> Result<String, String> {
-    let target = std::path::PathBuf::from(&path);
-    if target.as_os_str().is_empty() {
-        return Err("没有选择保存位置".to_string());
-    }
-    std::fs::write(&target, content.as_bytes()).map_err(|error| format!("写入失败: {error}"))?;
-    append_log(&format!("已写入文件: {path}（{} 字节）", content.len()));
-    Ok(path)
-}
-
 /// 标准 Base64 解码；长度或字符不合法时返回 None。
 pub(crate) fn decode_base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::new();
@@ -1541,19 +1530,6 @@ pub(crate) fn decode_base64(text: &str) -> Option<Vec<u8>> {
         return None;
     }
     Some(out)
-}
-
-/// 把 Base64 内容按二进制写到用户选定的路径：整包 zip 导出用。
-#[tauri::command]
-fn write_binary_file(path: String, base64: String) -> Result<String, String> {
-    let target = std::path::PathBuf::from(&path);
-    if target.as_os_str().is_empty() {
-        return Err("没有选择保存位置".to_string());
-    }
-    let bytes = decode_base64(&base64).ok_or_else(|| "内容不是合法的 Base64".to_string())?;
-    std::fs::write(&target, &bytes).map_err(|error| format!("写入失败: {error}"))?;
-    append_log(&format!("已写入文件: {path}（{} 字节）", bytes.len()));
-    Ok(path)
 }
 
 /// 在资源管理器里打开日志目录，返回目录路径。
@@ -2965,8 +2941,8 @@ pub fn run() {
             tray_status,
             open_external_url,
             open_log_dir,
-            write_text_file,
-            write_binary_file,
+            fs_commands::save_file,
+            fs_commands::stage_update,
             lan_sync_start,
             lan_sync_stop,
             lan_sync_poll,
