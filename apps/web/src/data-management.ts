@@ -6,6 +6,7 @@ import {
   summarizeBackup,
   toBase64Utf8,
   fromBase64Utf8,
+  type ActiveSemesterChoice,
   type BackupModule,
   type BackupPayload,
   type ImportMode,
@@ -336,11 +337,17 @@ export interface ImportConfigResult extends ImportResult {
 export async function importConfig(
   storage: Storage,
   payload: BackupPayload,
-  options: { modules: readonly BackupModule[]; mode: ImportMode; extras?: PackageExtras | null },
+  options: {
+    modules: readonly BackupModule[];
+    mode: ImportMode;
+    extras?: PackageExtras | null;
+    activeSemester?: ActiveSemesterChoice;
+  },
 ): Promise<ImportConfigResult> {
   const result = await importBackup(storage, payload, {
     mode: options.mode,
     modules: options.modules,
+    ...(options.activeSemester === undefined ? {} : { activeSemester: options.activeSemester }),
   });
   const extras = options.extras ?? null;
   let presets = false;

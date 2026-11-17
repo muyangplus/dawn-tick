@@ -20,6 +20,7 @@ import {
   snapshotsToday,
 } from '../src/backup.ts';
 import { dayStampLocal } from '../src/lib/dates.ts';
+import { semesterRow, userRow } from '@dawn-tick/core/testing';
 
 function course(id: string, name: string): Record<string, unknown> {
   return {
@@ -42,6 +43,9 @@ function course(id: string, name: string): Record<string, unknown> {
 
 async function seeded(): Promise<MemoryStorage> {
   const storage = new MemoryStorage();
+  // 课程所属的用户与学期要在：导入按外键确认父行存在
+  await storage.collection('users').put(userRow());
+  await storage.collection('semesters').put(semesterRow({ id: 's-1' }));
   await storage.collection('courses').put(course('c-1', '高等数学'));
   await writeSettings(storage, { theme: 'dark' });
   return storage;

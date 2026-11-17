@@ -1,10 +1,12 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BACKUP_MODULES,
   BACKUP_MODULE_LABEL,
   IMPORT_MODE_LABEL,
   IMPORT_MODES,
+  activeSemesterConflict,
   summarizeBackup,
+  type ActiveSemesterChoice,
   type BackupModule,
   type BackupPayload,
   type ImportMode,
@@ -50,6 +52,22 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
   const [pendingImportExtras, setPendingImportExtras] = useState<PackageExtras | null>(null);
   const [importModules, setImportModules] = useState<Set<BackupModule>>(new Set(BACKUP_MODULES));
   const [importMode, setImportMode] = useState<ImportMode>('skip');
+  /** 备份与本机各有一个当前学期时让用户选保留哪个；没有冲突时为 null */
+  const [semesterConflict, setSemesterConflict] = useState<{ local: string; incoming: string } | null>(null);
+  const [activeChoice, setActiveChoice] = useState<ActiveSemesterChoice>('keep-local');
+
+  useEffect(() => {
+    let cancelled = false;
+    setSemesterConflict(null);
+    setActiveChoice('keep-local');
+    if (pendingImport === null) return undefined;
+    void activeSemesterConflict(storage, pendingImport).then((conflict) => {
+      if (!cancelled) setSemesterConflict(conflict);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingImport, storage]);
   const [lockedSource, setLockedSource] = useState<LockedSource | null>(null);
   const [unlockPassword, setUnlockPassword] = useState('');
   const [unlockError, setUnlockError] = useState<string | null>(null);
@@ -137,6 +155,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
           mode: importMode,
           modules,
           extras: pendingImportExtras,
+          ...(semesterConflict === null ? {} : { activeSemester: activeChoice }),
         });
         toast.success(importResultText(result, importMode));
         setPendingImport(null);
@@ -250,6 +269,31 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
               </label>
             ))}
         </div>
+        {semesterConflict !== null && importModules.has('semesters') ? (
+          <div className="flex flex-col gap-1" data-role="import-active-semester">
+            <span className="text-xs text-muted">当前学期</span>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={activeChoice === 'keep-local' ? 'primary' : 'secondary'}
+                aria-label={`保留本机当前学期：${semesterConflict.local}`}
+                onClick={() => setActiveChoice('keep-local')}
+              >
+                保留「{semesterConflict.local}」
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={activeChoice === 'use-incoming' ? 'primary' : 'secondary'}
+                aria-label={`切换到备份的当前学期：${semesterConflict.incoming}`}
+                onClick={() => setActiveChoice('use-incoming')}
+              >
+                切换到「{semesterConflict.incoming}」
+              </Button>
+            </div>
+          </div>
+        ) : null}
         <div className="flex flex-wrap gap-2">
           {IMPORT_MODES.map((mode) => (
             <Button
