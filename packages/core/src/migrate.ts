@@ -48,9 +48,37 @@ export async function readMeta(db: SqlDriver, key: string): Promise<string | und
   return row?.value;
 }
 
+async function columnsOf(db: SqlDriver, table: string): Promise<Set<string>> {
+  if (!(await hasTable(db, table))) return new Set();
+  const rows = await db.all<{ name: string }>(`PRAGMA table_info(${table})`);
+  return new Set(rows.map((row) => row.name));
+}
+
+/**
+ * 按表结构推断实际已应用到哪个迁移（006 只写版本键、可重放，不需要识别）。
+ * 用于修复被改小的 `schema_version`：例如旧版本备份把它当设置导回来后，
+ * 迁移会从更早的版本重放，非幂等的 ALTER 失败，库就打不开了。
+ */
+export async function probeSchemaVersion(db: SqlDriver): Promise<string> {
+  if (!(await hasTable(db, 'users'))) return '';
+  const events = await columnsOf(db, 'events');
+  const schedules = await columnsOf(db, 'course_schedules');
+  if (events.has('show_in_timetable')) {
+    const table = await db.get<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'");
+    return /CHECK\s*\(\s*due_at/i.test(table?.sql ?? '') ? '004_timetable_entries' : '005_due_at_any';
+  }
+  if (schedules.has('start_time')) return '003_custom_time';
+  if (events.has('countdown')) return '002_event_kinds';
+  return '001_init';
+}
+
 /** 按 id 升序应用尚未执行的迁移，返回最终版本号。 */
 export async function migrate(db: SqlDriver, migrations: readonly Migration[]): Promise<string> {
-  const applied = await readSchemaVersion(db);
+  const recorded = await readSchemaVersion(db);
+  const probed = await probeSchemaVersion(db);
+  // 记录的版本落后于实际表结构：以表结构为准，先把版本号修正回来
+  if (probed > recorded) await writeMeta(db, SCHEMA_VERSION_KEY, probed);
+  const applied = probed > recorded ? probed : recorded;
   const pending = [...migrations]
     .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
     .filter((migration) => migration.id > applied);
