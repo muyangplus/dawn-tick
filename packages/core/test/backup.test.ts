@@ -76,12 +76,13 @@ test('导出包含全部集合与设置项', async () => {
   assert.equal(payload.meta['theme_preset'], 'mono');
   assert.equal(payload.meta['device_id'], undefined);
   assert.equal(payload.meta['sync_cursor'], undefined);
+  assert.equal(payload.meta['schema_version'], undefined, 'A9：库结构版本不进备份');
   for (const key of Object.keys(payload.meta)) {
     assert.ok(BACKUP_META_KEYS.includes(key), `${key} 不应出现在备份里`);
   }
 });
 
-test('导出再导入可完整还原', { todo: sqliteTodo('A9：schema_version 被当作设置导入') }, async () => {
+test('导出再导入可完整还原', async () => {
   const { storage, semesterId } = await seedStorage();
   const payload = await exportBackup(storage);
 
@@ -102,7 +103,7 @@ test('导出再导入可完整还原', { todo: sqliteTodo('A9：schema_version �
   assert.equal(settings.themePreset, 'mono');
 });
 
-test('非法行被跳过并给出警告', { todo: sqliteTodo('A9：schema_version 被当作设置导入') }, async () => {
+test('非法行被跳过并给出警告', async () => {
   const { storage } = await seedStorage();
   const payload = await exportBackup(storage);
   payload.stores.courses = [
@@ -308,4 +309,14 @@ test('合并模式按 updated_at 取较新的一份', async () => {
   const merged = await target.collection<Record<string, unknown>>('courses').get('c-1');
   assert.equal(merged?.['name'], '高等数学', '本地较旧时用备份覆盖');
   assert.equal(merged?.['updated_at'], 20);
+});
+
+test('A9 旧备份里的 schema_version 不会被导入', async () => {
+  const { storage } = await seedStorage();
+  const payload = await exportBackup(storage);
+  payload.meta['schema_version'] = '001_init';
+  const target = createStorage();
+  await target.writeMeta('schema_version', '006_schema_version');
+  await importBackup(target, payload, { mode: 'overwrite' });
+  assert.equal(await target.readMeta('schema_version'), '006_schema_version');
 });

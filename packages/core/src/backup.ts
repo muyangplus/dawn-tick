@@ -6,13 +6,13 @@ export const BACKUP_FORMAT = 'dawn-tick-backup';
 export const BACKUP_VERSION = 1;
 
 /**
- * 参与备份的设置项：由 settings.ts 的键清单派生，再拼 schema_version。
+ * 参与备份的设置项：由 settings.ts 的键清单派生。
  * 排除 device_id 与 sync_cursor（见 D73），以及 EXPORT_EXCLUDED_KEYS 里的 WebDAV 密码。
+ * 不含 schema_version：它描述的是本机库结构，导入别处的值会让迁移重放或被跳过。
  */
-export const BACKUP_META_KEYS: readonly string[] = [
-  'schema_version',
-  ...SETTING_META_KEYS.filter((key) => !EXPORT_EXCLUDED_KEYS.includes(key)),
-];
+export const BACKUP_META_KEYS: readonly string[] = SETTING_META_KEYS.filter(
+  (key) => !EXPORT_EXCLUDED_KEYS.includes(key),
+);
 
 /** 备份模块：界面按模块勾选，导出与导入共用同一分组。 */
 export type BackupModule = 'semesters' | 'courses' | 'events' | 'reminders' | 'settings';

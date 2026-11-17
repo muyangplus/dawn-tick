@@ -5,6 +5,7 @@ import {
   inspectSqlxBaseline,
   LEGACY_SQLX_BASELINE_KEY,
   migrate,
+  probeSchemaVersion,
   readMeta,
   readSchemaVersion,
   writeLegacySqlxBaseline,
@@ -164,4 +165,20 @@ test('有 _sqlx_migrations 的库不算旧库，空库也不触发', async () =>
     schemaVersion: '',
     legacy: false,
   });
+});
+
+test('A9 schema_version 被改小（旧备份导回）时按表结构修正，不再重放迁移', async () => {
+  const db = openNodeSqlite(':memory:');
+  await migrate(db, migrations());
+  await writeMeta(db, 'schema_version', '003_custom_time');
+  assert.equal(await migrate(db, migrations()), LATEST);
+});
+
+test('A9 表结构探测与各迁移对应', async () => {
+  const list = migrations();
+  for (let count = 1; count <= 5; count += 1) {
+    const db = openNodeSqlite(':memory:');
+    await migrate(db, list.slice(0, count));
+    assert.equal(await probeSchemaVersion(db), list[count - 1]?.id);
+  }
 });
