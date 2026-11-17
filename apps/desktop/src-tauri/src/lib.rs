@@ -263,22 +263,30 @@ fn storage_info() -> StorageInfo {
     storage_info_of(&dir, fallback, Vec::new())
 }
 
-/// 复制数据文件：数据库（含 WAL 附带文件）与现有日志；目标已有同名文件时保留目标。
-/// 窗口几何存在数据库里，跟着数据库一起走，不再单独复制。
+/// 复制数据文件：数据库与现有日志；目标已有同名文件时保留目标。
+/// 数据库用 `VACUUM INTO` 生成一份自洽的单文件副本：逐个复制正在使用的 db / -wal / -shm 会拿到前后不一致的快照，
+/// 目标已有 db 而缺 -wal 时还会把别的库的 WAL 重放上去。窗口几何存在数据库里，跟着数据库一起走。
 fn copy_data_files(from: &std::path::Path, to: &std::path::Path) -> Vec<String> {
     let mut copied = Vec::new();
     if same_path(from, to) {
         return copied;
     }
-    let mut names = vec![
-        DATABASE_FILE_NAME.to_string(),
-        LOG_FILE_NAME.to_string(),
-        "startup.log".to_string(),
-    ];
-    for suffix in ["-wal", "-shm"] {
-        names.push(format!("{DATABASE_FILE_NAME}{suffix}"));
+    let source_db = from.join(DATABASE_FILE_NAME);
+    let target_db = to.join(DATABASE_FILE_NAME);
+    if source_db.is_file() && !target_db.exists() {
+        // 目标没有主库：先清掉可能残留的附带文件，免得新库打开时重放
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let _ = std::fs::remove_file(to.join(format!("{DATABASE_FILE_NAME}{suffix}")));
+        }
+        match tauri::async_runtime::block_on(vacuum_into(&source_db, &target_db)) {
+            Ok(()) => copied.push(DATABASE_FILE_NAME.to_string()),
+            Err(error) => {
+                let _ = std::fs::remove_file(&target_db);
+                append_log(&format!("复制数据库失败: {error}"));
+            }
+        }
     }
-    for name in names {
+    for name in [LOG_FILE_NAME.to_string(), "startup.log".to_string()] {
         let source = from.join(&name);
         let target = to.join(&name);
         if !source.is_file() || target.exists() {
@@ -289,6 +297,26 @@ fn copy_data_files(from: &std::path::Path, to: &std::path::Path) -> Vec<String> 
         }
     }
     copied
+}
+
+/// 把整个库写成目标路径上的单文件副本（不带 -wal / -shm）。
+async fn vacuum_into(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    use sqlx::{ConnectOptions, Connection};
+    let mut connection = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(source)
+        .read_only(true)
+        .busy_timeout(std::time::Duration::from_millis(2000))
+        .connect()
+        .await
+        .map_err(|error| error.to_string())?;
+    let result = sqlx::query("VACUUM INTO ?")
+        .bind(target.to_string_lossy().to_string())
+        .execute(&mut connection)
+        .await
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+    let _ = connection.close().await;
+    result
 }
 
 /// 设置或清除自定义存储位置：清空即恢复默认。改完需要重启才生效。
@@ -547,19 +575,37 @@ fn apply_pending_restore() {
     }
     let dir = data_dir();
     let _ = create_dir_all(&dir);
-    let db = database_file(&dir);
-    for path in [
-        db.clone(),
-        dir.join(format!("{DATABASE_FILE_NAME}-wal")),
-        dir.join(format!("{DATABASE_FILE_NAME}-shm")),
-        dir.join(format!("{DATABASE_FILE_NAME}-journal")),
-    ] {
-        let _ = std::fs::remove_file(&path);
+    let stamp = local_stamp(now_ms());
+    match replace_database_with(&dir, &source, &stamp) {
+        Ok(bytes) => append_log(&format!("已套用快照 {safe}（{bytes} 字节），原库留存为 .pre-restore-{stamp}")),
+        Err(error) => append_log(&format!("套用快照失败，原库未改动: {error}")),
     }
-    match std::fs::copy(&source, &db) {
-        Ok(bytes) => append_log(&format!("已套用快照 {safe}（{bytes} 字节）")),
-        Err(error) => append_log(&format!("套用快照失败: {error}")),
+}
+
+/// 用快照替换数据库：先完整复制到临时文件，再把原库连同 -wal / -shm / -journal 改名留存，
+/// 最后改名就位。任何一步失败都不会留下「原库已删、新库没到」的空窗。
+fn replace_database_with(dir: &std::path::Path, source: &std::path::Path, stamp: &str) -> Result<u64, String> {
+    let db = dir.join(DATABASE_FILE_NAME);
+    let staging = dir.join(format!("{DATABASE_FILE_NAME}.restore-tmp"));
+    let bytes = std::fs::copy(source, &staging).map_err(|error| {
+        let _ = std::fs::remove_file(&staging);
+        format!("复制快照失败: {error}")
+    })?;
+    if db.exists() {
+        let saved = format!("{DATABASE_FILE_NAME}.pre-restore-{stamp}");
+        if let Err(error) = std::fs::rename(&db, dir.join(&saved)) {
+            let _ = std::fs::remove_file(&staging);
+            return Err(format!("留存原库失败: {error}"));
+        }
+        move_sidecars(dir, &saved);
+    } else {
+        // 没有主库却有附带文件：是别的库留下的，不能让新库重放它们
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let _ = std::fs::remove_file(dir.join(format!("{DATABASE_FILE_NAME}{suffix}")));
+        }
     }
+    std::fs::rename(&staging, &db).map_err(|error| format!("快照就位失败: {error}"))?;
+    Ok(bytes)
 }
 
 /// SQLite 的损坏报错都带这些字样；锁冲突、权限不足等不算损坏。
@@ -2391,24 +2437,28 @@ async fn read_meta_value(key: &str) -> Option<String> {
 #[cfg(desktop)]
 async fn write_meta_value(key: &str, value: &str) -> bool {
     use sqlx::{ConnectOptions, Connection};
+    // 只写进已经迁移过的库：库不存在、或还没建出 users 表（迁移未跑）时跳过。
+    // 否则全新安装时窗口一移动就先建出 app_meta，001 迁移再建同名表会失败。
     let file = database_file(&data_dir());
-    if let Some(parent) = file.parent() {
-        if create_dir_all(parent).is_err() {
-            return false;
-        }
+    if !file.is_file() {
+        return false;
     }
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(file)
-        .create_if_missing(true)
+        .create_if_missing(false)
         .busy_timeout(std::time::Duration::from_millis(1000));
     let Ok(mut connection) = options.connect().await else {
         return false;
     };
-    let created = sqlx::query("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        .execute(&mut connection)
-        .await
-        .is_ok();
-    let written = created
+    let migrated = sqlx::query_scalar::<_, i64>(
+        // 有 users 与 app_meta 说明迁移已建过表（含早期没有 _sqlx_migrations 的旧库）
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('users', 'app_meta')",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .map(|count| count == 2)
+    .unwrap_or(false);
+    let written = migrated
         && sqlx::query(
             "INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )
@@ -3346,6 +3396,59 @@ mod tests {
 
     /// 找一个可写的临时目录：优先系统临时目录，受限环境（只允许写工作区）退回 target 下。
     #[cfg(desktop)]
+    #[test]
+    fn copy_data_files_writes_consistent_database_and_keeps_existing_target() {
+        let from = scratch_dir("dt-copy-from");
+        let to = scratch_dir("dt-copy-to");
+        let db = from.join(DATABASE_FILE_NAME);
+        tauri::async_runtime::block_on(async {
+            use sqlx::{ConnectOptions, Connection};
+            let mut connection = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&db)
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .connect()
+                .await
+                .unwrap();
+            sqlx::query("CREATE TABLE t (v TEXT)").execute(&mut connection).await.unwrap();
+            sqlx::query("INSERT INTO t VALUES ('x')").execute(&mut connection).await.unwrap();
+            let _ = connection.close().await;
+        });
+        // 目标残留别的库的 WAL：复制前清掉
+        std::fs::write(to.join(format!("{DATABASE_FILE_NAME}-wal")), b"stale").unwrap();
+
+        let copied = copy_data_files(&from, &to);
+        assert!(copied.contains(&DATABASE_FILE_NAME.to_string()));
+        assert!(!to.join(format!("{DATABASE_FILE_NAME}-wal")).exists());
+        assert!(database_healthy(&to.join(DATABASE_FILE_NAME)));
+
+        // 目标已有主库：整体跳过，不覆盖
+        let again = copy_data_files(&from, &to);
+        assert!(!again.contains(&DATABASE_FILE_NAME.to_string()));
+    }
+
+    #[test]
+    fn replace_database_keeps_original_until_snapshot_is_in_place() {
+        let dir = scratch_dir("dt-replace-db");
+        let db = dir.join(DATABASE_FILE_NAME);
+        std::fs::write(&db, b"old").unwrap();
+        std::fs::write(dir.join(format!("{DATABASE_FILE_NAME}-wal")), b"old-wal").unwrap();
+        let snapshot = dir.join("snap.db");
+        std::fs::write(&snapshot, b"new").unwrap();
+
+        assert_eq!(replace_database_with(&dir, &snapshot, "s1").unwrap(), 3);
+        assert_eq!(std::fs::read(&db).unwrap(), b"new");
+        assert_eq!(std::fs::read(dir.join(format!("{DATABASE_FILE_NAME}.pre-restore-s1"))).unwrap(), b"old");
+        assert!(!dir.join(format!("{DATABASE_FILE_NAME}-wal")).exists(), "旧 WAL 跟着原库留存，不留给新库");
+        assert!(dir.join(format!("{DATABASE_FILE_NAME}.pre-restore-s1-wal")).exists());
+
+        // 快照不存在：原库原样保留
+        let missing = dir.join("missing.db");
+        assert!(replace_database_with(&dir, &missing, "s2").is_err());
+        assert_eq!(std::fs::read(&db).unwrap(), b"new");
+        assert!(!dir.join(format!("{DATABASE_FILE_NAME}.restore-tmp")).exists());
+    }
+
     fn scratch_dir(name: &str) -> PathBuf {
         let candidates = [
             std::env::temp_dir().join(name),
@@ -3372,6 +3475,29 @@ mod tests {
 
         // 数据库还没有 / 键还没有：按默认值处理
         assert!(read_meta_value(WINDOW_GEOMETRY_KEY).await.is_none());
+        // 库还没建（前端尚未迁移）：不写，避免抢先建出 app_meta 让 001 迁移失败
+        assert!(!write_meta_value(WINDOW_GEOMETRY_KEY, "{}").await);
+        assert!(!database_file(&data_dir()).exists(), "不应凭空建库");
+
+        // 模拟前端已跑过迁移的库
+        {
+            use sqlx::{ConnectOptions, Connection};
+            let file = database_file(&data_dir());
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            let mut connection = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&file)
+                .create_if_missing(true)
+                .connect()
+                .await
+                .expect("建测试库");
+            for sql in [
+                "CREATE TABLE users (id TEXT PRIMARY KEY)",
+                "CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            ] {
+                sqlx::query(sql).execute(&mut connection).await.expect("建表");
+            }
+            let _ = connection.close().await;
+        }
 
         let sample = geometry(1200, 800, 100, 80, false);
         let text = serde_json::to_string(&sample).expect("序列化几何");
@@ -3536,16 +3662,13 @@ mod tests {
         let to = temp.join("to");
         std::fs::create_dir_all(&from).expect("建源目录");
         std::fs::create_dir_all(&to).expect("建目标目录");
-        std::fs::write(from.join(DATABASE_FILE_NAME), b"db").expect("写数据库");
-        std::fs::write(from.join(format!("{DATABASE_FILE_NAME}-wal")), b"wal").expect("写 wal");
         std::fs::write(from.join(LOG_FILE_NAME), b"log-a").expect("写日志");
+        std::fs::write(from.join("startup.log"), b"boot").expect("写启动日志");
         std::fs::write(to.join(LOG_FILE_NAME), b"keep").expect("目标已有同名文件");
 
         let copied = copy_data_files(&from, &to);
-        assert!(copied.contains(&DATABASE_FILE_NAME.to_string()));
-        assert!(copied.contains(&format!("{DATABASE_FILE_NAME}-wal")));
         assert!(!copied.contains(&LOG_FILE_NAME.to_string()), "目标已有文件不覆盖");
-        assert_eq!(std::fs::read(to.join(DATABASE_FILE_NAME)).expect("读回数据库"), b"db");
+        assert!(copied.contains(&"startup.log".to_string()));
         assert_eq!(std::fs::read(to.join(LOG_FILE_NAME)).expect("读回日志"), b"keep");
         assert!(copy_data_files(&to, &to).is_empty(), "同一个目录不复制");
         let _ = std::fs::remove_dir_all(&temp);
