@@ -8,7 +8,7 @@ import {
   previewPullFromPeer,
 } from '../src/lan-sync-preview.ts';
 import { buildLanEnvelope } from '../src/lan-sync-payload.ts';
-import { createStorage, eventRow, seedStorage } from '../../../packages/core/test/helpers.ts';
+import { createStorage, eventRow, seedStorage } from '@dawn-tick/core/testing';
 
 const NOW = 1759900000000;
 

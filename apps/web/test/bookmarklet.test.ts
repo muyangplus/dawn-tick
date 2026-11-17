@@ -14,7 +14,7 @@ import {
   EXPECTED_COURSE_NAMES,
   EXPECTED_DIAGNOSTICS,
   diagnosticCountsOf,
-} from '../../../packages/core/test/fixtures/import-diagnostics.ts';
+} from '@dawn-tick/core/testing/import-diagnostics';
 
 const OUTER_PAGE = `<!doctype html><html><head><title>个人课表查询</title></head><body>
 <div class="widget-backdrop-loading"><div class="msg">加载中...</div></div>

@@ -17,7 +17,7 @@ import {
   semesterRow,
   timeSlotRow,
   userRow,
-} from './helpers.ts';
+} from './kit/index.ts';
 
 type Row = Record<string, unknown>;
 

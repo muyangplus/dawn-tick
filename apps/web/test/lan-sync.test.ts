@@ -43,7 +43,7 @@ import {
   type Pairing,
   type TrustedToken,
 } from '../src/lan-sync.ts';
-import { createStorage, eventRow, seedStorage } from '../../../packages/core/test/helpers.ts';
+import { createStorage, eventRow, seedStorage } from '@dawn-tick/core/testing';
 import { loadTrustedTokens, sameTrustedTokens, saveTrustedTokens } from '../src/lan-trust-store.ts';
 
 const NOW = 1759900000000;

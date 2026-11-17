@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { openNodeSqlite } from '../src/drivers/node-sqlite.ts';
-import { migrate } from '../src/migrate.ts';
-import { MemoryStorage, type Storage } from '../src/storage.ts';
-import { weeksToMask } from '../src/weeks.ts';
-import type { SqlDriver, SqlValue } from '../src/db.ts';
+import { fileURLToPath } from 'node:url';
+import { loadSqlMigrations, openNodeSqlite } from '../../src/drivers/node-sqlite.ts';
+import { migrate } from '../../src/migrate.ts';
+import { MemoryStorage, type Storage } from '../../src/storage.ts';
+import { weeksToMask } from '../../src/weeks.ts';
+import type { SqlDriver, SqlValue } from '../../src/db.ts';
 import type {
   CourseRow,
   CourseScheduleRow,
@@ -11,7 +12,7 @@ import type {
   SemesterRow,
   TimeSlotRow,
   UserRow,
-} from '../src/types.ts';
+} from '../../src/types.ts';
 
 export const NOW = 1759900000000;
 export const USER_ID = 'u1';
@@ -28,38 +29,32 @@ export function weekRange(from: number, to: number, step = 1): number[] {
 }
 
 export function initSql(): string {
-  return readFileSync(new URL('../src/schema/001_init.sql', import.meta.url), 'utf8');
+  return readFileSync(new URL('../../src/schema/001_init.sql', import.meta.url), 'utf8');
 }
 
 /** 002：待办类型扩充与逐条开关（与各端启动时应用的迁移一致）。 */
 export function eventKindsSql(): string {
-  return readFileSync(new URL('../src/schema/002_event_kinds.sql', import.meta.url), 'utf8');
+  return readFileSync(new URL('../../src/schema/002_event_kinds.sql', import.meta.url), 'utf8');
 }
 
 /** 003：条目自定义时间。 */
 export function customTimeSql(): string {
-  return readFileSync(new URL('../src/schema/003_custom_time.sql', import.meta.url), 'utf8');
+  return readFileSync(new URL('../../src/schema/003_custom_time.sql', import.meta.url), 'utf8');
 }
 
 /** 004：条目是否显示在课表上。 */
 export function timetableEntriesSql(): string {
-  return readFileSync(new URL('../src/schema/004_timetable_entries.sql', import.meta.url), 'utf8');
+  return readFileSync(new URL('../../src/schema/004_timetable_entries.sql', import.meta.url), 'utf8');
 }
 
 /** 005：截止时刻对所有条目类型开放。 */
 export function dueAtAnySql(): string {
-  return readFileSync(new URL('../src/schema/005_due_at_any.sql', import.meta.url), 'utf8');
+  return readFileSync(new URL('../../src/schema/005_due_at_any.sql', import.meta.url), 'utf8');
 }
 
-/** 与各端一致的迁移集合：001 建表 + 002 事件类型 + 003 自定义时间 + 004 课表条目 + 005 截止时刻。 */
+/** 与各端一致的迁移集合：按文件名顺序读取 src/schema 下全部迁移，新增迁移无需改这里。 */
 export function migrations(): Array<{ id: string; sql: string }> {
-  return [
-    { id: '001_init', sql: initSql() },
-    { id: '002_event_kinds', sql: eventKindsSql() },
-    { id: '003_custom_time', sql: customTimeSql() },
-    { id: '004_timetable_entries', sql: timetableEntriesSql() },
-    { id: '005_due_at_any', sql: dueAtAnySql() },
-  ];
+  return loadSqlMigrations(fileURLToPath(new URL('../../src/schema/', import.meta.url)));
 }
 
 export async function createSqlite(): Promise<SqlDriver> {

@@ -15,7 +15,7 @@ import {
   updateSemester,
   updateTimeSlot,
 } from '../src/mutations.ts';
-import { START_DATE, USER_ID, createSqlite } from './helpers.ts';
+import { START_DATE, USER_ID, createSqlite } from './kit/index.ts';
 
 type Row = Record<string, unknown>;
 

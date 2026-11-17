@@ -10,7 +10,10 @@ import {
   writeLegacySqlxBaseline,
   writeMeta,
 } from '../src/migrate.ts';
-import { createSqlite, eventKindsSql, initSql, migrations, tableNames } from './helpers.ts';
+import { createSqlite, eventKindsSql, initSql, migrations, tableNames } from './kit/index.ts';
+
+/** 最新迁移 id：由 src/schema 目录推出，新增迁移时用例不必改。 */
+const LATEST = migrations().at(-1)!.id;
 
 test('迁移建立全部表并记录版本', async () => {
   const db = await createSqlite();
@@ -24,14 +27,14 @@ test('迁移建立全部表并记录版本', async () => {
     'time_slots',
     'users',
   ]);
-  assert.equal(await readSchemaVersion(db), '005_due_at_any');
+  assert.equal(await readSchemaVersion(db), LATEST);
 });
 
 test('迁移可重复执行', async () => {
   const db = openNodeSqlite(':memory:');
   const list = migrations();
-  assert.equal(await migrate(db, list), '005_due_at_any');
-  assert.equal(await migrate(db, list), '005_due_at_any');
+  assert.equal(await migrate(db, list), LATEST);
+  assert.equal(await migrate(db, list), LATEST);
 });
 
 test('002 迁移保留旧库数据并补齐新列', async () => {
@@ -45,7 +48,7 @@ test('002 迁移保留旧库数据并补齐新列', async () => {
     `INSERT INTO events (id, user_id, type, title, done, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ['old-exam', 'u1', 'exam', '旧考试', 0, 1, 1],
   );
-  assert.equal(await migrate(db, migrations()), '005_due_at_any');
+  assert.equal(await migrate(db, migrations()), LATEST);
   const row = await db.get<{ countdown: number; manual_done: number; title: string }>(
     "SELECT countdown, manual_done, title FROM events WHERE id = 'old-exam'",
   );
@@ -72,7 +75,7 @@ test('003 迁移为自定义时间加列且老数据保留', async () => {
     `INSERT INTO course_schedules (id, course_id, day_of_week, period_start, period_end, weeks_mask, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ['s-old', 'c-old', 2, 1, 2, 3, 1, 1],
   );
-  assert.equal(await migrate(db, migrations()), '005_due_at_any');
+  assert.equal(await migrate(db, migrations()), LATEST);
   const eventCols = (await db.all<{ name: string }>("PRAGMA table_info(events)")).map((row) => row.name);
   const scheduleCols = (await db.all<{ name: string }>("PRAGMA table_info(course_schedules)")).map((row) => row.name);
   assert.ok(eventCols.includes('start_time') && eventCols.includes('end_time'));
@@ -100,7 +103,7 @@ test('004 迁移默认不占课表并把实验回填为显示', async () => {
     `INSERT INTO events (id, user_id, type, title, on_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ['e-todo', 'u3', 'todo', '交作业', '2026-10-13', 1, 1],
   );
-  assert.equal(await migrate(db, migrations()), '005_due_at_any');
+  assert.equal(await migrate(db, migrations()), LATEST);
   const lab = await db.get<{ show_in_timetable: number }>("SELECT show_in_timetable FROM events WHERE id = 'e-lab'");
   const todo = await db.get<{ show_in_timetable: number }>("SELECT show_in_timetable FROM events WHERE id = 'e-todo'");
   assert.equal(lab?.show_in_timetable, 1);
@@ -129,9 +132,9 @@ test('有 users 缺 _sqlx_migrations 的旧库能被识别并补写基线', asyn
   assert.equal(state.hasUsers, true);
   assert.equal(state.hasSqlxMigrations, false);
   assert.equal(state.legacy, true);
-  assert.equal(state.schemaVersion, '005_due_at_any');
+  assert.equal(state.schemaVersion, LATEST);
   assert.equal(await writeLegacySqlxBaseline(db, state.schemaVersion), true);
-  assert.equal(await readMeta(db, LEGACY_SQLX_BASELINE_KEY), '005_due_at_any');
+  assert.equal(await readMeta(db, LEGACY_SQLX_BASELINE_KEY), LATEST);
   // 重复调用幂等：基线已记过就不再写
   assert.equal(await writeLegacySqlxBaseline(db, state.schemaVersion), false);
   assert.equal(await inspectSqlxBaseline(db).then((next) => next.legacy), true);

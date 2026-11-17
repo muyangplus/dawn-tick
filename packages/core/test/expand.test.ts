@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { currentOccurrence, expand, nextOccurrence, resolveDayKind, type ExpandDayKind, type ExpandInput } from '../src/expand.ts';
 import { loadExpandInput } from '../src/repository.ts';
 import type { Storage } from '../src/storage.ts';
-import { SEMESTER_ID, createStorage, eventRow, seedStorage } from './helpers.ts';
+import { SEMESTER_ID, createStorage, eventRow, seedStorage } from './kit/index.ts';
 
 async function buildInput(storage: Storage, from: string, to: string): Promise<ExpandInput> {
   const input = await loadExpandInput(storage, SEMESTER_ID, from, to);

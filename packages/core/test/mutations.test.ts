@@ -32,7 +32,7 @@ import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.t
 import { weekView } from '../src/repository.ts';
 import { ValidationError } from '../src/validation.ts';
 import { MemoryStorage } from '../src/storage.ts';
-import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './helpers.ts';
+import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './kit/index.ts';
 
 const FIXED = (() => {
   let counter = 0;

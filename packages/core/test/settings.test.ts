@@ -10,7 +10,7 @@ import {
   readSettings,
   writeSettings,
 } from '../src/settings.ts';
-import { createStorage } from './helpers.ts';
+import { createStorage } from './kit/index.ts';
 
 test('周视图天数可选 1–7 天', async () => {
   assert.deepEqual([...VIEW_DAY_OPTIONS], [1, 2, 3, 4, 5, 6, 7]);

@@ -5,7 +5,7 @@ import { expand } from '../src/expand.ts';
 import { loadExpandInput } from '../src/repository.ts';
 import type { EventRow, ReminderRow } from '../src/types.ts';
 import type { Storage } from '../src/storage.ts';
-import { NOW, createStorage, eventRow, seedStorage } from './helpers.ts';
+import { NOW, createStorage, eventRow, seedStorage } from './kit/index.ts';
 
 function reminder(overrides: Partial<ReminderRow> & Pick<ReminderRow, 'id' | 'target_id'>): ReminderRow {
   return {
