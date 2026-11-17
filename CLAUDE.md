@@ -20,7 +20,7 @@ python tools/schema-check/validate_schema.py   # replay SQL schema + migrations 
 node tools/release/version.mjs --check  # version consistency across apps (CI runs this)
 ```
 
-- Run tests and smoke with `TZ=Asia/Shanghai`. CI sets it, and some tests derive dates from local time, so they fail under UTC.
+- The product's home time zone is `Asia/Shanghai`; the smoke pins it. CI also runs `pnpm test` under `Asia/Kolkata` and `America/New_York`, so time assertions must not depend on the local offset.
 - Test files are discovered by glob (`node --test "test/**/*.test.ts"` per package, `"tools/**/*.test.mjs"` at the root). Keep the double quotes so Node, not the shell, expands the pattern (works under Windows cmd too).
 - Other checks from `tools/verify/verify-all.ps1` (Windows/PowerShell, also covers builds, APK and cargo): `node tools/design/check-a11y.mjs`, `node --test tools/design/check-a11y.test.mjs` (tokens.ts ↔ styles.css consistency), `node tools/legal/collect-licenses.mjs --check`, `node tools/release/changelog.mjs --check`, `python tools/verify/check-workflows.py`.
 - Desktop shell: `cargo check --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml` / `cargo test ...` (the Rust tests include DDL checks). Android: `pnpm -C apps/web build && pnpm -C apps/mobile exec cap sync android`, then `sh ./gradlew assembleDebug` in `apps/mobile/android`.

@@ -16,9 +16,16 @@ import {
 const STAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}$/;
 
 test('日志时间戳带本地时间与偏移', () => {
-  const text = formatLogTimestamp(Date.UTC(2026, 9, 13, 10, 1, 34, 123));
+  const at = Date.UTC(2026, 9, 13, 10, 1, 34, 123);
+  const text = formatLogTimestamp(at);
   assert.match(text, STAMP_RE);
-  assert.match(text, /^2026-10-13 \d{2}:01:34\.123 [+-]\d{2}:\d{2}$/);
+  // 本地时间减去偏移应还原为同一时刻：与运行时区无关
+  const [, y, mo, d, h, mi, s, ms, sign, oh, om] = text.match(
+    /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3}) ([+-])(\d{2}):(\d{2})$/,
+  )!.map(String);
+  const offset = (sign === '-' ? -1 : 1) * (Number(oh) * 60 + Number(om));
+  const local = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s), Number(ms));
+  assert.equal(local - offset * 60_000, at);
 });
 
 test('开发渠道记录全部等级且每行都带时间', () => {

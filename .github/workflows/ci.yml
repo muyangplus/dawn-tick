@@ -41,6 +41,27 @@ jobs:
           TZ: Asia/Shanghai
         run: pnpm ui:smoke
 
+  timezones:
+    name: 时区矩阵（${{ matrix.tz }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 半小时偏移与负偏移 + 夏令时；主时区 Asia/Shanghai 由 node job 覆盖
+        tz: [Asia/Kolkata, America/New_York]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 单元与集成测试
+        env:
+          TZ: ${{ matrix.tz }}
+        run: pnpm test
+
   schema:
     name: 数据模型跨引擎校验
     runs-on: ubuntu-latest
