@@ -8,6 +8,7 @@ export interface RuntimeCredit {
 
 export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Web', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
+  { component: 'Web', name: '@capacitor-mlkit/barcode-scanning', version: '8.2.1', license: 'Apache-2.0' },
   { component: 'Web', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
   { component: 'Web', name: '@capacitor/filesystem', version: '8.1.5', license: 'MIT' },
   { component: 'Web', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
@@ -37,12 +38,14 @@ export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Web', name: 'tailwindcss', version: '4.3.3', license: 'MIT' },
   { component: 'Web', name: 'vaul', version: '1.1.2', license: 'MIT' },
   { component: 'Android', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
+  { component: 'Android', name: '@capacitor-mlkit/barcode-scanning', version: '8.2.1', license: 'Apache-2.0' },
   { component: 'Android', name: '@capacitor/android', version: '8.5.3', license: 'MIT' },
   { component: 'Android', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
   { component: 'Android', name: '@capacitor/filesystem', version: '8.1.5', license: 'MIT' },
   { component: 'Android', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
   { component: 'Windows', name: 'serde', version: '1.0.229', license: 'MIT OR Apache-2.0' },
   { component: 'Windows', name: 'serde_json', version: '1.0.151', license: 'MIT OR Apache-2.0' },
+  { component: 'Windows', name: 'sha2', version: '0.10.9', license: 'MIT OR Apache-2.0' },
   { component: 'Windows', name: 'sqlx', version: '0.8.6', license: 'MIT OR Apache-2.0' },
   { component: 'Windows', name: 'tauri', version: '2.12.2', license: 'Apache-2.0 OR MIT' },
   { component: 'Windows', name: 'tauri-build', version: '2.7.1', license: 'Apache-2.0 OR MIT' },
@@ -51,4 +54,5 @@ export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Windows', name: 'tauri-plugin-notification', version: '2.5.1', license: 'Apache-2.0 OR MIT' },
   { component: 'Windows', name: 'tauri-plugin-sql', version: '2.5.0', license: 'Apache-2.0 OR MIT' },
   { component: 'Windows', name: 'windows-sys', version: '0.52.0', license: 'MIT OR Apache-2.0' },
+  { component: 'Windows', name: 'zip', version: '4.6.1', license: 'MIT' },
 ];
