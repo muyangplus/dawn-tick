@@ -156,3 +156,25 @@ test('旧库缺少 download_source 时按自动检测读取，非法值被拒', 
   );
   assert.equal(await storage.readMeta('download_source'), 'gitlab', '非法值不落库');
 });
+
+test('一次写入里有一项不合法时整批不写', async () => {
+  const storage = createStorage();
+  await assert.rejects(writeSettings(storage, { viewDays: 3, classReminderMinutes: 999 }), /1 到 180/);
+  assert.equal((await readSettings(storage)).viewDays, DEFAULT_SETTINGS.viewDays, '合法的那项也没写');
+});
+
+test('主题、配色与动效写入前校验取值', async () => {
+  const storage = createStorage();
+  await assert.rejects(writeSettings(storage, { theme: 'neon' as never }), /主题/);
+  await assert.rejects(writeSettings(storage, { themePreset: 'rainbow' as never }), /配色/);
+  const next = await writeSettings(storage, { theme: 'dark', themePreset: 'mono', motion: 'off' });
+  assert.deepEqual([next.theme, next.themePreset, next.motion], ['dark', 'mono', 'off']);
+});
+
+test('接收测试版没设置过时为 null，写 null 不落库', async () => {
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).receiveBeta, null);
+  await writeSettings(storage, { receiveBeta: null });
+  assert.equal(await storage.readMeta('receive_beta'), undefined);
+  assert.equal((await writeSettings(storage, { receiveBeta: false })).receiveBeta, false);
+});
