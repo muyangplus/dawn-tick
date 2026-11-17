@@ -587,3 +587,13 @@ test('资产名与扩展名不符时仍按资产名判定，不把 zip 当安装
   assert.equal(portableFileName('https://gitee.com/x/asset-2', GITEE_PORTABLE_ASSET.name), 'DawnTick-update.zip');
   assert.equal(portableFileName('https://gitee.com/x/asset-2'), null);
 });
+
+test('C1 安装包暂存句柄可持久化并原样还原', async () => {
+  const { stagedHandle, parseStagedHandle } = await import('../src/lib/update-install.ts');
+  const handle = stagedHandle('DawnTick-0.7.0-release-windows-x64-setup.exe', 'a'.repeat(64));
+  assert.deepEqual(parseStagedHandle(handle), {
+    name: 'DawnTick-0.7.0-release-windows-x64-setup.exe',
+    sha256: 'a'.repeat(64),
+  });
+  assert.equal(parseStagedHandle(String.raw`C:\Users\me\AppData\Local\Temp\setup.exe`), null, '旧的任意路径不再接受');
+});

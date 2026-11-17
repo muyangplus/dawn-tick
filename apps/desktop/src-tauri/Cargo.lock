@@ -791,6 +791,7 @@ version = "0.6.12"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "tauri",
  "tauri-build",

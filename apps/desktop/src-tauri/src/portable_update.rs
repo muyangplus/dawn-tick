@@ -13,43 +13,12 @@
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
 
-use crate::paths;
-
 /// 便携包里的程序名：发布流程把可执行文件重命名为它再打包。
 pub const PORTABLE_EXE_NAME: &str = "DawnTick.exe";
 /// 解压目录名：数据目录下的子目录，每次更新清空重建。
 const STAGING_DIR_NAME: &str = "update-staging";
 /// 等旧进程释放 exe 的最长轮次（每轮约 1 秒）：自动退出失败时给用户留手动退出的时间。
 const WAIT_ROUNDS: u32 = 300;
-
-/// 校验 zip 路径：存在、是普通文件、扩展名 `.zip`，且 `canonicalize` 后落在允许目录内。
-pub fn resolve_portable_zip(text: &str, allowed_dirs: &[PathBuf]) -> Result<PathBuf, String> {
-    let text = text.trim();
-    if text.is_empty() {
-        return Err("没有提供便携包路径".to_string());
-    }
-    let path = PathBuf::from(text);
-    let canonical = std::fs::canonicalize(&path).map_err(|_| format!("便携包不存在: {text}"))?;
-    if !canonical.is_file() {
-        return Err(format!("不是便携包文件: {text}"));
-    }
-    let is_zip = canonical
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("zip"))
-        .unwrap_or(false);
-    if !is_zip {
-        return Err("只允许解压 .zip 便携包".to_string());
-    }
-    let allowed = allowed_dirs.iter().any(|dir| match std::fs::canonicalize(dir) {
-        Ok(dir) => paths::path_inside(&canonical, &dir),
-        Err(_) => false,
-    });
-    if !allowed {
-        return Err("便携包必须位于临时目录或数据目录内".to_string());
-    }
-    Ok(canonical)
-}
 
 /// zip 条目名 → 安全相对路径：拒绝绝对路径、盘符、`..` 与空名。
 pub fn entry_relative_path(name: &str) -> Result<PathBuf, String> {
@@ -221,16 +190,16 @@ fn launch_script(_script: &Path) -> Result<(), String> {
 /// 返回脚本路径，前端据此提示「应用将退出并自动替换」。此时**不要**重启旧进程：
 /// 旧二进制会重新占用 exe，脚本永远覆盖不了。
 #[tauri::command]
-pub async fn prepare_portable_update(zip_path: String) -> Result<String, String> {
+pub async fn prepare_portable_update(name: String, sha256: String) -> Result<String, String> {
     // 解压整个便携包：放到阻塞线程池，界面不卡
-    tauri::async_runtime::spawn_blocking(move || prepare_portable_update_blocking(zip_path))
+    tauri::async_runtime::spawn_blocking(move || prepare_portable_update_blocking(name, sha256))
         .await
         .map_err(|error| format!("后台任务失败: {error}"))?
 }
 
-fn prepare_portable_update_blocking(zip_path: String) -> Result<String, String> {
-    let allowed = vec![crate::data_dir(), std::env::temp_dir()];
-    let zip_path = resolve_portable_zip(&zip_path, &allowed)?;
+fn prepare_portable_update_blocking(name: String, sha256: String) -> Result<String, String> {
+    // 只接受暂存目录里、哈希一致的 zip（见 fs_commands）
+    let zip_path = crate::fs_commands::resolve_staged(&crate::fs_commands::updates_dir(), &name, &sha256, &["zip"])?;
     let exe = std::env::current_exe().map_err(|error| format!("拿不到当前程序路径: {error}"))?;
     let staging = staging_dir(&crate::data_dir());
     let staged_exe = extract_portable_zip(&zip_path, &staging)?;
@@ -372,29 +341,6 @@ mod tests {
                 "{name:?} 应被拒绝"
             );
         }
-    }
-
-    #[test]
-    fn zip_outside_allowed_dirs_is_rejected() {
-        let allowed = scratch_dir("portable-zip-allowed");
-        let outside = scratch_dir("portable-zip-outside");
-        let zip = write_zip(&outside.join("update.zip"), &[("DawnTick.exe", b"MZ")]);
-        let error = resolve_portable_zip(&zip.to_string_lossy(), &[allowed.clone()])
-            .expect_err("目录外应拒绝");
-        assert!(error.contains("临时目录或数据目录"), "{error}");
-
-        // 扩展名不是 zip 的一律拒绝
-        let not_zip = allowed.join("update.exe");
-        std::fs::write(&not_zip, b"MZ").expect("应能写文件");
-        let error = resolve_portable_zip(&not_zip.to_string_lossy(), &[allowed.clone()])
-            .expect_err("非 zip 应拒绝");
-        assert!(error.contains(".zip"), "{error}");
-
-        let inside = write_zip(&allowed.join("update.zip"), &[("DawnTick.exe", b"MZ")]);
-        assert!(resolve_portable_zip(&inside.to_string_lossy(), &[allowed.clone()]).is_ok());
-
-        let _ = std::fs::remove_dir_all(&allowed);
-        let _ = std::fs::remove_dir_all(&outside);
     }
 
     #[test]
