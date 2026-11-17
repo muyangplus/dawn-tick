@@ -1,8 +1,7 @@
 import { readSystemsConfig, type SchoolSystemId, type SystemConfig } from '../config/index.ts';
-import { nameHitScore } from '../schools/index.ts';
-import { DIRECTORY_NAMES, MANUAL_SCHOOLS } from './schools.ts';
+import { MANUAL_SCHOOLS } from './schools.ts';
 
-export { DIRECTORY_NAMES, MANUAL_SCHOOLS };
+export { MANUAL_SCHOOLS };
 
 /** 教务系统 id；事实来源是 src/config/systems.json（见 src/config/index.ts）。 */
 export type SchoolSystem = SchoolSystemId;
@@ -84,10 +83,7 @@ export interface SchoolEntry {
   source: 'builtin' | 'user';
 }
 
-/**
- * 内置学校：上游适配仓库的条目 + 本项目自行维护的条目。
- * 两段数据都在 schools.ts，手工维护段重新生成时不会被覆盖。
- */
+/** 内置学校：`schools.ts` 里手工维护的教务入口条目。 */
 export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...MANUAL_SCHOOLS];
 
 /**
@@ -136,30 +132,6 @@ export function entryUrlFor(system: SchoolSystem, url: string): string {
   }
 }
 
-/**
- * 按校名检索教务条目（候选/调试用）。
- *
- * 权重表与目录检索共用 `nameHitScore`：整串相等 100 > 前缀 92 > 包含 84；
- * 同分按校名、id 稳定排序。口径与 `searchSchools` 的「精确 > 前缀 > 包含」一致，
- * 避免同一个关键词在目录检索与入口检索两条路径上给出不同的首条。
- */
-export function matchSchools(schools: readonly SchoolEntry[], keyword: string): SchoolEntry[] {
-  const query = keyword.trim().toLowerCase();
-  const scored: Array<{ school: SchoolEntry; score: number }> = [];
-  for (const school of schools) {
-    const score = query.length === 0 ? 1 : nameHitScore(school.name, '', query);
-    if (score > 0) scored.push({ school, score });
-  }
-  return scored
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        (left.school.name === right.school.name ? 0 : left.school.name < right.school.name ? -1 : 1) ||
-        (left.school.id === right.school.id ? 0 : left.school.id < right.school.id ? -1 : 1),
-    )
-    .map((item) => item.school);
-}
-
 /** 合并内置与用户自定义学校，同 id 时用户条目优先。 */
 export function mergeSchools(
   builtin: readonly SchoolEntry[],
@@ -169,77 +141,4 @@ export function mergeSchools(
   for (const school of builtin) byId.set(school.id, school);
   for (const school of custom) byId.set(school.id, { ...school, source: 'user' });
   return [...byId.values()];
-}
-
-/** 下拉框候选：带教务入口的条目排在前，其次才是名单里只有校名的学校。 */
-export interface SchoolSuggestion {
-  key: string;
-  name: string;
-  system: SchoolSystem;
-  url: string;
-  id: string | null;
-  hasEntry: boolean;
-  source: 'builtin' | 'user' | 'directory';
-}
-
-export interface SuggestSchoolsOptions {
-  schools: readonly SchoolEntry[];
-  directory?: readonly string[];
-  limit?: number;
-}
-
-export function suggestSchools(query: string, options: SuggestSchoolsOptions): SchoolSuggestion[] {
-  const limit = options.limit ?? 20;
-  const directory = options.directory ?? DIRECTORY_NAMES;
-  const keyword = query.trim();
-  const out: SchoolSuggestion[] = [];
-  const covered = new Set<string>();
-
-  const pool =
-    keyword.length === 0
-      ? [...options.schools].sort((left, right) => left.name.localeCompare(right.name))
-      : matchSchools(options.schools, keyword);
-
-  for (const school of pool) {
-    if (out.length >= limit) break;
-    out.push({
-      key: school.id,
-      name: school.name,
-      system: school.system,
-      url: school.url,
-      id: school.id,
-      hasEntry: school.url.length > 0,
-      source: school.source,
-    });
-    covered.add(school.name);
-  }
-
-  if (keyword.length > 0) {
-    const lower = keyword.toLowerCase();
-    // 名单校名也走同一张权重表（精确 > 前缀 > 包含，同分按校名），
-    // 保证「候选」与「目录检索」对同一个关键词排出同一个首条。
-    const tail = directory
-      .map((name) => ({ name, score: nameHitScore(name, '', lower) }))
-      .filter((item) => item.score > 0)
-      .sort(
-        (left, right) =>
-          right.score - left.score || (left.name === right.name ? 0 : left.name < right.name ? -1 : 1),
-      );
-    for (const { name } of tail) {
-      if (out.length >= limit) break;
-      if (covered.has(name)) continue;
-      out.push({
-        key: `dir:${name}`,
-        name,
-        system: 'other',
-        url: '',
-        id: null,
-        hasEntry: false,
-        source: 'directory',
-      });
-      covered.add(name);
-    }
-  }
-
-  return out;
 }
