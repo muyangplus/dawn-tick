@@ -15,7 +15,7 @@ import {
   type Storage,
   type TimeSlotRow,
 } from '@dawn-tick/core';
-import { dayRangeOf, type DayRange } from '../../lib/day-nav.ts';
+import { dayRangeOf } from '../../lib/day-nav.ts';
 import { weekDateOf } from '../../data.ts';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -50,11 +50,6 @@ export interface Overlap {
 /** 节次是否可用：1 起、整数、结束不小于开始。 */
 export function periodsValid(start: number, end: number): boolean {
   return Number.isInteger(start) && Number.isInteger(end) && start >= 1 && end >= start;
-}
-
-/** 学期覆盖的日期区间（与 `dayRangeOf` 同一口径）。 */
-export function semesterRangeOf(semester: Pick<SemesterRow, 'start_date' | 'total_weeks'> | null): DayRange | null {
-  return semester === null ? null : dayRangeOf(semester);
 }
 
 /** 日期溢出判定：不在学期内时返回说明，null 表示可用。 */

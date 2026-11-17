@@ -42,10 +42,6 @@ export class ReadOnlyStorageError extends Error {
   }
 }
 
-export function isReadOnlyStorageError(cause: unknown): boolean {
-  return cause instanceof ReadOnlyStorageError;
-}
-
 function deny(): Promise<never> {
   return Promise.reject(new ReadOnlyStorageError());
 }

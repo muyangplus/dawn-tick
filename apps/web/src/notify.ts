@@ -1,4 +1,4 @@
-import { isAndroidApp, isDesktopApp, isWebApp, supportsBackgroundReminders } from './lib/capabilities.ts';
+import { isAndroidApp, isDesktopApp, isWebApp } from './lib/capabilities.ts';
 import { NOTIFY_ASKED_META_KEY } from './lib/meta-keys.ts';
 import type { Storage } from '@dawn-tick/core';
 
@@ -63,16 +63,6 @@ export async function notifyNow(title: string, body: string): Promise<void> {
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     new Notification(title, { body });
   }
-}
-
-/** Android 支持提前排定通知，应用关闭后仍可送达。 */
-export async function scheduleNotify(id: number, title: string, body: string, at: number): Promise<boolean> {
-  if (!supportsBackgroundReminders()) return false;
-  const local = await import('@capacitor/local-notifications');
-  await local.LocalNotifications.schedule({
-    notifications: [{ id: id % 2_000_000_000, title, body, schedule: { at: new Date(at) } }],
-  });
-  return true;
 }
 
 export function currentNotifyPermission(): NotifyPermission {

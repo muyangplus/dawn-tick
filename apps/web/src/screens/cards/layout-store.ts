@@ -44,7 +44,3 @@ export async function writeLayout(storage: Storage, config: LayoutConfig): Promi
   await writeMetaJson(storage, LAYOUT_META_KEY, plainConfig(config), { scope: 'layout' });
 }
 
-/** 恢复默认：清空所有覆盖项 */
-export async function resetLayout(storage: Storage): Promise<void> {
-  await writeLayout(storage, {});
-}

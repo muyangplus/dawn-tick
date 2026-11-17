@@ -203,8 +203,6 @@ export interface Suppression {
   done: readonly DoneRecord[];
 }
 
-export const NO_SUPPRESSION: Suppression = { mutes: [], done: [] };
-
 /**
  * 这次提醒是否被「勿扰」或「完成」抑制。
  * 按目标 id + 触发时刻判断：静音窗口/当天只影响落在区间内的提醒，

@@ -149,15 +149,6 @@ export function markLanDiscoveryAttempted(
   return next;
 }
 
-/** 当前到点、应该探测的记录；`statuses` 里没有的（新配对）立即探测。 */
-export function dueLanPairings(
-  pairings: readonly LanPairing[],
-  statuses: LanPairingStatuses,
-  now = Date.now(),
-): LanPairing[] {
-  return pairings.filter((pairing) => shouldProbePairing(statuses[pairing.id], now));
-}
-
 /**
  * 在 UDP 发现结果里找同一台设备：优先稳定 `deviceId`（IP / 端口变化不影响），
  * 其次按设备名；同名多台时优先同 IP。地址型兜底名不参与匹配。
@@ -247,15 +238,6 @@ export async function discoverPairingAddresses(
     updated.push(discovered);
   }
   return { pairings: next, updated, scanned: peers.length };
-}
-
-/** 列表里是否有记录需要探测：给暂停 / 定时器判断用。 */
-export function hasDueLanPairing(
-  pairings: readonly LanPairing[],
-  statuses: LanPairingStatuses,
-  now = Date.now(),
-): boolean {
-  return pairings.some((pairing) => shouldProbePairing(statuses[pairing.id], now));
 }
 
 /* ── 单次重连探测 ─────────────────────────────────────────────── */
