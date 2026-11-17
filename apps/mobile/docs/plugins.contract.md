@@ -186,6 +186,7 @@ HTTP 路径白名单（原生层只放行这些，其余 404/405）：`/ping`、
 |---|---|---|---|
 | `schedule` | `id: number`、`title: string`、`body?: string`、`at: number`、`kind: string`、`targetId?: string` | 无（resolve 空） | `at` 是 epoch 毫秒；`kind` 决定动作集合（见下表）；同一 `id` 重复调用按最后一次覆盖 |
 | `cancel` | `id: number` | 无（resolve 空） | 取消闹钟并清掉已展示的通知 |
+| `pending` | 无 | `reminders?: { id?: number; at?: number }[]` | 持久化里的全部提醒（含已展示、等待动作回传的）；前端按 `at > now` 过滤后与扫描结果对账 |
 | `requestPermissionInfo` | 无 | `notifications?: string`、`exactAlarm?: string` | 只报告不弹窗；取值 `granted` / `denied` |
 | `pollActions` | 无 | `actions?: { id?: number; action?: string; targetId?: string; kind?: string }[]` | 取走进程不在线时堆积的动作；队列空时为空数组 |
 

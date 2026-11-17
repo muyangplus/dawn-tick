@@ -35,7 +35,6 @@ import {
 } from './reminder-collect.ts';
 
 const SCAN_INTERVAL_MS = 30_000;
-const SCHEDULE_AHEAD_MS = 60 * 60 * 1000;
 /** 补投上限：睡眠/休眠唤醒后只补最近这段时间内到点的提醒，避免一次弹出一早上的旧提醒。 */
 const CATCH_UP_MS = 5 * 60 * 1000;
 
@@ -59,7 +58,16 @@ const SYSTEM_CLOCK: SchedulerClock = {
 /** 调度器用到的平台桥接口：默认 `ReminderBridge`，测试可注入桩。 */
 export type ReminderBridgeLike = Pick<
   ReminderBridge,
-  'connect' | 'stop' | 'refreshPermission' | 'schedule' | 'deliver' | 'cancel' | 'pollActions' | 'syncTray' | 'clearTray'
+  | 'connect'
+  | 'stop'
+  | 'refreshPermission'
+  | 'schedule'
+  | 'deliver'
+  | 'cancel'
+  | 'pending'
+  | 'pollActions'
+  | 'syncTray'
+  | 'clearTray'
 >;
 /** Windows 托盘最多列出几条待提醒；多了菜单过长。 */
 const TRAY_LIMIT = 5;
@@ -92,6 +100,8 @@ export class ReminderScheduler {
   private readonly pending = new Map<string, unknown>();
   /** 上一轮成功扫描的时刻；两轮之间到点的提醒由下一轮补投 */
   private lastScanAt: number | null = null;
+  /** Android 原生贪睡：通知 id → 再次提醒时刻；对账时不撤销 */
+  private nativeSnoozes = new Map<number, number>();
   private readonly deliveries = new Map<string, DeliveryItem>();
   private readonly trayPinned = new Map<string, DeliveryItem>();
   private lastScan: DeliveryItem[] = [];
@@ -190,7 +200,8 @@ export class ReminderScheduler {
       this.deliveries.set(entry.key, next);
       this.trayPinned.set(entry.key, next);
     }
-    // Android 的贪睡已由原生广播按同一 id 重排，这里不再 schedule（避免覆盖原生标题）
+    // Android 的贪睡已由原生广播按同一 id 重排，这里不再 schedule（避免覆盖原生标题），只记下以免对账撤销
+    if (isAndroidApp()) this.nativeSnoozes.set(entry?.notificationId ?? hashKey(plan.id), plan.triggerAt);
     if (isDesktopApp()) {
       const snoozed: SnoozedDelivery = {
         key: entry?.key ?? plan.id,
@@ -315,6 +326,34 @@ export class ReminderScheduler {
     await this.syncTray();
   }
 
+  /**
+   * Android：以原生持久化为准对账。只动未到点的排定——已展示的通知与原生贪睡不碰；
+   * 扫描结果里没有（删课、改时间、关提醒、被勿扰）或时刻变了的撤销，缺的补排。
+   */
+  private async reconcileNative(now: number): Promise<void> {
+    const native = await this.bridge.pending();
+    if (native === null) return;
+    for (const [id, until] of this.nativeSnoozes) if (until <= now) this.nativeSnoozes.delete(id);
+    const desired = new Map<number, DeliveryItem>();
+    for (const item of this.lastScan) if (item.triggerAt > now) desired.set(item.notificationId, item);
+    let cancelled = 0;
+    let scheduled = 0;
+    for (const [id, at] of native) {
+      if (at <= now || this.nativeSnoozes.has(id)) continue;
+      const want = desired.get(id);
+      if (want !== undefined && want.triggerAt === at) continue;
+      if (want === undefined) {
+        await this.bridge.cancel(id);
+        cancelled += 1;
+      }
+    }
+    for (const [id, item] of desired) {
+      if (native.get(id) === item.triggerAt || this.nativeSnoozes.has(id)) continue;
+      if (await this.bridge.schedule(item)) scheduled += 1;
+    }
+    if (cancelled > 0 || scheduled > 0) logDebug('reminder', '原生排定对账', { cancelled, scheduled });
+  }
+
   private async tick(): Promise<void> {
     const now = this.clock.now();
     // Android 由原生闹钟按同一 id 投递，补投会让同一条再响一次；其它平台补上两轮扫描之间到点的提醒
@@ -357,13 +396,13 @@ export class ReminderScheduler {
       this.deliveries.set(item.key, item);
       if (this.handled.has(item.key)) continue;
       if (item.triggerAt <= now) {
-        await this.deliverOnce(item);
+        // Android 到点由原生闹钟投递，页面不再重复弹
+        if (isAndroidApp()) this.handled.add(item.key);
+        else await this.deliverOnce(item);
         continue;
       }
-      if (isAndroidApp()) {
-        if (item.triggerAt - now < SCHEDULE_AHEAD_MS && (await this.bridge.schedule(item))) this.handled.add(item.key);
-        continue;
-      }
+      // Android 的未来提醒统一由下方对账排定（覆盖完整前瞻窗口，应用关闭后也能按时响）
+      if (isAndroidApp()) continue;
       if (item.triggerAt - now <= SCAN_INTERVAL_MS && !this.pending.has(item.key)) {
         const handle = this.clock.setTimeout(() => {
           this.pending.delete(item.key);
@@ -375,9 +414,11 @@ export class ReminderScheduler {
 
     await this.syncTray();
     if (isAndroidApp()) {
+      // 先取回离线期间的动作（贪睡会改原生排定），再对账
       for (const payload of await this.bridge.pollActions()) {
         await this.applyAction(payload, 'android');
       }
+      await this.reconcileNative(now);
     }
     logDebug('reminder', '提醒扫描', {
       upcoming: items.length,

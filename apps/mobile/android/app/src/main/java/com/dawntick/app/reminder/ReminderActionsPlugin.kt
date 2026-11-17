@@ -112,6 +112,19 @@ class ReminderActionsPlugin : Plugin() {
         call.resolve()
     }
 
+    /**
+     * 持久化里的全部提醒 `{ reminders: [{ id, at }] }`：前端据此对账，撤销已不存在或改了时间的排定。
+     * 已展示的记录仍保留（动作回传要用），由调用方按 `at` 过滤。
+     */
+    @PluginMethod
+    fun pending(call: PluginCall) {
+        val reminders = JSArray()
+        for (record in ReminderStore.list(context)) {
+            reminders.put(JSObject().put("id", record.id).put("at", record.at))
+        }
+        call.resolve(JSObject().put("reminders", reminders))
+    }
+
     /** 通知权限与精确闹钟状态：只报告，不弹系统弹窗。 */
     @PluginMethod
     fun requestPermissionInfo(call: PluginCall) {

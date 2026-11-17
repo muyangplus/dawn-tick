@@ -12,6 +12,7 @@ import {
 } from '@dawn-tick/core';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import type { DeliveryItem } from '../src/reminder-collect.ts';
+import { installCapacitorPlatform } from './kit/platform.ts';
 import { ReminderScheduler, type ReminderBridgeLike, type SchedulerClock } from '../src/reminder-scheduler.ts';
 
 const TIME_ZONE = 'Asia/Shanghai';
@@ -70,16 +71,33 @@ class ManualClock implements SchedulerClock {
   }
 }
 
-function stubBridge(delivered: DeliveryItem[]): ReminderBridgeLike {
+interface NativeLog {
+  scheduled: DeliveryItem[];
+  cancelled: number[];
+}
+
+function stubBridge(
+  delivered: DeliveryItem[],
+  native: Map<number, number> | null = null,
+  log: NativeLog = { scheduled: [], cancelled: [] },
+): ReminderBridgeLike {
   return {
     connect: async () => null,
     stop: () => {},
     refreshPermission: async () => null,
-    schedule: async () => false,
+    schedule: async (item) => {
+      log.scheduled.push(item);
+      native?.set(item.notificationId, item.triggerAt);
+      return native !== null;
+    },
     deliver: async (item) => {
       delivered.push(item as DeliveryItem);
     },
-    cancel: async () => {},
+    cancel: async (id) => {
+      log.cancelled.push(id);
+      native?.delete(id);
+    },
+    pending: async () => (native === null ? null : new Map(native)),
     pollActions: async () => [],
     syncTray: async () => {},
     clearTray: async () => {},
@@ -108,10 +126,11 @@ async function seed(): Promise<{ storage: Storage; semesterId: string }> {
   return { storage, semesterId: String(semester['id']) };
 }
 
-async function scheduler(start: number) {
+async function scheduler(start: number, native: Map<number, number> | null = null) {
   const { storage, semesterId } = await seed();
   const clock = new ManualClock(start);
   const delivered: DeliveryItem[] = [];
+  const log: NativeLog = { scheduled: [], cancelled: [] };
   const upcoming: number[] = [];
   const instance = new ReminderScheduler({
     storage,
@@ -121,9 +140,9 @@ async function scheduler(start: number) {
     onUpcoming: (items) => upcoming.splice(0, upcoming.length, ...items.map((item) => item.triggerAt)),
     onPermission: () => {},
     clock,
-    bridge: stubBridge(delivered),
+    bridge: stubBridge(delivered, native, log),
   });
-  return { instance, clock, delivered, upcoming };
+  return { instance, clock, delivered, upcoming, log };
 }
 
 test('A1 到点前一个扫描间隔内设精确定时，到点即投递一次', async () => {
@@ -193,4 +212,47 @@ test('A1 停止后撤掉未触发的定时投递', async () => {
   assert.equal(clock.pendingCount(), 0);
   await clock.advanceTo(TRIGGER);
   assert.equal(delivered.length, 0);
+});
+
+test('A2 Android 一次排定完整前瞻窗口，不再只排 1 小时内', async (t) => {
+  t.after(installCapacitorPlatform());
+  const native = new Map<number, number>();
+  const { instance, log, delivered } = await scheduler(at(6, 0), native);
+  await instance.scanNow();
+  assert.ok(log.scheduled.some((item) => item.triggerAt === TRIGGER), '1 小时 45 分钟后的提醒也已交给原生');
+  assert.equal(delivered.length, 0, 'Android 不由页面投递');
+  const before = log.scheduled.length;
+  await instance.scanNow();
+  assert.equal(log.scheduled.length, before, '原生已有且时刻相同的不重复排');
+  instance.stop();
+});
+
+test('A2 Android 对账：撤销扫描结果里已不存在的未来排定，不碰已到点与贪睡', async (t) => {
+  t.after(installCapacitorPlatform());
+  const stale = 4242;
+  const shown = 4343;
+  const native = new Map<number, number>([
+    [stale, at(9, 0)],
+    [shown, at(5, 0)],
+  ]);
+  const { instance, log } = await scheduler(at(6, 0), native);
+  await instance.scanNow();
+  assert.deepEqual(log.cancelled, [stale]);
+  assert.ok(native.has(shown), '已展示的记录保留给动作回传');
+  instance.stop();
+});
+
+test('A2 Android 对账：同一通知 id 的时刻变了就按新时刻重排', async (t) => {
+  t.after(installCapacitorPlatform());
+  const native = new Map<number, number>();
+  const { instance, log } = await scheduler(at(6, 0), native);
+  await instance.scanNow();
+  const item = log.scheduled.find((entry) => entry.triggerAt === TRIGGER);
+  assert.ok(item !== undefined);
+
+  // 原生里留着旧时刻（例如改提前量前排的）：下一轮对账覆盖为扫描结果的时刻
+  native.set(item.notificationId, TRIGGER - 5 * 60 * 1000);
+  await instance.scanNow();
+  assert.equal(native.get(item.notificationId), TRIGGER);
+  instance.stop();
 });
