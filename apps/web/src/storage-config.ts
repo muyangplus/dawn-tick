@@ -6,6 +6,8 @@ export { canConfigureStorage };
 
 /** 原生存储位置信息（Rust 侧 StorageInfo，camelCase）。 */
 export interface StorageInfo {
+  /** 本次运行实际在用的数据目录；改了存储位置、尚未重启时与 dir 不同（旧版桌面壳不返回） */
+  activeDir?: string;
   /** 实际使用的数据目录 */
   dir: string;
   /** 没设置自定义位置时使用的目录 */
