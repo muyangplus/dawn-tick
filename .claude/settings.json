@@ -1,3 +1,8 @@
 {
-  "autoCompactWindow": 300000
+  "autoCompactWindow": 300000,
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  }
 }
