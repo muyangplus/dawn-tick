@@ -18,10 +18,12 @@ import {
   diagnosticCountsOf,
 } from '@dawn-tick/core/testing/import-diagnostics';
 
+/** Rust 打开教务窗口时把占位符换成本次随机值（lib.rs 的 import_injection_with）。 */
+const NONCE = '0123456789abcdef0123456789abcdef';
 const injectionSource = readFileSync(
   fileURLToPath(new URL('../../desktop/src-tauri/src/import-injection.js', import.meta.url)),
   'utf8',
-);
+).replace('__DT_IMPORT_NONCE__', NONCE);
 
 const PAGE = `<!doctype html><html><head><title>个人课表查询</title></head><body>
 <table id="kbgrid_table_0"><tbody>
@@ -86,7 +88,7 @@ async function runInjection(
 test('注入脚本挂出按钮并带回页面内容', async () => {
   const { target, payload, button } = await runInjection();
   assert.ok(target !== null, '应跳转到应用自身页面');
-  assert.match(String(target), /^http:\/\/tauri\.localhost\/import-submit\.html#d=/);
+  assert.ok(String(target).startsWith(`http://tauri.localhost/import-submit.html#n=${NONCE}&d=`), String(target).slice(0, 80));
   assert.ok(payload?.includes('<<<DAWNTICK>>>'));
   assert.match(button.textContent ?? '', /已交给晓刻/);
 
