@@ -52,11 +52,6 @@ export const PRIMARY_TAG_COUNT = 3;
 /** 结果区一次最多渲染多少行：2659 所全渲染没必要，其余靠关键词与筛选收敛。 */
 export const SCHOOL_RENDER_LIMIT = 120;
 
-/** 目录里出现过的全部标签（只读视图，便于界面直接遍历）。 */
-export function allSchoolTags(): readonly string[] {
-  return SCHOOL_TAGS;
-}
-
 /** 筛选行上固定露出的常用标签：先取 `PREFERRED_SCHOOL_TAGS`，不足 `PRIMARY_TAG_COUNT` 时按码元序补齐。 */
 export function primarySchoolTags(tags: readonly string[] = SCHOOL_TAGS): string[] {
   const available = new Set(tags);

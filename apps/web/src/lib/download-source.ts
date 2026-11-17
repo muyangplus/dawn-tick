@@ -8,7 +8,6 @@
  * - Gitee 镜像未同步/不可达时退化成「仓库可达」探测（`degraded`），下载链路据此回退另一个源。
  */
 
-import type { DownloadSourceChoice } from '@dawn-tick/core';
 import type { UpdateChannel } from '../update.ts';
 
 export {
@@ -22,9 +21,6 @@ export {
 
 /** 具体的一次下载（应用更新与预设更新共用）：不含 auto。 */
 export type DownloadSource = 'github' | 'gitee';
-
-/** 界面下拉的候选顺序：国内优先。 */
-export const DOWNLOAD_SOURCES: readonly DownloadSource[] = ['gitee', 'github'];
 
 export const DOWNLOAD_SOURCE_LABEL: Record<DownloadSource, string> = {
   gitee: 'Gitee',

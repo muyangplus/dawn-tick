@@ -56,10 +56,6 @@ export function describeError(cause: unknown): string {
   return errorMessage(cause);
 }
 
-export function logFileEnabled(): boolean {
-  return fileEnabled;
-}
-
 function allowed(level: LogLevel): boolean {
   return LEVEL_RANK[level] <= LEVEL_RANK[currentLevel];
 }
@@ -193,11 +189,6 @@ export function installLogHandlers(): void {
 /** 调试日志（第 4 级）。 */
 export function logDebug(scope: string, message: string, detail?: Record<string, unknown>): void {
   record('debug', scope, message, detail);
-}
-
-/** 最详细一级：请求/响应、解析细节等。 */
-export function logTrace(scope: string, message: string, detail?: Record<string, unknown>): void {
-  record('trace', scope, message, detail);
 }
 
 export function debugEnabled(): boolean {

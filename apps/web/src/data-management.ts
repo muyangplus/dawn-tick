@@ -41,14 +41,6 @@ export type { PackageExtras } from './package.ts';
 
 export type ExportFormat = 'json' | 'base64' | 'zip';
 
-export const EXPORT_FORMATS: readonly ExportFormat[] = ['json', 'base64', 'zip'];
-
-export const EXPORT_FORMAT_LABEL: Record<ExportFormat, string> = {
-  json: 'JSON 文件',
-  base64: 'Base64 文本',
-  zip: '整包 zip',
-};
-
 export interface ExportRequest {
   modules: readonly BackupModule[];
   format: ExportFormat;

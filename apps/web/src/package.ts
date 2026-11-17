@@ -27,11 +27,6 @@ export interface PackageExtras {
   logs: string | null;
 }
 
-export const EMPTY_PACKAGE_EXTRAS: PackageExtras = {
-  presets: { snapshot: null, content: null },
-  logs: null,
-};
-
 export interface PackageInput {
   backupJson: string;
   presets?: PackagePresets | undefined;

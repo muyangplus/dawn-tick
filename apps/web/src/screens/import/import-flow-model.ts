@@ -187,17 +187,6 @@ export function fileKind(fileName: string): FileKind {
   return 'unknown';
 }
 
-export function fileKindLabel(kind: FileKind): string {
-  switch (kind) {
-    case 'ics':
-      return '日历文件';
-    case 'sheet':
-      return '表格文件';
-    case 'unknown':
-      return '未知文件';
-  }
-}
-
 /** 文件渠道对非支持格式的就近说明：不进入解析，避免给出看不懂的内部错误。 */
 export function unsupportedFileReason(fileName: string): string {
   return `不支持「${fileName}」：请选择 .csv / .xlsx / .ics 文件`;

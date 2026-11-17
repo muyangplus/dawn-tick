@@ -69,11 +69,6 @@ export async function detectWindowsInstallKind(): Promise<WindowsInstallKind> {
   return pendingInstallKind;
 }
 
-/** 订阅检测结果（非 React 场景用）。 */
-export function subscribeWindowsInstallKind(listener: () => void): () => void {
-  return subscribeInstallKind(listener);
-}
-
 /** 界面读取检测结果：第一步可能还是 null（检测中）。 */
 export function useWindowsInstallKind(): WindowsInstallKind | null {
   return useSyncExternalStore(subscribeInstallKind, windowsInstallKindSnapshot, windowsInstallKindSnapshot);

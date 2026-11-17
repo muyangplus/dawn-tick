@@ -41,11 +41,6 @@ export function isCorruptLocked(): boolean {
   return tripped !== null;
 }
 
-/** 首次损坏事件；未发生时返回 null。 */
-export function corruptEvent(): CorruptEvent | null {
-  return tripped;
-}
-
 /**
  * 上报一次错误：不是损坏返回 false；是损坏则锁定写入（同一会话只通知一次）并返回 true。
  * 调用方拿返回值决定是否换文案，不需要自己判重。

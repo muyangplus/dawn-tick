@@ -41,7 +41,6 @@ import {
   type TodoSort,
 } from '@dawn-tick/core';
 import { clampWindowStart, dayRangeOf } from './lib/day-nav.ts';
-import { dayStampUtc } from './lib/dates.ts';
 
 /** 课表里条目的角标文案。 */
 const EVENT_LABEL: Record<string, string> = {
@@ -139,7 +138,6 @@ export interface CourseDetail {
   reminder: ReminderRow | undefined;
 }
 
-const LOOKAHEAD_DAYS = 14;
 /** 课次日期范围：至少覆盖整个学期，学期外保留今天前后各一段 */
 const OCCURRENCE_PAST_DAYS = 45;
 const OCCURRENCE_FUTURE_DAYS = 60;
@@ -738,17 +736,9 @@ export async function loadCourseDetail(storage: Storage, courseId: string): Prom
   };
 }
 
-export function slotTimeOf(slots: readonly TimeSlotRow[], period: number): string {
-  return slots.find((slot) => slot.period_no === period)?.start_time ?? '';
-}
-
 function scheduleKey(row: EventRow): number {
   if (row.due_at !== null && row.due_at !== undefined) return row.due_at;
   if (row.on_date !== null && row.on_date !== undefined) return Date.parse(`${row.on_date}T00:00:00Z`);
   return Number.MAX_SAFE_INTEGER;
 }
 
-export function todoDateLabel(row: EventRow): string {
-  if (row.due_at !== null && row.due_at !== undefined) return dayStampUtc(row.due_at);
-  return row.on_date ?? '未排期';
-}

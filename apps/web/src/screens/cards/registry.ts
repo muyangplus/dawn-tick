@@ -109,11 +109,6 @@ export function listCards(scope: CardScope): readonly CardDef[] {
   return [...(REGISTRY.get(scope)?.values() ?? [])];
 }
 
-/** 取某页面的一张卡片 */
-export function getCard(scope: CardScope, id: string): CardDef | undefined {
-  return REGISTRY.get(scope)?.get(id);
-}
-
 function zoneOf(def: CardDef, state: CardState | undefined): CardZone {
   return state?.zone ?? def.defaultZone;
 }
@@ -160,13 +155,6 @@ export function renderCard<S extends CardScope>(card: ResolvedCard, ctx: CardCon
 /** 某页面某个区域要渲染的卡片 */
 export function cardsInZone(scope: CardScope, config: LayoutConfig, zone: CardZone): ResolvedCard[] {
   return resolveCards(scope, config).filter((card) => card.zone === zone);
-}
-
-/** 写入配置的纯函数：切换某张卡片的显示状态 */
-export function toggleCardVisible(config: LayoutConfig, scope: CardScope, id: string): LayoutConfig {
-  const card = resolveAllCards(scope, config).find((item) => item.def.id === id);
-  if (card === undefined) return config;
-  return { ...config, [id]: { ...config[id], visible: !card.visible } };
 }
 
 /** 写入配置的纯函数：把卡片切到另一个区域，落位在该区域末尾 */
