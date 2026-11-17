@@ -5,6 +5,7 @@ import {
   deleteEvent,
   formatDate,
   formatTime,
+  MAX_PERIODS,
   maskToWeeks,
   periodsForClockRange,
   plusMinutesText,
@@ -86,11 +87,11 @@ export interface TodoFormProps {
   container?: FormContainer;
 }
 
-/** 节次输入取整到 1..40，非法时用兜底值。 */
+/** 节次输入取整到 1..MAX_PERIODS，非法时用兜底值。 */
 function toPeriod(value: string, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(40, Math.max(1, Math.round(parsed)));
+  return Math.min(MAX_PERIODS, Math.max(1, Math.round(parsed)));
 }
 
 export function TodoForm({

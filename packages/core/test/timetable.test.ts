@@ -86,11 +86,12 @@ test('非法参数被拒绝', () => {
         durationMinutes: 45,
         breakMinutes: 10,
         blocks: [
-          { section: 'am', startTime: '08:00', count: 20 },
-          { section: 'pm', startTime: '14:00', count: 20 },
+          { section: 'am', startTime: '00:00', count: 20 },
+          { section: 'pm', startTime: '12:00', count: 20 },
+          { section: 'night', startTime: '23:00', count: 1 },
         ],
       }),
-    /不能超过 30 节/,
+    /不能超过 40 节/,
   );
 });
 
