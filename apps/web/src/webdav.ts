@@ -1,7 +1,6 @@
 import {
   BACKUP_MODULES,
   exportBackup,
-  importBackup,
   type AppSettings,
   type BackupModule,
   type BackupPayload,
@@ -15,7 +14,7 @@ import { readMetaNumber } from './lib/meta.ts';
 import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
 import {
-  applyPackageEntries,
+  applyBackupPackage,
   buildPackageBytes,
   readPackageEntries,
   readPresetExtras,
@@ -293,14 +292,12 @@ export async function applyPackage(
   try {
     const { payload, extras } = await readPackageEntries(bytes);
     const modules: readonly BackupModule[] = mode === 'all' ? BACKUP_MODULES : ['settings'];
-    const result = await importBackup(storage, payload, {
+    const result = await applyBackupPackage(storage, payload, {
       mode: mode === 'all' ? 'clear' : 'overwrite',
-      modules: [...modules],
-      now: Date.now(),
+      modules,
+      extras,
     });
-
-    const applied = await applyPackageEntries(storage, extras, { restorePresets: true });
-    const presets = applied.presets;
+    const presets = result.presets;
     logInfo('webdav', '已应用同步包', {
       mode,
       imported: result.imported,
