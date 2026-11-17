@@ -31,7 +31,7 @@ type Row = Record<string, unknown>;
 import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.ts';
 import { weekView } from '../src/repository.ts';
 import { ValidationError } from '../src/validation.ts';
-import { MemoryStorage } from '../src/storage.ts';
+import { MemoryStorage, type Storage } from '../src/storage.ts';
 import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './kit/index.ts';
 
 const FIXED = (() => {
@@ -566,4 +566,94 @@ test('启动回填历史排课的 weeks_raw 且幂等', async () => {
   }
   assert.equal(await storage.readMeta('weeks_raw_backfill_v1'), '1');
   assert.equal(await backfillWeeksRaw(storage), 0, '第二次调用不再改动');
+});
+
+/** 某门课当前的排课行。 */
+async function aliveSchedules(storage: Storage, courseId: string): Promise<Row[]> {
+  return (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => row['course_id'] === courseId && row['deleted_at'] === null,
+  );
+}
+
+test('A4 setSchedules 保存自定义上课时间', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  assert.ok(course !== undefined);
+  await setSchedules(storage, course.id, [
+    { dayOfWeek: 2, periodStart: 3, periodEnd: 4, weeks: [1, 2], startTime: '13:30', endTime: '15:00' },
+  ]);
+  const [row] = await aliveSchedules(storage, course.id);
+  assert.equal(row?.['start_time'], '13:30');
+  assert.equal(row?.['end_time'], '15:00');
+});
+
+test('A5 重新保存课程保留排课 id 与其上的停课、排课级提醒', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  const schedule = course?.schedules[0];
+  assert.ok(course !== undefined && schedule !== undefined);
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: schedule.id,
+    onDate: '2026-09-21',
+    action: 'cancel',
+  });
+  const rule = await setReminder(storage, { userId: USER_ID, targetType: 'schedule', targetId: schedule.id });
+
+  // 表单原样带回 id，只改了教室
+  await setSchedules(storage, course.id, [{ ...schedule, room: '新教室' }]);
+  const [after] = await aliveSchedules(storage, course.id);
+  assert.equal(after?.['id'], schedule.id, '原地更新而非新建');
+  assert.equal(after?.['room'], '新教室');
+  assert.equal((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
+  assert.equal((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
+});
+
+test('A5 不带 id 时按星期与节次认回原排课；被移除的排课连同停课与提醒一起删除', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  const schedule = course?.schedules[0];
+  assert.ok(course !== undefined && schedule !== undefined);
+
+  const { id: _drop, ...withoutId } = schedule;
+  await setSchedules(storage, course.id, [{ ...withoutId, weeks: [1, 2, 3] }]);
+  assert.equal((await aliveSchedules(storage, course.id))[0]?.['id'], schedule.id);
+
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: schedule.id,
+    onDate: '2026-09-21',
+    action: 'cancel',
+  });
+  const rule = await setReminder(storage, { userId: USER_ID, targetType: 'schedule', targetId: schedule.id });
+  await setSchedules(storage, course.id, [{ dayOfWeek: 6, periodStart: 7, periodEnd: 8, weeks: [1] }]);
+  const rows = await aliveSchedules(storage, course.id);
+  assert.equal(rows.length, 1);
+  assert.notEqual(rows[0]?.['id'], schedule.id);
+  assert.notEqual((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
+  assert.notEqual((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
+});
+
+test('删除课程同时删除排课级提醒与停课记录', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  const schedule = course?.schedules[0];
+  assert.ok(course !== undefined && schedule !== undefined);
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: schedule.id,
+    onDate: '2026-09-21',
+    action: 'cancel',
+  });
+  const rule = await setReminder(storage, { userId: USER_ID, targetType: 'schedule', targetId: schedule.id });
+  await deleteCourse(storage, course.id);
+  assert.notEqual((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
+  assert.notEqual((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
 });
