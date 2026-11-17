@@ -1,4 +1,4 @@
-import type { AppSettings, Storage } from '@dawn-tick/core';
+import { addDays, weekStart, type AppSettings, type Storage } from '@dawn-tick/core';
 import type { AppData } from './data.ts';
 import { parseHex } from './design/contrast.ts';
 import { resolveTokens } from './design/tokens.ts';
@@ -127,9 +127,14 @@ export function buildWidgetSnapshot(
     endsAt: item.endAt,
   });
 
+  // 一周概览只放本周（今天所在的周一至周日）实际要上的课：别周的虚线课与已调走的原位置都不进
+  const monday = weekStart(data.today);
+  const sunday = addDays(monday, 6);
   const grid: WidgetGridLesson[] = [];
   for (const lessons of data.grid.values()) {
     for (const lesson of lessons) {
+      if (!lesson.inWeek || lesson.movedOut) continue;
+      if (lesson.date < monday || lesson.date > sunday) continue;
       // 「始终不显示周末」也作用于一周概览：周末课不进快照
       if (settings.hideWeekends && lesson.dayOfWeek >= 6) continue;
       grid.push({
