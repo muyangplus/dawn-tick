@@ -149,10 +149,6 @@ function matchesFilters(school: School, options: SearchSchoolsOptions): boolean 
  * 名称/简称的命中档位：整串相等 > 作为前缀 > 出现在中间，**同一档里校名优先于简称**。
  * 返回值就是 `scoreOf` 的前六档（100/96/92/90/84/82），0 表示没命中。
  *
- * 单独导出（而不是在 `scoreOf` 里内联）是为了让其它「按校名检索」的入口——
- * `import/school-list.ts` 的 `matchSchools` 与 `suggestSchools`——复用**同一张权重表**：
- * 同一个关键词在目录检索与入口检索两条路径上必须排出同一个首条结果。
- *
  * `query` 由调用方先做 `trim().toLowerCase()`；这里只负责把校名/简称转小写。
  */
 export function nameHitScore(name: string, shortName: string, query: string): number {
