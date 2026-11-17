@@ -16,7 +16,7 @@ REQUIRED_TRIGGERS = {
     'publish.yml': {'push', 'schedule', 'workflow_dispatch'},
 }
 REQUIRED_JOBS = {
-    'ci.yml': {'node', 'schema', 'rust', 'rust-linux', 'android'},
+    'ci.yml': {'node', 'schema', 'rust', 'rust-linux', 'android', 'timezones'},
     'publish.yml': {'plan', 'gate', 'windows', 'android', 'web', 'publish'},
 }
 # 发布说明的比较基准：滚动标签会移动，不能进已发版正文；
