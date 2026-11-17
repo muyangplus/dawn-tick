@@ -133,7 +133,16 @@ test('展开输入包含调课与日期判定', async () => {
   const input = await loadExpandInput(storage, SEMESTER_ID, '2026-09-21', '2026-09-27');
   assert.ok(input !== undefined);
   assert.equal(input.reschedules?.length, 1);
-  assert.equal(input.dayKinds?.length, 1);
+  // 用户记录在前，内置中秋假期（09-25～09-27）随后合并进来
+  assert.deepEqual(
+    input.dayKinds?.map((kind) => [kind.on_date, kind.type]),
+    [
+      ['2026-09-25', 'holiday'],
+      ['2026-09-25', 'holiday'],
+      ['2026-09-26', 'holiday'],
+      ['2026-09-27', 'holiday'],
+    ],
+  );
 });
 
 test('未使用的行工厂仍可用', () => {
