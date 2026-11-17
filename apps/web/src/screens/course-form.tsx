@@ -34,6 +34,8 @@ function allWeeks(total: number): number[] {
 
 interface ScheduleDraft {
   key: string;
+  /** 已保存排课的 id：保存时原地更新，保留其上的调课、停课与提醒 */
+  id?: string;
   dayOfWeek: number;
   periodStart: number;
   periodEnd: number;
@@ -199,6 +201,7 @@ export function CourseForm({
             const weeks = [...schedule.weeks].sort((left, right) => left - right);
             return {
               key: `draft-${draftSeed}`,
+              id: schedule.id,
               dayOfWeek: schedule.dayOfWeek,
               periodStart: schedule.periodStart,
               periodEnd: schedule.periodEnd,
@@ -232,6 +235,7 @@ export function CourseForm({
           note: note.trim().length > 0 ? note.trim() : null,
         };
         const schedules = drafts.map((draft) => ({
+          id: draft.id,
           dayOfWeek: draft.dayOfWeek,
           periodStart: Math.min(draft.periodStart, draft.periodEnd),
           periodEnd: Math.max(draft.periodStart, draft.periodEnd),

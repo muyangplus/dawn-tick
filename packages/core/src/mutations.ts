@@ -107,6 +107,16 @@ async function dropReminders(ctx: Context, targetType: ReminderTargetType, targe
   }
 }
 
+/** 删除一条排课及挂在它上面的排课级提醒与调课/停课记录：不留指向已删排课的孤儿。 */
+async function removeScheduleDeep(ctx: Context, id: string): Promise<void> {
+  await dropReminders(ctx, 'schedule', id);
+  for (const row of await ctx.storage.collection<Row>('events').getAll()) {
+    if (row['deleted_at'] !== null || row['ref_schedule_id'] !== id) continue;
+    await remove(ctx, 'events', String(row['id']));
+  }
+  await remove(ctx, 'course_schedules', id);
+}
+
 export async function ensureUser(
   storage: Storage,
   userId: string,
@@ -496,7 +506,7 @@ export async function deleteCourse(storage: Storage, id: string, options: WriteO
   const schedules = await storage.collection<Row>('course_schedules').getAll();
   for (const schedule of schedules) {
     if (schedule['deleted_at'] !== null || schedule['course_id'] !== id) continue;
-    await remove(ctx, 'course_schedules', String(schedule['id']));
+    await removeScheduleDeep(ctx, String(schedule['id']));
   }
   await dropReminders(ctx, 'course', id);
   await remove(ctx, 'courses', id);
@@ -550,18 +560,21 @@ export async function updateSchedule(
 }
 
 export async function deleteSchedule(storage: Storage, id: string, options: WriteOptions = {}): Promise<void> {
-  const ctx = context(storage, options);
-  await dropReminders(ctx, 'schedule', id);
-  await remove(ctx, 'course_schedules', id);
+  await removeScheduleDeep(context(storage, options), id);
 }
 
 export interface ScheduleInput {
+  /** 已有排课的 id：带上时原地更新，保留挂在它上面的调课、停课与提醒 */
+  id?: string | undefined;
   dayOfWeek: number;
   periodStart: number;
   periodEnd: number;
   weeks: readonly number[];
   weeksRaw?: string | null;
   room?: string | null;
+  /** 自定义时间（HH:MM）；为空表示按节次时间 */
+  startTime?: string | null;
+  endTime?: string | null;
 }
 
 export interface SetSchedulesOptions extends WriteOptions {
@@ -569,7 +582,11 @@ export interface SetSchedulesOptions extends WriteOptions {
   totalWeeks?: number | undefined;
 }
 
-/** 用给定排课替换某门课的全部排课；`weeks_raw` 由位图派生，调用方不必再传。 */
+/**
+ * 用给定排课替换某门课的全部排课；`weeks_raw` 由位图派生，调用方不必再传。
+ * 已有排课原地更新（按 id，缺 id 时按星期与节次匹配）以保留其上的调课、停课与提醒；
+ * 不再出现的排课连同这些附属记录一起删除。
+ */
 export async function setSchedules(
   storage: Storage,
   courseId: string,
@@ -581,21 +598,48 @@ export async function setSchedules(
   const existing = (await storage.collection<Row>('course_schedules').getAll()).filter(
     (row) => isAlive(row) && row['course_id'] === courseId,
   );
-  for (const row of existing) await remove(ctx, 'course_schedules', String(row['id']));
+  const unclaimed = new Map(existing.map((row) => [String(row['id']), row]));
+  const claim = (item: ScheduleInput): Row | undefined => {
+    if (item.id !== undefined) {
+      const byId = unclaimed.get(item.id);
+      if (byId !== undefined) return byId;
+    }
+    for (const row of unclaimed.values()) {
+      if (
+        row['day_of_week'] === item.dayOfWeek &&
+        row['period_start'] === item.periodStart &&
+        row['period_end'] === item.periodEnd
+      ) {
+        return row;
+      }
+    }
+    return undefined;
+  };
 
   const rows: Row[] = [];
   for (const item of list) {
     const mask = weeksToMask([...item.weeks]);
+    const fields: Row = {
+      day_of_week: item.dayOfWeek,
+      period_start: item.periodStart,
+      period_end: item.periodEnd,
+      weeks_mask: mask,
+      weeks_raw: item.weeksRaw ?? describeWeeks(mask, totalWeeks),
+      room: item.room ?? null,
+      start_time: item.startTime ?? null,
+      end_time: item.endTime ?? null,
+    };
+    const match = claim(item);
+    if (match !== undefined) {
+      unclaimed.delete(String(match['id']));
+      rows.push(await patch(ctx, 'course_schedules', String(match['id']), fields));
+      continue;
+    }
     rows.push(
       await insert(ctx, 'course_schedules', {
         id: ctx.id(),
         course_id: courseId,
-        day_of_week: item.dayOfWeek,
-        period_start: item.periodStart,
-        period_end: item.periodEnd,
-        weeks_mask: mask,
-        weeks_raw: item.weeksRaw ?? describeWeeks(mask, totalWeeks),
-        room: item.room ?? null,
+        ...fields,
         created_at: ctx.now(),
         updated_at: ctx.now(),
         deleted_at: null,
@@ -604,6 +648,7 @@ export async function setSchedules(
       }),
     );
   }
+  for (const id of unclaimed.keys()) await removeScheduleDeep(ctx, id);
   return rows;
 }
 
