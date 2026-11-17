@@ -135,7 +135,8 @@ export function useAppSession(): AppSession {
     },
     [fallback, corrupt],
   );
-  const reminders = useReminders(storage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
+  // 提醒动作（如「完成」）会写库：回退/损坏时经只读包装拦下，不写进临时库
+  const reminders = useReminders(uiStorage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
     enabled: settings.classReminderEnabled,
     minutes: settings.classReminderMinutes,
   });
@@ -160,8 +161,8 @@ export function useAppSession(): AppSession {
         todos: next.todos.length,
         exams: next.exams.length,
       });
-      // 翻页只换查看窗口，数据没变：不重写小组件快照、不惊动悬浮窗
-      if (!explicit) {
+      // 翻页只换查看窗口，数据没变：不重写小组件快照、不惊动悬浮窗；临时回退库只读，不写快照
+      if (!explicit && !isFallbackStorage(target)) {
         await writeWidgetSnapshot(target, await currentWeekData(target, current, next), current);
         await notifyWidgetWindows();
       }
