@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
+  addDays,
   builtinHolidays,
   createCourse,
   createEvent,
@@ -16,6 +17,7 @@ import {
   weekOfDate,
   weekStart,
   writeSettings,
+  type Collection,
   type CourseRow,
   type CourseScheduleRow,
   type EventRow,
@@ -489,4 +491,57 @@ test('buildTimelineData：按日期归档并给出正在上 / 下一节', () => 
   assert.equal(empty.todayLessons.length, 0);
   assert.equal(empty.currentLesson, undefined);
   assert.equal(empty.nextLesson, undefined);
+});
+
+test('翻页复用学期快照：库没写过不再整表读，写过之后重新读', async () => {
+  const raw = await openIndexedDbStorage('flow-snapshot');
+  let courseReads = 0;
+  const counting: Storage = {
+    kind: raw.kind,
+    collection: (name) => {
+      const collection = raw.collection<unknown>(name);
+      if (name !== 'courses') return collection as never;
+      // IndexedDB 集合是类实例，方法在原型上：逐个转发，不能展开
+      const wrapped: Collection<unknown> = {
+        name: collection.name,
+        get: (key) => collection.get(key),
+        getAll: () => {
+          courseReads += 1;
+          return collection.getAll();
+        },
+        put: (value) => collection.put(value),
+        putMany: (values) => collection.putMany(values),
+        delete: (key) => collection.delete(key),
+        clear: () => collection.clear(),
+      };
+      return wrapped as never;
+    },
+    readMeta: (key) => raw.readMeta(key),
+    writeMeta: (key, value) => raw.writeMeta(key, value),
+    close: () => raw.close(),
+  };
+  const storage = validatedStorage(counting);
+
+  const today = formatDate(Date.now(), TIME_ZONE);
+  const start = weekStart(today);
+  const semester = await createSemester(storage, { userId: USER_ID, name: '测试学期', startDate: start, totalWeeks: 20, timeZone: TIME_ZONE });
+  const course = await createCourse(storage, { semesterId: String(semester['id']), name: '高等数学' });
+  await createSchedule(storage, {
+    courseId: String(course['id']),
+    dayOfWeek: dayOfWeek(today),
+    periodStart: 1,
+    periodEnd: 2,
+    weeks: [weekOfDate(today, start)],
+  });
+
+  const settings = { ...DEFAULT_SETTINGS, hideWeekends: false };
+  await loadAppData(storage, settings);
+  const afterFirst = courseReads;
+  await loadAppData(storage, settings, { windowStart: addDays(today, 7), reuseSnapshot: true });
+  assert.equal(courseReads, afterFirst, '翻页不再读课程表');
+
+  await createCourse(storage, { semesterId: String(semester['id']), name: '大学物理' });
+  const fresh = await loadAppData(storage, settings, { windowStart: today, reuseSnapshot: true });
+  assert.ok(courseReads > afterFirst, '写过之后重新读');
+  assert.ok(fresh.courses.some((item) => item.name === '大学物理'));
 });

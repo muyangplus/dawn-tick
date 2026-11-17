@@ -1,5 +1,4 @@
 import {
-  activeSemester,
   addDays,
   builtinHolidayName,
   builtinHolidays,
@@ -15,10 +14,10 @@ import {
   hasWeek,
   isWeekend,
   LAB_COLOR,
-  listManagedCourses,
+  expandInputOf,
   listSemesters,
-  listTimeSlots,
-  loadExpandInput,
+  loadSemesterSnapshot,
+  managedCoursesOf,
   maskToWeeks,
   nextOccurrence,
   nextWorkday,
@@ -27,6 +26,7 @@ import {
   resolveTimeZone,
   weekOfDate,
   weekStart,
+  writeGeneration,
   type AppSettings,
   type CourseRow,
   type CourseScheduleRow,
@@ -35,6 +35,7 @@ import {
   type Occurrence,
   type ReminderRow,
   type SemesterRow,
+  type SemesterSnapshot,
   type Storage,
   type TimeSlotRow,
   type TodoSort,
@@ -622,32 +623,54 @@ function pickEvents(events: readonly EventRow[]): {
   return { exams, todos, countdowns, reschedules };
 }
 
+/** 上次读出的学期快照：只在翻页这类「数据没变」的重载里复用，且库的写入代数必须没变。 */
+let snapshotCache: { storage: Storage; semesterId: string; generation: number; snapshot: SemesterSnapshot } | null = null;
+
+async function semesterSnapshot(storage: Storage, semesterId: string, reuse: boolean): Promise<SemesterSnapshot | undefined> {
+  const generation = writeGeneration(storage);
+  if (
+    reuse &&
+    generation !== null &&
+    snapshotCache !== null &&
+    snapshotCache.storage === storage &&
+    snapshotCache.semesterId === semesterId &&
+    snapshotCache.generation === generation
+  ) {
+    return snapshotCache.snapshot;
+  }
+  const snapshot = await loadSemesterSnapshot(storage, semesterId);
+  snapshotCache =
+    snapshot === undefined || generation === null ? null : { storage, semesterId, generation, snapshot };
+  return snapshot;
+}
+
 export async function loadAppData(
   storage: Storage,
   settings: AppSettings,
-  options: { viewWeek?: number; windowStart?: string | null } = {},
+  options: {
+    viewWeek?: number;
+    windowStart?: string | null;
+    /** 只换查看窗口（翻页）：库没写过就复用上次读出的学期数据，不再整表读 */
+    reuseSnapshot?: boolean;
+  } = {},
 ): Promise<AppData> {
   const timeZone = resolveTimeZone(settings.timeZone, settings.autoTimeZone);
   const today = formatDate(Date.now(), timeZone);
   const semesters = await listSemesters(storage, USER_ID);
-  const semester = (await activeSemester(storage, USER_ID)) ?? null;
-  if (semester === null) return emptyAppData({ timeZone, today });
+  const active = semesters.find((row) => row.is_active === 1);
+  if (active === undefined) return emptyAppData({ timeZone, today });
+  const snapshot = await semesterSnapshot(storage, active.id, options.reuseSnapshot === true);
+  if (snapshot === undefined) return emptyAppData({ timeZone, today });
 
-  const slots = await listTimeSlots(storage, semester.id);
+  const { semester, slots, courses, schedules, events: semesterEvents } = snapshot;
   const context = loadSemesterContext({ semester, today, settings, options });
-  const [courses, schedules, events] = await Promise.all([
-    storage.collection<CourseRow>('courses').getAll(),
-    storage.collection<CourseScheduleRow>('course_schedules').getAll(),
-    storage.collection<EventRow>('events').getAll(),
-  ]);
-  const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
   const holidays = loadHolidays(semesterEvents);
   const { grid, labs } = buildGrid({
     semester,
     slots,
     courses,
     schedules,
-    events,
+    events: semesterEvents,
     windowDates: context.windowDates,
     weekOfDay: context.weekOfDay,
     holidays,
@@ -656,8 +679,7 @@ export async function loadAppData(
 
   const now = Date.now();
   const range = occurrenceRange(semester, today);
-  const expandInput = await loadExpandInput(storage, semester.id, range.from, range.to);
-  const occurrences = expandInput === undefined ? [] : expand(expandInput);
+  const occurrences = expand(expandInputOf(snapshot, range.from, range.to));
   const timeline = buildTimelineData({ occurrences, today, now });
   const picked = pickEvents(semesterEvents);
 
@@ -676,7 +698,7 @@ export async function loadAppData(
     slots,
     grid,
     hasLessons: [...grid.values()].some((list) => list.length > 0),
-    courses: await listManagedCourses(storage, semester.id),
+    courses: managedCoursesOf(courses, schedules),
     holidayLabels: holidays.holidayLabels,
     workdayDates: holidays.workdays,
     lessonsByDate: timeline.lessonsByDate,

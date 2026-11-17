@@ -411,6 +411,17 @@ export async function assertValidBatch(storage: Storage, store: StoreName, rows:
 }
 
 const VALIDATED = Symbol('validated-storage');
+const GENERATION = Symbol('write-generation');
+
+/**
+ * 写入代数：经 `validatedStorage` 的每次写入（put / putMany / delete / clear / writeMeta）完成后加一。
+ * 读快照前记下代数，之后代数没变才说明快照仍是最新（写到一半时读到的快照会因写完加一而失效）。
+ * 用来判断读出的快照是否还新；不经包装的存储返回 null，调用方应当不复用。
+ */
+export function writeGeneration(storage: Storage): number | null {
+  const value = (storage as { [GENERATION]?: { count: number } })[GENERATION];
+  return value === undefined ? null : value.count;
+}
 
 /** 已经由 `validatedStorage` 包过：写入时会自己校验，调用方不必再校验一遍。 */
 export function isValidatedStorage(storage: Storage): boolean {
@@ -420,8 +431,13 @@ export function isValidatedStorage(storage: Storage): boolean {
 export function validatedStorage(inner: Storage): Storage {
   if (isValidatedStorage(inner)) return inner;
   const cache = new Map<StoreName, Collection<unknown>>();
-  const wrappedStorage: Storage & { [VALIDATED]: true } = {
+  const generation = { count: 0 };
+  const bump = (): void => {
+    generation.count += 1;
+  };
+  const wrappedStorage: Storage & { [VALIDATED]: true; [GENERATION]: { count: number } } = {
     [VALIDATED]: true,
+    [GENERATION]: generation,
     kind: inner.kind,
     collection<T>(name: StoreName): Collection<T> {
       const existing = cache.get(name);
@@ -434,19 +450,30 @@ export function validatedStorage(inner: Storage): Storage {
         put: async (value) => {
           await assertValid(inner, name, value as Row);
           await base.put(value);
+          bump();
         },
         putMany: async (values) => {
           await assertValidBatch(inner, name, values as Row[]);
           await base.putMany(values);
+          bump();
         },
-        delete: (key) => base.delete(key),
-        clear: () => base.clear(),
+        delete: async (key) => {
+          await base.delete(key);
+          bump();
+        },
+        clear: async () => {
+          await base.clear();
+          bump();
+        },
       };
       cache.set(name, wrapped as Collection<unknown>);
       return wrapped;
     },
     readMeta: (key) => inner.readMeta(key),
-    writeMeta: (key, value) => inner.writeMeta(key, value),
+    writeMeta: async (key, value) => {
+      await inner.writeMeta(key, value);
+      bump();
+    },
     close: () => inner.close(),
   };
   return wrappedStorage;
