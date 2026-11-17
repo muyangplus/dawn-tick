@@ -268,3 +268,55 @@ test('页面表格预览供手动校正', () => {
   assert.equal(inspection.system.id, 'unknown');
   assert.ok(inspection.tables[0]?.rows.length ?? 0 >= 2);
 });
+
+test('星期表头表格：连堂 rowspan 给出结束节，后面几行不错列', () => {
+  const page = `<table>
+  <tr><th>时段</th><th>节次</th><th>星期一</th><th>星期二</th><th>星期三</th></tr>
+  <tr><td rowspan="4">上午</td><td>1</td>
+    <td rowspan="2">高等数学<br>张老师<br>教三-201<br>1-16周</td><td></td><td>英语<br>3-10周</td></tr>
+  <tr><td>2</td><td>大学物理<br>李老师<br>2-16周</td><td></td></tr>
+  <tr><td>3</td><td>线性代数<br>1-8周</td><td></td><td></td></tr>
+  <tr><td>4</td><td></td><td></td><td>体育<br>1-16周</td></tr>
+</table>`;
+  const result = extractTimetableFromHtml(page, { totalWeeks: 20 });
+  assert.equal(result.shape, 'weekday-table');
+  const byName = new Map(result.schedules.map((item) => [item.courseName, item]));
+  assert.deepEqual(
+    [byName.get('高等数学')?.dayOfWeek, byName.get('高等数学')?.periodStart, byName.get('高等数学')?.periodEnd],
+    [1, 1, 2],
+    '连堂两节',
+  );
+  assert.deepEqual([byName.get('大学物理')?.dayOfWeek, byName.get('大学物理')?.periodStart], [2, 2], '被上方 rowspan 占住的列不再左移');
+  assert.deepEqual([byName.get('线性代数')?.dayOfWeek, byName.get('线性代数')?.periodStart], [1, 3]);
+  assert.deepEqual([byName.get('英语')?.dayOfWeek, byName.get('体育')?.dayOfWeek, byName.get('体育')?.periodStart], [3, 3, 4]);
+});
+
+test('正方旧版 kbtable：表头行不生成第 0 节，按节次列定节', () => {
+  const page = `<table id="kbtable">
+  <tr><td></td><td>星期一</td><td>星期二</td><td>星期三</td></tr>
+  <tr><td>第1节</td><td rowspan="2">高等数学<br>1-16周<br>教三-201</td><td></td><td></td></tr>
+  <tr><td>第2节</td><td>大学物理<br>2-16周</td><td></td></tr>
+</table>`;
+  const result = extractTimetableFromHtml(page, { totalWeeks: 20 });
+  assert.ok(result.schedules.length >= 2, JSON.stringify(result));
+  assert.ok(result.schedules.every((item) => item.periodStart >= 1), '没有第 0 节');
+  const math = result.schedules.find((item) => item.courseName === '高等数学');
+  assert.deepEqual([math?.dayOfWeek, math?.periodStart, math?.periodEnd], [1, 1, 2]);
+  const physics = result.schedules.find((item) => item.courseName === '大学物理');
+  assert.deepEqual([physics?.dayOfWeek, physics?.periodStart], [2, 2]);
+});
+
+test('课程名带「周」字不当周次行', () => {
+  const page = `<table>
+  <tr><th>节次</th><th>星期一</th><th>星期二</th><th>星期三</th></tr>
+  <tr><td>第1节</td><td>周易<br>张老师<br>3-10周</td><td></td><td></td></tr>
+</table>`;
+  const course = extractTimetableFromHtml(page, { totalWeeks: 20 }).schedules[0];
+  assert.equal(course?.courseName, '周易');
+  assert.deepEqual(course?.weeks, [3, 4, 5, 6, 7, 8, 9, 10]);
+
+  const grid = `<table id="kbtable"><tr><td id="1-1"><span>周易</span><p>3-10周</p></td></tr></table>`;
+  const zf = extractTimetableFromHtml(grid, { totalWeeks: 20 }).schedules[0];
+  assert.equal(zf?.courseName, '周易');
+  assert.deepEqual(zf?.weeks, [3, 4, 5, 6, 7, 8, 9, 10]);
+});

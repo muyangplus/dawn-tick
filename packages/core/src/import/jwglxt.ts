@@ -1,5 +1,6 @@
 import type { ImportedSchedule } from './apply.ts';
 import { looksLikeRoom } from './csv.ts';
+import { attribute, findWeekdayHeader, parseHtmlTables, stripTags, weekdayTableCells } from './html-grid.ts';
 import { parseWeeksText } from './weeks-text.ts';
 
 export interface JwglxtCell {
@@ -10,27 +11,15 @@ export interface JwglxtCell {
   raw: string;
 }
 
-function stripTags(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|span|td|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>');
-}
-
 function rowSpanOf(tag: string): number {
-  const match = /rowspan\s*=\s*["']?(\d+)["']?/i.exec(tag);
-  const value = match === null ? 1 : Number(match[1]);
-  return Number.isFinite(value) && value > 0 ? Math.min(20, value) : 1;
+  const value = Number(attribute(tag, 'rowspan') ?? '1');
+  return Number.isFinite(value) && value > 0 ? Math.min(20, Math.floor(value)) : 1;
 }
 
 /** 解析正方课表页：新版为按 `id="日-节"` 标记的网格，旧版为 kbtable 表格。 */
 export function parseTimetableCells(html: string): JwglxtCell[] {
   const cells: JwglxtCell[] = [];
-  const grid = /<(\w+)\b([^>]*id\s*=\s*["'](\d{1,2})[-_](\d{1,2})["'][^>]*)>([\s\S]*?)<\/\1>/gi;
+  const grid = /<(\w+)\b([^>]*\bid\s*=\s*["'](\d{1,2})[-_](\d{1,2})["'][^>]*)>([\s\S]*?)<\/\1>/gi;
   for (const match of html.matchAll(grid)) {
     const day = Number(match[3]);
     const period = Number(match[4]);
@@ -38,27 +27,24 @@ export function parseTimetableCells(html: string): JwglxtCell[] {
     cells.push({
       dayOfWeek: day,
       periodNo: period,
-      rowSpan: rowSpanOf(match[2] ?? ''),
-      raw: stripTags(match[5] ?? ''),
+      rowSpan: rowSpanOf(`<x ${match[2] ?? ''}>`),
+      raw: stripTags(match[5] ?? '', { spanBreaks: true }),
     });
   }
   if (cells.length > 0) return cells;
 
-  const table = /<table[^>]*id\s*=\s*["']kbtable["'][^>]*>([\s\S]*?)<\/table>/i.exec(html)?.[1];
+  const table = parseHtmlTables(html).find((item) => /\bid\s*=\s*["']?kbtable\b/i.test(item.html.slice(0, 400)));
   if (table === undefined) return [];
-  const rows = table.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/gi) ?? [];
-  for (const [rowIndex, row] of rows.entries()) {
-    const columns = row.match(/<td\b[^>]*>[\s\S]*?<\/td>/gi) ?? [];
-    for (const [columnIndex, column] of columns.entries()) {
-      const day = columnIndex;
-      if (day < 1 || day > 7) continue;
-      cells.push({
-        dayOfWeek: day,
-        periodNo: rowIndex,
-        rowSpan: rowSpanOf(/^<td\b[^>]*>/i.exec(column)?.[0] ?? ''),
-        raw: stripTags(column),
-      });
-    }
+  // 旧版 kbtable：有星期表头就按表头定列，没有就按「第 0 列节次、1–7 列周一到周日」
+  const header = findWeekdayHeader(table);
+  const days = header?.days ?? new Map(Array.from({ length: 7 }, (_, index) => [index + 1, index + 1] as const));
+  for (const cell of weekdayTableCells(table, header?.row ?? 0, days)) {
+    cells.push({
+      dayOfWeek: cell.dayOfWeek,
+      periodNo: cell.periodStart,
+      rowSpan: cell.periodEnd - cell.periodStart + 1,
+      raw: stripTags(cell.slot.cell.html, { spanBreaks: true }),
+    });
   }
   return cells;
 }
@@ -91,7 +77,8 @@ export function parseTimetable(
 
     const name = lines[0] ?? '';
     if (name.length === 0) continue;
-    const weeksText = lines.find((line) => /周|单|双/.test(line)) ?? null;
+    // 首行是课程名（如「周易」），不当周次行
+    const weeksText = lines.slice(1).find((line) => /周|单|双/.test(line)) ?? null;
     const others = lines.slice(1).filter((line) => line !== weeksText);
     const room = others.find((line) => looksLikeRoom(line)) ?? null;
     const teacher = others.find((line) => line !== room) ?? null;
