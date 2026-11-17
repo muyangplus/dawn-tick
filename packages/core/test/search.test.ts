@@ -24,7 +24,7 @@ test('搜索命中课程、排课与日程', async () => {
     title: '高等数学期末',
     subject: '高等数学',
     location: '教三-201',
-    priority: 4,
+    priority: null,
     start_at: Date.UTC(2027, 0, 5, 1, 0, 0),
     on_date: '2027-01-05',
     created_at: 1,

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { loadSqlMigrations, openNodeSqlite } from '../../src/drivers/node-sqlite.ts';
 import { migrate } from '../../src/migrate.ts';
 import { MemoryStorage, type Storage } from '../../src/storage.ts';
+import { sqliteStorage } from '../../src/sqlite-storage.ts';
 import { weeksToMask } from '../../src/weeks.ts';
 import type { SqlDriver, SqlValue } from '../../src/db.ts';
 import type {
@@ -191,8 +192,50 @@ export function eventRow(
   };
 }
 
+/**
+ * 用例默认存储。`DT_TEST_STORAGE=sqlite`（见 `pnpm test:sqlite`）时换成迁移过的 node:sqlite 内存库，
+ * 让外键、CHECK 等 SQLite 语义也被同一批用例覆盖。
+ */
 export function createStorage(): Storage {
+  if (testStorageKind() === 'sqlite') return sqliteStorage(lazyMigratedSqlite());
   return new MemoryStorage();
+}
+
+export function testStorageKind(): 'memory' | 'sqlite' {
+  return process.env['DT_TEST_STORAGE'] === 'sqlite' ? 'sqlite' : 'memory';
+}
+
+/** 只在 SQLite 下表现不同、尚未修复的用例：`test(name, { todo: sqliteTodo('原因') }, fn)`。 */
+export function sqliteTodo(reason: string): string | undefined {
+  return testStorageKind() === 'sqlite' ? reason : undefined;
+}
+
+/** 同步拿到驱动、首次访问前完成迁移：createStorage 保持同步签名。 */
+function lazyMigratedSqlite(): SqlDriver {
+  const db = openNodeSqlite(':memory:');
+  const ready = migrate(db, migrations());
+  return {
+    exec: async (sql) => {
+      await ready;
+      return db.exec(sql);
+    },
+    all: async (sql, params) => {
+      await ready;
+      return db.all(sql, params);
+    },
+    get: async (sql, params) => {
+      await ready;
+      return db.get(sql, params);
+    },
+    run: async (sql, params) => {
+      await ready;
+      return db.run(sql, params);
+    },
+    close: async () => {
+      await ready;
+      return db.close();
+    },
+  };
 }
 
 /** 与 SQLite 校验使用的同一份样例数据。 */

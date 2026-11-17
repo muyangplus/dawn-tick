@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "pnpm -r --if-present test && node --test \"tools/**/*.test.mjs\"",
+    "test": "pnpm -r --if-present test && pnpm -C packages/core test:sqlite && node --test \"tools/**/*.test.mjs\"",
     "typecheck": "pnpm -r --if-present typecheck",
     "version:current": "node tools/release/version.mjs --current",
     "version:set": "node tools/release/version.mjs",
