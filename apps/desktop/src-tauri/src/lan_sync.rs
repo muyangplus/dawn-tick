@@ -530,21 +530,11 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
-fn write_empty(stream: &mut TcpStream, status: u16) {
-    let head = format!(
-        "HTTP/1.1 {status} {}\r\n{}Connection: close\r\n\r\n",
-        reason(status),
-        cors_headers()
-    );
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.flush();
-}
-
 fn write_json(stream: &mut TcpStream, status: u16, body: &str) {
     let head = format!(
         "HTTP/1.1 {status} {}\r\n{}Content-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         reason(status),
-        cors_headers(),
+        common_headers(),
         body.len()
     );
     let _ = stream.write_all(head.as_bytes());
@@ -553,7 +543,8 @@ fn write_json(stream: &mut TcpStream, status: u16, body: &str) {
 }
 
 /// 不再给 CORS 许可：浏览器网页不是本服务的客户端。
-fn cors_headers() -> &'static str {
+/// 公共响应头：不缓存。不发 CORS 头，浏览器跨源请求一律被拒。
+fn common_headers() -> &'static str {
     "Cache-Control: no-store\r\n"
 }
 
