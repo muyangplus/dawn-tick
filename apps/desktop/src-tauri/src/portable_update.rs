@@ -221,7 +221,14 @@ fn launch_script(_script: &Path) -> Result<(), String> {
 /// 返回脚本路径，前端据此提示「应用将退出并自动替换」。此时**不要**重启旧进程：
 /// 旧二进制会重新占用 exe，脚本永远覆盖不了。
 #[tauri::command]
-pub fn prepare_portable_update(zip_path: String) -> Result<String, String> {
+pub async fn prepare_portable_update(zip_path: String) -> Result<String, String> {
+    // 解压整个便携包：放到阻塞线程池，界面不卡
+    tauri::async_runtime::spawn_blocking(move || prepare_portable_update_blocking(zip_path))
+        .await
+        .map_err(|error| format!("后台任务失败: {error}"))?
+}
+
+fn prepare_portable_update_blocking(zip_path: String) -> Result<String, String> {
     let allowed = vec![crate::data_dir(), std::env::temp_dir()];
     let zip_path = resolve_portable_zip(&zip_path, &allowed)?;
     let exe = std::env::current_exe().map_err(|error| format!("拿不到当前程序路径: {error}"))?;

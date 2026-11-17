@@ -321,7 +321,14 @@ async fn vacuum_into(source: &std::path::Path, target: &std::path::Path) -> Resu
 
 /// 设置或清除自定义存储位置：清空即恢复默认。改完需要重启才生效。
 #[tauri::command]
-fn set_storage_path(path: String) -> Result<StorageInfo, String> {
+async fn set_storage_path(path: String) -> Result<StorageInfo, String> {
+    // 要复制整个数据库：放到阻塞线程池
+    tauri::async_runtime::spawn_blocking(move || set_storage_path_blocking(path))
+        .await
+        .map_err(|error| format!("后台任务失败: {error}"))?
+}
+
+fn set_storage_path_blocking(path: String) -> Result<StorageInfo, String> {
     let text = path.trim().to_string();
     let config_file = storage_config_file();
     if text.is_empty() {
@@ -1116,7 +1123,13 @@ fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> bool {
     let Ok(text) = serde_json::to_string(value) else {
         return false;
     };
-    std::fs::write(path, text).is_ok()
+    // 先写临时文件再改名：写到一半断电不会留下半截 JSON（storage.json 损坏会静默退回默认目录，看起来像数据没了）
+    let staging = path.with_extension("json.tmp");
+    if std::fs::write(&staging, text).is_err() {
+        let _ = std::fs::remove_file(&staging);
+        return false;
+    }
+    std::fs::rename(&staging, path).is_ok()
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1870,7 +1883,12 @@ fn tray_status() -> serde_json::Value {
 
 /// 前端日志落盘：与 panic、启动错误写入同一文件。
 #[tauri::command]
-fn log_event(level: String, scope: String, message: String, detail: Option<String>) {
+async fn log_event(level: String, scope: String, message: String, detail: Option<String>) {
+    // 每行都要写文件：放到阻塞线程池，不占主线程
+    let _ = tauri::async_runtime::spawn_blocking(move || log_event_blocking(level, scope, message, detail)).await;
+}
+
+fn log_event_blocking(level: String, scope: String, message: String, detail: Option<String>) {
     // detail 为前端附带的 JSON 明细；为空时省略，保证日志行格式稳定
     let tail = match detail {
         Some(text) if !text.is_empty() && text != "null" => format!(" {text}"),

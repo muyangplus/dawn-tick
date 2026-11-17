@@ -300,7 +300,14 @@ pub fn scan(timeout_ms: u64) -> Vec<LanDiscoveryPeer> {
 
 /// Tauri 命令：扫描局域网设备；可选 `host` 只保留该地址所属网段的广播。
 #[tauri::command]
-pub fn lan_discovery_scan(timeout_ms: Option<u64>, host: Option<String>) -> Vec<LanDiscoveryPeer> {
+pub async fn lan_discovery_scan(timeout_ms: Option<u64>, host: Option<String>) -> Vec<LanDiscoveryPeer> {
+    // 扫描要等满超时：放到阻塞线程池
+    tauri::async_runtime::spawn_blocking(move || lan_discovery_scan_blocking(timeout_ms, host))
+        .await
+        .unwrap_or_default()
+}
+
+fn lan_discovery_scan_blocking(timeout_ms: Option<u64>, host: Option<String>) -> Vec<LanDiscoveryPeer> {
     let subnet = host
         .as_deref()
         .map(str::trim)
