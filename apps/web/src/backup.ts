@@ -1,7 +1,6 @@
 import {
   BACKUP_MODULES,
   exportBackup,
-  importBackup,
   parseBackup,
   type AppSettings,
   type ImportResult,
@@ -14,6 +13,7 @@ import { dayStampLocal } from './lib/dates.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { SNAPSHOT_INDEX_META_KEY, SNAPSHOT_META_PREFIX } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
+import { applyBackupPackage } from './package.ts';
 
 /** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
 
@@ -273,11 +273,7 @@ export async function restoreSnapshot(
     const raw = await storage.readMeta(entry.id);
     if (raw === undefined) throw new Error('快照内容不存在');
     const payload = parseBackup(raw);
-    const result = await importBackup(storage, payload, {
-      mode: 'clear',
-      modules: BACKUP_MODULES,
-      now: Date.now(),
-    });
+    const result = await applyBackupPackage(storage, payload, { mode: 'clear', modules: BACKUP_MODULES });
     logInfo('backup', '已恢复快照', {
       name: entry.id,
       imported: result.imported,

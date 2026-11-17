@@ -1,4 +1,14 @@
-import { parseBackup, zipStore, type BackupPayload, type Storage } from '@dawn-tick/core';
+import {
+  importBackup,
+  parseBackup,
+  zipStore,
+  type ActiveSemesterChoice,
+  type BackupModule,
+  type BackupPayload,
+  type ImportMode,
+  type ImportResult,
+  type Storage,
+} from '@dawn-tick/core';
 import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { pickBackupText, readZipEntries } from './zip-read.ts';
 
@@ -119,4 +129,40 @@ export async function applyPackageEntries(
     }
   }
   return { presets, logsSkipped: extras.logs !== null };
+}
+
+export interface ApplyBackupOptions {
+  modules: readonly BackupModule[];
+  mode: ImportMode;
+  /** 包里的预设缓存与日志；勾选了「设置」才套用预设 */
+  extras?: PackageExtras | null;
+  activeSemester?: ActiveSemesterChoice;
+  now?: number;
+}
+
+export interface ApplyBackupResult extends ImportResult {
+  presets: boolean;
+}
+
+/**
+ * 备份包落库的唯一入口：文件导入、WebDAV 同步包与库内快照恢复都走这里，
+ * 导入规则（外键、后写胜、当前学期、本机设置）只在 core 的 importBackup 里实现一次。
+ */
+export async function applyBackupPackage(
+  storage: Storage,
+  payload: BackupPayload,
+  options: ApplyBackupOptions,
+): Promise<ApplyBackupResult> {
+  const result = await importBackup(storage, payload, {
+    mode: options.mode,
+    modules: options.modules,
+    now: options.now ?? Date.now(),
+    ...(options.activeSemester === undefined ? {} : { activeSemester: options.activeSemester }),
+  });
+  const extras = options.extras ?? null;
+  let presets = false;
+  if (extras !== null && options.modules.includes('settings')) {
+    presets = (await applyPackageEntries(storage, extras, { restorePresets: true })).presets;
+  }
+  return { ...result, presets };
 }

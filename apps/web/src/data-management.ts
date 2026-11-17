@@ -1,7 +1,6 @@
 import {
   BACKUP_MODULES,
   exportBackup,
-  importBackup,
   parseBackup,
   summarizeBackup,
   toBase64Utf8,
@@ -28,7 +27,7 @@ import { EXPORT_CORRUPT_MESSAGE, reportCorrupt } from './db/corrupt-guard.ts';
 import { dayStampUtc } from './lib/dates.ts';
 import { saveBinaryFile, saveTextFile } from './system-actions.ts';
 import {
-  applyPackageEntries,
+  applyBackupPackage,
   buildPackageBytes,
   buildPackageEntries,
   readPackageEntries,
@@ -344,17 +343,9 @@ export async function importConfig(
     activeSemester?: ActiveSemesterChoice;
   },
 ): Promise<ImportConfigResult> {
-  const result = await importBackup(storage, payload, {
-    mode: options.mode,
-    modules: options.modules,
-    ...(options.activeSemester === undefined ? {} : { activeSemester: options.activeSemester }),
-  });
+  const result = await applyBackupPackage(storage, payload, options);
+  const presets = result.presets;
   const extras = options.extras ?? null;
-  let presets = false;
-  if (extras !== null && options.modules.includes('settings')) {
-    const applied = await applyPackageEntries(storage, extras, { restorePresets: true });
-    presets = applied.presets;
-  }
   const logsSkipped = extras !== null && extras.logs !== null;
   logInfo('backup', '导入备份', {
     mode: options.mode,
