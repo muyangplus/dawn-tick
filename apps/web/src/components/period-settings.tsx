@@ -4,25 +4,35 @@ import {
   appendTimeSlot,
   DEFAULT_TIMETABLE_ID,
   deleteTimeSlot,
-  durationBetween,
   effectiveTimetables,
   findTimetable,
   generatePeriods,
   isClockText,
   listTimeSlots,
-  PERIOD_BREAK_MAX,
-  PERIOD_BREAK_MIN,
-  PERIOD_DURATION_MAX,
-  PERIOD_DURATION_MIN,
   presetSpacing,
   reflowPeriods,
   replaceTimeSlots,
   sectionOf,
   updateTimeSlot,
-  type PeriodSection,
   type Storage,
   type TimeSlotRow,
 } from '@dawn-tick/core';
+import {
+  DEFAULT_BREAK,
+  DEFAULT_DURATION,
+  MAX_BREAK,
+  MAX_DURATION,
+  MIN_BREAK,
+  MIN_DURATION,
+  breakFieldError,
+  durationFieldError,
+  filterPresets,
+  paramError,
+  reflowedSlots,
+  timeDraft,
+  within,
+  type RerollDraft,
+} from './period-settings-model.ts';
 import { Button } from './ui/button.tsx';
 import { HelpHint } from './ui/help-hint.tsx';
 import { SectionCard } from './ui/collapsible-card.tsx';
@@ -37,13 +47,6 @@ import { errorMessage } from '../lib/errors.ts';
 import { logInfo } from '../log.ts';
 
 const SECTION_LABEL = { am: '上午', pm: '下午', night: '晚上' } as const;
-/** 每节时长与课间的可输入范围：与 core 的生成/顺延算法同一口径 */
-const MIN_DURATION = PERIOD_DURATION_MIN;
-const MAX_DURATION = PERIOD_DURATION_MAX;
-const DEFAULT_DURATION = 45;
-const MIN_BREAK = PERIOD_BREAK_MIN;
-const MAX_BREAK = PERIOD_BREAK_MAX;
-const DEFAULT_BREAK = 10;
 /** 「本次启动期间不再询问」的勾选框文案 */
 const SCOPE_OPT_OUT_LABEL = '本次启动期间不再询问';
 
@@ -54,18 +57,6 @@ export interface PeriodSettingsProps {
   storage: Storage;
   semesterId: string;
   onChanged: () => void;
-}
-
-/** 刚完成的单节改动，以及这次重排要用的时长。 */
-interface RerollDraft {
-  /** 被改动的那一节，用于文案定位，也是重排的锚点 */
-  periodNo: number;
-  /** 被改动的那一节所属时段 */
-  section: PeriodSection;
-  /** 改结束时间时推算出的每节时长；没改结束时间时沿用设置里的值 */
-  durationMinutes: number;
-  /** 时长是否由刚才手改的结束时间推算而来 */
-  durationFromEdit: boolean;
 }
 
 /** 一次「已经落库、但还没问作用范围」的编辑：输入时只记下，失焦或回车才问一次。 */
@@ -83,32 +74,6 @@ interface AppliedPreset {
   name: string;
   source: string | null;
   count: number;
-}
-
-function within(value: number, min: number, max: number): boolean {
-  return Number.isFinite(value) && value >= min && value <= max;
-}
-
-/** 重排参数越界时的说明，null 表示可以顺延重排。 */
-function paramError(durationMinutes: number, breakMinutes: number): string | null {
-  if (!within(durationMinutes, MIN_DURATION, MAX_DURATION)) {
-    return `每节时长 ${MIN_DURATION}–${MAX_DURATION} 分钟，当前 ${durationMinutes} 分钟`;
-  }
-  if (!within(breakMinutes, MIN_BREAK, MAX_BREAK)) {
-    return `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟，当前 ${breakMinutes} 分钟`;
-  }
-  return null;
-}
-
-/** 输入框下方的字段级错误：只标越界的那一项，避免两条重复文案。 */
-function durationFieldError(value: number): string | undefined {
-  return within(value, MIN_DURATION, MAX_DURATION)
-    ? undefined
-    : `每节时长 ${MIN_DURATION}–${MAX_DURATION} 分钟`;
-}
-
-function breakFieldError(value: number): string | undefined {
-  return within(value, MIN_BREAK, MAX_BREAK) ? undefined : `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟`;
 }
 
 export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSettingsProps) {
@@ -151,17 +116,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         }`;
 
   /** 可套用的作息：内置 + 启动时套用的缓存快照（含各校作息），按关键词过滤。 */
-  const presetOptions = useMemo(() => {
-    const all = effectiveTimetables();
-    const keyword = presetQuery.trim().toLowerCase();
-    if (keyword === '') return all;
-    return all.filter(
-      (preset) =>
-        preset.name.toLowerCase().includes(keyword) ||
-        preset.id.toLowerCase().includes(keyword) ||
-        (preset.source ?? '').toLowerCase().includes(keyword),
-    );
-  }, [presetQuery]);
+  const presetOptions = useMemo(() => filterPresets(effectiveTimetables(), presetQuery), [presetQuery]);
 
   const reload = useCallback(async () => {
     setSlots(await listTimeSlots(storage, semesterId));
@@ -330,24 +285,11 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     }
   }
 
-  /** 这次时间改动对应的重排参数（同步算好，等失焦或回车时再问范围）。 */
-  function timeDraft(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): RerollDraft {
-    const nextStart = changes.startTime ?? slot.start_time;
-    const nextEnd = changes.endTime ?? slot.end_time;
-    const editedDuration = changes.endTime === undefined ? null : durationBetween(nextStart, nextEnd);
-    return {
-      periodNo: slot.period_no,
-      section: sectionOf(nextStart),
-      durationMinutes: editedDuration ?? duration,
-      durationFromEdit: editedDuration !== null,
-    };
-  }
-
   /** 时间输入框：立刻落库，失焦或回车时才弹「调整范围」。 */
   function editTime(slot: TimeSlotRow, changes: { startTime?: string; endTime?: string }): void {
     const field = changes.startTime !== undefined ? 'start' : 'end';
     const value = changes.startTime ?? changes.endTime ?? '';
-    markPending(`time:${slot.id}:${field}=${value}`, timeDraft(slot, changes), saveTime(slot, changes));
+    markPending(`time:${slot.id}:${field}=${value}`, timeDraft(slot, changes, duration), saveTime(slot, changes));
   }
 
   /** 从改动的这一节起顺延重排；锚点之前的课次与各节原有的时段、备注原样保留。 */
@@ -374,22 +316,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           rows.map((row) => ({ periodNo: row.period_no, start: row.start_time, end: row.end_time })),
           { anchorPeriodNo: anchor, durationMinutes: duration, breakMinutes },
         );
-        const times = new Map(planned.map((period) => [period.periodNo, period] as const));
-        await replaceTimeSlots(
-          storage,
-          semesterId,
-          rows.map((row) => {
-            const next = times.get(row.period_no);
-            const startTime = next?.start ?? row.start_time;
-            return {
-              periodNo: row.period_no,
-              startTime,
-              endTime: next?.end ?? row.end_time,
-              section: row.section ?? sectionOf(startTime),
-              label: row.label,
-            };
-          }),
-        );
+        await replaceTimeSlots(storage, semesterId, reflowedSlots(rows, planned));
         logInfo('timetable', '按锚点顺延重排', {
           anchor,
           section: current.section,
