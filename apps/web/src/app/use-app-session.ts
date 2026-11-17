@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { addDays, weekStart } from '@dawn-tick/core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { addDays, formatDate, weekStart } from '@dawn-tick/core';
+import { nextRefreshAt, shouldRefreshOnResume } from '../lib/clock-boundary.ts';
 import { readSettings, updateSemester, writeSettings, DEFAULT_SETTINGS, type AppSettings, type Storage } from '@dawn-tick/core';
 import { createSnapshot, pruneSnapshots } from '../backup.ts';
 import { downloadAndApply, type ApplyMode } from '../webdav.ts';
@@ -141,11 +142,18 @@ export function useAppSession(): AppSession {
     minutes: settings.classReminderMinutes,
   });
 
+  /** 每次载入的序号：连点翻页、改设置与窗口 effect 交错时，只采用最后一次发起的结果 */
+  const reloadSeq = useRef(0);
+  /** 上次载入完成的时刻与当天日期：回到前台时据此判断要不要重载 */
+  const loadedAt = useRef(0);
   const reload = useCallback(
     async (target: Storage | null, current: AppSettings, start?: string | null): Promise<AppData | undefined> => {
       if (target === null) return undefined;
+      const seq = ++reloadSeq.current;
       const explicit = start !== undefined && start !== null && start !== '';
       const next = await loadAppData(target, current, explicit ? { windowStart: start } : {});
+      if (seq !== reloadSeq.current) return undefined;
+      loadedAt.current = Date.now();
       setData(next);
       // 只记显式起点：null 表示跟随设置里的默认起点，设置一变窗口才会跟着动。
       // 记夹过学期的实际起点（next.windowStart），避免状态与已加载窗口不一致时「翻不动」。
@@ -220,6 +228,29 @@ export function useAppSession(): AppSession {
     if (wanted === data.windowStart) return;
     void reload(storage, settings, wanted);
   }, [windowStart, data, storage, settings, reload]);
+
+  // 跨过课程起止或午夜时刷新「今天 / 正在上 / 下一节」与小组件；回到前台（含 Capacitor resume）时补一次
+  useEffect(() => {
+    if (storage === null || data === null) return undefined;
+    const refreshNow = (): void => {
+      void reload(storage, settings, windowStart);
+    };
+    const wait = Math.max(1000, nextRefreshAt(data, Date.now()) - Date.now());
+    // setTimeout 上限约 24.8 天；课表场景最长到午夜，不会触顶
+    const timer = setTimeout(refreshNow, wait);
+    const onResume = (): void => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const today = formatDate(Date.now(), data.timeZone);
+      if (shouldRefreshOnResume(loadedAt.current, data.today, Date.now(), today)) refreshNow();
+    };
+    globalThis.document?.addEventListener('visibilitychange', onResume);
+    globalThis.document?.addEventListener('resume', onResume);
+    return () => {
+      clearTimeout(timer);
+      globalThis.document?.removeEventListener('visibilitychange', onResume);
+      globalThis.document?.removeEventListener('resume', onResume);
+    };
+  }, [storage, data, settings, windowStart, reload]);
 
   // 主题：预设 + 明暗落到根节点；跟随系统时监听系统变化
   useEffect(() => {
@@ -337,9 +368,10 @@ export function useAppSession(): AppSession {
       await updateSemester(storage, id, { is_active: 1 });
       setWindowStart(null);
       setDayDate(null);
-      refresh();
+      // 显式按默认起点重载：refresh 捕获的是旧学期的窗口起点
+      await reload(storage, settings, null);
     },
-    [storage, data, guardWrite, refresh],
+    [storage, data, guardWrite, reload, settings],
   );
 
   return {
