@@ -170,6 +170,18 @@ export async function buildPackage(
   return { bytes, payload };
 }
 
+/** 刚上传文件在服务器上的修改时间：优先取 PUT 响应头，没有就 HEAD 一次；都拿不到时返回 null。 */
+async function uploadedModifiedAt(settings: DavSettings, name: string, put: Response): Promise<number | null> {
+  const fromPut = put.headers.get('last-modified');
+  if (fromPut !== null) {
+    const parsed = Date.parse(fromPut);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (name !== FIXED_NAME) return null;
+  const status = await remoteStatus(settings);
+  return status.exists ? status.lastModified : null;
+}
+
 export async function uploadPackage(
   storage: Storage,
   settings: DavSettings,
@@ -192,8 +204,11 @@ export async function uploadPackage(
     if (!response.ok) {
       return { ok: false, name, bytes: bytes.length, error: `服务器返回 ${response.status}` };
     }
-    await storage.writeMeta(LAST_UPLOAD_KEY, String(now));
-    logInfo('webdav', '已上传同步包', { name, bytes: bytes.length });
+    // 记服务器上的修改时间而非本机时刻：上传耗时与两端时钟偏差都会让本机时刻早于服务器记录，
+    // 之后自己的上传会被误判为「远端更新」并从此不再上传
+    const serverModified = await uploadedModifiedAt(settings, name, response);
+    await storage.writeMeta(LAST_UPLOAD_KEY, String(serverModified ?? Date.now()));
+    logInfo('webdav', '已上传同步包', { name, bytes: bytes.length, serverModified });
     return { ok: true, name, bytes: bytes.length, error: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
