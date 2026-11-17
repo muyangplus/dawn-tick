@@ -87,6 +87,14 @@ const SOURCE_RANK: Record<HolidaySource, number> = {
   builtin: 3,
 };
 
+/**
+ * 假期/调休判定的来源优先级，数字小的优先：手工 > 学校 > 内置。
+ * 没有来源的是用户在界面上的「设为假日/非假日」，与 manual 同级。
+ */
+export function holidaySourceRank(source: HolidaySource | null | undefined): number {
+  return source === null || source === undefined ? SOURCE_RANK.manual : SOURCE_RANK[source];
+}
+
 /** 同一日期多条判定时按来源优先级取一条。 */
 export function resolveDayKind(kinds: readonly ExpandDayKind[]): Map<string, ExpandDayKind> {
   const out = new Map<string, ExpandDayKind>();
@@ -96,10 +104,7 @@ export function resolveDayKind(kinds: readonly ExpandDayKind[]): Map<string, Exp
       out.set(kind.on_date, kind);
       continue;
     }
-    // 没有来源的是用户在界面上的「设为假日/非假日」，与 manual 同级
-    const rank = kind.source === null ? SOURCE_RANK.manual : SOURCE_RANK[kind.source];
-    const existingRank = existing.source === null ? SOURCE_RANK.manual : SOURCE_RANK[existing.source];
-    if (rank < existingRank) out.set(kind.on_date, kind);
+    if (holidaySourceRank(kind.source) < holidaySourceRank(existing.source)) out.set(kind.on_date, kind);
   }
   return out;
 }

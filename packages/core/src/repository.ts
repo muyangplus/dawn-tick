@@ -2,7 +2,7 @@ import { DEFAULT_COURSE_COLOR } from './colors.ts';
 import { builtinHolidays, builtinWorkdays } from './holidays.ts';
 import { hasWeek } from './weeks.ts';
 import type { Storage } from './storage.ts';
-import { expand, type ExpandCourse, type ExpandDayKind, type ExpandInput, type ExpandReschedule, type ExpandSchedule, type ExpandTimeSlot, type Occurrence } from './expand.ts';
+import { expand, holidaySourceRank, type ExpandCourse, type ExpandDayKind, type ExpandInput, type ExpandReschedule, type ExpandSchedule, type ExpandTimeSlot, type Occurrence } from './expand.ts';
 import type {
   CourseRow,
   CourseScheduleRow,
@@ -14,8 +14,6 @@ import type {
   TimeSlotRow,
   WeekViewRow,
 } from './types.ts';
-
-const SOURCE_RANK: Record<HolidaySource, number> = { manual: 1, from_school: 2, builtin: 3 };
 
 function alive<T extends { deleted_at: number | null }>(row: T): boolean {
   return row.deleted_at === null;
@@ -104,11 +102,7 @@ export async function dayKindForDate(
         row.on_date === date &&
         (row.type === 'holiday' || row.type === 'makeup' || row.type === 'workday'),
     )
-    .sort((left, right) => rank(left.source) - rank(right.source))[0];
-}
-
-function rank(source: HolidaySource | null): number {
-  return source === null ? 4 : SOURCE_RANK[source];
+    .sort((left, right) => holidaySourceRank(left.source) - holidaySourceRank(right.source))[0];
 }
 
 /** 按来源优先级写入某天的放假/调休判定。 */
@@ -165,7 +159,7 @@ export async function applyDayKind(
   }
 
   const existingSource = existing.source ?? null;
-  if (rank(input.source) < rank(existingSource)) {
+  if (holidaySourceRank(input.source) < holidaySourceRank(existingSource)) {
     const full = await events.get(existing.id);
     if (full !== undefined) {
       await events.put({ ...full, source: input.source, title: input.title, updated_at: now, rev: Number(full.rev ?? 0) + 1, dirty: 1 });
