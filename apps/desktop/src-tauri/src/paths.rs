@@ -161,6 +161,7 @@ mod tests {
         assert_eq!(explorer_args(&dir), vec![r"C:\Users\me\Desktop".to_string()]);
     }
 
+    #[cfg(windows)]
     #[test]
     fn path_inside_matches_children_only() {
         let root = Path::new(r"C:\Users\me\Downloads");

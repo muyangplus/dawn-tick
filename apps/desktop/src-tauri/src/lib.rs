@@ -330,8 +330,11 @@ fn set_storage_path(path: String) -> Result<StorageInfo, String> {
 fn open_data_dir() -> Result<String, String> {
     let dir = data_dir();
     create_dir_all(&dir).map_err(|error| format!("创建数据目录失败: {error}"))?;
-    shell_open(&dir.to_string_lossy(), "打开数据目录")?;
-    append_log(&format!("已打开数据目录: {}", dir.display()));
+    #[cfg(windows)]
+    {
+        shell_open(&dir.to_string_lossy(), "打开数据目录")?;
+        append_log(&format!("已打开数据目录: {}", dir.display()));
+    }
     Ok(dir.to_string_lossy().to_string())
 }
 
@@ -3467,6 +3470,7 @@ mod tests {
     }
 
     /// 便携版判定：必须叫 DawnTick.exe 且不在安装目录里。
+    #[cfg(windows)]
     #[test]
     fn portable_layout_needs_renamed_exe_outside_install_dir() {
         let install_root = std::path::Path::new(r"C:\Users\me\AppData\Local\DawnTick");
