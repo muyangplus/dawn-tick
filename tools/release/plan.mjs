@@ -42,6 +42,11 @@ export function planRelease({
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`版本号格式不正确: ${version}`);
   }
+  // 后缀会拼进标签、标题与 GITHUB_OUTPUT：只接受固定写法，挡住换行与 shell 元字符
+  const rawSuffix = typeof betaSuffix === 'string' ? betaSuffix.trim() : '';
+  if (rawSuffix !== '' && !/^(plain|bare|\d{1,4})$/.test(rawSuffix)) {
+    throw new Error(`beta 后缀只能是 plain、bare 或数字: ${JSON.stringify(betaSuffix)}`);
+  }
 
   const isTagPush = typeof ref === 'string' && ref.startsWith('refs/tags/');
   let channel;
@@ -80,6 +85,14 @@ export function planRelease({
   } else {
     tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}`;
     buildRef = isTagPush ? tag : 'main';
+  }
+
+  // 标签版本必须与 package.json 一致：否则清单写标签版本、应用报 package.json 版本，客户端会永远提示有更新
+  if (isTagPush && channel !== 'dev') {
+    const tagVersion = /^v(\d+\.\d+\.\d+)/.exec(tag)?.[1];
+    if (tagVersion !== version) {
+      throw new Error(`标签 ${tag} 与 package.json 版本 ${version} 不一致，请先用 version:set 改版本再打标签`);
+    }
   }
 
   // dev 每次构建都带构建时间戳：产物名与关于页能区分是哪一次构建

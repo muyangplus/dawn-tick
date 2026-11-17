@@ -94,3 +94,16 @@ test('非法渠道与版本被拒绝', () => {
   assert.throws(() => planRelease({ ref: 'refs/heads/dev', version: V, dispatchChannel: 'nightly' }), /未知渠道/);
   assert.throws(() => planRelease({ ref: 'refs/heads/dev', version: '1.0' }), /版本号格式不正确/);
 });
+
+test('beta 后缀只接受 plain、bare 或数字（拼进标签与 GITHUB_OUTPUT）', () => {
+  for (const bad of ['1$(id)', '1\nbuildRef=evil', 'beta', '1 2']) {
+    assert.throws(() => planRelease({ ref: 'refs/heads/dev', eventName: 'workflow_dispatch', version: '0.7.0', dispatchChannel: 'beta', betaSuffix: bad }), /beta 后缀/);
+  }
+  assert.equal(planRelease({ ref: 'refs/heads/dev', eventName: 'workflow_dispatch', version: '0.7.0', dispatchChannel: 'beta', betaSuffix: '3' }).tag, 'v0.7.0-beta.3');
+});
+
+test('打的标签与 package.json 版本不一致时拒绝发布', () => {
+  assert.throws(() => planRelease({ ref: 'refs/tags/v0.7.0', version: '0.6.12' }), /不一致/);
+  assert.throws(() => planRelease({ ref: 'refs/tags/v0.7.0-beta.1', version: '0.6.12' }), /不一致/);
+  assert.equal(planRelease({ ref: 'refs/tags/v0.7.0', version: '0.7.0' }).channel, 'release');
+});
