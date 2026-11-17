@@ -35,6 +35,16 @@ export interface ReminderInput {
 
 const DEFAULT_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** 可设置提醒的条目类型：表单为这些类型提供「提前提醒」。 */
+const REMINDABLE_EVENT_TYPES: ReadonlySet<EventRow['type']> = new Set(['exam', 'temp', 'todo', 'homework', 'lab']);
+const EVENT_DETAIL: Partial<Record<EventRow['type'], string>> = {
+  exam: '考试',
+  temp: '日程',
+  todo: '待办',
+  homework: '作业',
+  lab: '实验',
+};
+
 function active(reminder: ReminderRow): boolean {
   return reminder.enabled === 1 && reminder.deleted_at === null;
 }
@@ -109,18 +119,21 @@ export function computeReminders(input: ReminderInput): ReminderOccurrence[] {
   const timeZone = input.timeZone ?? DEFAULT_TIME_ZONE;
   for (const event of input.events) {
     if (event.deleted_at !== null) continue;
-    if ((event.type !== 'exam' && event.type !== 'temp') || event.start_at === null) continue;
+    if (!REMINDABLE_EVENT_TYPES.has(event.type)) continue;
+    // 作业/待办常常只有截止时刻：没有开始时刻时以截止时刻为准
+    const anchor = event.start_at ?? event.due_at;
+    if (anchor === null) continue;
     const rule = findRule(input.reminders, 'event', event.id);
     if (rule === undefined) continue;
-    const date = event.on_date ?? formatDate(event.start_at, timeZone);
+    const date = event.on_date ?? formatDate(anchor, timeZone);
     if (rule.skip_holidays === 1 && holidays.has(date)) continue;
     const item = toOccurrence(
       rule,
       'event',
       event.id,
       event.title,
-      event.location ?? (event.type === 'exam' ? '考试' : '日程'),
-      event.start_at,
+      event.location ?? EVENT_DETAIL[event.type] ?? '日程',
+      anchor,
     );
     if (inWindow(item.triggerAt)) out.push(item);
   }
