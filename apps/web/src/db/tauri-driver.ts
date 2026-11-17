@@ -1,10 +1,12 @@
 import type { SqlDriver, SqlValue } from '@dawn-tick/core';
+import { invokeNative } from '../lib/native.ts';
 
 /** Tauri 端驱动：底层是 tauri-plugin-sql（sqlx）。表结构由 Rust 侧迁移建立。 */
 export async function openTauriDriver(databaseUrl?: string): Promise<SqlDriver> {
   // 数据库位置由原生侧给出（数据目录固定为 %APPDATA%\com.dawntick.app）
-  const { invoke } = await import('@tauri-apps/api/core');
-  const url = databaseUrl ?? (await invoke<string>('database_url'));
+  const nativeUrl = databaseUrl ?? (await invokeNative<string>('database_url'));
+  if (nativeUrl === undefined) throw new Error('当前平台不支持原生 SQLite');
+  const url = nativeUrl;
   const plugin = await import('@tauri-apps/plugin-sql');
   const db = await plugin.default.load(url);
   return {

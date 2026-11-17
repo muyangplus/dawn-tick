@@ -38,9 +38,11 @@ android {
         applicationId "com.dawntick.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 200
-        versionName "0.2.0"
+        versionCode 700
+        versionName "0.7.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // 只处理真机 ABI（x86/x86_64 只有模拟器用）：ABI 过滤与拆包统一由下面的
+        // android.splits.abi.include 负责；两处同时配置会被 AGP 判为冲突。
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -55,6 +57,16 @@ android {
     def dtVersionCode = System.getenv('DT_VERSION_CODE')
     if (dtVersionCode != null && !dtVersionCode.trim().isEmpty()) {
         defaultConfig.versionCode = dtVersionCode.trim().toInteger()
+    }
+    // 按 ABI 拆包：只发 arm64-v8a（现代真机）与 armeabi-v7a（32 位老设备）两个包，
+    // 不发 universal。客户端按设备首选 ABI 下载对应包（见 apps/web/src/lib/android-abi.ts）。
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk false
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
@@ -81,8 +93,10 @@ android {
             }
         }
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // 体积：R8 压缩 + 资源裁剪；插件通过反射注册，保号规则见 proguard-rules.pro
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (hasReleaseKeystore) {
                 signingConfig signingConfigs.release
             }

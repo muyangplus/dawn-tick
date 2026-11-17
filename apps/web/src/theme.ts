@@ -1,17 +1,9 @@
 import type { ThemeMode, ThemePreset } from '@dawn-tick/core';
-import { PRESETS, courseTint, cssVariables, resolveTokens } from './design/tokens.ts';
-
-/** 主题预设；`label` 用于设置页展示，`courses` 为课程取色板。 */
-export const THEMES = PRESETS;
+import { courseTint, cssVariables, resolveTokens } from './design/tokens.ts';
 
 export function resolveMode(mode: ThemeMode, prefersDark: boolean): 'light' | 'dark' {
   if (mode === 'system') return prefersDark ? 'dark' : 'light';
   return mode;
-}
-
-export function courseColor(preset: ThemePreset, index: number): string {
-  const palette = PRESETS[preset].courses;
-  return palette[index % palette.length] ?? palette[0] ?? '#4F8DFD';
 }
 
 export { courseTint, resolveTokens };

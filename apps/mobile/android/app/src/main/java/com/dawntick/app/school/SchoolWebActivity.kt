@@ -3,16 +3,23 @@ package com.dawntick.app.school
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import com.dawntick.app.diag.NativeLog
+
+/** 诊断日志标签：原生侧按标签区分教务窗口事件。 */
+private const val LOG_TAG = "SchoolWeb"
 
 /** 应用内教务窗口：用户自行登录并打开课表页，页面右下角的「导入到晓刻」把内容交回 Web 层。 */
 class SchoolWebActivity : AppCompatActivity() {
@@ -27,7 +34,9 @@ class SchoolWebActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         title = "登录教务并打开课表页"
         val url = intent.getStringExtra("url").orEmpty()
+        NativeLog.info(this, LOG_TAG, "onCreate url=${NativeLog.redactUrl(url)} length=${url.length}")
         if (url.isEmpty()) {
+            NativeLog.warn(this, LOG_TAG, "onCreate 缺少 url，直接关闭窗口")
             finish()
             return
         }
@@ -51,16 +60,49 @@ class SchoolWebActivity : AppCompatActivity() {
                 // 非 http/https（自定义 scheme、intent:// 等）一律不加载。
                 val target = request.url
                 val scheme = target.scheme?.lowercase()
-                if (scheme != "http" && scheme != "https") return true
+                if (scheme != "http" && scheme != "https") {
+                    NativeLog.warn(
+                        this@SchoolWebActivity,
+                        LOG_TAG,
+                        "拦截非 http(s) 跳转 scheme=${scheme ?: "(无)"} url=${NativeLog.redactUrl(target.toString())}",
+                    )
+                    return true
+                }
                 return false
             }
 
+            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                NativeLog.info(this@SchoolWebActivity, LOG_TAG, "onPageStarted url=${NativeLog.redactUrl(url)}")
+            }
+
             override fun onPageFinished(view: WebView, loadedUrl: String?) {
+                NativeLog.info(this@SchoolWebActivity, LOG_TAG, "onPageFinished url=${NativeLog.redactUrl(loadedUrl)}")
                 // 注入脚本自带 window.__dtImportReady 守卫，重复注入不会叠加按钮。
                 view.evaluateJavascript(INJECTION, null)
             }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                NativeLog.error(
+                    this@SchoolWebActivity,
+                    LOG_TAG,
+                    "onReceivedError code=${error.errorCode} desc=${error.description} " +
+                        "mainFrame=${request.isForMainFrame} url=${NativeLog.redactUrl(request.url?.toString())}",
+                )
+            }
         }
         webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                // 页面脚本报错是「按钮没反应」的常见原因；只记 ERROR，避免日志被埋点刷满
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    NativeLog.error(
+                        this@SchoolWebActivity,
+                        LOG_TAG,
+                        "控制台错误 ${message.message()} (${message.sourceId()}:${message.lineNumber()})",
+                    )
+                }
+                return false
+            }
+
             override fun onCreateWindow(
                 view: WebView,
                 isDialog: Boolean,
@@ -69,15 +111,30 @@ class SchoolWebActivity : AppCompatActivity() {
             ): Boolean {
                 // 教务菜单多用 window.open/target=_blank 打开子页面，默认会被静默拒绝。
                 // 改为在当前 WebView 内跳转，登录会话与「导入到晓刻」按钮都保留。
-                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
-                val child = transport.webView ?: return false
+                val transport = resultMsg.obj as? WebView.WebViewTransport
+                if (transport == null) {
+                    NativeLog.warn(this@SchoolWebActivity, LOG_TAG, "onCreateWindow 没有拿到 WebViewTransport")
+                    return false
+                }
+                val child = transport.webView
+                if (child == null) {
+                    NativeLog.warn(this@SchoolWebActivity, LOG_TAG, "onCreateWindow 没有拿到子 WebView")
+                    return false
+                }
                 child.webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(
                         childView: WebView,
                         request: WebResourceRequest,
                     ): Boolean {
                         val scheme = request.url.scheme?.lowercase()
-                        if (scheme != "http" && scheme != "https") return true
+                        if (scheme != "http" && scheme != "https") {
+                            NativeLog.warn(
+                                this@SchoolWebActivity,
+                                LOG_TAG,
+                                "拦截新窗口非 http(s) 跳转 url=${NativeLog.redactUrl(request.url.toString())}",
+                            )
+                            return true
+                        }
                         val target = request.url.toString()
                         view.post { view.loadUrl(target) }
                         return true

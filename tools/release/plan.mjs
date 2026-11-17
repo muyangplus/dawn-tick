@@ -18,8 +18,10 @@ export function nextBetaNumber(existingTags, version) {
 /**
  * 渠道与标签规则：
  * - dev：固定标签 dev-latest，滚动覆盖；由手动触发或定时任务发布，构建自 dev 分支
- * - beta：标签 v<version>-beta.<n>，n 从既有标签续号；构建自 main，保留历史
+ * - beta：手动触发时默认用纯版本号 `v<version>` 发预发布（不带 -beta）；
+ *   也可显式指定 `-beta` 或序号 `-beta.<n>`；构建自 main，保留历史
  * - release：标签 v<version>；构建自 main，打标签触发自动发布
+ *   若标签说明里写了 `[prerelease]`，则纯版本号标签按测试版预发布（标签仍是 v<version>）
  * beta 与 release 都从 main 发版：改动在 dev 上做，经 PR 合入 main 后再打标签。
  */
 export function planRelease({
@@ -28,10 +30,22 @@ export function planRelease({
   runNumber = 0,
   version,
   dispatchChannel = '',
+  /**
+   * beta 渠道的版本后缀：默认 'plain' → 纯版本号 `v<version>`（不带 -beta）；
+   * 填 'bare' → `v<version>-beta`（带 -beta、不带序号）；填数字 → `-beta.<n>`
+   */
+  betaSuffix = 'plain',
+  /** 打标签时的说明文字：纯版本号标签若含 `[prerelease]`，按测试版预发布处理 */
+  tagMessage = '',
   existingTags = [],
 }) {
   if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) {
     throw new Error(`版本号格式不正确: ${version}`);
+  }
+  // 后缀会拼进标签、标题与 GITHUB_OUTPUT：只接受固定写法，挡住换行与 shell 元字符
+  const rawSuffix = typeof betaSuffix === 'string' ? betaSuffix.trim() : '';
+  if (rawSuffix !== '' && !/^(plain|bare|\d{1,4})$/.test(rawSuffix)) {
+    throw new Error(`beta 后缀只能是 plain、bare 或数字: ${JSON.stringify(betaSuffix)}`);
   }
 
   const isTagPush = typeof ref === 'string' && ref.startsWith('refs/tags/');
@@ -41,8 +55,10 @@ export function planRelease({
     channel = 'dev';
   } else if (isTagPush) {
     const name = ref.slice('refs/tags/'.length);
-    if (/-beta\./.test(name)) channel = 'beta';
+    // 测试版标签允许不带序号（`vX.Y.Z-beta`）或带序号（`vX.Y.Z-beta.N`）
+    if (/-beta(\.|$)/.test(name)) channel = 'beta';
     else if (/-dev\./.test(name)) channel = 'dev';
+    else if (tagMessage.toLowerCase().includes('[prerelease]')) channel = 'beta';
     else channel = 'release';
   } else if (typeof dispatchChannel === 'string' && dispatchChannel.length > 0) {
     if (!CHANNELS.includes(dispatchChannel)) throw new Error(`未知渠道: ${dispatchChannel}`);
@@ -60,11 +76,23 @@ export function planRelease({
     tag = DEV_ROLLING_TAG;
     buildRef = 'dev';
   } else if (channel === 'beta') {
-    tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}-beta.${nextBetaNumber(existingTags, version)}`;
+    // 手动触发时可指定后缀：plain 不带序号，其余按序号拼 `-beta.<n>`；默认 1
+    const suffix = typeof betaSuffix === 'string' ? betaSuffix.trim() : '';
+    const suffixTag =
+      suffix === '' || suffix === 'plain' ? '' : suffix === 'bare' ? '-beta' : `-beta.${suffix}`;
+    tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}${suffixTag}`;
     buildRef = isTagPush ? tag : 'main';
   } else {
     tag = isTagPush ? ref.slice('refs/tags/'.length) : `v${version}`;
     buildRef = isTagPush ? tag : 'main';
+  }
+
+  // 标签版本必须与 package.json 一致：否则清单写标签版本、应用报 package.json 版本，客户端会永远提示有更新
+  if (isTagPush && channel !== 'dev') {
+    const tagVersion = /^v(\d+\.\d+\.\d+)/.exec(tag)?.[1];
+    if (tagVersion !== version) {
+      throw new Error(`标签 ${tag} 与 package.json 版本 ${version} 不一致，请先用 version:set 改版本再打标签`);
+    }
   }
 
   // dev 每次构建都带构建时间戳：产物名与关于页能区分是哪一次构建
@@ -103,6 +131,8 @@ if (invokedDirectly) {
     runNumber: Number(args.get('run') ?? process.env.GITHUB_RUN_NUMBER ?? 0),
     version: args.get('version') ?? currentVersion(),
     dispatchChannel: args.get('channel') ?? '',
+    betaSuffix: args.get('beta-suffix') ?? 'plain',
+    tagMessage: args.get('tag-message') ?? '',
     existingTags: (args.get('existing-tags') ?? '').split(',').filter((item) => item.trim().length > 0),
   });
 

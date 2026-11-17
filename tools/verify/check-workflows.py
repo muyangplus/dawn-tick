@@ -16,23 +16,54 @@ REQUIRED_TRIGGERS = {
     'publish.yml': {'push', 'schedule', 'workflow_dispatch'},
 }
 REQUIRED_JOBS = {
-    'ci.yml': {'node', 'schema', 'rust'},
+    'ci.yml': {'node', 'schema', 'rust', 'rust-linux', 'android', 'timezones'},
     'publish.yml': {'plan', 'gate', 'windows', 'android', 'web', 'publish'},
 }
-# 发布说明的比较基准：滚动标签会移动，不能进已发版正文
-PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""', '--notes-start-tag "$PREV"']
+# 发布说明的比较基准：滚动标签会移动，不能进已发版正文；
+# Full Changelog 由脚本手动拼进正文，所以不再要求 --notes-start-tag（两者同时传会互相覆盖）
+PUBLISH_NOTES_REQUIRED = ['*-latest) PREV=""']
+# 用 CHANGELOG 段落作正文时要自己补 Full Changelog 比较链接（--notes-file 不会自动生成）
+PUBLISH_FULL_CHANGELOG_REQUIRED = ['**Full Changelog**: https://github.com/%s/compare/%s...%s', 'BODY_FILE']
 # 标签已存在时不传 --target：附注标签对象不是有效目标
 PUBLISH_TARGET_REQUIRED = ['TAG_EXISTS=false', 'args+=(--target "$TARGET")']
+# 构建来源只解析一次：各任务检出同一提交，发布目标也用它
+PUBLISH_BUILD_SHA_REQUIRED = ['ref: ${{ needs.plan.outputs.buildSha }}', 'TARGET="${BUILD_SHA:?BUILD_SHA 未设置}"']
+PUBLISH_BUILD_SHA_FORBIDDEN = ['ref: ${{ needs.plan.outputs.buildRef }}']
+# 滚动渠道原地更新：先删整个发布会留下一段没有可下载包的空窗
+PUBLISH_ROLLING_FORBIDDEN = ['gh release delete "$TAG"']
+# 独立 assets 仓库同步：产物推 GitHub 上的 dawn-tick-assets（按渠道分支 force-push），
+# Gitee 侧从 GitHub 镜像；CI 不再直连 Gitee API（实测超时），旧 Gitee 脚本只留手动兜底
+PUBLISH_ASSETS_REQUIRED = ['tools/release/publish-assets.mjs', 'ASSETS_TOKEN', 'ASSETS_REPO']
+PUBLISH_ASSETS_FORBIDDEN = ['GITEE_TOKEN', 'tools/release/publish-gitee.mjs']
 # 便携包说明：数据在程序所在目录，不是 %LOCALAPPDATA%
 PUBLISH_PORTABLE_README_REQUIRED = ['数据与日志都在本目录']
 PUBLISH_PORTABLE_README_FORBIDDEN = ['数据与日志目录：%LOCALAPPDATA%']
+# 更新清单：发布产物必须带 version.json v2（渠道 / 版本 / 标签 / 提交 / 发布说明 + files / checksums），
+# GitHub Release 与 assets 仓库共用同一份
+PUBLISH_VERSION_JSON_REQUIRED = [
+    'node tools/release/version-json.mjs',
+    '--channel="$CHANNEL"',
+    '--version="$MANIFEST_VERSION"',
+    '--tag="$TAG"',
+    '--commit="$BUILD_SHA"',
+    '--out=out',
+    # 校验清单覆盖全部产物（含 version.json）：`sha256sum * > SHA256SUMS.txt`
+    'SHA256SUMS.txt',
+]
 
 
-def check_publish_notes(text: str) -> list[str]:
+def check_publish_notes(text: str) -> list:
     problems = [f'publish.yml 缺少发布说明比较基准的约束: {item}' for item in PUBLISH_NOTES_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少 Full Changelog 链接: {item}' for item in PUBLISH_FULL_CHANGELOG_REQUIRED if item not in text]
     problems += [f'publish.yml 缺少发布目标的约束: {item}' for item in PUBLISH_TARGET_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少构建提交的约束: {item}' for item in PUBLISH_BUILD_SHA_REQUIRED if item not in text]
+    problems += [f'publish.yml 仍按分支名检出（应检出 plan 解析的提交）: {item}' for item in PUBLISH_BUILD_SHA_FORBIDDEN if item in text]
+    problems += [f'publish.yml 滚动发布不应先删除: {item}' for item in PUBLISH_ROLLING_FORBIDDEN if item in text]
     problems += [f'publish.yml 便携包说明缺少: {item}' for item in PUBLISH_PORTABLE_README_REQUIRED if item not in text]
     problems += [f'publish.yml 便携包说明写错数据目录: {item}' for item in PUBLISH_PORTABLE_README_FORBIDDEN if item in text]
+    problems += [f'publish.yml 缺少更新兜底清单的约束: {item}' for item in PUBLISH_VERSION_JSON_REQUIRED if item not in text]
+    problems += [f'publish.yml 缺少 assets 仓库同步的约束: {item}' for item in PUBLISH_ASSETS_REQUIRED if item not in text]
+    problems += [f'publish.yml 仍在 CI 里直连 Gitee（已改为 assets 仓库 + Gitee 镜像）: {item}' for item in PUBLISH_ASSETS_FORBIDDEN if item in text]
     return problems
 
 
@@ -62,7 +93,17 @@ def main() -> int:
             failures.append(f'{name} 缺少任务: {sorted(missing_jobs)}')
 
         if name == 'publish.yml':
-            failures.extend(check_publish_notes(text))
+            # dev 分支推送即自动滚动发布：缺了这条，dev-latest 只能靠手动/定时
+            push_cfg = triggers.get('push') if isinstance(triggers, dict) else None
+            branches = (push_cfg or {}).get('branches') or []
+            if 'dev' not in branches and 'dev' not in [str(b) for b in branches]:
+                failures.append('publish.yml 缺少 push.branches: dev（dev 推送应自动滚动发布）')
+            # 发布逻辑拆到 tools/release/publish.sh 后，约束在脚本里也要成立：两份文本合起来检查
+            script = Path('tools/release/publish.sh')
+            combined = text + (script.read_text(encoding='utf-8') if script.exists() else '')
+            if not script.exists():
+                failures.append('tools/release/publish.sh 不存在')
+            failures.extend(check_publish_notes(combined))
 
     if failures:
         for failure in failures:

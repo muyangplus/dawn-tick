@@ -5,6 +5,7 @@ import {
   applyPackage,
   buildPackage,
   davConfigured,
+  davUploadTimeoutMs,
   downloadAndApply,
   maybeAutoSync,
   normalizeDavUrl,
@@ -15,6 +16,7 @@ import {
   type DavSettings,
 } from '../src/webdav.ts';
 import { readZipEntries } from '../src/zip-read.ts';
+import { setSecretStoreForTests, type SecretStore } from '../src/lib/credentials.ts';
 
 const settings: DavSettings = {
   webdavUrl: 'https://dav.example.com/DawnTick',
@@ -109,15 +111,22 @@ test('未配置地址时直接拒绝', async () => {
 test('上传会把整包 PUT 到固定名', async () => {
   const storage = new MemoryStorage();
   await writeSettings(storage, { theme: 'dark' });
-  const { calls, restore } = stubFetch(() => new Response(null, { status: 201 }));
+  // 服务器记下的修改时间晚于本机时刻（上传耗时、时钟偏差）：以服务器为准
+  const { calls, restore } = stubFetch(
+    () => new Response(null, { status: 201, headers: { 'last-modified': 'Tue, 14 Oct 2026 02:00:07 GMT' } }),
+  );
   try {
-    const result = await uploadPackage(storage, settings, 1_793_000_000_000);
+    const result = await uploadPackage(storage, settings, Date.parse('Tue, 14 Oct 2026 02:00:00 GMT'));
     assert.equal(result.ok, true);
     assert.equal(result.name, 'DawnTick-backup.zip');
     assert.ok(result.bytes > 0);
     assert.equal(calls[0]?.method, 'PUT');
     assert.equal(calls[0]?.url, 'https://dav.example.com/DawnTick/DawnTick-backup.zip');
-    assert.equal(await storage.readMeta('webdav_last_upload'), '1793000000000');
+    assert.equal(
+      await storage.readMeta('webdav_last_upload'),
+      String(Date.parse('Tue, 14 Oct 2026 02:00:07 GMT')),
+      'A15：记服务器修改时间，下次不会把自己的上传当成远端更新',
+    );
   } finally {
     restore();
   }
@@ -227,4 +236,144 @@ test('坏包给出可读错误且不改数据', async () => {
   assert.equal(outcome.ok, false);
   assert.ok((outcome.error ?? '').length > 0);
   assert.equal((await readSettings(target)).theme, 'light');
+});
+
+test('整包带上预设并在应用时恢复', async () => {
+  const source = new MemoryStorage();
+  await writeSettings(source, { theme: 'dark' });
+  await source.writeMeta('presets_snapshot_v1', '{"version":"1"}');
+  await source.writeMeta('presets_content_v1', '{"schools":[]}');
+  const { bytes } = await buildPackage(source, 1_793_000_000_000);
+  const entries = await readZipEntries(bytes);
+  assert.ok(entries.has('presets/snapshot.json'));
+  assert.ok(entries.has('presets/content.json'));
+
+  const target = new MemoryStorage();
+  const outcome = await applyPackage(target, bytes, 'all');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.presets, true);
+  assert.equal(await target.readMeta('presets_snapshot_v1'), '{"version":"1"}');
+  assert.equal(await target.readMeta('presets_content_v1'), '{"schools":[]}');
+});
+
+/** 统一假密钥库：密文是 `cipher(明文)`，只用于验证请求前的透明解密。 */
+function fakeSecretStore(): SecretStore {
+  return {
+    encrypt: async (value: string) => `cipher(${value})`,
+    decrypt: async (ciphertext: string) => {
+      const matched = /^cipher\((.*)\)$/s.exec(ciphertext);
+      if (matched === null) throw new Error('密文损坏');
+      return matched[1] as string;
+    },
+    isAvailable: async () => true,
+  };
+}
+
+test('密码是 enc:v1 信封时先解密再用于鉴权', async () => {
+  setSecretStoreForTests(fakeSecretStore());
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 200 }));
+  try {
+    await remoteStatus({ ...settings, webdavPassword: 'enc:v1:cipher(p@ss)' });
+    const expected = Buffer.from('小明:p@ss', 'utf8').toString('base64');
+    assert.equal(calls[0]?.authorization, `Basic ${expected}`, '发出的应是解密后的密码');
+  } finally {
+    restore();
+    setSecretStoreForTests(undefined);
+  }
+});
+
+test('密码解不开时不发请求并给出可读错误', async () => {
+  setSecretStoreForTests({
+    encrypt: async () => 'cipher(x)',
+    decrypt: async () => {
+      throw new Error('key lost');
+    },
+    isAvailable: async () => true,
+  });
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 200 }));
+  try {
+    const status = await remoteStatus({ ...settings, webdavPassword: 'enc:v1:broken' });
+    assert.equal(status.ok, false);
+    assert.match(status.error ?? '', /无法解密/);
+    assert.equal(calls.length, 0, '解不开的密码不能当 Basic 凭据发出去');
+  } finally {
+    restore();
+    setSecretStoreForTests(undefined);
+  }
+});
+
+test('自动同步用存储里的当前密码，而不是内存中的旧信封', async () => {
+  const storage = new MemoryStorage();
+  await storage.writeMeta('webdav_password', 'stored-secret');
+  const on = {
+    ...DEFAULT_SETTINGS,
+    webdavUrl: settings.webdavUrl,
+    webdavUser: 'u',
+    webdavPassword: 'enc:v1:cipher(stale)',
+    webdavAuto: true,
+  };
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 201 }));
+  try {
+    const outcome = await maybeAutoSync(storage, on, {
+      startup: true,
+      now: Date.parse('Tue, 14 Oct 2026 02:00:00 GMT'),
+    });
+    assert.equal(outcome.action, 'uploaded');
+    const expected = Buffer.from('u:stored-secret', 'utf8').toString('base64');
+    assert.ok(
+      calls.some((call) => call.authorization === `Basic ${expected}`),
+      '请求头应使用存储里的密码',
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('自动同步遇到解不开的密码直接报错', async () => {
+  setSecretStoreForTests({
+    encrypt: async () => 'cipher(x)',
+    decrypt: async () => {
+      throw new Error('key lost');
+    },
+    isAvailable: async () => true,
+  });
+  const storage = new MemoryStorage();
+  await storage.writeMeta('webdav_password', 'enc:v1:broken');
+  const on = { ...DEFAULT_SETTINGS, webdavUrl: settings.webdavUrl, webdavUser: 'u', webdavAuto: true };
+  const { calls, restore } = stubFetch(() => new Response(null, { status: 201 }));
+  try {
+    const outcome = await maybeAutoSync(storage, on, { startup: true, now: Date.now() });
+    assert.equal(outcome.action, 'error');
+    assert.match(outcome.detail ?? '', /无法解密/);
+    assert.equal(calls.length, 0);
+  } finally {
+    restore();
+    setSecretStoreForTests(undefined);
+  }
+});
+
+test('B1 服务器不响应时探测在超时后返回可读错误，不无限等待', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const original = globalThis.fetch;
+  globalThis.fetch = ((_input: RequestInfo | URL, init: RequestInit = {}) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    })) as typeof fetch;
+  try {
+    const pending = remoteStatus(settings);
+    // 让请求先挂上 abort 监听，再推进时钟
+    await Promise.resolve();
+    await Promise.resolve();
+    t.mock.timers.tick(15_000);
+    const status = await pending;
+    assert.equal(status.ok, false);
+    assert.match(status.error ?? '', /15 秒内没有响应/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('B1 上传超时随包体积放宽', () => {
+  assert.equal(davUploadTimeoutMs(0), 60_000);
+  assert.ok(davUploadTimeoutMs(10_000_000) > 200_000);
 });

@@ -2,6 +2,9 @@ import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   WIDGET_VARIANTS,
+  WEEKDAY_LABELS,
+  addDays,
+  dayOfWeek,
   formatDate,
   formatTime,
   readSettings,
@@ -13,10 +16,15 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
-import { logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
+import { describeError, logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
+import { fail } from '../lib/fail.ts';
+import { formatCountdown, formatRemaining } from '../lib/format.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
+import { canUseWidget, measureWidget, openMainWindow, watchWidgetResize } from '../widget-window.ts';
 import { MiniShell } from './shell.tsx';
-import { shouldShowTomorrow, tomorrowPreviewLessons } from './tomorrow.ts';
+import { examWidgetView } from './exam.ts';
+import { ExamWidgetBody } from './exam.tsx';
+import { miniEmptyText, shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
 import '../styles.css';
 
 installWebviewGuards();
@@ -28,31 +36,6 @@ const REFRESH_MS = 15_000;
 async function hideWindow(): Promise<void> {
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().hide();
-}
-
-/** 时间差格式化：超过一小时带小时位。 */
-function span(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
-  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
-}
-
-/** 距下一节开始：已是开始时刻时给「即将开始」。 */
-function countdown(target: number, now: number): string {
-  const diff = target - now;
-  if (diff <= 0) return '即将开始';
-  return span(Math.floor(diff / 1000));
-}
-
-/** 距本节结束：已经到点给 00:00。 */
-function remaining(endAt: number, now: number): string {
-  return span(Math.max(0, Math.floor((endAt - now) / 1000)));
-}
-
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function variantOf(settings: AppSettings | null): WidgetVariant {
@@ -77,11 +60,11 @@ function Mini() {
     if (storage === null || current === null) return;
     try {
       const latest = await readSettings(storage);
-      if (
-        latest.tomorrowPreview !== current.tomorrowPreview ||
-        latest.widgetVariant !== current.widgetVariant ||
-        latest.widgetBackground !== current.widgetBackground
-      ) {
+      // 整份比较：主窗口改了任何设置（含主题、时区）都要跟上
+      if (JSON.stringify(latest) !== JSON.stringify(current)) {
+        if (latest.themePreset !== current.themePreset || latest.theme !== current.theme) {
+          applyTheme(latest.themePreset, latest.theme);
+        }
         settingsRef.current = latest;
         setSettings(latest);
       }
@@ -107,9 +90,9 @@ function Mini() {
         });
       }
     } catch (cause: unknown) {
-      const message = describe(cause);
-      setError(message);
-      logWarn('mini', '悬浮窗数据加载失败', { message });
+      // 原始异常只进日志；悬浮窗只显示用户语言
+      logWarn('mini', '悬浮窗数据加载失败', { message: describeError(cause) });
+      setError(fail('课表读取失败', '数据暂时读不出来', '请稍后重试；仍失败请重启应用。').text);
     }
   }, []);
 
@@ -117,7 +100,7 @@ function Mini() {
     let cancelled = false;
     void (async () => {
       try {
-        const storage = await openStorage();
+        const storage = await openStorage({ secondary: true });
         const loaded = await readSettings(storage);
         if (cancelled) return;
         storageRef.current = storage;
@@ -126,9 +109,10 @@ function Mini() {
         applyTheme(loaded.themePreset, loaded.theme);
         await reload();
       } catch (cause: unknown) {
-        const message = describe(cause);
-        if (!cancelled) setError(message);
-        logWarn('mini', '悬浮窗初始化失败', { message });
+        logWarn('mini', '悬浮窗初始化失败', { message: describeError(cause) });
+        if (!cancelled) {
+          setError(fail('悬浮窗读取失败', '无法打开本机数据', '请关闭后重新打开悬浮窗；仍失败请重启应用。').text);
+        }
       }
     })();
     return () => {
@@ -147,7 +131,7 @@ function Mini() {
         if (disposed) off();
         else stop = off;
       } catch (cause: unknown) {
-        logWarn('mini', '订阅数据变更失败', { message: describe(cause) });
+        logWarn('mini', '订阅数据变更失败', { message: describeError(cause) });
       }
     })();
     return () => {
@@ -171,17 +155,32 @@ function Mini() {
   const next = data?.nextLesson;
   const zone = data?.timeZone ?? 'UTC';
   const background = settings?.widgetBackground ?? 'light';
+  /** 考试倒计时样式：最近一场未过期考试 + 总场数（纯函数，冒烟可用桩数据断言） */
+  const examView = examWidgetView(data?.exams ?? [], now, zone);
   const hide = (): void => void hideWindow();
+  // 悬浮窗是常用入口：双击整窗或点标题栏「打开」都能回主窗口
+  const openMain = (): void => void openMainWindow();
   // 明天有课时把标题栏文案换掉，不再往内容区里塞一行标签（那行会把课程名挤出可视区）
   const headLabel = current !== undefined ? '正在上课' : undefined;
   // 明日课程预告：复用设置里的「空日程提示明日预告」，当天没课或当天的课都上完时切过去
   const todayLessons = data?.todayLessons ?? [];
   const tomorrowLessons = data?.tomorrowLessons ?? [];
   const tomorrowEnabled = settings?.tomorrowPreview !== false;
+  // 「始终不显示周末」时预告看下一个工作日：周五看周一，不显示周末
+  const tomorrowDate = data === null ? '' : addDays(data.today, 1);
+  const previewDate = data === null ? '' : previewDateFor(data.today, settings?.hideWeekends === true);
+  const previewLessons =
+    data === null || previewDate === tomorrowDate
+      ? tomorrowLessons
+      : (data.lessonsByDate.get(previewDate) ?? []);
+  const previewLabel =
+    data === null || previewDate === tomorrowDate
+      ? '明日课程预告'
+      : `${WEEKDAY_LABELS[dayOfWeek(previewDate) - 1] ?? ''}课程预告`;
   const showTomorrow = shouldShowTomorrow({
     enabled: tomorrowEnabled,
     todayEnds: todayLessons.map((lesson) => lesson.endAt),
-    tomorrowCount: tomorrowLessons.length,
+    tomorrowCount: previewLessons.length,
     now,
   });
   const nextIsTomorrow =
@@ -197,12 +196,54 @@ function Mini() {
     if (nextDate === dayAfter) return '后天';
     return nextDate;
   })();
+  // 实际渲染的列表：today 用当天/预告课程，combo 用未完成且带截止时间的待办（最多 3 条）
+  const todayShown = showTomorrow ? tomorrowPreviewLessons(previewLessons).slice(0, 3) : todayLessons;
+  const comboTasks = (data?.todos ?? [])
+    .filter((row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined)
+    .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
+    .slice(0, 3);
+  /**
+   * 正文行数：让原生按内容定高（Rust `content_height` = 头部 + 留白 + 行高 × 行数）。
+   * minimal 只有一行大数字，行数不影响高度；空态也占一行。
+   */
+  const contentRows = ((): number | undefined => {
+    if (variant === 'minimal') return undefined;
+    // 错误态给两行：一行说明 + 一行「打开主窗口修复」提示，避免窗口过矮只剩标题像空白
+    if (error !== null) return 2;
+    if (variant === 'today') return Math.max(1, todayShown.length);
+    // combo 上半区固定 3 行（标签 / 课程名 / 时间行）+ 待办区标签 1 行
+    if (variant === 'combo') return 4 + Math.max(1, comboTasks.length);
+    // exam：考试名 1 行 + 倒计时/日期 1 行；没有考试时只有空态 1 行
+    if (variant === 'exam') return examView.next === null ? 1 : 2;
+    // bar：课程名 + 时间行
+    return 2;
+  })();
+
+  // 行数或样式变了才请原生定高：同一份内容不重复 resize（StrictMode 双跑也只调一次）
+  const measuredKey = useRef('');
+  useEffect(() => {
+    if (!canUseWidget()) return;
+    const key = `${variant}:${contentRows ?? ''}`;
+    if (key === measuredKey.current) return;
+    measuredKey.current = key;
+    void measureWidget(variant, contentRows).then((layout) => {
+      // 失败时清掉指纹，下一次数据刷新再试
+      if (layout === null) measuredKey.current = '';
+    });
+  }, [variant, contentRows]);
+
+  // 用户拖动边框后 200ms 防抖记忆尺寸；非桌面端 watchWidgetResize 直接返回空函数
+  useEffect(() => {
+    if (!canUseWidget()) return;
+    return watchWidgetResize(variant);
+  }, [variant]);
 
   if (error !== null) {
     return (
-      <MiniShell variant={variant} onHide={hide} background={background}>
-        <div className="mini-empty" data-role="mini-error">
-          课表读取失败：{error}
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} background={background}>
+        <div className="mini-empty" data-role="mini-error" role="alert">
+          <span>{error}</span>
+          <span className="mini-hint">可点右上「打开」进入主窗口修复数据</span>
         </div>
       </MiniShell>
     );
@@ -210,14 +251,14 @@ function Mini() {
 
   if (variant === 'minimal') {
     return (
-      <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={headLabel} background={background}>
         <div className="mini-minimal">
           <span className="mini-count-big" data-role="mini-count">
             {current !== undefined
-              ? remaining(current.endAt, now)
+              ? formatRemaining(current.endAt, now)
               : next === undefined
                 ? '--:--'
-                : countdown(next.startAt, now)}
+                : formatCountdown(next.startAt - now)}
           </span>
           <span className="mini-minimal-name">
             {current !== undefined
@@ -231,18 +272,27 @@ function Mini() {
     );
   }
 
+  if (variant === 'exam') {
+    return (
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label="考试倒计时" background={background}>
+        <ExamWidgetBody exams={data?.exams ?? []} now={now} timeZone={zone} />
+      </MiniShell>
+    );
+  }
+
   if (variant === 'today') {
-    // 明日预告最多列 3 节，且不再插入独立标签行，避免把课程名挤出悬浮窗
-    const lessons = showTomorrow ? tomorrowPreviewLessons(tomorrowLessons).slice(0, 3) : todayLessons;
+    // 预告最多列 3 节，且不再插入独立标签行，避免把课程名挤出悬浮窗
+    const lessons = todayShown;
     return (
       <MiniShell
         variant={variant}
         onHide={hide}
+        onOpen={openMain}
         background={background}
-        label={showTomorrow ? '明日课程预告' : undefined}
+        label={showTomorrow ? previewLabel : undefined}
       >
         {lessons.length === 0 ? (
-          <div className="mini-empty">今天没有课啦</div>
+          <div className="mini-empty">{miniEmptyText(showTomorrow)}</div>
         ) : (
           <ul className="mini-list">
             {lessons.map((lesson) => {
@@ -258,7 +308,7 @@ function Mini() {
                   <span className="mini-item-name">{lesson.courseName}</span>
                   {running && (
                     <span className="tabular mini-item-remain" data-role="mini-running-left">
-                      余 {remaining(lesson.endAt, now)}
+                      剩余 {formatRemaining(lesson.endAt, now)}
                     </span>
                   )}
                   {lesson.room !== null && <span className="mini-item-room">{lesson.room}</span>}
@@ -272,12 +322,9 @@ function Mini() {
   }
 
   if (variant === 'combo') {
-    const tasks = (data?.todos ?? [])
-      .filter((row) => row.done === 0 && row.due_at !== null && row.due_at !== undefined)
-      .sort((left, right) => (left.due_at ?? 0) - (right.due_at ?? 0))
-      .slice(0, 3);
+    const tasks = comboTasks;
     return (
-      <MiniShell variant={variant} onHide={hide} label={headLabel} background={background}>
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={headLabel} background={background}>
         <div className="mini-combo-top">
           <span className="mini-label" data-role="mini-top-label">
             {current !== undefined ? '正在上课' : nextIsTomorrow && tomorrowEnabled ? '明日课程预告' : '下一节课'}
@@ -288,10 +335,10 @@ function Mini() {
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
               {current !== undefined
-                ? remaining(current.endAt, now)
+                ? formatRemaining(current.endAt, now)
                 : next === undefined
                   ? '--:--'
-                  : countdown(next.startAt, now)}
+                  : formatCountdown(next.startAt - now)}
             </span>
             <span className="mini-meta">
               {current !== undefined
@@ -332,7 +379,7 @@ function Mini() {
           </div>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
-              {remaining(current.endAt, now)}
+              {formatRemaining(current.endAt, now)}
             </span>
             <span className="mini-meta">
               {formatTime(current.startAt, zone)}–{formatTime(current.endAt, zone)}
@@ -349,7 +396,7 @@ function Mini() {
           </div>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
-              {countdown(next.startAt, now)}
+              {formatCountdown(next.startAt - now)}
             </span>
             <span className="mini-meta">
               {nextDayLabel === '' ? '' : `${nextDayLabel} `}

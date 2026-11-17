@@ -1,6 +1,40 @@
-# 晓刻 DawnTick
+<p align="center">
+  <img src="assets/brand/app-icon.svg" width="112" height="112" alt="晓刻图标">
+</p>
 
-课表与日程提醒工具。课表导入一次，多端同步，课前准时提醒，桌面与主屏小组件随时看。
+<h1 align="center">晓刻 DawnTick</h1>
+
+<p align="center">课表与日程提醒工具。课表导入一次，多端同步，课前准时提醒，桌面与主屏小组件随时看。</p>
+
+<p align="center">
+  <a href="https://github.com/muyangplus/dawn-tick/releases/latest"><img alt="正式版" src="https://img.shields.io/github/v/release/muyangplus/dawn-tick?label=%E6%AD%A3%E5%BC%8F%E7%89%88&color=FF6B4A"></a>
+  <a href="https://github.com/muyangplus/dawn-tick/releases"><img alt="测试版" src="https://img.shields.io/github/v/release/muyangplus/dawn-tick?include_prereleases&label=%E6%B5%8B%E8%AF%95%E7%89%88&color=6C5CE7"></a>
+  <a href="https://github.com/muyangplus/dawn-tick/releases/tag/dev-latest"><img alt="开发版" src="https://img.shields.io/badge/%E5%BC%80%E5%8F%91%E7%89%88-dev--latest-8B7CF0"></a>
+  <a href="https://github.com/muyangplus/dawn-tick/releases"><img alt="下载量" src="https://img.shields.io/github/downloads/muyangplus/dawn-tick/total?label=%E4%B8%8B%E8%BD%BD"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/muyangplus/dawn-tick/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/muyangplus/dawn-tick/ci.yml?branch=dev&label=CI"></a>
+  <a href="https://github.com/muyangplus/dawn-tick/actions/workflows/publish.yml"><img alt="发布" src="https://img.shields.io/github/actions/workflow/status/muyangplus/dawn-tick/publish.yml?label=%E5%8F%91%E5%B8%83"></a>
+  <a href="LICENSE"><img alt="许可证" src="https://img.shields.io/github/license/muyangplus/dawn-tick?label=%E8%AE%B8%E5%8F%AF%E8%AF%81"></a>
+  <a href="https://github.com/muyangplus/dawn-tick/commits/dev"><img alt="最近提交" src="https://img.shields.io/github/last-commit/muyangplus/dawn-tick/dev?label=%E6%9C%80%E8%BF%91%E6%8F%90%E4%BA%A4"></a>
+</p>
+<p align="center">
+  <img alt="Windows" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
+  <img alt="Android" src="https://img.shields.io/badge/Android-7.0%2B-3DDC84?logo=android&logoColor=white">
+  <img alt="Web" src="https://img.shields.io/badge/Web-%E6%B5%8F%E8%A7%88%E5%99%A8-FF6B4A?logo=googlechrome&logoColor=white">
+</p>
+<p align="center">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white">
+  <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?logo=tailwindcss&logoColor=white">
+  <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white">
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white">
+  <img alt="Capacitor" src="https://img.shields.io/badge/Capacitor-8-119EFF?logo=capacitor&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-%E6%9C%AC%E5%9C%B0%E4%BC%98%E5%85%88-003B57?logo=sqlite&logoColor=white">
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-%E2%89%A524-5FA04E?logo=nodedotjs&logoColor=white">
+  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-12-F69220?logo=pnpm&logoColor=white">
+</p>
 
 ## 平台与产物
 
@@ -45,7 +79,8 @@
 | `apps/web` | 界面与平台存储驱动（`src/components` 组件库、`src/design` 设计令牌） |
 | `apps/desktop` | Tauri 壳、托盘、窗口配置 |
 | `apps/mobile` | Capacitor 壳与 Android 小组件 |
-| `tools` | 校验、发布、设计令牌、许可证、预设同步脚本 |
+| `assets/brand` | 应用图标源文件（SVG），`node tools/design/render-icons.mjs` 生成三端位图 |
+| `tools` | 校验、发布、设计令牌、图标、许可证、预设同步脚本 |
 | `docs` | 公开文档 |
 
 ## 文档
@@ -83,7 +118,7 @@
 | beta | `main` | 手动 | `vX.Y.Z-beta.<n>` | 预发布，保留历史 |
 | release | `main` | 打标签 | `vX.Y.Z` | 正式 Release |
 
-产物名为 `DawnTick-<version>-<channel>-<平台>`，每个产物附同名 `.sha256` 文件；完整规则见 [发布与版本](docs/06-发布与版本.md)。
+产物名为 `DawnTick-<version>-<channel>-<平台>`，校验统一看发布里的 `SHA256SUMS.txt`；完整规则见 [发布与版本](docs/06-发布与版本.md)。
 
 ## 许可证
 

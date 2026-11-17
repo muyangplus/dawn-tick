@@ -7,6 +7,14 @@ import {
   parsePageDiagnostics,
   stripPageMarkers,
 } from '@dawn-tick/core';
+import {
+  DIAGNOSTICS_INNER_PAGE,
+  DIAGNOSTICS_OUTER_PAGE,
+  DIAGNOSTICS_URL,
+  EXPECTED_COURSE_NAMES,
+  EXPECTED_DIAGNOSTICS,
+  diagnosticCountsOf,
+} from '@dawn-tick/core/testing/import-diagnostics';
 
 const OUTER_PAGE = `<!doctype html><html><head><title>个人课表查询</title></head><body>
 <div class="widget-backdrop-loading"><div class="msg">加载中...</div></div>
@@ -37,16 +45,20 @@ async function runBookmarklet(outer: string, inner: string, url: string) {
     } },
     configurable: true,
   });
+  // 书签每条路径都以 alert 收尾：等到 alert 即可，不再轮询；兜底超时防止用例挂死
+  let finished: () => void = () => {};
+  const done = new Promise<void>((resolve) => {
+    finished = resolve;
+  });
   (window as unknown as { alert: (message: string) => void }).alert = (message: string) => {
     alerted = message;
+    finished();
   };
 
   window.eval(PAGE_BOOKMARKLET.replace(/^javascript:/, ''));
-  for (let attempt = 0; attempt < 200 && captured === ''; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  // 让 writeText 之后的 alert 回调先执行
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([done, new Promise((resolve) => (timer = setTimeout(resolve, 10_000)))]);
+  clearTimeout(timer);
   return { captured, alerted, window };
 }
 
@@ -73,6 +85,28 @@ test('书签在「课表位于 iframe」时回传完整内容', async () => {
   assert.equal(result.schedules[0]?.courseName, '高等数学');
   assert.equal(result.schedules[0]?.room, '教三-201');
   assert.equal(result.schedules[1]?.dayOfWeek, 3);
+});
+
+test('书签与注入脚本共用同一组诊断样例', async () => {
+  const { captured } = await runBookmarklet(
+    DIAGNOSTICS_OUTER_PAGE,
+    DIAGNOSTICS_INNER_PAGE,
+    DIAGNOSTICS_URL,
+  );
+  const diagnostics = parsePageDiagnostics(captured);
+  assert.ok(diagnostics !== null, '应带回诊断信息');
+  assert.deepEqual(diagnosticCountsOf(diagnostics ?? {}), EXPECTED_DIAGNOSTICS);
+  assert.equal(diagnostics?.loading, false, '样例页面不在加载中');
+  assert.equal(diagnostics?.title, '个人课表查询');
+  assert.equal(diagnostics?.url, DIAGNOSTICS_URL);
+  assert.equal(typeof diagnostics?.ready, 'string', 'ready 是 document.readyState，具体值随执行时机变化');
+
+  const result = extractTimetableFromHtml(captured, { totalWeeks: 20 });
+  assert.equal(result.shape, 'grid');
+  assert.deepEqual(
+    result.schedules.map((item) => item.courseName).sort(),
+    [...EXPECTED_COURSE_NAMES].sort(),
+  );
 });
 
 test('剥离诊断头后剩余的才是页面内容', async () => {

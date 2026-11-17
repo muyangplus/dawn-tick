@@ -1,5 +1,12 @@
 import type { Storage } from '@dawn-tick/core';
+import { errorMessage } from './lib/errors.ts';
+import { readMetaJson, writeMetaJson } from './lib/meta.ts';
+import { LOG_META_KEY } from './lib/meta-keys.ts';
+import { supportsNativeLog } from './lib/capabilities.ts';
+import { invokeNative } from './lib/native.ts';
 import { detectPlatform } from './platform-detect.ts';
+
+export { LOG_META_KEY };
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
 
@@ -16,7 +23,6 @@ export interface LogEntry {
 }
 
 declare const __DT_CHANNEL__: string | undefined;
-export const LOG_META_KEY = 'app_log';
 const MAX_ENTRIES = 300;
 
 /** dev 渠道默认 trace（最详细），其余渠道默认 info。 */
@@ -32,10 +38,9 @@ export function applyLogSettings(options: { level: LogLevel; fileEnabled: boolea
   currentLevel = options.level;
   fileEnabled = options.fileEnabled;
   void (async () => {
-    if (detectPlatform() !== 'tauri') return;
+    if (!supportsNativeLog()) return;
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
+      await invokeNative('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
     } catch {
       // 原生日志不可用时只影响内存与本地存储
     }
@@ -46,8 +51,9 @@ export function logLevel(): LogLevel {
   return currentLevel;
 }
 
-export function logFileEnabled(): boolean {
-  return fileEnabled;
+/** 异常转一行内部原因：界面只显示用户语言，原始信息只进日志。单一实现见 `lib/errors.ts`。 */
+export function describeError(cause: unknown): string {
+  return errorMessage(cause);
 }
 
 function allowed(level: LogLevel): boolean {
@@ -63,10 +69,9 @@ function platformLabel(): string {
 }
 
 async function writeToNative(entry: LogEntry): Promise<void> {
-  if (detectPlatform() !== 'tauri') return;
+  if (!supportsNativeLog()) return;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('log_event', {
+    await invokeNative('log_event', {
       level: entry.level,
       scope: entry.scope,
       message: entry.message,
@@ -85,10 +90,20 @@ function scheduleFlush(): void {
   }, 400);
 }
 
+/** 立即把缓冲写入本地存储，取消已排队的延迟写入（退出前与测试用）。 */
+export async function flushLogsNow(): Promise<void> {
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  await flush();
+}
+
 async function flush(): Promise<void> {
   if (storage === null) return;
   try {
-    await storage.writeMeta(LOG_META_KEY, JSON.stringify(buffer));
+    // scope 传 null：写日志失败不能再记一条日志，否则会自触发下一轮 flush
+    await writeMetaJson(storage, LOG_META_KEY, buffer, { scope: null });
   } catch {
     // 日志写入失败不影响主流程
   }
@@ -98,16 +113,39 @@ export function attachLogStorage(target: Storage): void {
   storage = target;
 }
 
+/** 校验落盘日志：只收结构完整的行，坏行丢弃；整体不是数组时返回 null 交给兜底。 */
+function parseLogEntries(value: unknown): LogEntry[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries: LogEntry[] = [];
+  for (const item of value) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const at = record['at'];
+    const level = record['level'];
+    const scope = record['scope'];
+    const message = record['message'];
+    if (typeof at !== 'number' || !Number.isFinite(at)) continue;
+    if (typeof level !== 'string' || !(LOG_LEVELS as readonly string[]).includes(level)) continue;
+    if (typeof scope !== 'string' || typeof message !== 'string') continue;
+    const entry: LogEntry = { at, level: level as LogLevel, scope, message };
+    const detail = record['detail'];
+    if (detail !== null && typeof detail === 'object' && !Array.isArray(detail)) {
+      entry.detail = detail as Record<string, unknown>;
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
 export async function loadLogs(): Promise<void> {
   if (storage === null) return;
-  try {
-    const raw = await storage.readMeta(LOG_META_KEY);
-    if (raw === null || raw === undefined || raw === '') return;
-    const parsed = JSON.parse(raw) as LogEntry[];
-    if (Array.isArray(parsed)) buffer = parsed.slice(-MAX_ENTRIES);
-  } catch {
-    buffer = [];
-  }
+  const loaded = await readMetaJson<LogEntry[] | null>(storage, LOG_META_KEY, {
+    parse: parseLogEntries,
+    fallback: null,
+    scope: 'log',
+  });
+  // null = 没存过或读不出：保留内存里已有的条目
+  if (loaded !== null) buffer = loaded.slice(-MAX_ENTRIES);
 }
 
 function record(level: LogLevel, scope: string, message: string, detail?: Record<string, unknown>): void {
@@ -151,11 +189,6 @@ export function installLogHandlers(): void {
 /** 调试日志（第 4 级）。 */
 export function logDebug(scope: string, message: string, detail?: Record<string, unknown>): void {
   record('debug', scope, message, detail);
-}
-
-/** 最详细一级：请求/响应、解析细节等。 */
-export function logTrace(scope: string, message: string, detail?: Record<string, unknown>): void {
-  record('trace', scope, message, detail);
 }
 
 export function debugEnabled(): boolean {

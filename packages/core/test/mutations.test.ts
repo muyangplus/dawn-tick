@@ -24,13 +24,15 @@ import {
   uuidv7,
 } from '../src/mutations.ts';
 import { listTimeSlots } from '../src/repository.ts';
+import { backfillWeeksRaw } from '../src/backfill.ts';
+import { describeWeeks, weeksToMask } from '../src/weeks.ts';
 
 type Row = Record<string, unknown>;
 import { DEFAULT_SETTINGS, readSettings, writeSettings } from '../src/settings.ts';
 import { weekView } from '../src/repository.ts';
 import { ValidationError } from '../src/validation.ts';
-import { MemoryStorage } from '../src/storage.ts';
-import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './helpers.ts';
+import { MemoryStorage, type Storage } from '../src/storage.ts';
+import { SEMESTER_ID, START_DATE, USER_ID, createStorage, seedStorage, weekRange } from './kit/index.ts';
 
 const FIXED = (() => {
   let counter = 0;
@@ -193,6 +195,32 @@ test('写入前校验会拦截非法值', async () => {
     () => createSemester(storage, { userId: USER_ID, name: '坏周数', startDate: START_DATE, totalWeeks: 99 }, options),
     (error: unknown) => error instanceof ValidationError,
   );
+});
+
+test('课程名为空或全是空白时拒绝写入', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const semesterId = String(semester['id']);
+
+  for (const name of ['', '   ', '\t']) {
+    await assert.rejects(
+      () => createCourse(storage, { semesterId, name }, options),
+      (error: unknown) => error instanceof RangeError && error.message.includes('课程名不能为空'),
+      `createCourse 应拒绝空名 ${JSON.stringify(name)}`,
+    );
+  }
+
+  const course = await createCourse(storage, { semesterId, name: '  高等数学  ' }, options);
+  assert.equal(course['name'], '高等数学', '名称两端的空白会被去掉');
+
+  await assert.rejects(
+    () => updateCourse(storage, String(course['id']), { name: '  ' }, options),
+    (error: unknown) => error instanceof RangeError && error.message.includes('课程名不能为空'),
+    'updateCourse 应拒绝把名称改成空白',
+  );
+  const stored = await storage.collection<Record<string, unknown>>('courses').get(String(course['id']));
+  assert.equal(stored?.['name'], '高等数学', '被拒的空名不会写回');
 });
 
 test('设置默认值与读写回环', async () => {
@@ -484,4 +512,209 @@ test('新建学期使用固定 id 生成器便于断言', async () => {
     },
   );
   assert.equal(semester['id'], SEMESTER_ID);
+});
+
+test('setSchedules 由周次位图派生 weeks_raw', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const courses = await listManagedCourses(storage, SEMESTER_ID);
+  const course = courses[0];
+  assert.ok(course !== undefined);
+
+  await setSchedules(
+    storage,
+    course.id,
+    [{ dayOfWeek: 2, periodStart: 3, periodEnd: 4, weeks: weekRange(1, 16) }],
+    { totalWeeks: 20 },
+  );
+  const rows = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => row['course_id'] === course.id && row['deleted_at'] === null,
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.['weeks_raw'], describeWeeks(weeksToMask(weekRange(1, 16)), 20));
+  assert.equal(rows[0]?.['weeks_raw'], '1-16周');
+
+  await setSchedules(storage, course.id, [
+    { dayOfWeek: 4, periodStart: 1, periodEnd: 2, weeks: [2, 4, 6, 8] },
+  ]);
+  const after = (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => row['course_id'] === course.id && row['deleted_at'] === null,
+  );
+  assert.equal(after[0]?.['weeks_raw'], '2-8周(双)');
+});
+
+test('启动回填历史排课的 weeks_raw 且幂等', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const collection = storage.collection<Row>('course_schedules');
+  const seeded = await collection.getAll();
+  const target = seeded[0];
+  assert.ok(target !== undefined);
+  // 模拟历史数据：只写了位图，没有周次文本
+  await collection.put({ ...target, weeks_raw: null });
+  const before = await collection.getAll();
+  const blanks = before.filter(
+    (row) => (row['weeks_raw'] === null || row['weeks_raw'] === '') && Number(row['weeks_mask'] ?? 0) > 0,
+  );
+  assert.ok(blanks.length >= 1, '构造出的历史排课应缺周次文本');
+
+  const filled = await backfillWeeksRaw(storage);
+  assert.equal(filled, blanks.length);
+  for (const row of blanks) {
+    const after = await collection.get(String(row['id']));
+    assert.equal(after?.['weeks_raw'], describeWeeks(Number(row['weeks_mask'])));
+  }
+  assert.equal(await storage.readMeta('weeks_raw_backfill_v1'), '1');
+  assert.equal(await backfillWeeksRaw(storage), 0, '第二次调用不再改动');
+});
+
+/** 某门课当前的排课行。 */
+async function aliveSchedules(storage: Storage, courseId: string): Promise<Row[]> {
+  return (await storage.collection<Row>('course_schedules').getAll()).filter(
+    (row) => row['course_id'] === courseId && row['deleted_at'] === null,
+  );
+}
+
+test('A4 setSchedules 保存自定义上课时间', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  assert.ok(course !== undefined);
+  await setSchedules(storage, course.id, [
+    { dayOfWeek: 2, periodStart: 3, periodEnd: 4, weeks: [1, 2], startTime: '13:30', endTime: '15:00' },
+  ]);
+  const [row] = await aliveSchedules(storage, course.id);
+  assert.equal(row?.['start_time'], '13:30');
+  assert.equal(row?.['end_time'], '15:00');
+});
+
+test('A5 重新保存课程保留排课 id 与其上的停课、排课级提醒', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  const schedule = course?.schedules[0];
+  assert.ok(course !== undefined && schedule !== undefined);
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: schedule.id,
+    onDate: '2026-09-21',
+    action: 'cancel',
+  });
+  const rule = await setReminder(storage, { userId: USER_ID, targetType: 'schedule', targetId: schedule.id });
+
+  // 表单原样带回 id，只改了教室
+  await setSchedules(storage, course.id, [{ ...schedule, room: '新教室' }]);
+  const [after] = await aliveSchedules(storage, course.id);
+  assert.equal(after?.['id'], schedule.id, '原地更新而非新建');
+  assert.equal(after?.['room'], '新教室');
+  assert.equal((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
+  assert.equal((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
+});
+
+test('A5 不带 id 时按星期与节次认回原排课；被移除的排课连同停课与提醒一起删除', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  const schedule = course?.schedules[0];
+  assert.ok(course !== undefined && schedule !== undefined);
+
+  const { id: _drop, ...withoutId } = schedule;
+  await setSchedules(storage, course.id, [{ ...withoutId, weeks: [1, 2, 3] }]);
+  assert.equal((await aliveSchedules(storage, course.id))[0]?.['id'], schedule.id);
+
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: schedule.id,
+    onDate: '2026-09-21',
+    action: 'cancel',
+  });
+  const rule = await setReminder(storage, { userId: USER_ID, targetType: 'schedule', targetId: schedule.id });
+  await setSchedules(storage, course.id, [{ dayOfWeek: 6, periodStart: 7, periodEnd: 8, weeks: [1] }]);
+  const rows = await aliveSchedules(storage, course.id);
+  assert.equal(rows.length, 1);
+  assert.notEqual(rows[0]?.['id'], schedule.id);
+  assert.notEqual((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
+  assert.notEqual((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
+});
+
+test('删除课程同时删除排课级提醒与停课记录', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const [course] = await listManagedCourses(storage, SEMESTER_ID);
+  const schedule = course?.schedules[0];
+  assert.ok(course !== undefined && schedule !== undefined);
+  const cancel = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId: SEMESTER_ID,
+    refScheduleId: schedule.id,
+    onDate: '2026-09-21',
+    action: 'cancel',
+  });
+  const rule = await setReminder(storage, { userId: USER_ID, targetType: 'schedule', targetId: schedule.id });
+  await deleteCourse(storage, course.id);
+  assert.notEqual((await storage.collection<Row>('events').get(String(cancel['id'])))?.['deleted_at'], null);
+  assert.notEqual((await storage.collection<Row>('reminders').get(String(rule['id'])))?.['deleted_at'], null);
+});
+
+test('删除事件连带删除子孙事件及其提醒', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  await ensureUser(storage, USER_ID, '我', options);
+  const parent = await createEvent(storage, { userId: USER_ID, type: 'todo', title: '课程设计' }, options);
+  const child = await createEvent(storage, { userId: USER_ID, type: 'todo', title: '需求', parentId: String(parent['id']) }, options);
+  const grandchild = await createEvent(
+    storage,
+    { userId: USER_ID, type: 'todo', title: '访谈', parentId: String(child['id']) },
+    options,
+  );
+  await setReminder(storage, { userId: USER_ID, targetType: 'event', targetId: String(grandchild['id']), advanceMinutes: 5 }, options);
+
+  await deleteEvent(storage, String(parent['id']), options);
+  const events = await storage.collection<Record<string, unknown>>('events').getAll();
+  assert.equal(events.length, 3);
+  assert.ok(events.every((row) => (row['deleted_at'] as number) > 0));
+  const reminders = await storage.collection<Record<string, unknown>>('reminders').getAll();
+  assert.ok(reminders.every((row) => (row['deleted_at'] as number) > 0), '孙事件的提醒也删除');
+});
+
+test('删除学期连带删除挂在其排课上的调课（即使调课没记学期）', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const course = await createCourse(storage, { semesterId: String(semester['id']), name: '高等数学' }, options);
+  const schedule = await createSchedule(
+    storage,
+    { courseId: String(course['id']), dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: weekRange(1, 16) },
+    options,
+  );
+  const reschedule = await createReschedule(
+    storage,
+    {
+      userId: USER_ID,
+      semesterId: String(semester['id']),
+      refScheduleId: String(schedule['id']),
+      onDate: START_DATE,
+      action: 'cancel',
+    },
+    options,
+  );
+  const events = storage.collection<Record<string, unknown>>('events');
+  await events.put({ ...(await events.get(String(reschedule['id']))), semester_id: null });
+
+  const report = await deleteSemesterDeep(storage, String(semester['id']), options);
+  assert.equal(report.events, 1);
+  assert.ok(((await events.get(String(reschedule['id'])))?.['deleted_at'] as number) > 0);
+});
+
+test('节次上限统一为 40', async () => {
+  const storage = createStorage();
+  const options = { now: fixedClock(), id: FIXED };
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: START_DATE }, options);
+  const semesterId = String(semester['id']);
+  const before = (await listTimeSlots(storage, semesterId)).length;
+  for (let index = before; index < 40; index += 1) await appendTimeSlot(storage, semesterId, 10, 0, options);
+  assert.equal((await listTimeSlots(storage, semesterId)).length, 40);
+  await assert.rejects(appendTimeSlot(storage, semesterId, 10, 0, options), /40 节/);
 });

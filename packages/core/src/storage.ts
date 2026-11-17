@@ -25,6 +25,12 @@ export const STORE_KEYS: Record<StoreName, string> = {
 
 export type StorageKind = 'memory' | 'sqlite' | 'indexeddb';
 
+/** `app_meta` 的一行：键值都是字符串，所有结构化数据由调用方自行序列化。 */
+export interface MetaRow {
+  key: string;
+  value: string;
+}
+
 export interface Collection<T> {
   readonly name: StoreName;
   get(key: string): Promise<T | undefined>;
@@ -42,6 +48,27 @@ export interface Storage {
   readMeta(key: string): Promise<string | undefined>;
   writeMeta(key: string, value: string): Promise<void>;
   close(): Promise<void>;
+}
+
+export interface MetaAccessors {
+  readMeta(key: string): Promise<string | undefined>;
+  writeMeta(key: string, value: string): Promise<void>;
+}
+
+/**
+ * `app_meta` 的 kv 访问只此一份：三端各自把 `app_meta` 集合传进来，不再各写一遍 get/put 样板。
+ * 只抽读写，不承载键名语义与 JSON 编解码。
+ */
+export function createMetaAccessors(collection: Collection<MetaRow>): MetaAccessors {
+  return {
+    async readMeta(key: string): Promise<string | undefined> {
+      const row = await collection.get(key);
+      return row?.value;
+    },
+    async writeMeta(key: string, value: string): Promise<void> {
+      await collection.put({ key, value });
+    },
+  };
 }
 
 function keyOf(name: StoreName, value: Record<string, unknown>): string {
@@ -98,12 +125,11 @@ export class MemoryStorage implements Storage {
   }
 
   async readMeta(key: string): Promise<string | undefined> {
-    const row = await this.collection<{ key: string; value: string }>('app_meta').get(key);
-    return row?.value;
+    return createMetaAccessors(this.collection<MetaRow>('app_meta')).readMeta(key);
   }
 
   async writeMeta(key: string, value: string): Promise<void> {
-    await this.collection<{ key: string; value: string }>('app_meta').put({ key, value });
+    await createMetaAccessors(this.collection<MetaRow>('app_meta')).writeMeta(key, value);
   }
 
   async close(): Promise<void> {

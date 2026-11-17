@@ -15,7 +15,7 @@ import {
   tableNames,
   userRow,
   weekRange,
-} from './helpers.ts';
+} from './kit/index.ts';
 
 function sample(): {
   semester: SemesterRow;

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    只提供圆角轮廓：solid 透明，不参与上色。
+    FrameLayout 用 clipToOutline 把 widget_surface 裁成同样圆角，边框由 foreground
+    （widget_bg_stroke）盖在最上层，因此底色可以按快照 colors.surface 动态设置。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+    <corners android:radius="16dp" />
+</shape>

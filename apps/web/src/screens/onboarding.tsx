@@ -4,7 +4,6 @@ import {
   addDays,
   createSemester,
   formatDate,
-  importBackup,
   summarizeBackup,
   weekStart,
   type BackupPayload,
@@ -12,11 +11,23 @@ import {
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
 import { Card, CardTitle } from '../components/ui/card.tsx';
+import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
+import { HelpHint } from '../components/ui/help-hint.tsx';
+import { InlineError } from '../components/ui/inline-error.tsx';
 import { SchoolPickerDialog } from '../components/school-picker-dialog.tsx';
 import { toast } from '../components/ui/toaster.tsx';
+import {
+  importConfig,
+  parseImportText,
+  presentModules,
+  readImportFile,
+  type PackageExtras,
+} from '../data-management.ts';
 import { applySchoolTimetable, loadPresetContext, type PresetContext, type School } from './school-picker-model.ts';
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
+import { useAction } from '../lib/action.ts';
+import { errorMessage } from '../lib/errors.ts';
 
 export interface OnboardingProps {
   storage: Storage;
@@ -35,8 +46,13 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   const [startDate, setStartDate] = useState(() => weekStart(today));
   const [totalWeeks, setTotalWeeks] = useState(20);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** 导入自己的错误：显示在导入分区里，不跟建学期的错误混在一起 */
+  const [importError, setImportError] = useState<string | null>(null);
+  const { busy, run } = useAction();
   const [pending, setPending] = useState<BackupPayload | null>(null);
+  /** 整包 zip 里的预设与日志；JSON / Base64 输入为 null */
+  const [pendingExtras, setPendingExtras] = useState<PackageExtras | null>(null);
+  const [importText, setImportText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   /** 首次使用时选的学校：创建学期后按该校作息排课次，之后在作息设置里可一键再套用 */
   const [school, setSchool] = useState<School | null>(null);
@@ -58,33 +74,66 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     };
   }, [storage]);
 
+  /** 读备份文件：JSON / Base64 文本 / 整包 zip 都走设置页同一套解析与错误文案。 */
   async function pickFile(file: File): Promise<void> {
-    setError(null);
-    try {
-      const parsed = JSON.parse(await file.text()) as BackupPayload;
-      if (parsed.format !== 'dawn-tick-backup') {
-        setError('这个文件不是晓刻的备份');
-        return;
-      }
-      setPending(parsed);
-    } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+    setImportError(null);
+    const { payload, extras, error: readError } = await readImportFile(file);
+    if (payload === null) {
+      setImportError(readError ?? '读取备份文件失败');
+      return;
     }
+    setPending(payload);
+    setPendingExtras(extras);
+  }
+
+  /** 粘贴的文本：JSON 与 Base64 都接受；整包 zip 只能选文件。 */
+  function pickText(): void {
+    setImportError(null);
+    try {
+      setPending(parseImportText(importText));
+      setPendingExtras(null);
+    } catch (cause: unknown) {
+      setImportError(errorMessage(cause));
+    }
+  }
+
+  function clearPending(): void {
+    setPending(null);
+    setPendingExtras(null);
+    setImportError(null);
   }
 
   async function applyImport(): Promise<void> {
     if (pending === null) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await importBackup(storage, pending, { mode: 'overwrite' });
-      toast.success(`已导入 ${result.imported} 条数据`);
-      onDone();
-    } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+    const target = pending;
+    setImportError(null);
+    const result = await run({
+      scope: 'onboarding',
+      label: '正在导入备份…',
+      fail: { what: '导入备份失败', next: '请检查备份文件后重试。' },
+      confirm: () =>
+        confirmAction({
+          title: '覆盖现有数据',
+          description: '将覆盖设备上的现有数据，不可撤销',
+          confirmLabel: '确认覆盖',
+        }),
+      task: async () => {
+        const modules = presentModules(target);
+        // 整包可能只带预设快照、没有设置行：补上 settings 才会写回预设
+        const hasPresets =
+          pendingExtras !== null &&
+          (pendingExtras.presets.snapshot !== null || pendingExtras.presets.content !== null);
+        if (hasPresets && !modules.includes('settings')) modules.push('settings');
+        const imported = await importConfig(storage, target, {
+          mode: 'overwrite',
+          modules,
+          extras: pendingExtras,
+        });
+        toast.success(`已导入 ${imported.imported} 条记录${imported.presets ? '，已恢复预设' : ''}`);
+        onDone();
+      },
+    });
+    if (!result.ok && result.error !== null) setImportError(result.error);
   }
 
   /** 建学期：跳过引导与「创建并开始」共用这一段，只有取值来源不同。 */
@@ -94,35 +143,35 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     weeks: number,
     picked: School | null,
   ): Promise<void> {
-    setBusy(true);
     setError(null);
-    try {
-      const semester = await createSemester(storage, {
-        userId,
-        name: semesterName,
-        startDate: start,
-        totalWeeks: weeks,
-        timeZone,
-      });
-      if (picked !== null) {
-        // 记录这次选择：作息设置里据此置顶「一键套用」
-        await writeRecentSchool(storage, picked);
-        try {
-          const result = await applySchoolTimetable(storage, String(semester['id']), picked);
-          toast.success(`已按 ${picked.name} 排好课次（${result.periods} 节）`);
-        } catch (cause: unknown) {
-          // 套用作息失败不影响学期创建，用户可在作息设置里重来
-          setError(`学期已创建，但套用作息失败：${cause instanceof Error ? cause.message : String(cause)}`);
+    const result = await run({
+      scope: 'onboarding',
+      label: '正在创建学期…',
+      task: async () => {
+        const semester = await createSemester(storage, {
+          userId,
+          name: semesterName,
+          startDate: start,
+          totalWeeks: weeks,
+          timeZone,
+        });
+        if (picked !== null) {
+          // 记录这次选择：作息设置里据此置顶「一键套用」
+          await writeRecentSchool(storage, picked);
+          try {
+            const applied = await applySchoolTimetable(storage, String(semester['id']), picked);
+            toast.success(`已按 ${picked.name} 排好节次（${applied.periods} 节）`);
+          } catch (cause: unknown) {
+            // 套用作息失败不影响学期创建，用户可在作息设置里重来
+            setError(`学期已创建，但套用作息失败：${errorMessage(cause)}`);
+          }
+        } else {
+          toast.success('学期已创建');
         }
-      } else {
-        toast.success('学期已创建');
-      }
-      onDone();
-    } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
+        onDone();
+      },
+    });
+    if (!result.ok && result.error !== null) setError(result.error);
   }
 
   async function submit(): Promise<void> {
@@ -169,9 +218,9 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               onChange={(event) => setTotalWeeks(Number(event.target.value))}
             />
           </Field>
-          {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
+          {error !== null && <InlineError>{error}</InlineError>}
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={busy} onClick={() => void submit()}>
+            <Button variant="primary" loading={busy} onClick={() => void submit()}>
               创建并开始
             </Button>
             <Button
@@ -189,8 +238,9 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               跳过，先用默认学期
             </Button>
           </div>
-          <span className="text-xs text-muted">
-            跳过会直接建一个「{DEFAULT_SEMESTER_NAME}」（本周一开学、{DEFAULT_WEEKS} 周、内置默认作息），之后在设置里随时可改。
+          <span className="flex items-center gap-1 text-xs text-muted">
+            跳过会建一个「{DEFAULT_SEMESTER_NAME}」（本周一开学、{DEFAULT_WEEKS} 周）
+            <HelpHint label="跳过引导">使用内置默认作息，之后可在设置里修改</HelpHint>
           </span>
 
           <details className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-advanced">
@@ -230,15 +280,19 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">
             <span className="text-xs font-semibold text-ink">已有数据：直接导入</span>
-            <span className="text-xs text-muted">选择晓刻导出的备份文件并导入</span>
+            <span className="text-xs text-muted">选择备份文件，或直接粘贴 JSON / Base64 文本</span>
+            <span className="text-xs text-muted" data-role="onboarding-import-formats">
+              支持晓刻导出的 JSON、Base64 文本与整包 zip
+            </span>
             <input
               ref={fileRef}
               type="file"
-              accept="application/json,.json"
+              accept="application/json,text/plain,application/zip,.json,.txt,.zip"
               className="hidden"
               aria-label="选择备份文件"
               onChange={(event) => {
                 const file = event.target.files?.[0];
+                event.target.value = '';
                 if (file !== undefined) void pickFile(file);
               }}
             />
@@ -246,26 +300,50 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               <Button variant="secondary" aria-label="选择备份文件" disabled={busy} onClick={() => fileRef.current?.click()}>
                 选择备份文件
               </Button>
-              {pending !== null && (
-                <>
-                  <span className="text-xs text-muted">
-                    {summarizeBackup(pending)
-                      .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
-                      .join('、')}
-                  </span>
-                  <Button variant="primary" aria-label="确认导入" disabled={busy} onClick={() => void applyImport()}>
-                    确认导入
-                  </Button>
-                  <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>
-                    取消
-                  </Button>
-                </>
-              )}
+            </div>
+            <textarea
+              data-role="onboarding-import-text"
+              aria-label="备份文本"
+              placeholder="或在此粘贴 JSON / Base64 备份文本"
+              className="h-20 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
+              value={importText}
+              onChange={(event) => setImportText(event.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                aria-label="从文本导入"
+                disabled={busy || importText.trim().length === 0}
+                onClick={pickText}
+              >
+                从文本导入
+              </Button>
             </div>
             {pending !== null && (
-              <span className="text-xs text-muted">
-                导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
-              </span>
+              <>
+                <span className="text-xs text-muted">
+                  {summarizeBackup(pending)
+                    .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
+                    .join('、')}
+                </span>
+                <InlineError data-role="onboarding-overwrite-hint">
+                  将覆盖设备上的现有数据，不可撤销
+                </InlineError>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="primary" aria-label="确认导入" loading={busy} onClick={() => void applyImport()}>
+                    确认导入
+                  </Button>
+                  <Button variant="ghost" aria-label="取消导入" disabled={busy} onClick={clearPending}>
+                    取消
+                  </Button>
+                </div>
+                <span className="text-xs text-muted">
+                  导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
+                </span>
+              </>
+            )}
+            {importError !== null && (
+              <InlineError data-role="onboarding-import-error">{importError}</InlineError>
             )}
           </div>
         </Card>

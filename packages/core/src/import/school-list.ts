@@ -1,7 +1,7 @@
 import { readSystemsConfig, type SchoolSystemId, type SystemConfig } from '../config/index.ts';
-import { DIRECTORY_NAMES, MANUAL_SCHOOLS } from './schools.ts';
+import { MANUAL_SCHOOLS } from './schools.ts';
 
-export { DIRECTORY_NAMES, MANUAL_SCHOOLS };
+export { MANUAL_SCHOOLS };
 
 /** 教务系统 id；事实来源是 src/config/systems.json（见 src/config/index.ts）。 */
 export type SchoolSystem = SchoolSystemId;
@@ -67,21 +67,23 @@ export const SYSTEM_ENTRIES: readonly SystemEntry[] = new Proxy([] as SystemEntr
   },
 });
 
+/**
+ * 一条教务入口数据：只回答「这所学校从哪个地址登录」，不参与目录检索与排序。
+ *
+ * 校名/简称/拼音/标签/省份的检索统一走 `schools/index.ts` 的 `searchSchools`；
+ * 这里的 `name` 只用于与目录学校做入口匹配（先 id、后校名），不是检索键。
+ * 也不再带 `aliases`：简称检索由目录数据自己的 `shortName` / `shortPinyin` 承担。
+ */
 export interface SchoolEntry {
   id: string;
   name: string;
   system: SchoolSystem;
   /** 教务系统域名或完整地址；留空表示待补充 */
   url: string;
-  /** 检索用简称 */
-  aliases?: readonly string[];
   source: 'builtin' | 'user';
 }
 
-/**
- * 内置学校：上游适配仓库的条目 + 本项目自行维护的条目。
- * 两段数据都在 schools.ts，手工维护段重新生成时不会被覆盖。
- */
+/** 内置学校：`schools.ts` 里手工维护的教务入口条目。 */
 export const BUILTIN_SCHOOLS: readonly SchoolEntry[] = [...MANUAL_SCHOOLS];
 
 /**
@@ -130,25 +132,6 @@ export function entryUrlFor(system: SchoolSystem, url: string): string {
   }
 }
 
-/** 按名称与简称检索，前缀命中优先。 */
-export function matchSchools(schools: readonly SchoolEntry[], keyword: string): SchoolEntry[] {
-  const query = keyword.trim().toLowerCase();
-  const scored: Array<{ school: SchoolEntry; score: number }> = [];
-  for (const school of schools) {
-    const fields = [school.name, ...(school.aliases ?? [])].map((text) => text.toLowerCase());
-    let score = 0;
-    for (const field of fields) {
-      if (query.length === 0) score = Math.max(score, 1);
-      else if (field.startsWith(query)) score = Math.max(score, 3);
-      else if (field.includes(query)) score = Math.max(score, 2);
-    }
-    if (score > 0) scored.push({ school, score });
-  }
-  return scored
-    .sort((left, right) => right.score - left.score || left.school.name.localeCompare(right.school.name))
-    .map((item) => item.school);
-}
-
 /** 合并内置与用户自定义学校，同 id 时用户条目优先。 */
 export function mergeSchools(
   builtin: readonly SchoolEntry[],
@@ -158,68 +141,4 @@ export function mergeSchools(
   for (const school of builtin) byId.set(school.id, school);
   for (const school of custom) byId.set(school.id, { ...school, source: 'user' });
   return [...byId.values()];
-}
-
-/** 下拉框候选：带教务入口的条目排在前，其次才是名单里只有校名的学校。 */
-export interface SchoolSuggestion {
-  key: string;
-  name: string;
-  system: SchoolSystem;
-  url: string;
-  id: string | null;
-  hasEntry: boolean;
-  source: 'builtin' | 'user' | 'directory';
-}
-
-export interface SuggestSchoolsOptions {
-  schools: readonly SchoolEntry[];
-  directory?: readonly string[];
-  limit?: number;
-}
-
-export function suggestSchools(query: string, options: SuggestSchoolsOptions): SchoolSuggestion[] {
-  const limit = options.limit ?? 20;
-  const directory = options.directory ?? DIRECTORY_NAMES;
-  const keyword = query.trim();
-  const out: SchoolSuggestion[] = [];
-  const covered = new Set<string>();
-
-  const pool =
-    keyword.length === 0
-      ? [...options.schools].sort((left, right) => left.name.localeCompare(right.name))
-      : matchSchools(options.schools, keyword);
-
-  for (const school of pool) {
-    if (out.length >= limit) break;
-    out.push({
-      key: school.id,
-      name: school.name,
-      system: school.system,
-      url: school.url,
-      id: school.id,
-      hasEntry: school.url.length > 0,
-      source: school.source,
-    });
-    covered.add(school.name);
-  }
-
-  if (keyword.length > 0) {
-    const lower = keyword.toLowerCase();
-    for (const name of directory) {
-      if (out.length >= limit) break;
-      if (covered.has(name) || !name.toLowerCase().includes(lower)) continue;
-      out.push({
-        key: `dir:${name}`,
-        name,
-        system: 'other',
-        url: '',
-        id: null,
-        hasEntry: false,
-        source: 'directory',
-      });
-      covered.add(name);
-    }
-  }
-
-  return out;
 }

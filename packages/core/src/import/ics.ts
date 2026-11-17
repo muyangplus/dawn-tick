@@ -1,4 +1,16 @@
-import { epochFromParts, formatDate, formatTime, parseTime, weekStart, addDays, dayOfWeek } from '../time.ts';
+import {
+  DEFAULT_TIME_ZONE,
+  addDays,
+  dayOfWeek,
+  diffDays,
+  epochFromParts,
+  formatDate,
+  formatTime,
+  isValidTimeZone,
+  parseTime,
+  partsInZone,
+  weekStart,
+} from '../time.ts';
 import { maskToWeeks } from '../weeks.ts';
 import type { ImportedSchedule } from './apply.ts';
 
@@ -33,11 +45,30 @@ export interface IcsTimeSlot {
   end_time: string;
 }
 
+/**
+ * 额外条目：课表模型表达不了的单次事件（调课落点、自定义时间课次、日程）。
+ * 与 `schedules` 的周次位图模型不同，这里直接给起止时刻，不生成 RRULE。
+ */
+export interface IcsExtraEvent {
+  uid: string;
+  summary: string;
+  /** 开始时刻（毫秒） */
+  start: number;
+  /** 结束时刻（毫秒）；全天条目忽略，按开始日期的次日结束 */
+  end: number;
+  location?: string | null;
+  description?: string | null;
+  /** 全天条目：DTSTART/DTEND 写成 DATE 值，日期按学期时区取 */
+  allDay?: boolean;
+}
+
 export interface IcsExportInput {
   semester: IcsSemester;
   courses: readonly IcsCourse[];
   schedules: readonly IcsSchedule[];
   timeSlots: readonly IcsTimeSlot[];
+  /** 额外条目：先写课表排课，再写这些单次事件 */
+  extraEvents?: readonly IcsExtraEvent[];
   calendarName?: string;
   stamp?: number;
 }
@@ -64,12 +95,9 @@ export function escapeIcsText(text: string): string {
     .replace(/\r?\n/g, '\\n');
 }
 
+/** 单遍反转义：`\\n` 是反斜杠加 n，不能先换成换行再处理反斜杠。 */
 export function unescapeIcsText(text: string): string {
-  return text
-    .replace(/\\n/gi, '\n')
-    .replace(/\\,/g, ',')
-    .replace(/\\;/g, ';')
-    .replace(/\\\\/g, '\\');
+  return text.replace(/\\([\\;,nN])/g, (_, char: string) => (char === 'n' || char === 'N' ? '\n' : char));
 }
 
 function foldLine(line: string): string {
@@ -190,8 +218,40 @@ export function exportIcs(input: IcsExportInput): string {
     }
   }
 
+  for (const event of input.extraEvents ?? []) {
+    pushExtraEvent(lines, event, stamp, input.semester.time_zone);
+  }
+
   lines.push('END:VCALENDAR');
   return `${lines.map(foldLine).join('\r\n')}\r\n`;
+}
+
+/** 单次事件：全天条目写 DATE 值（DTEND 为次日），其余写 UTC 时刻。 */
+function pushExtraEvent(
+  lines: string[],
+  event: IcsExtraEvent,
+  stamp: number,
+  timeZone: string,
+): void {
+  lines.push('BEGIN:VEVENT');
+  lines.push(`UID:${event.uid}`);
+  lines.push(`DTSTAMP:${icsStamp(stamp)}`);
+  if (event.allDay === true) {
+    const date = formatDate(event.start, timeZone);
+    lines.push(`DTSTART;VALUE=DATE:${date.replace(/-/g, '')}`);
+    lines.push(`DTEND;VALUE=DATE:${addDays(date, 1).replace(/-/g, '')}`);
+  } else {
+    lines.push(`DTSTART:${icsStamp(event.start)}`);
+    lines.push(`DTEND:${icsStamp(event.end)}`);
+  }
+  lines.push(`SUMMARY:${escapeIcsText(event.summary)}`);
+  if (event.location !== undefined && event.location !== null) {
+    lines.push(`LOCATION:${escapeIcsText(event.location)}`);
+  }
+  if (event.description !== undefined && event.description !== null && event.description.length > 0) {
+    lines.push(`DESCRIPTION:${escapeIcsText(event.description)}`);
+  }
+  lines.push('END:VEVENT');
 }
 
 function icsEpoch(date: string, time: string, timeZone: string): number {
@@ -217,9 +277,15 @@ export interface ParsedIcsEvent {
   description: string | null;
   start: number;
   end: number;
+  /** DTSTART 为 DATE 值（全天） */
+  allDay: boolean;
+  /** 重复规则按哪个时区的墙钟展开：TZID、`Z` 为 UTC、浮动时间为导入时给的默认时区 */
+  timeZone: string;
   rrule: string | null;
   rdates: number[];
   exdates: number[];
+  /** DATE 值的 EXDATE：按日期排除，不比时刻 */
+  exdateDays: string[];
 }
 
 export interface ParsedCalendar {
@@ -227,8 +293,33 @@ export interface ParsedCalendar {
   warnings: string[];
 }
 
+export interface ParseIcsOptions {
+  /** 浮动时间（不带 Z 也不带 TZID）与无法识别的 TZID 按这个时区读；默认 Asia/Shanghai */
+  defaultTimeZone?: string;
+}
+
+/** Outlook / Exchange 导出常见的 Windows 时区名。 */
+const WINDOWS_TIME_ZONES: Record<string, string> = {
+  'China Standard Time': 'Asia/Shanghai',
+  'Taipei Standard Time': 'Asia/Taipei',
+  'Tokyo Standard Time': 'Asia/Tokyo',
+  'Korea Standard Time': 'Asia/Seoul',
+  'Singapore Standard Time': 'Asia/Singapore',
+  'India Standard Time': 'Asia/Kolkata',
+  'GMT Standard Time': 'Europe/London',
+  'W. Europe Standard Time': 'Europe/Berlin',
+  'Romance Standard Time': 'Europe/Paris',
+  'Eastern Standard Time': 'America/New_York',
+  'Central Standard Time': 'America/Chicago',
+  'Mountain Standard Time': 'America/Denver',
+  'Pacific Standard Time': 'America/Los_Angeles',
+  'AUS Eastern Standard Time': 'Australia/Sydney',
+  UTC: 'UTC',
+  'Coordinated Universal Time': 'UTC',
+};
+
 function unfold(text: string): string[] {
-  const raw = text.split(/\r?\n/);
+  const raw = text.replace(/^﻿/, '').split(/\r?\n/);
   const lines: string[] = [];
   for (const line of raw) {
     if (/^[ \t]/.test(line) && lines.length > 0) {
@@ -240,9 +331,24 @@ function unfold(text: string): string[] {
   return lines;
 }
 
-function parseIcsDate(value: string, params: string): number | null {
-  const trimmed = value.trim();
-  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(trimmed);
+function paramOf(params: string, name: string): string | undefined {
+  for (const chunk of params.split(';')) {
+    const [key, ...rest] = chunk.split('=');
+    if (key?.trim().toUpperCase() === name) return rest.join('=').trim().replace(/^"(.*)"$/, '$1');
+  }
+  return undefined;
+}
+
+interface DateValue {
+  epoch: number;
+  /** YYYY-MM-DD，DATE 值才有 */
+  date: string | null;
+  timeZone: string;
+}
+
+/** 解析单个 DATE / DATE-TIME 值。时区按 Z → TZID → 默认时区的顺序取。 */
+function parseIcsValue(value: string, params: string, resolveZone: (tzid: string | undefined) => string): DateValue | null {
+  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(value.trim());
   if (match === null) return null;
   const [, year, month, day, hour, minute, second, zulu] = match;
   const parts = {
@@ -253,129 +359,229 @@ function parseIcsDate(value: string, params: string): number | null {
     minute: minute === undefined ? 0 : Number(minute),
     second: second === undefined ? 0 : Number(second),
   };
-  if (zulu === 'Z') return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-  const tzid = /TZID=([^;:]+)/.exec(params)?.[1];
-  return epochFromParts(parts, tzid ?? 'UTC');
+  const isDate = hour === undefined;
+  if (zulu === 'Z') {
+    return {
+      epoch: Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second),
+      date: null,
+      timeZone: 'UTC',
+    };
+  }
+  const timeZone = resolveZone(paramOf(params, 'TZID'));
+  return {
+    epoch: epochFromParts(parts, timeZone),
+    date: isDate ? `${year}-${month}-${day}` : null,
+    timeZone,
+  };
 }
 
-/** 展开 FREQ=WEEKLY 的 RRULE，返回起始时刻毫秒列表。其余频度记入 warnings。 */
+interface ExpandOptions {
+  rdates?: readonly number[];
+  exdates?: readonly number[];
+  exdateDays?: readonly string[];
+  /** 按哪个时区的墙钟逐周推进；跨夏令时也保持同一墙钟时刻 */
+  timeZone?: string;
+}
+
+const MAX_OCCURRENCES = 400;
+const DAY_CODE_INDEX = new Map(DAY_CODES.map((code, index) => [code, index + 1]));
+
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
+}
+
+/**
+ * 展开 FREQ=WEEKLY 的 RRULE（支持 INTERVAL、COUNT、UNTIL、多值 BYDAY），返回起始时刻毫秒列表。
+ * COUNT 按 RFC 5545 计入被 EXDATE 排除的那些；其余频度记入 warnings、只保留首次。
+ */
 export function expandWeeklyRrule(
   start: number,
   rrule: string,
-  extraDates: readonly number[],
-  excluded: readonly number[],
+  options: ExpandOptions = {},
 ): { dates: number[]; warnings: string[] } {
+  const timeZone = options.timeZone ?? 'UTC';
   const warnings: string[] = [];
   const parts = new Map<string, string>();
   for (const chunk of rrule.split(';')) {
     const [key, value] = chunk.split('=');
     if (key !== undefined && value !== undefined) parts.set(key.trim().toUpperCase(), value.trim());
   }
-  const freq = parts.get('FREQ');
-  if (freq !== 'WEEKLY') {
-    warnings.push(`不支持的 RRULE 频度: ${freq ?? '未指定'}`);
-    return { dates: [], warnings };
-  }
-  const interval = Number(parts.get('INTERVAL') ?? '1');
-  const count = parts.get('COUNT') === undefined ? null : Number(parts.get('COUNT'));
-  const untilText = parts.get('UNTIL');
-  const until = untilText === undefined ? null : (parseIcsDate(untilText, '') ?? null);
+  const excludedAt = new Set(options.exdates ?? []);
+  const excludedDays = new Set(options.exdateDays ?? []);
+  const isExcluded = (epoch: number): boolean =>
+    excludedAt.has(epoch) || excludedDays.has(formatDate(epoch, timeZone));
 
-  const WEEK = 7 * 86400000;
-  const dates: number[] = [];
-  let current = start;
-  let produced = 0;
-  const limit = count ?? 200;
-  while (produced < limit) {
-    if (until !== null && current > until) break;
-    if (!excluded.includes(current)) {
-      dates.push(current);
-      produced += 1;
-    } else if (count !== null) {
-      produced += 1;
+  const freq = parts.get('FREQ');
+  const collected: number[] = [];
+  if (freq !== 'WEEKLY') {
+    warnings.push(`不支持的 RRULE 频度: ${freq ?? '未指定'}，只导入首次`);
+    if (!isExcluded(start)) collected.push(start);
+  } else {
+    const interval = Math.max(1, Number(parts.get('INTERVAL') ?? '1') || 1);
+    const countText = parts.get('COUNT');
+    const count = countText === undefined ? null : Math.max(0, Number(countText) || 0);
+    const untilText = parts.get('UNTIL');
+    let until: number | null = null;
+    if (untilText !== undefined) {
+      const parsed = parseIcsValue(untilText, '', () => timeZone);
+      // 仅日期的 UNTIL 含当天：截到当天最后一刻
+      until = parsed === null ? null : parsed.date !== null ? parsed.epoch + 86400000 - 1 : parsed.epoch;
     }
-    if (count === null && until !== null && current + interval * WEEK > until) break;
-    current += interval * WEEK;
-    if (dates.length + extraDates.length > 400) break;
+
+    const wall = partsInZone(start, timeZone);
+    const startDate = `${wall.year}-${pad2(wall.month)}-${pad2(wall.day)}`;
+    const byDay = (parts.get('BYDAY') ?? '')
+      .split(',')
+      .map((code) => DAY_CODE_INDEX.get(code.trim().toUpperCase().replace(/^[+-]?\d+/, '')))
+      .filter((day): day is number => day !== undefined);
+    const days = byDay.length > 0 ? [...new Set(byDay)].sort((a, b) => a - b) : [dayOfWeek(startDate)];
+    const firstMonday = weekStart(startDate);
+
+    let produced = 0;
+    outer: for (let week = 0; week < 1000; week += interval) {
+      for (const day of days) {
+        const date = addDays(firstMonday, week * 7 + day - 1);
+        if (diffDays(date, startDate) < 0) continue;
+        const [year, month, dayOfMonth] = date.split('-').map(Number);
+        const epoch = epochFromParts(
+          { year: year as number, month: month as number, day: dayOfMonth as number, hour: wall.hour, minute: wall.minute, second: wall.second },
+          timeZone,
+        );
+        if (until !== null && epoch > until) break outer;
+        if (count !== null && produced >= count) break outer;
+        produced += 1;
+        if (!isExcluded(epoch)) collected.push(epoch);
+        if (collected.length >= MAX_OCCURRENCES) {
+          warnings.push(`重复次数超过 ${MAX_OCCURRENCES}，其余已忽略`);
+          break outer;
+        }
+      }
+      if (count === null && until === null && produced >= MAX_OCCURRENCES) break;
+    }
   }
-  for (const extra of extraDates) {
-    if (!dates.includes(extra) && !excluded.includes(extra)) dates.push(extra);
+  const all = new Set(collected);
+  for (const extra of options.rdates ?? []) {
+    if (!isExcluded(extra)) all.add(extra);
   }
-  return { dates: dates.sort((a, b) => a - b), warnings };
+  return { dates: [...all].sort((a, b) => a - b), warnings };
 }
 
-export function parseIcs(text: string): ParsedCalendar {
+export function parseIcs(text: string, options: ParseIcsOptions = {}): ParsedCalendar {
+  const fallbackZone =
+    options.defaultTimeZone !== undefined && isValidTimeZone(options.defaultTimeZone)
+      ? options.defaultTimeZone
+      : DEFAULT_TIME_ZONE;
   const warnings: string[] = [];
-  const events: ParsedIcsEvent[] = [];
-  const lines = unfold(text);
-  let inEvent = false;
-  let current: Record<string, { value: string; params: string }> = {};
-
-  const flush = (): void => {
-    const startRaw = current['DTSTART'];
-    const summary = current['SUMMARY'];
-    if (startRaw === undefined || summary === undefined) {
-      if (Object.keys(current).length > 0) warnings.push('有 VEVENT 缺少 DTSTART 或 SUMMARY');
-      current = {};
-      return;
+  const unknownZones = new Set<string>();
+  const resolveZone = (tzid: string | undefined): string => {
+    if (tzid === undefined || tzid.length === 0) return fallbackZone;
+    if (isValidTimeZone(tzid)) return tzid;
+    const windows = WINDOWS_TIME_ZONES[tzid];
+    if (windows !== undefined) return windows;
+    // 形如 /mozilla.org/20050126_1/Asia/Shanghai 的前缀
+    const tail = /([A-Za-z_]+\/[A-Za-z_+-]+(?:\/[A-Za-z_+-]+)?)$/.exec(tzid)?.[1];
+    if (tail !== undefined && isValidTimeZone(tail)) return tail;
+    if (!unknownZones.has(tzid)) {
+      unknownZones.add(tzid);
+      warnings.push(`无法识别的时区 ${tzid}，按 ${fallbackZone} 读取`);
     }
-    const start = parseIcsDate(startRaw.value, startRaw.params);
-    if (start === null) {
-      warnings.push(`无法解析 DTSTART: ${startRaw.value}`);
-      current = {};
-      return;
-    }
-    const endRaw = current['DTEND'];
-    const end = endRaw === undefined ? start : (parseIcsDate(endRaw.value, endRaw.params) ?? start);
-    const rrule = current['RRULE']?.value ?? null;
-    const rdates = (current['RDATE']?.value ?? '')
-      .split(',')
-      .map((item) => parseIcsDate(item, current['RDATE']?.params ?? ''))
-      .filter((item): item is number => item !== null);
-    const exdates = (current['EXDATE']?.value ?? '')
-      .split(',')
-      .map((item) => parseIcsDate(item, current['EXDATE']?.params ?? ''))
-      .filter((item): item is number => item !== null);
-
-    events.push({
-      uid: current['UID']?.value ?? '',
-      summary: unescapeIcsText(summary.value),
-      location: current['LOCATION'] === undefined ? null : unescapeIcsText(current['LOCATION'].value),
-      description: current['DESCRIPTION'] === undefined ? null : unescapeIcsText(current['DESCRIPTION'].value),
-      start,
-      end,
-      rrule,
-      rdates,
-      exdates,
-    });
-    current = {};
+    return fallbackZone;
   };
 
-  for (const line of lines) {
-    if (line === 'BEGIN:VEVENT') {
-      inEvent = true;
-      current = {};
+  const events: ParsedIcsEvent[] = [];
+  type Property = { value: string; params: string };
+  let current: Map<string, Property[]> | null = null;
+  // VEVENT 里嵌套的 VALARM 等组件有自己的 DESCRIPTION / TRIGGER，不能混进事件
+  let nested = 0;
+
+  const first = (name: string): Property | undefined => current?.get(name)?.[0];
+
+  const flush = (): void => {
+    const startRaw = first('DTSTART');
+    const summary = first('SUMMARY');
+    if (startRaw === undefined || summary === undefined) {
+      warnings.push('有 VEVENT 缺少 DTSTART 或 SUMMARY');
+      return;
+    }
+    const start = parseIcsValue(startRaw.value, startRaw.params, resolveZone);
+    if (start === null) {
+      warnings.push(`无法解析 DTSTART: ${startRaw.value}`);
+      return;
+    }
+    const endRaw = first('DTEND');
+    const end = endRaw === undefined ? null : parseIcsValue(endRaw.value, endRaw.params, resolveZone);
+    const rdates: number[] = [];
+    for (const property of current?.get('RDATE') ?? []) {
+      for (const item of property.value.split(',')) {
+        const parsed = parseIcsValue(item, property.params, resolveZone);
+        if (parsed !== null) rdates.push(parsed.epoch);
+      }
+    }
+    const exdates: number[] = [];
+    const exdateDays: string[] = [];
+    for (const property of current?.get('EXDATE') ?? []) {
+      for (const item of property.value.split(',')) {
+        const parsed = parseIcsValue(item, property.params, resolveZone);
+        if (parsed === null) continue;
+        if (parsed.date !== null) exdateDays.push(parsed.date);
+        else exdates.push(parsed.epoch);
+      }
+    }
+    const location = first('LOCATION');
+    const description = first('DESCRIPTION');
+    events.push({
+      uid: first('UID')?.value ?? '',
+      summary: unescapeIcsText(summary.value),
+      location: location === undefined ? null : unescapeIcsText(location.value),
+      description: description === undefined ? null : unescapeIcsText(description.value),
+      start: start.epoch,
+      end: end?.epoch ?? start.epoch,
+      allDay: start.date !== null,
+      timeZone: start.timeZone,
+      rrule: first('RRULE')?.value ?? null,
+      rdates,
+      exdates,
+      exdateDays,
+    });
+  };
+
+  for (const rawLine of unfold(text)) {
+    const line = rawLine.trimEnd();
+    const upper = line.toUpperCase();
+    if (upper === 'BEGIN:VEVENT') {
+      current = new Map();
+      nested = 0;
       continue;
     }
-    if (line === 'END:VEVENT') {
-      if (inEvent) flush();
-      inEvent = false;
+    if (current === null) continue;
+    if (upper === 'END:VEVENT') {
+      flush();
+      current = null;
       continue;
     }
-    if (!inEvent) continue;
+    if (upper.startsWith('BEGIN:')) {
+      nested += 1;
+      continue;
+    }
+    if (upper.startsWith('END:')) {
+      nested = Math.max(0, nested - 1);
+      continue;
+    }
+    if (nested > 0) continue;
     const separator = line.indexOf(':');
     if (separator === -1) continue;
-    const left = line.slice(0, separator);
-    const value = line.slice(separator + 1);
-    const [name, ...params] = left.split(';');
-    if (name === undefined) continue;
-    current[name.toUpperCase()] = { value, params: params.join(';') };
+    const [name, ...params] = line.slice(0, separator).split(';');
+    if (name === undefined || name.length === 0) continue;
+    const key = name.toUpperCase();
+    const list = current.get(key) ?? [];
+    list.push({ value: line.slice(separator + 1), params: params.join(';') });
+    current.set(key, list);
   }
 
   return { events, warnings };
 }
 
-/** 把 ICS 事件按「课程名 + 地点」聚合为可写入的排课。 */
+/** 把 ICS 事件按「课程名 + 星期 + 节次 + 地点」聚合为可写入的排课；多值 BYDAY 拆成多条。 */
 export function icsToSchedules(
   calendar: ParsedCalendar,
   semester: IcsSemester,
@@ -384,12 +590,22 @@ export function icsToSchedules(
   const warnings = [...calendar.warnings];
   const slots = [...timeSlots].sort((a, b) => a.period_no - b.period_no);
   const merged = new Map<string, ImportedSchedule>();
+  const firstMonday = weekStart(semester.start_date);
 
   for (const event of calendar.events) {
+    if (event.allDay) {
+      warnings.push(`全天事件不是课程，已跳过: ${event.summary}`);
+      continue;
+    }
     const expanded =
       event.rrule === null
-        ? { dates: [event.start], warnings: [] }
-        : expandWeeklyRrule(event.start, event.rrule, event.rdates, event.exdates);
+        ? { dates: [event.start, ...event.rdates.filter((item) => item !== event.start)], warnings: [] }
+        : expandWeeklyRrule(event.start, event.rrule, {
+            rdates: event.rdates,
+            exdates: event.exdates,
+            exdateDays: event.exdateDays,
+            timeZone: event.timeZone,
+          });
     warnings.push(...expanded.warnings);
 
     const wallStart = formatTime(event.start, semester.time_zone);
@@ -400,44 +616,34 @@ export function icsToSchedules(
       warnings.push(`未找到匹配节次: ${wallStart}，使用第 1 节代替`);
     }
     const periodStart = startSlot?.period_no ?? 1;
-    const periodEnd = endSlot?.period_no ?? periodStart;
+    const periodEnd = Math.max(endSlot?.period_no ?? periodStart, periodStart);
 
-    const day = dayOfWeek(formatDate(event.start, semester.time_zone));
-    const weeks = new Set<number>();
-    for (const date of expanded.dates) {
-      const formatted = formatDate(date, semester.time_zone);
-      const diff = Math.floor(diffInDays(formatted, weekStart(semester.start_date)) / 7) + 1;
-      if (diff >= 1 && diff <= semester.total_weeks) weeks.add(diff);
+    let inRange = 0;
+    for (const occurrence of expanded.dates) {
+      const date = formatDate(occurrence, semester.time_zone);
+      const week = Math.floor(diffDays(date, firstMonday) / 7) + 1;
+      if (week < 1 || week > semester.total_weeks) continue;
+      inRange += 1;
+      const day = dayOfWeek(date);
+      const key = `${event.summary}|${day}|${periodStart}|${periodEnd}|${event.location ?? ''}`;
+      const existing = merged.get(key);
+      if (existing === undefined) {
+        merged.set(key, {
+          courseName: event.summary,
+          dayOfWeek: day,
+          periodStart,
+          periodEnd,
+          weeks: [week],
+          room: event.location,
+          teacher: event.description,
+        });
+      } else if (!existing.weeks.includes(week)) {
+        existing.weeks.push(week);
+      }
     }
-    if (weeks.size === 0) {
-      warnings.push(`事件不在学期范围内: ${event.summary}`);
-      continue;
-    }
-
-    const key = `${event.summary}|${day}|${periodStart}|${periodEnd}|${event.location ?? ''}`;
-    const existing = merged.get(key);
-    if (existing === undefined) {
-      merged.set(key, {
-        courseName: event.summary,
-        dayOfWeek: day,
-        periodStart,
-        periodEnd,
-        weeks: [...weeks].sort((a, b) => a - b),
-        room: event.location,
-        teacher: event.description,
-      });
-    } else {
-      existing.weeks = [...new Set([...existing.weeks, ...weeks])].sort((a, b) => a - b);
-    }
+    if (inRange === 0) warnings.push(`事件不在学期范围内: ${event.summary}`);
   }
 
+  for (const schedule of merged.values()) schedule.weeks.sort((a, b) => a - b);
   return { schedules: [...merged.values()], warnings };
-}
-
-function diffInDays(later: string, earlier: string): number {
-  const toMs = (date: string): number => {
-    const [year, month, day] = date.split('-').map(Number);
-    return Date.UTC(year as number, (month as number) - 1, day as number);
-  };
-  return Math.round((toMs(later) - toMs(earlier)) / 86400000);
 }

@@ -20,17 +20,19 @@ test('定时任务发 dev 渠道', () => {
   assert.equal(plan.buildRef, 'dev');
 });
 
-test('beta 渠道在 main 上发版，标签按既有标签续号', () => {
-  const plan = planRelease({
-    ref: 'refs/heads/main',
-    version: V,
-    dispatchChannel: 'beta',
-    existingTags: ['v0.1.0-beta.1', 'v0.1.0-beta.3', 'v0.0.9-beta.7'],
-  });
-  assert.equal(plan.tag, 'v0.1.0-beta.4');
-  assert.equal(plan.buildRef, 'main');
-  assert.equal(plan.rolling, false);
-  assert.equal(plan.prerelease, true);
+test('beta 渠道默认不带 -beta，用纯版本号发预发布', () => {
+  const fallback = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta' });
+  assert.equal(fallback.channel, 'beta');
+  assert.equal(fallback.tag, 'v0.1.0');
+  assert.equal(fallback.buildRef, 'main');
+  assert.equal(fallback.prerelease, true);
+});
+
+test('beta 渠道可在发布时指定 -beta / 序号', () => {
+  const bare = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: 'bare' });
+  assert.equal(bare.tag, 'v0.1.0-beta');
+  const numbered = planRelease({ ref: 'refs/heads/main', version: V, dispatchChannel: 'beta', betaSuffix: '3' });
+  assert.equal(numbered.tag, 'v0.1.0-beta.3');
 });
 
 test('beta 分支已移除：dev 之外的普通分支按 dev 处理', () => {
@@ -53,11 +55,31 @@ test('打标签触发正式发布', () => {
   assert.equal(plan.title, '晓刻 v0.2.0');
 });
 
-test('打 beta 标签沿用该标签', () => {
-  const plan = planRelease({ ref: 'refs/tags/v0.2.0-beta.1', version: '0.2.0' });
+test('纯版本号标签带 [prerelease] 说明时按测试版预发布', () => {
+  const plan = planRelease({
+    ref: 'refs/tags/v0.2.0',
+    version: '0.2.0',
+    tagMessage: '[prerelease] 0.2.0 测试版',
+  });
   assert.equal(plan.channel, 'beta');
-  assert.equal(plan.tag, 'v0.2.0-beta.1');
+  assert.equal(plan.tag, 'v0.2.0');
   assert.equal(plan.prerelease, true);
+
+  const stable = planRelease({ ref: 'refs/tags/v0.2.0', version: '0.2.0', tagMessage: '正式版' });
+  assert.equal(stable.channel, 'release');
+  assert.equal(stable.prerelease, false);
+});
+
+test('打 beta 标签沿用该标签（可带序号或不带）', () => {
+  const numbered = planRelease({ ref: 'refs/tags/v0.2.0-beta.1', version: '0.2.0' });
+  assert.equal(numbered.channel, 'beta');
+  assert.equal(numbered.tag, 'v0.2.0-beta.1');
+  assert.equal(numbered.prerelease, true);
+
+  const plain = planRelease({ ref: 'refs/tags/v0.2.0-beta', version: '0.2.0' });
+  assert.equal(plain.channel, 'beta');
+  assert.equal(plain.tag, 'v0.2.0-beta');
+  assert.equal(plain.prerelease, true);
 });
 
 test('手动触发 release 渠道使用 main', () => {
@@ -71,4 +93,17 @@ test('手动触发 release 渠道使用 main', () => {
 test('非法渠道与版本被拒绝', () => {
   assert.throws(() => planRelease({ ref: 'refs/heads/dev', version: V, dispatchChannel: 'nightly' }), /未知渠道/);
   assert.throws(() => planRelease({ ref: 'refs/heads/dev', version: '1.0' }), /版本号格式不正确/);
+});
+
+test('beta 后缀只接受 plain、bare 或数字（拼进标签与 GITHUB_OUTPUT）', () => {
+  for (const bad of ['1$(id)', '1\nbuildRef=evil', 'beta', '1 2']) {
+    assert.throws(() => planRelease({ ref: 'refs/heads/dev', eventName: 'workflow_dispatch', version: '0.7.0', dispatchChannel: 'beta', betaSuffix: bad }), /beta 后缀/);
+  }
+  assert.equal(planRelease({ ref: 'refs/heads/dev', eventName: 'workflow_dispatch', version: '0.7.0', dispatchChannel: 'beta', betaSuffix: '3' }).tag, 'v0.7.0-beta.3');
+});
+
+test('打的标签与 package.json 版本不一致时拒绝发布', () => {
+  assert.throws(() => planRelease({ ref: 'refs/tags/v0.7.0', version: '0.6.12' }), /不一致/);
+  assert.throws(() => planRelease({ ref: 'refs/tags/v0.7.0-beta.1', version: '0.6.12' }), /不一致/);
+  assert.equal(planRelease({ ref: 'refs/tags/v0.7.0', version: '0.7.0' }).channel, 'release');
 });

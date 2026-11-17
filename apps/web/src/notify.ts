@@ -1,17 +1,36 @@
-import { detectPlatform } from './platform-detect.ts';
+import { isAndroidApp, isDesktopApp, isWebApp } from './lib/capabilities.ts';
+import { NOTIFY_ASKED_META_KEY } from './lib/meta-keys.ts';
+import type { Storage } from '@dawn-tick/core';
 
 export type NotifyPermission = 'granted' | 'denied' | 'default' | 'unsupported';
 
-export async function ensureNotifyPermission(): Promise<NotifyPermission> {
-  const platform = detectPlatform();
+/** 是否已向系统申请过通知权限：用来区分「没问过」与「问过但被拒绝」。 */
+const ASKED_KEY = NOTIFY_ASKED_META_KEY;
 
-  if (platform === 'capacitor') {
+export async function markNotifyAsked(storage: Storage): Promise<void> {
+  try {
+    await storage.writeMeta(ASKED_KEY, '1');
+  } catch {
+    // 写标记失败不影响权限流程
+  }
+}
+
+export async function readNotifyAsked(storage: Storage): Promise<boolean> {
+  try {
+    return (await storage.readMeta(ASKED_KEY)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export async function ensureNotifyPermission(): Promise<NotifyPermission> {
+  if (isAndroidApp()) {
     const local = await import('@capacitor/local-notifications');
     const result = await local.LocalNotifications.requestPermissions();
     return result.display === 'granted' ? 'granted' : 'denied';
   }
 
-  if (platform === 'tauri') {
+  if (isDesktopApp()) {
     const plugin = await import('@tauri-apps/plugin-notification');
     if (!(await plugin.isPermissionGranted())) {
       const granted = await plugin.requestPermission();
@@ -27,9 +46,7 @@ export async function ensureNotifyPermission(): Promise<NotifyPermission> {
 }
 
 export async function notifyNow(title: string, body: string): Promise<void> {
-  const platform = detectPlatform();
-
-  if (platform === 'capacitor') {
+  if (isAndroidApp()) {
     const local = await import('@capacitor/local-notifications');
     await local.LocalNotifications.schedule({
       notifications: [{ id: Date.now() % 2_000_000_000, title, body }],
@@ -37,7 +54,7 @@ export async function notifyNow(title: string, body: string): Promise<void> {
     return;
   }
 
-  if (platform === 'tauri') {
+  if (isDesktopApp()) {
     const plugin = await import('@tauri-apps/plugin-notification');
     if (await plugin.isPermissionGranted()) plugin.sendNotification({ title, body });
     return;
@@ -48,19 +65,8 @@ export async function notifyNow(title: string, body: string): Promise<void> {
   }
 }
 
-/** Android 支持提前排定通知，应用关闭后仍可送达。 */
-export async function scheduleNotify(id: number, title: string, body: string, at: number): Promise<boolean> {
-  if (detectPlatform() !== 'capacitor') return false;
-  const local = await import('@capacitor/local-notifications');
-  await local.LocalNotifications.schedule({
-    notifications: [{ id: id % 2_000_000_000, title, body, schedule: { at: new Date(at) } }],
-  });
-  return true;
-}
-
 export function currentNotifyPermission(): NotifyPermission {
-  const platform = detectPlatform();
-  if (platform !== 'web') return 'default';
+  if (!isWebApp()) return 'default';
   if (typeof Notification === 'undefined') return 'unsupported';
   return Notification.permission as NotifyPermission;
 }

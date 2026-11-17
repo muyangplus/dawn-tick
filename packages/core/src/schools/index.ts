@@ -146,6 +146,24 @@ function matchesFilters(school: School, options: SearchSchoolsOptions): boolean 
 }
 
 /**
+ * 名称/简称的命中档位：整串相等 > 作为前缀 > 出现在中间，**同一档里校名优先于简称**。
+ * 返回值就是 `scoreOf` 的前六档（100/96/92/90/84/82），0 表示没命中。
+ *
+ * `query` 由调用方先做 `trim().toLowerCase()`；这里只负责把校名/简称转小写。
+ */
+export function nameHitScore(name: string, shortName: string, query: string): number {
+  const full = name.toLowerCase();
+  const short = shortName.toLowerCase();
+  if (full === query) return 100;
+  if (short.length > 0 && short === query) return 96;
+  if (full.startsWith(query)) return 92;
+  if (short.length > 0 && short.startsWith(query)) return 90;
+  if (full.includes(query)) return 84;
+  if (short.length > 0 && short.includes(query)) return 82;
+  return 0;
+}
+
+/**
  * 命中得分；0 表示没命中。分数只用于排序，数值本身没有对外含义。
  *
  * 次序是「整串相等 > 作为前缀 > 出现在中间」，且**同一档里校名与简称同级**：
@@ -158,15 +176,8 @@ function matchesFilters(school: School, options: SearchSchoolsOptions): boolean 
  * 不会被简称全拼 `beida` 抢走：`shortPinyin.startsWith(query)` 为假。
  */
 function scoreOf(school: School, query: string, compact: string): number {
-  const name = school.name.toLowerCase();
-  const shortName = school.shortName?.toLowerCase() ?? '';
-
-  if (name === query) return 100;
-  if (shortName.length > 0 && shortName === query) return 96;
-  if (name.startsWith(query)) return 92;
-  if (shortName.length > 0 && shortName.startsWith(query)) return 90;
-  if (name.includes(query)) return 84;
-  if (shortName.length > 0 && shortName.includes(query)) return 82;
+  const nameScore = nameHitScore(school.name, school.shortName ?? '', query);
+  if (nameScore > 0) return nameScore;
 
   if (compact.length === 0) return 0;
   const initials = school.initials ?? '';

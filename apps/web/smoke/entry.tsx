@@ -1,7 +1,5 @@
-import * as fakeIndexedDb from 'fake-indexeddb';
-import type { ReactElement } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
 import {
+  activeSemester,
   addDays,
   BUILTIN_PRESET_VERSION,
   BUILTIN_TIMETABLES,
@@ -15,604 +13,199 @@ import {
   findTimetable,
   fromBase64Utf8,
   setPresetOverride,
+  toBase64Utf8,
+  updateSemester,
   validatedStorage,
+  WIDGET_VARIANT_LABEL,
+  WIDGET_VARIANTS,
   writeSettings,
 } from '@dawn-tick/core';
-import { App } from '../src/App.tsx';
+import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
+import type { AppData } from '../src/data.ts';
+import { SemesterStatsCard } from '../src/screens/cards/semester-stats-card.tsx';
+import { RELEASES_URL } from '../src/components/app-dialogs.tsx';
+import { closeUpdatePrompt, requestUpdatePrompt } from '../src/components/update-prompt.ts';
+import { checkForUpdate, type UpdateManifest, type UpdateStatus } from '../src/update.ts';
+import { sha256Hex, type UpdateDownloadHost, planUpdateDownload } from '../src/lib/update-download.ts';
+import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
+import { dismissUpdateTask, setUpdateHostFactoryForTests, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
+import { setAndroidAbiForTests, preferredAndroidAbi } from '../src/lib/android-abi.ts';
+import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
+import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
 import { formatLogTimestamp } from '../src/log.ts';
+import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
+import { setSecretStoreForTests } from '../src/lib/credentials.ts';
 import { MiniShell } from '../src/mini/shell.tsx';
+import { ExamWidgetBody } from '../src/mini/exam.tsx';
+import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
-import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets } from '../src/widget-pin.ts';
+import { toastSaved } from '../src/screens/settings/file-export.ts';
+import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
+import { markStorageFallback } from '../src/db/fallback.ts';
+import { isCorruptLocked, reportCorrupt, resetCorruptGuardForTests } from '../src/db/corrupt-guard.ts';
+import { DatabaseCorruptDialog } from '../src/components/database-corrupt-dialog.tsx';
+import { setStorageOpenerForTests } from '../src/db/platform.ts';
+import { setLanDiscoveryScannerForTests } from '../src/lan-sync-discovery.ts';
+import { formatPairPayload } from '../src/lan-pair-payload.ts';
+import { setPairScannerForTests } from '../src/lan-pair-scan.ts';
+import { LanSyncBlock } from '../src/screens/settings/lan-sync-block.tsx';
+import { LanSyncServerPanel } from '../src/screens/settings/lan-sync-server-panel.tsx';
+import {
+  defaultLanNetwork,
+  formatLanNetworkLine,
+  readLanNetworks,
+  readStoredLanHost,
+  resolveLanHost,
+  saveStoredLanHost,
+  setLanNetworkListerForTests,
+  sortLanNetworks,
+  type LanHostStorage,
+  type LanNetwork,
+} from '../src/lan-sync-network.ts';
+import {
+  ACTION_LABEL,
+  isReminderSuppressed,
+  planReminderAction,
+  reminderActionIds,
+  takeDue,
+} from '../src/lib/reminder-actions.ts';
 import {
   PRESET_CONTENT_META_KEY,
   PRESET_SNAPSHOT_META_KEY,
   PRESET_SNAPSHOT_URL,
   PRESET_VERSION_URL,
-  canonicalPresetJson,
   presetIndexFromSnapshot,
-  sha256HexSync,
-  writeCachedPresetContent,
-  type CachedPresetContent,
-  type PresetSnapshot,
 } from '../src/preset-update.ts';
+import {
+  blurInput,
+  CACHE_TIMETABLE_ID,
+  CACHE_TIMETABLE_NAME,
+  clickByLabel,
+  clickByText,
+  clickByTextStart,
+  clickContentBack,
+  clickGridCell,
+  clickLessonCard,
+  clickMenu,
+  clickTab,
+  dragEmptySlot,
+  dragLesson,
+  fakePresetContent,
+  fakePresetSnapshot,
+  findLessonCard,
+  flush,
+  hasLabel,
+  installCanvas2dStub,
+  mount,
+  openSettingsGroup,
+  PAGE_MIXED_DUPLICATE_SAMPLE,
+  PAGE_NO_DUPLICATE_SAMPLE,
+  PAGE_SAMPLE,
+  PAGE_WEEKDAY_SAMPLE,
+  pointerEvent,
+  presetJsonResponse,
+  pressEnter,
+  quickDragLesson,
+  seed,
+  setInputValue,
+  setNotifyPermission,
+  settingsNav,
+  settingsNavIsListOnly,
+  settingsNavItem,
+  settingsNavItems,
+  settingsPanel,
+  settingsSubpageOpen,
+  slotRange,
+  type SmokeResult,
+  stubRect,
+  tapLessonCard,
+  triggerText,
+  USER_ID,
+  waitFor,
+} from './kit.tsx';
 
-// jsdom 不带 IndexedDB，这里把 fake-indexeddb 的全部实现挂到全局（显式引用，避免被 tree-shake）
-for (const [key, value] of Object.entries(fakeIndexedDb)) {
-  if (key === 'default' || value === undefined) continue;
-  Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
-}
-
-const USER_ID = 'u1';
-
-export interface SmokeResult {
-  name: string;
-  ok: boolean;
-  detail: string;
-}
-
-export interface SmokeSeed {
-  /** 当前周的周一 */
-  monday: string;
-  /** 造好的过期待办 id：用来验证自动完成不回写数据库 */
-  overdueTodoId: string;
-  /** 今天：窗口默认从今天开始，断言大量用到 */
-  today: string;
-  /** 多天假期的第一天与第二天：都落在默认窗口里 */
-  holidayStart: string;
-  holidaySecond: string;
-}
-
-/** 造一份固定数据；返回当前周的周一日期，供后续断言推算有课的日期。 */
-async function seed(): Promise<SmokeSeed> {
-  const storage = validatedStorage(await openIndexedDbStorage());
-  const now = new Date();
-  const pad = (value: number): string => (value < 10 ? `0${value}` : String(value));
-  const todayText = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  /** 今天对应的周几（1=周一）：窗口从今天开始，放假列就是这一列 */
-  const nowDayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
-  const semester = await createSemester(storage, {
-    userId: USER_ID,
-    name: '2026-2027 第一学期',
-    startDate: '2026-09-07',
-    totalWeeks: 20,
-    timeZone: 'Asia/Shanghai',
-  });
-  const course = await createCourse(storage, {
-    semesterId: String(semester['id']),
-    name: '高等数学',
-    shortName: '高数',
-    teacher: '张老师',
-    location: '教三-201',
-  });
-  await createSchedule(storage, {
-    courseId: String(course['id']),
-    dayOfWeek: 1,
-    periodStart: 1,
-    periodEnd: 2,
-    weeks: Array.from({ length: 20 }, (_, index) => index + 1),
-  });
-  // 只在第 1-2 周上的课，用来验证非本周课程的虚线显示
-  const earlyCourse = await createCourse(storage, {    semesterId: String(semester['id']),
-    name: '大学物理',
-    shortName: '大物',
-    teacher: '李老师',
-    location: '理科楼-105',
-  });
-  await createSchedule(storage, {
-    courseId: String(earlyCourse['id']),
-    dayOfWeek: 3,
-    periodStart: 3,
-    periodEnd: 4,
-    weeks: [1, 2],
-  });
-  // 周二、周四都上的课：用来验证假期第二天（周二）与日程时间线的时间区间
-  const linearCourse = await createCourse(storage, {
-    semesterId: String(semester['id']),
-    name: '线性代数',
-    shortName: '线代',
-  });
-  await createSchedule(storage, {
-    courseId: String(linearCourse['id']),
-    dayOfWeek: 2,
-    periodStart: 5,
-    periodEnd: 6,
-    weeks: Array.from({ length: 20 }, (_, index) => index + 1),
-  });
-  await createSchedule(storage, {
-    courseId: String(linearCourse['id']),
-    dayOfWeek: 4,
-    periodStart: 7,
-    periodEnd: 8,
-    weeks: Array.from({ length: 20 }, (_, index) => index + 1),
-  });
-  // 只在第 1-2 周上的周一课：当天放假又非本周，用来验证放假优先于非本周
-  const probabilityCourse = await createCourse(storage, {
-    semesterId: String(semester['id']),
-    name: '概率论',
-    shortName: '概率',
-  });
-  await createSchedule(storage, {
-    courseId: String(probabilityCourse['id']),
-    dayOfWeek: nowDayOfWeek,
-    periodStart: 5,
-    periodEnd: 6,
-    weeks: [1, 2],
-  });
-  // 周视图铺满 7 天，才能验证「高亮当天列」
-  await writeSettings(storage, { viewDays: 7 });
-  // 今天与明天放假：窗口默认从今天开始，必落在窗口里；前一天设为工作日
-  const mondayOffset = (now.getDay() + 6) % 7;
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayOffset);
-  const mondayText = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
-  const holidayStartText = todayText;
-  const holidaySecondText = addDays(todayText, 1);
-  // 实验条目：覆盖「改实验 → 保存 → 写回」这条链路（曾经静默失败、没有日志）
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'lab',
-    title: '物理实验',
-    onDate: todayText,
-    periodStart: 3,
-    periodEnd: 4,
-    nature: 'lab',
-    showInTimetable: true,
-  });
-  // 打开「显示在课表上」的日程：应当和实验一样占课表格子
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'todo',
-    title: '组会',
-    onDate: todayText,
-    startAt: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 20, 0, 0).getTime(),
-    showInTimetable: true,
-    countdown: true,
-    subject: String(probabilityCourse['id']),
-  });
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'holiday',
-    title: '国庆节',
-    onDate: holidayStartText,
-  });
-  // 把假期前一天设为工作日：保证今天是这段假期的第一天（不受内置节假日表影响）
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'workday',
-    title: '非假日',
-    onDate: addDays(holidayStartText, -1),
-  });
-  // 明天也放假：形成一段两天假期，用来验证第二天起只显示「放假」
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'holiday',
-    title: '国庆节',
-    onDate: holidaySecondText,
-  });
-  // 每个星期几都上的晚课（第 9-10 节，20:40 结束）：日程时间线里「过期的课自动完成」用它，
-  // 白天所有空格的交互断言都不受影响（那些都落在第 1-3 节）
-  const pastCourse = await createCourse(storage, {
-    semesterId: String(semester['id']),
-    name: '往期课',
-    shortName: '往期',
-    location: '实验楼-501',
-  });
-  for (let day = 1; day <= 7; day += 1) {
-    await createSchedule(storage, {
-      courseId: String(pastCourse['id']),
-      dayOfWeek: day,
-      periodStart: 9,
-      periodEnd: 10,
-      weeks: Array.from({ length: 20 }, (_, index) => index + 1),
-    });
-  }
-  // 时间线用的三条日程：带截止时间且已过期的待办、没有时间的待办、没有开考时间的考试
-  const overdue = await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'todo',
-    title: '过期待办',
-    onDate: addDays(mondayText, 8),
-    dueAt: Date.now() - 3_600_000,
-  });
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'todo',
-    title: '无时间待办',
-    onDate: addDays(mondayText, -1),
-  });
-  // 窗口内的那一天：③ 段要看「其他」性质的待办
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'todo',
-    title: '窗口内待办',
-    onDate: addDays(mondayText, 7),
-  });
-  await createEvent(storage, {
-    userId: USER_ID,
-    semesterId: String(semester['id']),
-    type: 'exam',
-    title: '期末模拟考',
-    onDate: addDays(mondayText, 7),
-  });
-  return {
-    monday: mondayText,
-    overdueTodoId: String(overdue['id']),
-    today: todayText,
-    holidayStart: holidayStartText,
-    holidaySecond: holidaySecondText,
-  };
-}
-
-// 冒烟固定把所有设置卡片视为展开，避免折叠记忆影响断言
-globalThis.localStorage?.setItem('dt.settings.collapsed', '[]');
-function mount(element: ReactElement): { root: Root; container: HTMLElement } {
-  const container = document.createElement('div');
-  document.body.append(container);
-  const root = createRoot(container);
-  root.render(element);
-  return { root, container };
-}
-
-async function flush(rounds = 8): Promise<void> {
-  for (let index = 0; index < rounds; index += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-}
-
-function clickByText(container: HTMLElement, label: string): boolean {
-  const button = [...container.querySelectorAll('button')].find(
-    (item) => (item.textContent ?? '').trim() === label,
-  );
-  if (button === undefined) return false;
-  button.click();
-  return true;
-}
-
-/** 卡片式按钮的文字后面还有说明，用前缀匹配。 */
-function clickByTextStart(container: HTMLElement, prefix: string): boolean {
-  const button = [...container.querySelectorAll('button')].find((item) =>
-    (item.textContent ?? '').trim().startsWith(prefix),
-  );
-  if (button === undefined) return false;
-  button.click();
-  return true;
-}
-
-function clickByLabel(container: HTMLElement, prefix: string): boolean {
-  const button = container.querySelector(`button[aria-label^="${prefix}"]`);
-  if (!(button instanceof HTMLElement)) return false;
-  button.click();
-  return true;
-}
-
-function hasLabel(container: HTMLElement, prefix: string): boolean {
-  return container.querySelector(`button[aria-label^="${prefix}"]`) !== null;
-}
-
-function clickByAriaPrefix(container: HTMLElement, prefix: string): boolean {
-  const element = container.querySelector(`button[aria-label^="${prefix}"]`);
-  if (!(element instanceof HTMLElement)) return false;
-  element.click();
-  return true;
-}
-
-/** 打开顶部「＋」或「⋯」下拉后，点其中的菜单项 */
-function clickMenu(container: HTMLElement, menu: string, label: string): boolean {
-  const trigger = container.querySelector(`summary[aria-label="${menu}"]`);
-  if (trigger instanceof HTMLElement) trigger.click();
-  const item = [...container.querySelectorAll(`[role="menu"][aria-label="${menu}"] [role="menuitem"]`)].find(
-    (entry) => (entry.textContent ?? '').trim() === label,
-  );
-  if (!(item instanceof HTMLElement)) return false;
-  item.click();
-  return true;
-}
-
-function setInputValue(element: HTMLElement, value: string): void {
-  const prototype =
-    element instanceof window.HTMLTextAreaElement
-      ? window.HTMLTextAreaElement.prototype
-      : window.HTMLInputElement.prototype;
-  Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(element, value);
-  element.dispatchEvent(new window.Event('input', { bubbles: true }));
-}
-
-/**
- * 让输入框失焦：真实浏览器失焦会先派发不冒泡的 blur，再派发冒泡的 focusout；
- * React 的 onBlur 挂在 focusout 上，所以两个都派发，保持与浏览器一致的事件序列。
- */
-function blurInput(element: HTMLElement): void {
-  element.dispatchEvent(new window.FocusEvent('blur'));
-  element.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true }));
-}
-
-/** 在输入框里按回车。 */
-function pressEnter(element: HTMLElement): void {
-  element.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-}
-
-function pointerEvent(type: string, init: Record<string, unknown>): Event {
-  const EventCtor = window.PointerEvent ?? window.MouseEvent;
-  return new EventCtor(type, { bubbles: true, cancelable: true, ...init } as never);
-}
-
-/** 点击某天列某一节上的一行（该节空着时才有效，period 从 1 开始）。 */
-function clickGridCell(container: HTMLElement, day: number, period = 1): boolean {
-  const column = container.querySelector(`[data-day="${day}"]`);
-  if (!(column instanceof window.HTMLElement)) return false;
-  stubRect(column, day * 100, 100);
-  const row = [...column.querySelectorAll('div')][period - 1];
-  const target = row instanceof window.HTMLElement ? row : column;
-  const clientY = 100 + (period - 1) * 56 + 4;
-  // 真实鼠标点击前一定先有 pointerdown，周视图的落点判断依赖它
-  target.dispatchEvent(pointerEvent('pointerdown', { pointerId: 41, button: 0, clientX: 150, clientY }));
-  target.dispatchEvent(pointerEvent('pointerup', { pointerId: 41, clientX: 150, clientY }));
-  target.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientY }));
-  return true;
-}
-
-/** 占位块滚轮条上的节次范围文案。 */
-function slotRange(container: HTMLElement): string {
-  return (container.querySelector('[data-role="period-wheel"]')?.textContent ?? '').trim();
-}
-
-/** 课程表单里某个下拉框当前显示的值。 */
-function triggerText(label: string): string {
-  return (document.querySelector(`[aria-label="${label}"]`)?.textContent ?? '').trim();
-}
-
-/** 按住占位块本体拖动：dy 为相对按下的像素位移（56 一格）。 */
-function dragEmptySlot(
-  slot: HTMLElement,
-  startY = 400,
-): {
-  down: () => void;
-  move: (dy: number) => void;
-  up: (dy: number) => void;
-} {
-  const fire = (type: string, dy: number): void => {
-    slot.dispatchEvent(
-      pointerEvent(type, { pointerId: 31, button: 0, clientX: 150, clientY: startY + dy }),
-    );
-  };
-  return {
-    down: () => fire('pointerdown', 0),
-    move: (dy: number) => fire('pointermove', dy),
-    up: (dy: number) => fire('pointerup', dy),
-  };
-}
-
-/**
- * jsdom 没有布局（getBoundingClientRect 全是 0），周视图的落点定位依赖它，
- * 所以只在这几个节点上按 100 宽、56 高的规则行造一份几何。
- */
-function stubRect(element: Element, left: number, top: number, width = 100, height = 56): void {
-  const rect = {
-    x: left,
-    y: top,
-    left,
-    top,
-    right: left + width,
-    bottom: top + height,
-    width,
-    height,
-    toJSON: () => ({}),
-  } as unknown as DOMRect;
-  Object.defineProperty(element, 'getBoundingClientRect', {
-    value: () => rect,
-    configurable: true,
-    writable: true,
-  });
-}
-
-/** 在课程卡上按下指针并按住超过长按时长，再发窗口指针事件、移动与抬手。 */
-async function dragLesson(
-  container: HTMLElement,
-  name: string,
-  moveTo?: { day: number; clientY?: number },
-): Promise<boolean> {
-  const card = [...container.querySelectorAll('[data-tone]')].find((item) =>
-    (item.textContent ?? '').includes(name),
-  );
-  const holder = card?.parentElement;
-  if (!(card instanceof window.HTMLElement) || !(holder instanceof window.HTMLElement)) return false;
-  stubRect(holder, 100, 100);
-  holder.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 150, clientY: 104 }));
-  window.dispatchEvent(pointerEvent('pointerdown', { pointerId: 1, button: 0 }));
-  holder.dispatchEvent(pointerEvent('pointermove', { pointerId: 1, clientX: 152, clientY: 106 }));
-  await new Promise((resolve) => setTimeout(resolve, 420));
-  await flush(4);
-  if (moveTo !== undefined) {
-    const column = container.querySelector(`[data-day="${moveTo.day}"]`);
-    if (column instanceof window.HTMLElement) stubRect(column, moveTo.day * 100, 100);
-    holder.dispatchEvent(
-      pointerEvent('pointermove', {
-        pointerId: 1,
-        clientX: moveTo.day * 100 + 50,
-        clientY: moveTo.clientY ?? 104,
-      }),
-    );
-  }
-  await flush(2);
-  holder.dispatchEvent(
-    pointerEvent('pointerup', {
-      pointerId: 1,
-      clientX: moveTo === undefined ? 152 : moveTo.day * 100 + 50,
-      clientY: moveTo?.clientY ?? 106,
-    }),
-  );
-  await flush(4);
-  window.dispatchEvent(pointerEvent('pointercancel', { pointerId: 1 }));
-  return true;
-}
-
-/** 找到课程卡（CourseCard 渲染的按钮）与承接指针事件的外层容器。 */
-function findLessonCard(container: HTMLElement, name: string): { card: HTMLElement; holder: HTMLElement } | null {
-  const card = [...container.querySelectorAll('[data-tone]')].find((item) =>
-    (item.textContent ?? '').includes(name),
-  );
-  const holder = card?.parentElement;
-  if (!(card instanceof window.HTMLElement) || !(holder instanceof window.HTMLElement)) return null;
-  return { card, holder };
-}
-
-/** 只补发一次 click（不再按下指针）：用来验证拖动收尾那次 click 是否被抑制。 */
-function clickLessonCard(container: HTMLElement, name: string): boolean {
-  const found = findLessonCard(container, name);
-  if (found === null) return false;
-  found.card.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  return true;
-}
-
-/**
- * 普通单击课程卡：pointerdown → pointerup → click。
- * 两帧之间只有 40ms，远小于长按阈值 350ms，因此不会进入拖动。
- * React 18 只在根容器上监听，click 必须打在卡片自身上才会命中它的 onClick。
- */
-async function tapLessonCard(container: HTMLElement, name: string): Promise<boolean> {
-  const found = findLessonCard(container, name);
-  if (found === null) return false;
-  stubRect(found.holder, 100, 100);
-  found.holder.dispatchEvent(pointerEvent('pointerdown', { pointerId: 7, button: 0, clientX: 150, clientY: 104 }));
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  found.holder.dispatchEvent(pointerEvent('pointerup', { pointerId: 7, clientX: 150, clientY: 104 }));
-  await flush(2);
-  found.card.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await flush(10);
-  return true;
-}
-
-const PAGE_SAMPLE = `<table id="kbtable"><tr>
-  <td id="1-1"><div><span class="title">网页导入课程</span><p>张老师</p><p>教三-401</p><p>1-16周</p></div></td>
-  <td id="2-1"><div><span class="title">网页导入课程二</span><p>李老师</p><p>理科楼-201</p><p>2-16周(双)</p></div></td>
-</tr></table>`;
-
-const PAGE_WEEKDAY_SAMPLE = `<table><tr><td>节次</td><td>星期一</td><td>星期二</td><td>星期三</td></tr>
-  <tr><td>第1节</td><td>手动映射课程<br>1-16周</td><td></td><td></td></tr>
-  <tr><td>第2节</td><td></td><td>手动映射课程二<br>2-16周</td><td></td></tr>
-</table>`;
-
-/** 预设更新冒烟用的假 Response：全程不联网。 */
-function presetJsonResponse(body: unknown, ok = true, status = 200): Response {
-  return { ok, status, json: async () => body } as unknown as Response;
-}
-
-/**
- * 缓存快照 1.1.0 自带的作息正文：内容是「内置 default 的另一种作息」。
- * 用同一份数据测两件事——下载时能通过正文校验、启动时能真的覆盖掉内置预设。
- */
-const CACHE_TIMETABLE_ID = 'default';
-const CACHE_TIMETABLE_NAME = '缓存作息（测试）';
-const CACHE_PERIODS = [
-  { periodNo: 1, start: '08:30', end: '09:15' },
-  { periodNo: 2, start: '09:25', end: '10:10' },
-  { periodNo: 3, start: '10:25', end: '11:10' },
-  { periodNo: 4, start: '11:20', end: '12:05' },
-  { periodNo: 5, start: '13:30', end: '14:15' },
-  { periodNo: 6, start: '14:25', end: '15:10' },
-  { periodNo: 7, start: '15:20', end: '16:05' },
-  { periodNo: 8, start: '16:15', end: '17:00' },
-  { periodNo: 9, start: '18:30', end: '19:15' },
-  { periodNo: 10, start: '19:25', end: '20:10' },
-];
-
-/** 缓存正文（`presets_content_v1` 的形状）：与内置同名 id，但正文不同，足以证明「换掉了」。 */
-function fakePresetContent(version: string): CachedPresetContent {
-  return {
-    version,
-    timetables: [
-      { id: CACHE_TIMETABLE_ID, name: CACHE_TIMETABLE_NAME, periods: CACHE_PERIODS },
-      { id: 'usts', name: '苏州科技大学', periods: [{ periodNo: 1, start: '08:00', end: '08:45' }] },
-    ],
-    systems: [
-      {
-        id: 'jwglxt',
-        name: '正方教务（缓存）',
-        entryPath: '/jwglxt/xtgl/login_slogin.html',
-        hint: '缓存正文',
-        detect: { markers: ['jwglxt'] },
-      },
-    ],
-  };
-}
-
-/**
- * 造一份哈希自洽的快照（hash 用模块自身的规范化口径算，等价于预设仓库的生成器）。
- * `sources` 里的每一条同时带正文：`id`/`path`/`sha256` 进清单哈希，多出来的正文字段
- * **不参与**哈希（清单描述的是预设仓库里的文件），因此这里加正文不会改变签名口径。
- * 路径照合并后的结构写：作息表是历史契约符号路径（`timetable.json` 已并入 school.json），
- * 教务系统是 `systems/<id>/system.json`。
- *
- * 顶层还带 **内嵌索引 `index`**（原 `presets/index.json` 的信息已并入快照）：它**参与**哈希，
- * 所以这里的 hash 是「含索引」的新版哈希，与真实产物同口径。
- */
-function fakePresetSnapshot(version: string): PresetSnapshot {
-  const content = fakePresetContent(version);
-  const unsigned = {
-    version,
-    schemaVersion: 1,
-    generatedAt: '2026-02-01T00:00:00.000Z',
-    sources: {
-      timetables: content.timetables.map((preset) => ({
-        id: preset.id,
-        path: `presets/schools/${preset.id}/timetable.json`,
-        sha256: `sha256:${sha256HexSync(canonicalPresetJson(preset))}`,
-        ...preset,
-      })),
-      systems: content.systems.map((system) => ({
-        id: system.id,
-        path: `presets/systems/${system.id}/system.json`,
-        sha256: `sha256:${sha256HexSync(canonicalPresetJson(system))}`,
-        ...system,
-      })),
-      adapters: {},
-    },
-    index: {
-      _generated: true,
-      version,
-      schemaVersion: 1,
-      generatedAt: '2026-02-01T00:00:00.000Z',
-      // 合并后学校只有一个 school.json：configPath 与 timetablePath 都指它
-      schools: content.timetables.map((preset) => ({
-        id: preset.id,
-        name: preset.name,
-        system: null,
-        configPath: `presets/schools/${preset.id}/school.json`,
-        timetablePath: `presets/schools/${preset.id}/school.json`,
-      })),
-      systems: content.systems.map((system) => ({
-        id: system.id,
-        name: system.name,
-        metaPath: `presets/systems/${system.id}/system.json`,
-        loginPath: `presets/systems/${system.id}/system.json`,
-        // 索引里的 detect 四个子键必须齐全（空数组是合法值）
-        detect: {
-          markers: system.detect.markers ?? [],
-          timetableTableIds: system.detect.timetableTableIds ?? [],
-          timetableTableClasses: system.detect.timetableTableClasses ?? [],
-          gridCellIdPatterns: system.detect.gridCellIdPatterns ?? [],
-        },
-        entryPath: system.entryPath,
-        hint: system.hint,
-      })),
-    },
-  };
-  return { ...unsigned, hash: `sha256:${sha256HexSync(canonicalPresetJson(unsigned))}` } as unknown as PresetSnapshot;
-}
-
-export async function runSmoke(): Promise<SmokeResult[]> {
-  const results: SmokeResult[] = [];
+/** results 由调用方传入：中途抛错时已收集的断言不丢失。 */
+export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult[]> {
   const check = (name: string, ok: boolean, detail = ''): void => {
     results.push({ name, ok, detail });
   };
+
+  // 局域网二期：发现走原生 UDP，冒烟用固定列表替代（不启动任何原生进程）
+  setLanDiscoveryScannerForTests(async () => [
+    { name: '书房电脑', host: '192.168.1.5', port: 8765, seenAt: Date.now() },
+  ]);
+
+  // WebDAV 密码：平台密钥库用确定性桩替代（冒烟只验证信封与界面状态，不做真实密码学）
+  setSecretStoreForTests({
+    encrypt: async (value: string) => `smoke(${value})`,
+    decrypt: async (ciphertext: string) => {
+      const matched = /^smoke\((.*)\)$/s.exec(ciphertext);
+      if (matched === null) throw new Error('冒烟桩：密文不认识');
+      return matched[1] as string;
+    },
+    isAvailable: async () => true,
+  });
+
+  // R-07：提醒动作纯逻辑桩（不动原生桥）。三类代表提醒：课前（课程）、作业、考试。
+  const actionNow = Date.now();
+  const classReminder = { id: 'class-1', kind: 'class' as const, targetId: 'course-1', triggerAt: actionNow };
+  const homeworkReminder = { id: 'homework-1', kind: 'homework' as const, targetId: 'event-9', triggerAt: actionNow };
+  const examReminder = { id: 'exam-1', kind: 'exam' as const, targetId: 'event-10', triggerAt: actionNow };
+  const classLabels = reminderActionIds('class').map((id) => ACTION_LABEL[id]).join(' / ');
+  check(
+    'R-07 课前提醒动作集合：贪睡 / 勿扰，没有完成',
+    classLabels === `${ACTION_LABEL.snooze} / ${ACTION_LABEL.mute}` &&
+      !reminderActionIds('class').includes('done'),
+    classLabels,
+  );
+  const eventLabels = reminderActionIds('homework').map((id) => ACTION_LABEL[id]).join(' / ');
+  const eventKinds = ['todo', 'homework', 'exam', 'lab'] as const;
+  check(
+    'R-07 日程提醒动作集合：待办/作业/考试/实验都有完成',
+    eventLabels === `${ACTION_LABEL.snooze} / ${ACTION_LABEL.done} / ${ACTION_LABEL.mute}` &&
+      eventKinds.every((kind) => reminderActionIds(kind).includes('done')),
+    eventLabels,
+  );
+
+  const snoozePlan = planReminderAction(homeworkReminder, 'snooze', actionNow, 'Asia/Shanghai');
+  const snoozeAt = snoozePlan?.action === 'snooze' ? snoozePlan.triggerAt : 0;
+  const snoozedItem = { ...homeworkReminder, triggerAt: snoozeAt };
+  check(
+    'R-07 贪睡 10 分钟后同一提醒再次投递',
+    snoozePlan?.action === 'snooze' &&
+      snoozeAt === actionNow + 10 * 60_000 &&
+      takeDue([snoozedItem], actionNow + 9 * 60_000).due.length === 0 &&
+      takeDue([snoozedItem], actionNow + 10 * 60_000).due.length === 1,
+    `next=${new Date(snoozeAt).toISOString()}`,
+  );
+
+  const mutePlan = planReminderAction(classReminder, 'mute', actionNow, 'Asia/Shanghai');
+  const muteUntil = mutePlan?.action === 'mute' ? mutePlan.until : 0;
+  const muteState = { mutes: [{ targetId: 'course-1', until: muteUntil }], done: [] };
+  check(
+    'R-07 勿扰 1 小时只跳过当前条目窗口内的提醒',
+    mutePlan?.action === 'mute' &&
+      muteUntil === actionNow + 60 * 60_000 &&
+      isReminderSuppressed({ targetId: 'course-1', triggerAt: actionNow + 30 * 60_000 }, muteState) &&
+      !isReminderSuppressed({ targetId: 'course-1', triggerAt: muteUntil + 1 }, muteState) &&
+      !isReminderSuppressed({ targetId: 'course-2', triggerAt: actionNow + 30 * 60_000 }, muteState),
+    `until=${new Date(muteUntil).toISOString()}`,
+  );
+
+  const donePlan = planReminderAction(examReminder, 'done', actionNow, 'Asia/Shanghai');
+  const doneUntil = donePlan?.action === 'done' ? donePlan.suppressUntil : 0;
+  const doneState = { mutes: [], done: [{ targetId: 'event-10', until: doneUntil }] };
+  check(
+    'R-07 完成写回 events.done 且当天不再提醒',
+    donePlan?.action === 'done' &&
+      donePlan.write.eventId === 'event-10' &&
+      donePlan.write.fields.done === 1 &&
+      doneUntil > actionNow &&
+      isReminderSuppressed({ targetId: 'event-10', triggerAt: doneUntil - 1 }, doneState) &&
+      !isReminderSuppressed({ targetId: 'event-10', triggerAt: doneUntil }, doneState),
+    `suppressUntil=${new Date(doneUntil).toISOString()}`,
+  );
 
   const empty = mount(<App />);
   await flush(10);
@@ -620,6 +213,23 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '空库渲染引导页',
     (empty.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
     (empty.container.textContent ?? '').slice(0, 60),
+  );
+  const onboardingLabel = [...empty.container.querySelectorAll('label')].find(
+    (item) => (item.textContent ?? '').trim() === '开学日期',
+  );
+  const onboardingControl =
+    onboardingLabel?.htmlFor === undefined || onboardingLabel.htmlFor === ''
+      ? null
+      : document.getElementById(onboardingLabel.htmlFor);
+  const onboardingHintId = onboardingControl?.getAttribute('aria-describedby') ?? '';
+  const onboardingHint = onboardingHintId === '' ? null : document.getElementById(onboardingHintId);
+  check(
+    'Field 的 label 通过 for/id 关联控件并带上说明',
+    onboardingLabel !== null &&
+      onboardingControl instanceof window.HTMLInputElement &&
+      onboardingHint !== null &&
+      (onboardingHint.textContent ?? '').includes('该周记为第 1 周'),
+    `for=${onboardingLabel?.htmlFor ?? '(无)'}`,
   );
   empty.root.unmount();
 
@@ -632,17 +242,154 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const holidaySecondText = seeded.holidaySecond;
   const view = mount(<App />);
   await flush(20);
+  /** 切到「设备与同步」页：桌面侧栏与移动底栏共用同一个文字入口 */
+  const gotoDevices = async (): Promise<void> => {
+    clickByText(view.container, '设备与同步');
+    await flush(12);
+  };
+  /**
+   * 设备与同步页也是分组导航：点分组清单里的目标组，桌面切右侧内容、移动端进子页。
+   * 清单项在窄屏下只是 CSS 隐藏，仍可点回其它组；返回列表由 settings-nav-back 负责。
+   */
+  const openDeviceGroup = async (title: string, container: HTMLElement = view.container): Promise<boolean> => {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const item = [...container.querySelectorAll<HTMLElement>('[data-role="settings-nav-item"]')].find(
+        (node) => (node.textContent ?? '').includes(title),
+      );
+      if (item !== undefined) {
+        item.click();
+        await flush(12);
+        return true;
+      }
+      await flush(1);
+    }
+    return false;
+  };
+  /** 当前选中的设备分组 id（清单项的 aria-current=page） */
+  const activeDeviceGroup = (container: HTMLElement = view.container): string =>
+    container
+      .querySelector<HTMLElement>('[data-role="settings-nav-item"][aria-current="page"]')
+      ?.getAttribute('data-group') ?? '';
+  const gotoSettings = async (): Promise<void> => {
+    clickByText(view.container, '设置');
+    await flush(12);
+  };
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
   check(
-    'dev 构建首次提示开发版滚动更新',
+    'dev 构建首次提示开发版并引导安装正式版',
     (document.body.textContent ?? '').includes('开发版提示') &&
-      (document.body.textContent ?? '').includes('开发版滚动更新'),
+      (document.body.textContent ?? '').includes('日常使用建议安装正式版') &&
+      (document.body.textContent ?? '').includes('下载正式版'),
     (document.body.textContent ?? '').slice(0, 60),
   );
   if (clickByText(document.body, '知道了')) await flush(10);
   check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
+  // I-05：新装默认「今天为第一天」与「始终不显示周末」都开。冒烟固定时钟是周日，
+  // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
+  clickByText(view.container, '设置');
+  await flush(12);
+  const settingsGroupTitles = ['学期设置', '提醒设置', '外观与动效', '课表显示', '作息与选校', '悬浮窗与小组件', '时间与日程'];
+  await waitFor(() => settingsNavItems(view.container).length === settingsGroupTitles.length, 20);
+  const listedGroupTitles = (): string[] =>
+    settingsGroupTitles.filter((title) => settingsNavItem(view.container, title) !== null);
+  check(
+    '设置页改为分组导航：七组清单一次列全',
+    settingsNavItems(view.container).length === settingsGroupTitles.length &&
+      listedGroupTitles().length === settingsGroupTitles.length,
+    `分组=${listedGroupTitles().join(' / ') || '(无)'}`,
+  );
+  /** 每行摘要都来自 summarizeSettings：按分组取行文本，缺哪条一眼能看出来 */
+  const summaryChecks = [
+    ['提醒设置', '课前 20 分钟'],
+    ['外观与动效', '青春活力 · 跟随系统'],
+    ['课表显示', '7 天 · 隐藏周末'],
+    ['悬浮窗与小组件', '条形 · 浅色'],
+    ['时间与日程', 'Asia/Shanghai · 按开始时间'],
+  ] as const;
+  const missingSummaries = summaryChecks.filter(
+    ([title, summary]) => !(settingsNavItem(view.container, title)?.textContent ?? '').includes(summary),
+  );
+  check(
+    '分组清单每行带当前设置摘要',
+    missingSummaries.length === 0,
+    missingSummaries.length === 0
+      ? ''
+      : `缺：${missingSummaries.map(([title, summary]) => `${title}→${summary}`).join(' / ')}`,
+  );
+  check(
+    '移动端默认只显示分组清单',
+    settingsNavIsListOnly(view.container),
+    `nav=${settingsNav(view.container)?.className ?? '(无)'} / panel=${settingsPanel(view.container)?.className ?? '(无)'}`,
+  );
+  const enteredTimetableGroup = await openSettingsGroup(view.container, '课表显示');
+  const groupPanelText = (): string => settingsPanel(view.container)?.textContent ?? '';
+  check(
+    '点分组进入子页：只挂载当前分组内容',
+    enteredTimetableGroup &&
+      settingsSubpageOpen(view.container) &&
+      groupPanelText().includes('周视图天数') &&
+      !groupPanelText().includes('课程管理'),
+    `内容=${groupPanelText().slice(0, 40) || '(空)'}`,
+  );
+  check(
+    '子页顶部有返回设置列表',
+    view.container.querySelector('[data-role="settings-nav-back"]') !== null,
+    '',
+  );
+  if (clickByLabel(view.container, '返回设置列表')) await flush(10);
+  check(
+    '返回后回到分组清单',
+    settingsNavIsListOnly(view.container),
+    `nav=${settingsNav(view.container)?.className ?? '(无)'}`,
+  );
+  // 桌面（≥1024px）左列常驻：点哪组只换右侧内容，非当前组不挂载
+  const switchedToAppearance = await openSettingsGroup(view.container, '外观与动效');
+  const switchedBackToTimetable = await openSettingsGroup(view.container, '课表显示');
+  check(
+    '桌面左列切换分组：右侧只渲染当前组内容',
+    switchedToAppearance &&
+      switchedBackToTimetable &&
+      settingsSubpageOpen(view.container) &&
+      groupPanelText().includes('周视图天数') &&
+      !groupPanelText().includes('主题风格'),
+    `内容=${groupPanelText().slice(0, 40) || '(空)'}`,
+  );
+  const switchByAria = (label: string): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`);
+  check(
+    '新安装默认：今天为第一天、隐藏周末都开',
+    switchByAria('今天为第一天')?.getAttribute('aria-checked') === 'true' &&
+      switchByAria('始终不显示周末')?.getAttribute('aria-checked') === 'true',
+    `今天为第一天=${switchByAria('今天为第一天')?.getAttribute('aria-checked')} / 隐藏周末=${switchByAria('始终不显示周末')?.getAttribute('aria-checked')}`,
+  );
+  switchByAria('始终不显示周末')?.click();
+  await flush(16);
+  clickByText(view.container, '课表');
+  await flush(16);
+  check(
+    '关掉隐藏周末后周日列回到窗口',
+    view.container.querySelector(`[data-date="${todayText}"]`) !== null,
+    view.container.querySelector(`[data-date="${todayText}"]`) === null ? '仍无周日列' : '',
+  );
   const text = view.container.textContent ?? '';
   check('课表渲染课程', text.includes('高数'), text.slice(0, 80));
+  const firstColumn = view.container.querySelector<HTMLElement>('[data-date]');
+  check(
+    '周视图每列带日期分组标签',
+    firstColumn !== null &&
+      firstColumn.getAttribute('role') === 'group' &&
+      /^周[一二三四五六日] \d{1,2}\/\d{1,2}$/.test(firstColumn.getAttribute('aria-label') ?? ''),
+    firstColumn?.getAttribute('aria-label') ?? '(无)',
+  );
+  const namedLessonCard = [
+    ...view.container.querySelectorAll<HTMLElement>('[data-role="course-card"][aria-label]'),
+  ].find((item) => (item.getAttribute('aria-label') ?? '').includes('第 1–2 节'));
+  check(
+    '课程卡播报星期、节次、课程名与周次',
+    namedLessonCard !== null &&
+      /^周[一二三四五六日] 第 \d+(?:–\d+)? 节 .+ 第 \d+ 周/.test(namedLessonCard!.getAttribute('aria-label') ?? ''),
+    namedLessonCard?.getAttribute('aria-label') ?? '(无)',
+  );
   // 卡片无论是可点击的 button 还是只读 div，都要带 data-role：行高自适应靠它量布局
   check(
     '课表卡片带可测量的 data-role',
@@ -718,6 +465,48 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 't', bubbles: true }));
   await flush(30);
   check('快捷键 T 回到以今天开头的窗口', windowStartOf() === todayText, windowStartOf());
+  // 快捷键说明只在侧栏保留一处，且方向键是「平移一屏」不是「切周」
+  // 冒烟跑在移动端断点（不渲染侧栏），这里单独挂一次侧栏核对文案
+  const sidebar = mount(<AppSidebar current="timetable" onSelect={() => {}} appName="晓刻 DawnTick" subtitle="第 1 周" />);
+  await flush(4);
+  const sidebarText = sidebar.container.querySelector('[data-role="app-sidebar"]')?.textContent ?? '';
+  check(
+    '快捷键说明只在侧栏一处且方向键说法正确',
+    sidebarText.includes('快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天'),
+    sidebarText.slice(-40),
+  );
+  const sidebarHelp = [...sidebar.container.querySelectorAll('button')].find(
+    (item) => (item.textContent ?? '').trim() === '帮助',
+  );
+  check('桌面侧栏在设置/设备同一导航体系内提供「帮助」', sidebarHelp !== undefined, sidebarText.slice(0, 60));
+  sidebar.root.unmount();
+  sidebar.container.remove();
+
+  // P2-06：周模式与日模式同一份边界口径 —— 第 1 周的「上一屏」置灰、窗口不再越过学期边界
+  const navButton = (label: '上一屏' | '下一屏'): HTMLButtonElement | null =>
+    view.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  const stepWindowBy = async (label: '上一屏' | '下一屏'): Promise<void> => {
+    const before = windowStartOf();
+    if (clickByLabel(view.container, label)) await flush(12);
+    // 重载还没落地时窗口不动：再等一轮，避免把慢一拍的渲染当成翻不动
+    if (windowStartOf() === before) await flush(20);
+  };
+  for (let index = 0; index < 12 && navButton('上一屏')?.disabled === false; index += 1) {
+    await stepWindowBy('上一屏');
+  }
+  check(
+    '第 1 周的「上一屏」置灰',
+    navButton('上一屏')?.disabled === true && windowNav()?.getAttribute('data-window-week') === '1',
+    `起=${windowStartOf()} 周=${windowNav()?.getAttribute('data-window-week') ?? '(无)'}`,
+  );
+  if (clickByLabel(view.container, '下一屏')) await flush(24);
+  check(
+    '第 1 周仍能往后翻一屏',
+    windowNav()?.getAttribute('data-window-week') === '2',
+    `周=${windowNav()?.getAttribute('data-window-week') ?? '(无)'}`,
+  );
+  if (clickByLabel(view.container, '回到今天')) await flush(30);
+  check('边界用例后回到今天的窗口', windowStartOf() === todayText, windowStartOf());
   check(
     '放假日课程灰显',
     text.includes('放假') && view.container.querySelector('[data-tone="holiday"]') !== null,
@@ -770,30 +559,62 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
   check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
 
-  // C1：长按拖动 + 吸附后选作用范围
+  // C1：长按拖动 + 吸附后选生效范围（四选一，主按钮「应用调整」）
   const heldWithoutMove = await dragLesson(view.container, '高数');
   await flush(6);
   check(
-    '原地长按松手不弹调整弹窗',
-    heldWithoutMove && !(document.body.textContent ?? '').includes('调整课程时间'),
+    '原地长按松手不弹调课弹窗',
+    heldWithoutMove && document.querySelector('[data-role="adjust-dialog"]') === null,
     '',
   );
+  // 落点日期就是目标列（data-day=4 那一列）的日期：从 DOM 读，避免按种子推算
+  const dropColumnDate = view.container.querySelector('[data-day="4"]')?.getAttribute('data-date') ?? '';
   const heldAndMoved = await dragLesson(view.container, '高数', { day: 4 });
   await flush(6);
   const moveDialogText = document.body.textContent ?? '';
+  const moveDialog = document.querySelector('[data-role="adjust-dialog"]');
+  const moveDateInput = document.querySelector<HTMLInputElement>('input[aria-label="调整后日期"]');
   check(
-    '长按拖到别列后弹出调整课程时间',
+    '长按拖到别列后打开同一个调课弹窗并预填落点',
     heldAndMoved &&
-      moveDialogText.includes('调整课程时间') &&
-      moveDialogText.includes('本周生效') &&
-      moveDialogText.includes('每周生效') &&
-      moveDialogText.includes('指定周的同一天') &&
+      moveDialog !== null &&
+      moveDialogText.includes('调课') &&
+      moveDialogText.includes('这一次') &&
+      moveDialogText.includes('每周') &&
+      moveDialogText.includes('指定周') &&
       moveDialogText.includes('指定日期') &&
-      moveDialogText.includes('第 1–2 节'),
-    moveDialogText.slice(-60),
+      moveDialogText.includes('第 1–2 节') &&
+      moveDateInput instanceof window.HTMLInputElement &&
+      dropColumnDate !== '' &&
+      moveDateInput.value === dropColumnDate,
+    `${moveDialogText.slice(-60)} / 落点=${dropColumnDate} / 弹窗=${moveDateInput instanceof window.HTMLInputElement ? moveDateInput.value : '(无日期)'}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
-  check('取消调整弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
+  check('取消调课弹窗后课表不变', (view.container.textContent ?? '').includes('高数'), '');
+
+  // I-10 回归：普通课程卡按住直接拖（不先长按等待）也要打开同一个调课弹窗
+  const quickDragged = await quickDragLesson(view.container, '高数', { day: 3 });
+  await flush(6);
+  check(
+    'I-10 课程卡按住直接拖即可打开调课弹窗',
+    quickDragged && document.querySelector('[data-role="adjust-dialog"]') !== null,
+    quickDragged ? '已拖到第 3 列' : '没找到可拖的课程卡',
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // I-09：可拖动卡片独占触摸手势；不参与拖动的卡片留纵向滚动，页面才滚得动
+  const lessonTouchActionOf = (selector: string): string => {
+    const cell = view.container
+      .querySelector<HTMLElement>(selector)
+      ?.closest<HTMLElement>('[data-role="lesson-cell"]');
+    return cell?.style.touchAction ?? '(无)';
+  };
+  check('I-09 可拖动卡片才独占触摸手势', lessonTouchActionOf('[data-tone="solid"]') === 'none', '');
+  check(
+    'I-09 非本周卡片留纵向滚动',
+    lessonTouchActionOf('[data-dashed="true"]') === 'pan-y',
+    lessonTouchActionOf('[data-dashed="true"]'),
+  );
 
   // C1b：单击课程卡打开详情。拖动收尾只抑制紧随的那一次 click，且 pointerdown 会复位抑制标记。
   await dragLesson(view.container, '高数');
@@ -817,6 +638,29 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       detailText.includes('删除整门课'),
     detailText.slice(-60),
   );
+  // P0-02：删除排课先弹确认，取消后数据仍在
+  const removeScheduleButton = document.querySelector<HTMLElement>('[aria-label="删除该排课"]');
+  check(
+    '课程详情提供删除排课入口',
+    removeScheduleButton !== null,
+    removeScheduleButton?.tagName ?? '(无)',
+  );
+  removeScheduleButton?.click();
+  await flush(8);
+  const confirmText = document.body.textContent ?? '';
+  check(
+    '删除排课先弹确认并说明后果',
+    confirmText.includes('将删除') && confirmText.includes('不可撤销'),
+    confirmText.slice(-80),
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
+  check(
+    '取消删除后排课仍在',
+    document.querySelector('[data-role="reminder-section"]') !== null &&
+      (view.container.textContent ?? '').includes('高数'),
+    '',
+  );
+
   // 课前提醒：区块标题 + 「使用全局配置」子项开关（不再是标题态的复选框）
   const reminderSection = document.querySelector('[data-role="reminder-section"]');
   const globalSwitch = reminderSection?.querySelector<HTMLElement>('[role="switch"][aria-label="使用全局配置"]');
@@ -824,27 +668,49 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '课前提醒为区块标题且全局配置是子项开关',
     reminderSection !== null &&
       (reminderSection.textContent ?? '').includes('课前提醒') &&
-      globalSwitch !== null &&
+      globalSwitch != null &&
       globalSwitch.getAttribute('aria-checked') === 'true' &&
       reminderSection.querySelector('input[type="checkbox"][aria-label="使用全局配置"]') === null &&
       (reminderSection.textContent ?? '').includes('跟随全局设置'),
     `switch=${globalSwitch?.getAttribute('aria-checked') ?? '(无)'}`,
   );
-  if (globalSwitch !== null) {
+  if (globalSwitch != null) {
     globalSwitch.click();
     await flush(8);
     check(
       '关掉全局配置后出现本课程单独设置',
-      (reminderSection.textContent ?? '').includes('本课程单独设置') &&
-        (reminderSection.textContent ?? '').includes('保存提醒'),
-      (reminderSection.textContent ?? '').slice(-40),
+      (reminderSection?.textContent ?? '').includes('本课程单独设置') &&
+        (reminderSection?.textContent ?? '').includes('保存提醒'),
+      (reminderSection?.textContent ?? '').slice(-40),
     );
     globalSwitch.click();
     await flush(8);
   }
-  // 关掉详情面板，避免影响后续断言
+  // P0-03：详情关闭出口（✕ / Esc / 切页清空）
+  const closeDetailButton = document.querySelector<HTMLElement>('[aria-label="关闭课程详情"]');
+  check('课程详情有关闭按钮', closeDetailButton !== null, closeDetailButton?.tagName ?? '(无)');
+  closeDetailButton?.click();
+  await flush(8);
+  check('点关闭按钮收起课程详情', document.querySelector('[data-role="reminder-section"]') === null, '');
+
+  await tapLessonCard(view.container, '高数');
+  await flush(6);
+  check('重新打开详情后可再次关闭', document.querySelector('[data-role="reminder-section"]') !== null, '');
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(8);
+  check('Esc 关闭课程详情', document.querySelector('[data-role="reminder-section"]') === null, '');
+
+  await tapLessonCard(view.container, '高数');
+  await flush(6);
+  clickByText(document.body, '设置');
+  await flush(10);
+  clickByText(document.body, '课表');
+  await flush(10);
+  check(
+    '切到设置再回课表不残留详情',
+    document.querySelector('[data-role="reminder-section"]') === null,
+    '',
+  );
 
   // C2：点空白格 → 虚线占位块 → 滚轮改节次 → 进课程表单预填（周二第 1 节是空的）
   const clickInfo = clickGridCell(view.container, 2);
@@ -893,17 +759,46 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     triggerText('起始节') === '第 1 节' && triggerText('结束节') === '第 2 节',
     `${triggerText('起始节')} → ${triggerText('结束节')}`,
   );
-  // 内容超过屏高的弹窗必须留在视口内，并由正文区滚动
-  const tallDialog = document.querySelector<HTMLElement>('[role="dialog"]');
-  const tallBody = tallDialog?.querySelector<HTMLElement>('[data-role="dialog-body"]');
+  // C2a：课程名为空时保存禁用，并在字段下方给出错误文案（core 侧同样拒绝空名）
+  const emptyNameSave = [...document.body.querySelectorAll('button')].find(
+    (item) => (item.textContent ?? '').trim() === '保存',
+  );
+  const emptyNameErrorShown = (document.body.textContent ?? '').includes('课程名不能为空');
   check(
-    '弹窗有高度上限且正文区可滚动',
+    '课程名为空时保存禁用并提示',
+    emptyNameSave !== undefined && emptyNameSave.disabled && emptyNameErrorShown,
+    `保存=${emptyNameSave === undefined ? '无' : emptyNameSave.disabled ? '禁用' : '可点'} / 提示=${
+      emptyNameErrorShown ? '有' : '无'
+    }`,
+  );
+  // 内容超过屏高的弹层必须留在视口内，并由正文区滚动（桌面居中 Dialog / 移动底部 Sheet 两种容器）
+  const tallDialog = document.querySelector<HTMLElement>('[role="dialog"]');
+  const tallBody = tallDialog?.querySelector<HTMLElement>('[data-role="dialog-body"], [data-role="sheet-body"]');
+  const tallCapped = tallDialog?.className.includes('max-h-') === true;
+  check(
+    '弹层有高度上限且正文区可滚动',
     tallDialog !== null &&
-      tallBody !== null &&
-      tallDialog.className.includes('max-h-') &&
-      tallDialog.className.includes('overflow-hidden') &&
+      tallBody != null &&
+      tallCapped &&
       tallBody.className.includes('overflow-y-auto'),
-    `弹窗=${tallDialog?.className.includes('max-h-') === true ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
+    `弹层=${tallCapped ? '有上限' : '无上限'} / 正文=${tallBody?.className.includes('overflow-y-auto') === true ? '可滚动' : '不可滚动'}`,
+  );
+  // P2-05：弹窗打开时全局快捷键不再动背景 —— ←/→ 不翻窗口、/ 不叠第二层搜索
+  const windowStartInDialog = windowStartOf();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  await flush(20);
+  check('弹窗打开时 → 不改背景窗口', windowStartOf() === windowStartInDialog, `${windowStartInDialog} → ${windowStartOf()}`);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+  await flush(20);
+  check('弹窗打开时 ← 不改背景窗口', windowStartOf() === windowStartInDialog, windowStartOf());
+  const dialogsBefore = document.querySelectorAll('[role="dialog"]').length;
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: '/', bubbles: true }));
+  await flush(12);
+  check(
+    '弹窗打开时 / 不叠第二层搜索',
+    document.querySelectorAll('[role="dialog"]').length === dialogsBefore &&
+      !(document.body.textContent ?? '').includes('课程、教师、地点、周次与日程'),
+    `弹窗 ${dialogsBefore} → ${document.querySelectorAll('[role="dialog"]').length}`,
   );
   if (clickByText(document.body, '取消')) await flush(6);
   check('取消后占位块消失', view.container.querySelector('[data-role="empty-slot"]') === null, '');
@@ -959,13 +854,38 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const nameBox = document.querySelector('[role="dialog"] input');
   if (nameBox instanceof window.HTMLInputElement) setInputValue(nameBox, '重叠测试课');
   await flush(4);
-  if (clickByText(document.body, '保存')) await flush(16);
+  const courseSave = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+    (item) => (item.textContent ?? '').trim() === '保存',
+  );
+  courseSave?.click();
+  // React 19 在首个微任务里刷新离散事件的状态：等一拍再断言，此时保存还没落库
+  await Promise.resolve();
+  const busyOverlay = document.querySelector('[data-role="busy-overlay"]');
+  check(
+    '保存时按钮带 aria-busy 并盖慢操作蒙版',
+    courseSave !== undefined &&
+      courseSave.getAttribute('aria-busy') === 'true' &&
+      busyOverlay !== null,
+    `按钮 aria-busy=${courseSave?.getAttribute('aria-busy') ?? '无'} / 蒙版=${busyOverlay === null ? '无' : '有'}`,
+  );
+  await flush(16);
   check(
     '重叠课程保存成功并提示',
     (view.container.textContent ?? '').includes('重叠测试课') &&
       (document.body.textContent ?? '').includes('与「高等数学」第 1–2 节重叠，已同时保留'),
     (document.body.textContent ?? '').slice(-70),
   );
+  // I-10 回归：刚新建出来的课程卡也要能直接拖（不需要先按住等长按）
+  check('新建的课程出现在课表', findLessonCard(view.container, '重叠测试课') !== null, '');
+  const quickNewDrag = await quickDragLesson(view.container, '重叠测试课', { day: 3 });
+  await flush(6);
+  const newDragDialog = document.querySelector<HTMLElement>('[data-role="adjust-dialog"]');
+  check(
+    'I-10 新建的课程卡可直接拖动打开调课弹窗',
+    quickNewDrag && newDragDialog !== null && (document.body.textContent ?? '').includes('重叠测试课'),
+    `弹窗=${newDragDialog === null ? '无' : '有'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
 
   // C2b-2：多节占位块按住下半（下缘跟随）：向下继续扩展、向上收缩
   clickGridCell(view.container, 5, 1);
@@ -1071,13 +991,70 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
 
   // 只按一下不动（轻微抖动也算单击）：保留单节占位块，不弹加课弹窗
-  clickGridCell(view.container, 7, 5);
+  // 选一个第 5 节一定空着、又不是今天的列：今天有概率论、周二与周四有线代（第 5–8 节）
+  const todayDayOfWeek = new Date().getDay() === 0 ? 7 : new Date().getDay();
+  const emptyDay = [1, 2, 3, 4, 5, 6, 7].find(
+    (day) => day !== todayDayOfWeek && day !== 2 && day !== 4,
+  ) ?? 1;
+  clickGridCell(view.container, emptyDay, 5);
   await flush(8);
   check(
     '空白格单击（未拖动）只留单节占位块',
     slotRange(view.container) === '第 5 节' && document.querySelector('[aria-label="起始节"]') === null,
-    `${slotRange(view.container)}`,
+    `${slotRange(view.container)} @ 周${emptyDay}`,
   );
+  // P2-05：节次范围是 spinbutton，补 ↑/↓/Enter/Esc 并更新 aria-valuenow
+  const wheelOf = (): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>('[data-role="period-wheel"]');
+  const wheelKey = (key: string): void => {
+    wheelOf()?.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  };
+  check(
+    '节次范围是 spinbutton 且可键盘聚焦',
+    wheelOf()?.getAttribute('role') === 'spinbutton' && wheelOf()?.tabIndex === 0,
+    `role=${wheelOf()?.getAttribute('role') ?? '(无)'} tabindex=${wheelOf()?.tabIndex ?? '(无)'}`,
+  );
+  wheelKey('ArrowDown');
+  await flush(6);
+  check(
+    '↓ 扩展一节并更新 aria-valuenow',
+    slotRange(view.container) === '第 5–6 节' && wheelOf()?.getAttribute('aria-valuenow') === '6',
+    `${slotRange(view.container)} / now=${wheelOf()?.getAttribute('aria-valuenow') ?? '(无)'}`,
+  );
+  wheelKey('ArrowUp');
+  await flush(6);
+  check(
+    '↑ 收回一节并更新 aria-valuenow',
+    slotRange(view.container) === '第 5 节' && wheelOf()?.getAttribute('aria-valuenow') === '5',
+    `${slotRange(view.container)} / now=${wheelOf()?.getAttribute('aria-valuenow') ?? '(无)'}`,
+  );
+  // 16–20px 的小控件用透明外扩到 44px：视觉尺寸不变，只在 className 上留可断言的标记
+  const tapTargets = [...view.container.querySelectorAll<HTMLElement>('[data-tap-area="44"]')];
+  check(
+    '节次控件带 44px 透明命中区',
+    tapTargets.length >= 3 && tapTargets.every((item) => (item.getAttribute('class') ?? '').includes('after:')),
+    `${tapTargets.length} 个`,
+  );
+  wheelKey('Escape');
+  await flush(6);
+  check(
+    'spinbutton 上按 Esc 取消占位块',
+    view.container.querySelector('[data-role="empty-slot"]') === null,
+    '',
+  );
+  // 重新开一个占位块，验证 Enter 直接进加课弹窗
+  clickGridCell(view.container, emptyDay, 5);
+  await flush(8);
+  wheelKey('Enter');
+  await flush(12);
+  check(
+    'spinbutton 回车直接打开加课弹窗',
+    (document.body.textContent ?? '').includes('添加课程') &&
+      triggerText('起始节') === '第 5 节' &&
+      triggerText('结束节') === '第 5 节',
+    `${triggerText('起始节')} → ${triggerText('结束节')}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
   // 清掉占位块，避免影响后面的拖动调课断言
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
@@ -1087,21 +1064,21 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(6);
   const overlapMoveText = document.body.textContent ?? '';
   check(
-    '拖到已占用节次仍可打开调整弹窗',
-    overlapMoveText.includes('调整课程时间') && overlapMoveText.includes('第 3–4 节'),
+    '拖到已占用节次仍可打开调课弹窗',
+    document.querySelector('[data-role="adjust-dialog"]') !== null && overlapMoveText.includes('第 3–4 节'),
     overlapMoveText.slice(-60),
   );
-  if (clickByText(document.body, '本周生效')) await flush(16);
+  if (clickByText(document.body, '应用调整')) await flush(16);
   check(
     '重叠调课保存成功并提示',
     (document.body.textContent ?? '').includes('调整后与「重叠测试课」第 1–3 节重叠，已同时保留'),
     (document.body.textContent ?? '').slice(-70),
   );
-  // 本周生效的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
+  // 「这一次」的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
   const movedOutCard = view.container.querySelector('[data-tone="movedOut"]');
   const movedInCard = view.container.querySelector('[data-role="moved-in-label"]')?.closest('[data-tone]') ?? null;
   check(
-    '本周调课后课表标出原位置与落点',
+    '这一次调课后课表标出原位置与落点',
     movedOutCard !== null &&
       (movedOutCard.querySelector('[data-role="moved-out-label"]')?.textContent ?? '').trim() === '已调课' &&
       (movedOutCard.textContent ?? '').includes('高数') &&
@@ -1114,7 +1091,60 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
   check('切到日程页', switchedToSchedule && scheduleText.includes('倒计时'), scheduleText.slice(0, 60));
-  // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/课程调整收进「＋」，其余收进「⋯」
+  // 学期概览卡片：周次、课时、出勤估算、考试与课程排行都由本机数据算出
+  const statsRoot = view.container.querySelector<HTMLElement>('[data-role="semester-stats"]');
+  const statsText = statsRoot?.textContent ?? '';
+  check(
+    '学期概览卡片显示学期周次与已上过 / 待上节数',
+    statsRoot !== null &&
+      statsText.includes('学期概览') &&
+      /第 \d+ 周 \/ 共 20 周/.test(statsText) &&
+      /已上过 \d+ 节/.test(statsText) &&
+      /待上 \d+ 节/.test(statsText),
+    statsText.slice(0, 80),
+  );
+  check(
+    '学期概览卡片显示出勤估算、考试与课程课时排行',
+    statsText.includes('出勤估算') &&
+      /\d+%/.test((statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent ?? '')) &&
+      (statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent ?? '').includes('期末模拟考') &&
+      (statsRoot?.querySelector('[data-role="semester-stats-ranking"]')?.textContent ?? '').includes('往期课'),
+    [
+      statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent?.trim(),
+      statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent?.trim(),
+    ].join(' | '),
+  );
+  // 空学期：直接挂卡片正文，断言空态与「去添加课程」入口
+  const emptyStatsData = {
+    timeZone: 'Asia/Shanghai',
+    today: todayText,
+    lessonsByDate: new Map(),
+    reschedules: [],
+    exams: [],
+    todos: [],
+    courses: [],
+    semester: null,
+  } as unknown as AppData;
+  const emptyStats = mount(<SemesterStatsCard data={emptyStatsData} onAddTodo={() => {}} />);
+  await flush(4);
+  check(
+    '学期概览：空学期显示空态与去添加课程入口',
+    emptyStats.container.querySelector('[data-role="semester-stats-empty"]') !== null &&
+      (emptyStats.container.textContent ?? '').includes('去添加课程'),
+    (emptyStats.container.textContent ?? '').slice(0, 60),
+  );
+  emptyStats.root.unmount();
+  emptyStats.container.remove();
+  // 视图进入过渡：切页后视图根节点带 dt-view-enter，且根节点的 data-motion 同时存在
+  const viewRoot = view.container.querySelector('[data-role="view-root"]');
+  check(
+    '切页后视图根节点带进入过渡类',
+    viewRoot !== null &&
+      viewRoot.classList.contains('dt-view-enter') &&
+      (document.documentElement.dataset.motion ?? '') !== '',
+    `class=${viewRoot?.className ?? '(无)'} motion=${document.documentElement.dataset.motion ?? '(无)'}`,
+  );
+  // 日程页收敛为「顶部一行 + 时间线 + 侧栏卡片」：加日程/加考试/调课收进「＋」，其余收进「⋯」
   check(
     '日程页默认只剩顶部一行与时间线',
     view.container.querySelector('summary[aria-label="添加"]') !== null &&
@@ -1122,6 +1152,40 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
+  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源，固定四项
+  const addMenuLabels = (): string[] =>
+    [...view.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]')].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+  const EXPECTED_ADD_ACTIONS = ['加课程', '加待办', '加考试', '导入课表'];
+  check(
+    'P1-01 日程「添加」菜单含四项新增动作',
+    addMenuLabels().join('/') === EXPECTED_ADD_ACTIONS.join('/'),
+    addMenuLabels().join(' / ') || '(无)',
+  );
+  // 移动端 FAB → 底部 Sheet，同样四项，且必须含「加考试」
+  const mobileFab = view.container.querySelector<HTMLElement>('button[aria-label="添加"]');
+  mobileFab?.click();
+  await flush(10);
+  const fabActions = [...document.querySelectorAll<HTMLElement>('[data-role="add-actions"] button')].map((item) =>
+    (item.textContent ?? '').trim(),
+  );
+  check(
+    'P1-01 移动 FAB 底部 Sheet 含四项且含「加考试」',
+    mobileFab !== null &&
+      fabActions.join('/') === EXPECTED_ADD_ACTIONS.join('/') &&
+      fabActions.includes('加考试'),
+    fabActions.join(' / ') || '(无)',
+  );
+  if (clickByText(document.body, '加考试')) await flush(14);
+  const fabExamKind = document.querySelector('[aria-label="待办类型：考试"]');
+  check(
+    'P1-01 移动 FAB 点「加考试」打开考试表单且类型选中',
+    fabExamKind?.getAttribute('aria-pressed') === 'true' &&
+      document.querySelector('[aria-label="开考时间"]') !== null,
+    `类型选中=${fabExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(8);
   // ① 时间线课程显示开始–结束；② 行内「调课」按钮移除，改为点课程进详情再调课
   const seededHolidays = new Set<string>(builtinHolidays());
   seededHolidays.delete(addDays(holidayStartText, -1));
@@ -1133,7 +1197,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     { date: addDays(seededMonday, 10), range: '16:00–17:40', course: '线性代数' },
     { date: addDays(seededMonday, 7), range: '08:00–09:40', course: '高等数学' },
   ];
-  const picked = timelinePicks.find((item) => !seededHolidays.has(item.date)) ?? timelinePicks[0];
+  const picked = timelinePicks.find((item) => !seededHolidays.has(item.date)) ?? timelinePicks[0]!;
   const dateBox = view.container.querySelector('input[aria-label="查看日期"]');
   if (dateBox instanceof window.HTMLInputElement) setInputValue(dateBox, picked.date);
   await flush(10);
@@ -1169,14 +1233,15 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     (document.body.textContent ?? '').slice(-60),
   );
   if (clickByLabel(document.body, '调课')) await flush(14);
-  const adjustFromDate = document.querySelector('input[aria-label="原来哪一天"]');
+  const adjustFromDate = document.querySelector<HTMLInputElement>('input[aria-label="原日期"]');
   check(
-    '详情页调课入口打开调整弹窗并预填课次',
-    (document.body.textContent ?? '').includes('临时加课') &&
-      triggerText('哪门课') === picked.course &&
+    '详情页调课入口打开同一个调课弹窗并预填课次',
+    document.querySelector('[data-role="adjust-dialog"]') !== null &&
+      (document.body.textContent ?? '').includes('临时加课') &&
+      triggerText('课程') === picked.course &&
       adjustFromDate instanceof window.HTMLInputElement &&
       adjustFromDate.value === picked.date,
-    `${triggerText('哪门课')} / ${adjustFromDate instanceof window.HTMLInputElement ? adjustFromDate.value : '(无)'}`,
+    `${triggerText('课程')} / ${adjustFromDate instanceof window.HTMLInputElement ? adjustFromDate.value : '(无)'}`,
   );
   if (clickByText(document.body, '取消')) await flush(8);
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -1211,7 +1276,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const pastCourseRow = rowIn('timeline-completed', '往期课');
   const noTimeRow = rowIn('timeline-main', '无时间待办');
   const courseNature = natureOf(pastCourseRow);
-  const otherNature = natureOf(noTimeRow);
+  const todoNature = natureOf(noTimeRow);
   check(
     '日程时间线：过期的课自动归入已完成',
     pastCourseRow !== undefined &&
@@ -1300,9 +1365,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const adjustNature = natureOf(view.container.querySelector('[data-kind="adjust"]'));
   const examNature = natureOf(rowIn('timeline-main', '期末模拟考'));
   check(
-    '日程时间线：显示条目性质标签（课程/调整/其他/考试）',
-    courseNature === '课程' && adjustNature === '调整' && otherNature === '其他' && examNature === '考试',
-    `课程=${courseNature} 调整=${adjustNature} 其他=${otherNature} 考试=${examNature}`,
+    '日程时间线：显示条目性质标签（课程/调整/日程/考试）',
+    courseNature === '课程' && adjustNature === '调整' && todoNature === '日程' && examNature === '考试',
+    `课程=${courseNature} 调整=${adjustNature} 日程=${todoNature} 考试=${examNature}`,
   );
 
   // ④ 停课：日程里默认已完成（进已完成分组、不计入未完成），课表里灰显并标注「停课」
@@ -1326,12 +1391,23 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(view.container, '课表')) await flush(16);
   const cancelledCard = view.container.querySelector('[data-tone="cancelled"]');
   check(
-    '停课的课次在课表里灰显并标注',
+    '停课的这节课在课表里灰显并标注',
     cancelledCard !== null &&
       (cancelledCard.querySelector('[data-role="cancelled-label"]')?.textContent ?? '').trim() === '停课' &&
       cancelledCard.className.includes('opacity-45') &&
       (cancelledCard.textContent ?? '').includes('往期'),
     cancelledCard?.textContent?.trim() ?? '(无)',
+  );
+  // I-09：停课卡不参与拖动，但也不能吃掉页面滚动（touch-action 只留纵向滚动）
+  const cancelledCell = cancelledCard?.closest('[data-role="lesson-cell"]');
+  check(
+    'I-09 停课卡不参与拖动也不吃滚动',
+    cancelledCell instanceof window.HTMLElement &&
+      cancelledCell.style.touchAction === 'pan-y' &&
+      !(cancelledCard?.className ?? '').includes('cursor-grab'),
+    `touch-action=${cancelledCell instanceof window.HTMLElement ? cancelledCell.style.touchAction : '(无)'} / grab=${
+      (cancelledCard?.className ?? '').includes('cursor-grab') ? '有' : '无'
+    }`,
   );
   if (clickByText(view.container, '日程')) await flush(12);
 
@@ -1494,38 +1570,99 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       ),
     '',
   );
-  if (clickMenu(view.container, '添加', '课程调整')) await flush(12);
-  const adjustText = document.body.textContent ?? '';
+  // 页脚的「刷新」按钮与统计已收进顶部日期行：没有手动刷新，统计常驻
+  const scheduleStats = view.container.querySelector('[data-role="schedule-stats"]');
+  const scheduleRefresh = [...view.container.querySelectorAll('button')].find(
+    (node) => (node.textContent ?? '').trim() === '刷新',
+  );
   check(
-    '课程调整含三种模式',
-    adjustText.includes('调课') && adjustText.includes('调休') && adjustText.includes('临时加课'),
+    '日程页统计并入顶部日期行且不再提供「刷新」',
+    scheduleStats !== null &&
+      (scheduleStats.textContent ?? '').includes('条待办') &&
+      scheduleRefresh === undefined,
+    `统计=${scheduleStats?.textContent?.trim() ?? '(无)'} 刷新=${scheduleRefresh === undefined ? '无' : '有'}`,
+  );
+  const openAdjustTrimmed = clickMenu(view.container, '更多操作', '调课');
+  if (openAdjustTrimmed) await flush(12);
+  const adjustText = document.body.textContent ?? '';
+  const adjustDialogOpened = document.querySelector('[data-role="adjust-dialog"]') !== null;
+  const adjustHasButton = (label: string): boolean =>
+    [...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll('button') ?? [])].some(
+      (item) => (item.textContent ?? '').trim() === label,
+    );
+  check(
+    '调课弹窗含五个主操作',
+    openAdjustTrimmed &&
+      adjustDialogOpened &&
+      ['改期', '停课', '调休', '临时加课', '改为考试'].every((label) => adjustText.includes(label)),
     '',
   );
-  check('调课可直接选课与课次', document.querySelector('[aria-label="哪门课"]') !== null, '');
+  check('改期可直接选课与课次', document.querySelector('[aria-label="课程"]') !== null, '');
+  check(
+    '改期有四个生效范围',
+    ['这一次', '每周', '指定周', '指定日期'].every((label) => adjustText.includes(label)),
+    '',
+  );
+  check('改期主按钮为应用调整', adjustHasButton('应用调整'), '');
   if (clickByText(document.body, '调休')) await flush(8);
   check(
     '调休为指定两天',
-    document.querySelector('[aria-label="把哪一天的课表"]') !== null &&
-      document.querySelector('[aria-label="调到哪一天上"]') !== null,
+    document.querySelector('[aria-label="原日期课表"]') !== null &&
+      document.querySelector('[aria-label="目标上课日"]') !== null,
     '',
+  );
+  if (clickByText(document.body, '停课')) await flush(8);
+  check(
+    '停课主按钮改为确认停课',
+    adjustHasButton('确认停课') && !adjustHasButton('应用调整'),
+    (document.body.textContent ?? '').slice(-40),
   );
   if (clickByText(document.body, '临时加课')) await flush(8);
   check('临时加课可自定义名称', document.querySelector('[aria-label="或自定义课程名称"]') !== null, '');
+  check('临时加课主按钮为应用调整', adjustHasButton('应用调整'), '');
+  // I-11：把这次课改成考试 —— 日期取调整后日期、节次换钟点、可写备注，主按钮随之变化
+  if (clickByText(document.body, '改为考试')) await flush(8);
+  check(
+    'I-11 改为考试给出日期、节次与备注',
+    document.querySelector('[aria-label="考试日期"]') !== null &&
+      document.querySelector('[aria-label="考试起始节"]') !== null &&
+      document.querySelector('[aria-label="考试结束节"]') !== null &&
+      document.querySelector('[aria-label="考试备注"]') !== null &&
+      (document.body.textContent ?? '').includes('原课次从课表移除'),
+    `主按钮=${adjustHasButton('改为考试') ? '改为考试' : '未变'}`,
+  );
+  check(
+    'I-11 改为考试主按钮随之变化',
+    adjustHasButton('改为考试') && !adjustHasButton('应用调整') && !adjustHasButton('确认停课'),
+    '',
+  );
   if (clickByText(document.body, '取消')) await flush(6);
 
+  setNotifyPermission('granted');
   const switchedToSettings = clickByText(view.container, '设置');
   await flush(10);
+  await waitFor(() => settingsNavItems(view.container).length === settingsGroupTitles.length, 20);
   const settingsText = view.container.textContent ?? '';
+  check(
+    '重进设置页回到分组清单（不记忆上次分组）',
+    switchedToSettings &&
+      settingsNavIsListOnly(view.container) &&
+      settingsGroupTitles.every((title) => settingsText.includes(title)),
+    `nav=${settingsNav(view.container)?.className ?? '(无)'}`,
+  );
+  await openSettingsGroup(view.container, '悬浮窗与小组件');
+  const widgetSettingsText = view.container.textContent ?? '';
   check(
     '切到设置页',
     switchedToSettings &&
-      settingsText.includes('外观') &&
-      settingsText.includes('小组件背景') &&
-      !settingsText.includes('导出日志'),
+      settingsGroupTitles.every((title) => settingsText.includes(title)) &&
+      widgetSettingsText.includes('小组件背景') &&
+      !widgetSettingsText.includes('导出日志'),
     settingsText.slice(0, 60),
   );
 
-  // 「?」说明入口：设置项正文只留短句，补充说明点开可见
+  // 「?」说明入口：设置项正文只留短句，补充说明点开可见（说明在「课表显示」分组里）
+  await openSettingsGroup(view.container, '课表显示');
   const helpButton = view.container.querySelector<HTMLElement>('[aria-label="说明：周视图天数"]');
   helpButton?.click();
   await flush(10);
@@ -1535,24 +1672,98 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     helpButton !== null && helpBody !== null && (helpBody.textContent ?? '').includes('列宽按屏宽等分'),
     helpBody?.textContent?.trim() ?? '(未打开)',
   );
+  check(
+    '「?」浮层限宽且长词可断行，不溢出视口',
+    helpBody !== null &&
+      helpBody.className.includes('max-w-[min(20rem,calc(100vw-2rem))]') &&
+      helpBody.className.includes('break-words'),
+    helpBody?.className ?? '(未打开)',
+  );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
 
+  // —— P1-11 通知权限：删除 PERMISSION_LABEL 后全平台共用六态，非 Android 按能取到的三态显示 ——
+  // 权限状态行在「提醒设置」分组里：分组内容按需挂载，每次重进设置页都要先点进该组
+  await openSettingsGroup(view.container, '提醒设置');
+  const notifyLine = (): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>('[data-role="notify-permission"]');
+  check(
+    '通知权限用统一 live region 状态行（已允许）',
+    notifyLine()?.getAttribute('role') === 'status' &&
+      notifyLine()?.getAttribute('aria-live') === 'polite' &&
+      (notifyLine()?.textContent ?? '').includes('通知权限：已允许'),
+    notifyLine()?.textContent?.trim() ?? '(无)',
+  );
+  check('已允许时不显示权限横幅', view.container.querySelector('[data-role="notify-banner"]') === null, '');
+  setNotifyPermission('denied');
+  clickByText(view.container, '课表');
+  await flush(10);
+  clickByText(view.container, '设置');
+  await flush(12);
+  await openSettingsGroup(view.container, '提醒设置');
+  check(
+    '已拒绝：同一行改词并出现提醒横幅',
+    (notifyLine()?.textContent ?? '').includes('通知权限：已拒绝') &&
+      view.container.querySelector('[data-role="notify-banner"]') !== null,
+    notifyLine()?.textContent?.trim() ?? '(无)',
+  );
+  setNotifyPermission('default');
+  clickByText(view.container, '课表');
+  await flush(10);
+  clickByText(view.container, '设置');
+  await flush(12);
+  await openSettingsGroup(view.container, '提醒设置');
+  check(
+    '未申请：文案对齐六态且不误报横幅',
+    (notifyLine()?.textContent ?? '').includes('通知权限：未申请') &&
+      view.container.querySelector('[data-role="notify-banner"]') === null,
+    notifyLine()?.textContent?.trim() ?? '(无)',
+  );
+
   // —— 预设版本与更新：内置兜底 + 运行时下载缓存 + 失败回退（全程用注入的假 fetch，不联网） ——
+  // 预设版本在「诊断与维护」分组（设备与同步页）
+  await gotoDevices();
   await flush(8);
+  // 分组导航：首次进入默认选第一组（本地存储）；切组只挂载当前组；重进页面回默认组
+  check(
+    '设备页默认选中第一个分组（本地存储）',
+    activeDeviceGroup() === 'storage' && view.container.querySelectorAll('[data-role="settings-nav-item"]').length === 7,
+    `当前=${activeDeviceGroup() || '(无)'}`,
+  );
+  const openedBackupGroup = await openDeviceGroup('备份与恢复');
+  check(
+    '设备页切到备份分组后只挂载当前组内容',
+    openedBackupGroup &&
+      activeDeviceGroup() === 'backup' &&
+      view.container.querySelector('[data-role="backup-settings"]') !== null &&
+      view.container.querySelector('[data-role="log-settings"]') === null,
+    `当前=${activeDeviceGroup() || '(无)'}；备份块=${
+      view.container.querySelector('[data-role="backup-settings"]') === null ? '无' : '有'
+    }`,
+  );
+  await gotoSettings();
+  await gotoDevices();
+  check(
+    '重进设备页回到默认分组（本地存储）',
+    activeDeviceGroup() === 'storage' &&
+      view.container.querySelector('[data-role="backup-settings"]') === null,
+    `当前=${activeDeviceGroup() || '(无)'}`,
+  );
+  await openDeviceGroup('本地存储');
+  await openDeviceGroup('诊断与维护');
   const presetVersionLine = (): string =>
     (view.container.querySelector('[data-role="preset-version"]')?.textContent ?? '').trim();
   const presetResultLine = (): string =>
     (view.container.querySelector('[data-role="preset-result"]')?.textContent ?? '').trim();
   const presetButton = view.container.querySelector('button[aria-label="检查预设更新"]');
   check(
-    '设置页显示当前预设版本（内置）',
+    '设备页显示当前预设版本（内置）',
     presetVersionLine().includes('预设版本：') &&
       presetVersionLine().includes(BUILTIN_PRESET_VERSION) &&
       presetVersionLine().includes('（内置）'),
     presetVersionLine(),
   );
-  check('设置页提供检查预设更新按钮', presetButton instanceof window.HTMLElement, presetVersionLine());
+  check('设备页提供检查预设更新按钮', presetButton instanceof window.HTMLElement, presetVersionLine());
 
   const realFetch = globalThis.fetch;
   /** ② 里下载到的版本号；块外（③④ 校验缓存与启动套用）还要用。 */
@@ -1573,7 +1784,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     await flush(14);
     check(
       '检查预设更新离线时给出可读提示',
-      presetResultLine().includes('检查失败：无法连接预设源'),
+      presetResultLine().includes('检查预设更新失败：无法连接预设源'),
       presetResultLine(),
     );
 
@@ -1595,6 +1806,30 @@ export async function runSmoke(): Promise<SmokeResult[]> {
         presetVersionLine().includes(`${nextVersion}（已更新）`),
       `${presetResultLine()} / ${presetVersionLine()}`,
     );
+
+    // —— P1-06 待重启：路径只登记，主壳（非设置页）一条常驻条统一呈现 ——
+    const pendingBar = (): HTMLElement | null =>
+      view.container.querySelector<HTMLElement>('[data-role="pending-restart"]');
+    check(
+      '需重启的改动在主壳显示常驻条（含数量与两个动作）',
+      pendingBar() !== null &&
+        (pendingBar()?.textContent ?? '').includes('1 项改动待重启') &&
+        (pendingBar()?.textContent ?? '').includes('立即重启') &&
+        (pendingBar()?.textContent ?? '').includes('稍后'),
+      pendingBar()?.textContent?.trim() ?? '(无)',
+    );
+    const pendingCountBefore = pendingBar()?.getAttribute('data-pending-restart-count') ?? '';
+    if (pendingBar() !== null) clickByText(pendingBar() as HTMLElement, '稍后');
+    await flush(6);
+    check(
+      '「稍后」收起后仍保留计数，状态不会消失',
+      pendingBar() !== null &&
+        pendingBar()?.getAttribute('data-pending-restart-count') === pendingCountBefore &&
+        (pendingBar()?.textContent ?? '').includes('1 项改动待重启'),
+      pendingBar()?.textContent?.trim() ?? '(无)',
+    );
+    if (pendingBar() !== null) clickByText(pendingBar() as HTMLElement, '展开');
+    await flush(4);
 
     // ③ 索引来自快照：预设仓库已取消 presets/index.json，索引就是快照的 index 字段，
     //    所以「拿到一份通过校验的快照」就该能直接取出学校/系统目录，且路径指向 school.json。
@@ -1663,9 +1898,87 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('搜索弹窗渲染', (document.body.textContent ?? '').includes('输入关键词开始搜索'), '');
   check('回到课表', switchedToTimeline, '');
 
-  // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理卡片里能展开
+  // P1-03：搜索命中直达——非今日考试翻到该日期并高亮那一行，跨窗口课程翻到命中周并开详情
+  const searchInput = (): HTMLInputElement | null =>
+    document.querySelector<HTMLInputElement>('input[aria-label="搜索关键词"]');
+  const pickSearchResult = async (keyword: string, match: (text: string) => boolean): Promise<boolean> => {
+    const box = searchInput();
+    if (box === null) return false;
+    setInputValue(box, keyword);
+    await flush(20);
+    const hit = [...document.querySelectorAll<HTMLElement>('[data-role="dialog-body"] button')].find((item) =>
+      match(item.textContent ?? ''),
+    );
+    if (hit === undefined) return false;
+    hit.click();
+    await flush(24);
+    return true;
+  };
+  const scheduleDateBox = (): HTMLInputElement | null =>
+    view.container.querySelector<HTMLInputElement>('input[aria-label="查看日期"]');
+  const focusedRowText = (): string =>
+    (view.container.querySelector('[data-role="timeline-row"][data-focused="true"]')?.textContent ?? '').trim();
+  const examHitDate = addDays(seededMonday, 7);
+  const pickedExam = await pickSearchResult('期末模拟考', (text) => text.includes('期末模拟考'));
+  check(
+    'P1-03 非今日考试命中后显示该日期并高亮该行',
+    pickedExam &&
+      scheduleDateBox()?.value === examHitDate &&
+      focusedRowText().includes('期末模拟考'),
+    `命中=${String(pickedExam)} 日期=${scheduleDateBox()?.value ?? '(无)'} 高亮行=${focusedRowText().slice(0, 40) || '(无)'}`,
+  );
+
+  // 搜索入口只在课表页顶部：先切回课表再打开（切页会重建工具栏，旧节点已脱离文档）
+  if (clickByText(view.container, '课表')) await flush(12);
+  view.container.querySelector<HTMLElement>('button[aria-label="搜索"]')?.click();
+  await flush(8);
+  const scheduleStore = validatedStorage(await openIndexedDbStorage());
+  const activeSemesterRow = await activeSemester(scheduleStore, USER_ID);
+  const weekOneStart = String(activeSemesterRow?.['start_date'] ?? '');
+  // 概率论只在第 1-2 周：命中时必须翻到那两周的窗口，再打开课程详情
+  const pickedCourse = await pickSearchResult(
+    '概率',
+    (text) => text.includes('概率') && text.includes('排课'),
+  );
+  check(
+    'P1-03 跨窗口课程命中后翻到该周并打开详情',
+    pickedCourse &&
+      windowStartOf() === weekOneStart &&
+      (document.body.textContent ?? '').includes('概率论') &&
+      document.querySelector('[aria-label="调课"]') !== null,
+    `命中=${String(pickedCourse)} 窗口=${windowStartOf()} 期望=${weekOneStart} 详情=${
+      document.querySelector('[aria-label="调课"]') === null ? '未开' : '已开'
+    }`,
+  );
+  // 收尾：关掉详情、回到今天，避免影响后面的设置与导航用例
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(10);
+  if (clickByLabel(view.container, '回到今天')) await flush(24);
+
+  // 导入是课程管理的子项：导航里没有「导入」，设置页的课程管理分组里能展开
   clickByText(view.container, '设置');
   await flush(12);
+  // 课程管理在「学期设置」分组里：先点进该组
+  await openSettingsGroup(view.container, '学期设置');
+  const settingsActions = view.container.querySelector<HTMLElement>('[data-role="settings-actions"]');
+  check(
+    '设置页顶部只留导入课表（数据类动作迁到设备页）',
+    settingsActions !== null &&
+      (settingsActions.textContent ?? '').includes('导入课表') &&
+      !(settingsActions.textContent ?? '').includes('导出备份') &&
+      !(settingsActions.textContent ?? '').includes('检查更新'),
+    (settingsActions?.textContent ?? '(无)').trim(),
+  );
+  const pendingOnSettings = view.container.querySelector<HTMLElement>('[data-role="pending-restart"]');
+  check(
+    '设置页顶部同样显示待重启条',
+    pendingOnSettings !== null && (pendingOnSettings.textContent ?? '').includes('项改动待重启'),
+    pendingOnSettings?.textContent?.trim() ?? '(无)',
+  );
+  if (settingsActions !== null && clickByText(settingsActions, '导入课表')) await flush(12);
+  check('快捷动作直接打开导入向导', document.querySelector('[aria-label="导入步骤"]') !== null, '');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(8);
   const courseImport = view.container.querySelector('[data-role="course-import"]');
   const importSummary = view.container.querySelector('[aria-label="导入课表"]');
   if (importSummary instanceof window.HTMLElement) importSummary.click();
@@ -1678,20 +1991,81 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   check('已移除程序代登录入口', !importText.includes('正方教务') && !importText.includes('程序代登录'), '');
   check(
-    '新增「我的」页面且显示建设中',
-    [...view.container.querySelectorAll('button')].some((node) => (node.textContent ?? '').trim() === '我的'),
+    '导航项改为「设备与同步」，不再有「我的」占位',
+    [...view.container.querySelectorAll('button')].some(
+      (node) => (node.textContent ?? '').trim() === '设备与同步',
+    ) &&
+      ![...view.container.querySelectorAll('button')].some((node) => (node.textContent ?? '').trim() === '我的'),
     '',
   );
-  if (clickByText(view.container, '我的')) await flush(10);
-  check('「我的」页面为建设中占位', (view.container.textContent ?? '').includes('建设中'), '');
-  if (clickByText(view.container, '设置')) await flush(10);
-
-  if (clickByTextStart(view.container, '网页课表')) await flush(10);
+  await gotoDevices();
+  const devicesText = view.container.textContent ?? '';
   check(
-    '网页导入提供书签与粘贴',
-    view.container.querySelector('textarea[aria-label="书签小工具代码"]') !== null &&
-      view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]') !== null &&
-      (view.container.textContent ?? '').includes('识别并预览'),
+    '设备与同步页承载七张配置卡片，一级页面无「建设中」',
+    ['本地存储', '备份与恢复', 'WebDAV 同步', '局域网同步', '更新', '诊断与维护', '关于'].every((title) =>
+      devicesText.includes(title),
+    ) &&
+      !devicesText.includes('存储与同步') &&
+      !devicesText.includes('更新与维护') &&
+      !devicesText.includes('建设中'),
+    devicesText.slice(0, 60),
+  );
+  const devicesActions = view.container.querySelector<HTMLElement>('[data-role="devices-actions"]');
+  check(
+    '设备与同步页顶部不再放快捷动作行',
+    devicesActions === null,
+    devicesActions?.textContent?.trim() ?? '(无)',
+  );
+  const enteredStorage = await openDeviceGroup('本地存储');
+  const storageActions = view.container.querySelector<HTMLElement>('[data-role="storage-transfer-actions"]');
+  check(
+    '导出备份 / 导入备份 / ICS / 课表图片 PNG / 课表 PDF 下沉到「本地存储」分组',
+    enteredStorage &&
+      storageActions !== null &&
+      ['导出备份', '导入备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF'].every((label) =>
+        (storageActions.textContent ?? '').includes(label),
+      ) &&
+      storageActions.querySelector('[data-role="export-timetable-png"]') !== null &&
+      storageActions.querySelector('[data-role="export-timetable-pdf"]') !== null &&
+      storageActions.querySelector('[data-role="export-ics"]') !== null,
+    (storageActions?.textContent ?? '(无)').trim(),
+  );
+  const enteredBackupGroup = await openDeviceGroup('备份与恢复');
+  const backupGroupText = view.container.textContent ?? '';
+  check(
+    '「备份与恢复」分组保留快照列表与「新建快照」，不再重复导出/导入入口',
+    enteredBackupGroup &&
+      view.container.querySelector('[data-role="backup-settings"]') !== null &&
+      backupGroupText.includes('新建快照') &&
+      view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null &&
+      !backupGroupText.includes('导出备份') &&
+      !backupGroupText.includes('导出课表（ICS）'),
+    backupGroupText.slice(0, 80),
+  );
+  const enteredUpdateGroup = await openDeviceGroup('更新');
+  const updateButtons = [
+    ...view.container.querySelectorAll<HTMLButtonElement>('button[aria-label="检查更新"]'),
+  ];
+  check(
+    '「更新」分组保留唯一的「检查更新」，页面顶部不再重复',
+    enteredUpdateGroup &&
+      updateButtons.length === 1 &&
+      (view.container.querySelector('[data-role="release-page-link"]')?.getAttribute('href') ?? '').includes(
+        'muyangplus/dawn-tick/releases',
+      ),
+    `检查更新按钮 ${updateButtons.length} 个`,
+  );
+  await gotoSettings();
+  // 导入流程挂在「学期设置」分组的课程管理里：先点进该组
+  await openSettingsGroup(view.container, '学期设置');
+
+  // 渠道 ②：教务系统内嵌窗口承载选校与入口（Web 上明确给出「改用粘贴」的下一步）
+  if (clickByTextStart(view.container, '教务系统内嵌窗口')) await flush(10);
+  check(
+    '教务渠道给出选校与入口地址',
+    view.container.querySelector('[data-role="window-source"]') !== null &&
+      view.container.querySelector('[data-role="school-picker"]') !== null &&
+      view.container.querySelector('input[aria-label="入口地址"]') !== null,
     '',
   );
 
@@ -1816,7 +2190,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check(
     '确认后交给浏览器打开并关闭确认框',
     openedUrls.length === 1 &&
-      openedUrls[0].includes('template=request-school.yml') &&
+      openedUrls[0]!.includes('template=request-school.yml') &&
       linkUrlBox() === null &&
       (document.body.textContent ?? '').includes('已在默认浏览器打开'),
     `已打开 ${openedUrls.join('、') || '(无)'}`,
@@ -1885,6 +2259,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     }`,
   );
 
+  check(
+    'Web 上教务渠道给出改用粘贴的下一步',
+    (view.container.textContent ?? '').includes('当前平台没有内嵌教务窗口') &&
+      [...view.container.querySelectorAll('button')].some(
+        (node) => (node.textContent ?? '').trim() === '改用粘贴文本',
+      ),
+    '',
+  );
+  if (clickByText(view.container, '改用粘贴文本')) await flush(10);
+  check(
+    '网页导入提供书签与粘贴',
+    view.container.querySelector('textarea[aria-label="书签小工具代码"]') !== null &&
+      view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]') !== null &&
+      (view.container.textContent ?? '').includes('识别并预览') &&
+      (view.container.textContent ?? '').includes('1. 安装书签'),
+    '',
+  );
+
   const pasteBox = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBox instanceof window.HTMLTextAreaElement) {
     setInputValue(pasteBox, PAGE_SAMPLE);
@@ -1894,21 +2286,27 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   check('网页识别进入预览', (view.container.textContent ?? '').includes('解析到'), '');
 
   // 手动校正映射：换成星期表头样例，指定表头行与星期列
-  if (clickByText(view.container, '返回')) await flush(10);
+  if (clickContentBack(view.container)) await flush(10);
   const pasteBoxSecond = view.container.querySelector('textarea[aria-label="粘贴课表页面内容"]');
   if (pasteBoxSecond instanceof window.HTMLTextAreaElement) {
     setInputValue(pasteBoxSecond, PAGE_WEEKDAY_SAMPLE);
     await flush(6);
   }
-  const mappingSummary = [...view.container.querySelectorAll('summary')].find((item) =>
-    (item.textContent ?? '').includes('手动指定表格'),
+  const mappingButton = [...view.container.querySelectorAll('button')].find(
+    (item) => (item.textContent ?? '').trim() === '手动指定表格',
   );
-  check('提供手动校正映射入口', mappingSummary !== undefined, '');
-  if (mappingSummary instanceof HTMLElement) mappingSummary.click();
-  await flush(8);
-  if (clickByText(view.container, '读取页面表格')) await flush(10);
-  check('页面表格预览可读', (view.container.textContent ?? '').includes('星期一'), '');
-  if (clickByText(view.container, '按此映射识别')) await flush(22);
+  check('提供手动校正映射入口', mappingButton !== undefined, '');
+  mappingButton?.click();
+  await flush(10);
+  check(
+    '手动映射在抽屉里打开',
+    document.querySelector('[data-role="manual-mapping"]') !== null &&
+      document.querySelector('[data-role="manual-mapping"]')?.getAttribute('data-container') === 'sheet',
+    '',
+  );
+  if (clickByText(document.body, '读取页面表格')) await flush(10);
+  check('页面表格预览可读', (document.body.textContent ?? '').includes('星期一'), '');
+  if (clickByText(document.body, '按此映射识别')) await flush(22);
   check('按手动映射识别成功', (view.container.textContent ?? '').includes('解析到'), '');
 
   if (clickByText(document.body, '取消') === false) {
@@ -1918,17 +2316,14 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   clickByText(view.container, '设置');
   await flush(10);
+  // 课程管理在「学期设置」分组里：先点进该组
+  await openSettingsGroup(view.container, '学期设置');
 
   const startInputs = (root: HTMLElement): HTMLInputElement[] =>
     [...root.querySelectorAll('input[aria-label$="节开始时间"]')].filter(
       (item): item is HTMLInputElement => item instanceof window.HTMLInputElement,
     );
-  const panelText = view.container.textContent ?? '';
-  check(
-    '时间表与课程管理渲染',
-    panelText.includes('时间表') && panelText.includes('课程管理') && panelText.includes('高数'),
-    '',
-  );
+  const semesterPanelText = view.container.textContent ?? '';
   check('课程管理提供编辑与删除', hasLabel(view.container, '编辑课程') && hasLabel(view.container, '删除课程'), '');
   if (clickByLabel(view.container, '编辑课程')) await flush(12);
   check(
@@ -1941,15 +2336,249 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   if (clickByText(document.body, '取消')) await flush(6);
   check(
     '默认关着开发者特性：诊断入口不显示，也没有示例数据按钮',
-    !panelText.includes('导出日志') && !panelText.includes('填充示例数据'),
+    !semesterPanelText.includes('导出日志') && !semesterPanelText.includes('填充示例数据'),
     '',
   );
+  // 节次时间表在「作息与选校」卡里：展开后与学期卡的内容合并成一条断言
+  const openedSlotsCard = await openSettingsGroup(view.container, '作息与选校');
+  const slotsPanelText = view.container.textContent ?? '';
   check(
-    '维护卡带自动检查更新开关',
+    '时间表与课程管理渲染',
+    openedSlotsCard &&
+      semesterPanelText.includes('课程管理') &&
+      semesterPanelText.includes('高数') &&
+      slotsPanelText.includes('作息'),
+    `学期卡=${semesterPanelText.includes('课程管理') ? '有课程管理' : '缺课程管理'} / 作息卡=${
+      slotsPanelText.includes('作息') ? '有作息' : '缺作息'
+    }`,
+  );
+  // 更新渠道与开发者特性在「更新」卡，诊断入口在「备份与恢复」卡的导出导入区（设备与同步页）
+  await gotoDevices();
+  await openDeviceGroup('更新');
+  check(
+    '更新卡带自动检查更新开关',
     view.container.querySelector('[aria-label="自动检查版本更新"]') !== null &&
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
   );
+
+  // —— 双下载源：默认自动探测 Gitee / GitHub，手动切换后检查更新走选中的源（全程桩 fetch） ——
+  resetDownloadSourceCache();
+  const realSourceFetch = globalThis.fetch;
+  const sourceCalls: string[] = [];
+  // 独立 assets 仓库：取源与下载都走 raw，桩按渠道分支给 version.json（v2）与便携包分块
+  // 版本必须高于当前构建，否则更新检查判定「无更新」不会弹窗（版本号随发布变动，这里按 appVersion 递推）
+  const newerVersion = (() => {
+    const parts = appVersion().split('.').map((item) => Number(item));
+    const major = Number.isFinite(parts[0]) ? parts[0]! : 0;
+    const minor = Number.isFinite(parts[1]) ? parts[1]! : 0;
+    return `${major}.${minor + 1}.0`;
+  })();
+  const giteeVersionDev = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/version.json';
+  const giteeVersionRelease = 'https://gitee.com/muyangplus/dawn-tick-assets/raw/release/version.json';
+  const githubVersionDev = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/version.json';
+  const githubVersionRelease = 'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/version.json';
+  const giteePortableDev =
+    `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-windows-x64-portable.zip`;
+  const githubPortableDev =
+    `https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/dev/DawnTick-${newerVersion}-dev-windows-x64-portable.zip`;
+  const versionJson = (channel: string, version: string): Record<string, unknown> => {
+    const prefix = `DawnTick-${version}-${channel}`;
+    return {
+      schema: 2,
+      channel,
+      version,
+      tag: channel === 'dev' ? 'dev-latest' : `v${version}`,
+      commit: 'abcdef1',
+      releasedAt: 1_760_000_000_000,
+      notes: `渠道 ${channel} · 来源 ${channel === 'release' ? 'main' : channel} · 提交 abcdef1`,
+      files: {
+        windowsSetup: { name: `${prefix}-windows-x64-setup.exe`, size: 12, sha256: 'a'.repeat(64) },
+        windowsPortable: { name: `${prefix}-windows-x64-portable.zip`, size: 12, sha256: 'b'.repeat(64) },
+        android: { name: `${prefix}-android-arm64-v8a.apk`, size: 12, sha256: 'c'.repeat(64) },
+        android32: { name: `${prefix}-android-armeabi-v7a.apk`, size: 11, sha256: 'e'.repeat(64) },
+        web: { name: `${prefix}-web.zip`, size: 12, sha256: 'd'.repeat(64) },
+      },
+      checksums: 'SHA256SUMS.txt',
+    };
+  };
+  /** 256KB 分块探测：给一段比探测上限更大的流，客户端读满即停 */
+  const assetChunkResponse = (): Response => new Response(new Uint8Array(512 * 1024), { status: 200 });
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: (input: unknown): Promise<Response> => {
+      const url = String(input);
+      sourceCalls.push(url);
+      if (url === giteeVersionRelease) return Promise.resolve(presetJsonResponse(versionJson('release', newerVersion)));
+      if (url === giteeVersionDev) return Promise.resolve(presetJsonResponse(versionJson('dev', newerVersion)));
+      if (url === githubVersionRelease) return Promise.resolve(presetJsonResponse(versionJson('release', newerVersion)));
+      if (url === githubVersionDev) return Promise.resolve(presetJsonResponse(versionJson('dev', newerVersion)));
+      if (url === giteePortableDev || url === githubPortableDev) return Promise.resolve(assetChunkResponse());
+      return Promise.resolve(presetJsonResponse({}, false, 404));
+    },
+  });
+  try {
+    // 重新进分组触发自动探测（会话缓存已在上面清空）
+    await openDeviceGroup('本地存储');
+    await openDeviceGroup('更新');
+    const sourceResultLine = (): string =>
+      (view.container.querySelector('[data-role="download-source-result"]')?.textContent ?? '').trim();
+    const sourceSelect = view.container.querySelector<HTMLElement>('[aria-label="下载源"]');
+    check(
+      '更新卡带下载源选择（自动检测 / 国内 Gitee / 国际 GitHub）',
+      sourceSelect !== null && (sourceSelect.textContent ?? '').includes('自动检测'),
+      sourceSelect?.textContent?.trim() ?? '(无)',
+    );
+    // 强制重新探测：不依赖进页面时那一次（可能命中会话缓存或真实网络结果）
+    view.container.querySelector<HTMLElement>('[data-role="redetect-download-source"]')?.click();
+    const detected = await waitFor(
+      () => sourceResultLine().includes('自动：') && !sourceResultLine().includes('不可用'),
+      60,
+    );
+    check(
+      '自动检测并发探测两个源并显示各自耗时',
+      detected && sourceResultLine().includes('Gitee（') && sourceResultLine().includes('GitHub（'),
+      sourceResultLine(),
+    );
+
+    // 手动切到 Gitee：检查更新只请求 gitee.com 的发布接口
+    if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
+    await flush(8);
+    const giteeOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('国内（Gitee）'),
+    );
+    giteeOption?.click();
+    await flush(12);
+    check(
+      '手动切到国内 Gitee 后状态行改为「手动」',
+      sourceResultLine().includes('手动：Gitee'),
+      sourceResultLine(),
+    );
+    sourceCalls.length = 0;
+    const checkButton = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
+    if (checkButton instanceof window.HTMLElement) checkButton.click();
+    await waitFor(() => sourceCalls.includes(giteeVersionDev), 40);
+    await flush(6);
+    const giteeCheckCalls = [...sourceCalls];
+    check(
+      '手动选 Gitee 后检查更新读 gitee.com/muyangplus/dawn-tick-assets/raw/dev/version.json，不请求 GitHub',
+      giteeCheckCalls.includes(giteeVersionDev) &&
+        !giteeCheckCalls.some((url) => url.includes('api.github.com') || url.includes('raw.githubusercontent.com')),
+      giteeCheckCalls.join(' / ') || '(无请求)',
+    );
+    const giteeDialog = document.querySelector<HTMLElement>('[data-role="update-dialog"]');
+    check(
+      '更新弹窗显示下载源 Gitee',
+      giteeDialog !== null && (giteeDialog.textContent ?? '').includes('下载源 Gitee'),
+      (giteeDialog?.textContent ?? '').slice(0, 60),
+    );
+    // 下载 URL 指向同源 raw 文件：清单只有文件名，绝对地址由 assets 仓库分支拼出
+    const giteeStatus = await checkForUpdate({
+      channel: 'dev',
+      receiveBeta: false,
+      currentVersion: '0.0.1',
+      source: 'gitee',
+    });
+    check(
+      'Gitee 清单的下载 URL 与校验文件都指向同源 assets raw',
+      giteeStatus.manifest?.assets?.windows?.url ===
+        `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-windows-x64-setup.exe` &&
+        giteeStatus.manifest?.checksumsUrl ===
+          'https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/SHA256SUMS.txt',
+      `${giteeStatus.manifest?.assets?.windows?.url ?? '(无)'} / ${giteeStatus.manifest?.checksumsUrl ?? '(无)'}`,
+    );
+    const defaultAndroidPlan = planUpdateDownload(giteeStatus.manifest, 'android');
+    check(
+      '非 Android / 探测不出 ABI 时按 arm64 选 -android-arm64-v8a.apk',
+      preferredAndroidAbi() === 'arm64-v8a' &&
+        defaultAndroidPlan.kind === 'download' &&
+        defaultAndroidPlan.target.url ===
+          `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-android-arm64-v8a.apk` &&
+        defaultAndroidPlan.target.assetName === `DawnTick-${newerVersion}-dev-android-arm64-v8a.apk`,
+      defaultAndroidPlan.kind === 'download' ? defaultAndroidPlan.target.url : '(无 Android 包)',
+    );
+    try {
+      // 桩设备 ABI：v7 设备应当拿 android32 对应的包，下载 URL 与清单包名都指向 -android-armeabi-v7a.apk
+      setAndroidAbiForTests('armeabi-v7a');
+      const v7Status = await checkForUpdate({
+        channel: 'dev',
+        receiveBeta: false,
+        currentVersion: '0.0.1',
+        source: 'gitee',
+      });
+      const v7Plan = planUpdateDownload(v7Status.manifest, 'android');
+      check(
+        'armeabi-v7a 设备选 android32：下载 URL 与包名都指向 -android-armeabi-v7a.apk',
+        v7Plan.kind === 'download' &&
+          v7Plan.target.url ===
+            `https://gitee.com/muyangplus/dawn-tick-assets/raw/dev/DawnTick-${newerVersion}-dev-android-armeabi-v7a.apk` &&
+          v7Plan.target.assetName === `DawnTick-${newerVersion}-dev-android-armeabi-v7a.apk`,
+        v7Plan.kind === 'download' ? v7Plan.target.url : '(无 Android 包)',
+      );
+    } finally {
+      setAndroidAbiForTests(null);
+    }
+    closeUpdatePrompt();
+    dismissUpdateTask();
+    await flush(8);
+
+    // 手动切到 GitHub：检查更新只请求 raw.githubusercontent.com 的 assets 分支
+    if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
+    await flush(8);
+    const githubOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('国际（GitHub）'),
+    );
+    githubOption?.click();
+    await flush(12);
+    sourceCalls.length = 0;
+    const checkButtonAgain = view.container.querySelector<HTMLElement>('button[aria-label="检查更新"]');
+    if (checkButtonAgain instanceof window.HTMLElement) checkButtonAgain.click();
+    await waitFor(() => sourceCalls.includes(githubVersionDev), 40);
+    await flush(6);
+    const githubCheckCalls = [...sourceCalls];
+    check(
+      '手动选 GitHub 后检查更新读 raw.githubusercontent.com 的 assets 分支，不请求 Gitee',
+      githubCheckCalls.includes(githubVersionDev) && !githubCheckCalls.some((url) => url.includes('gitee.com')),
+      githubCheckCalls.join(' / ') || '(无请求)',
+    );
+    closeUpdatePrompt();
+    dismissUpdateTask();
+    await flush(8);
+
+    // 重新检测：强制重新探测两个源并回到自动选择（探测读当前渠道 dev 分支的 version.json + 便携包）
+    if (sourceSelect instanceof window.HTMLElement) sourceSelect.click();
+    await flush(8);
+    const autoOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+      (item.textContent ?? '').includes('自动检测'),
+    );
+    autoOption?.click();
+    await flush(12);
+    await waitFor(() => sourceResultLine().includes('自动：'), 40);
+    sourceCalls.length = 0;
+    const redetect = view.container.querySelector<HTMLElement>('[data-role="redetect-download-source"]');
+    redetect?.click();
+    await waitFor(
+      () =>
+        sourceCalls.includes(giteeVersionDev) &&
+        sourceCalls.includes(githubVersionDev) &&
+        sourceCalls.includes(giteePortableDev) &&
+        sourceCalls.includes(githubPortableDev),
+      40,
+    );
+    check(
+      '「重新检测」探测两个源的当前渠道 version.json 与真实便携包，并显示自动选择结果',
+      sourceResultLine().includes('自动：') &&
+        sourceCalls.includes(giteeVersionDev) &&
+        sourceCalls.includes(githubVersionDev) &&
+        sourceCalls.includes(giteePortableDev) &&
+        sourceCalls.includes(githubPortableDev),
+      `${sourceResultLine()} / ${sourceCalls.join(' / ') || '(无请求)'}`,
+    );
+  } finally {
+    Object.defineProperty(globalThis, 'fetch', { value: realSourceFetch, configurable: true, writable: true });
+    // 不清理会话缓存：后续分组重挂载直接复用这次桩结果，避免再打真实网络
+  }
   // 开发者特性：默认关，打开后诊断入口出现、关掉后又隐藏
   const devSwitch = view.container.querySelector('[aria-label="开发者特性"]');
   check(
@@ -1957,39 +2586,71 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     devSwitch !== null && devSwitch.getAttribute('aria-checked') === 'false',
     devSwitch === null ? '(无开关)' : String(devSwitch.getAttribute('aria-checked')),
   );
+  await openDeviceGroup('备份与恢复');
   check(
     '关着开发者特性时诊断入口隐藏',
     view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
       !(view.container.textContent ?? '').includes('导出日志'),
     '',
   );
-  if (devSwitch instanceof window.HTMLElement) devSwitch.click();
+  await openDeviceGroup('更新');
+  const devSwitchOn = view.container.querySelector('[aria-label="开发者特性"]');
+  if (devSwitchOn instanceof window.HTMLElement) devSwitchOn.click();
   await flush(12);
+  await openDeviceGroup('备份与恢复');
   check(
     '打开开发者特性后诊断入口出现',
     (view.container.textContent ?? '').includes('导出日志'),
-    '',
+    (view.container.textContent ?? '').includes('导出日志') ? '' : '(未出现导出日志)',
   );
+  await openDeviceGroup('更新');
   const devSwitchBack = view.container.querySelector('[aria-label="开发者特性"]');
   if (devSwitchBack instanceof window.HTMLElement) devSwitchBack.click();
   await flush(12);
+  await openDeviceGroup('备份与恢复');
   check(
     '再关掉开发者特性后诊断入口恢复隐藏',
-    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null,
+    view.container.querySelector('[aria-label="打开日志文件所在目录"]') === null &&
+      !(view.container.textContent ?? '').includes('导出日志'),
     '',
   );
-  // 时区与待办排序都是选择列表
-  const zoneTrigger = view.container.querySelector('[aria-label="时区"]');
-  if (zoneTrigger instanceof window.HTMLElement) zoneTrigger.click();
+  await gotoSettings();
+  // 时区与待办排序在「时间与日程」分组里：先点进该组
+  await openSettingsGroup(view.container, '时间与日程');
+  // I-06：时区改为可搜索列表，常用候选带 UTC 偏移，输入即筛选全部 IANA 时区
+  const zoneTrigger = view.container.querySelector<HTMLInputElement>('[aria-label="时区"]');
+  zoneTrigger?.focus();
   await flush(10);
-  const zoneOptions = [...document.querySelectorAll('[role="option"]')].map((item) => (item.textContent ?? '').trim());
+  const zoneOptionsIn = (): string[] =>
+    [...document.querySelectorAll('[aria-label="时区候选"] [role="option"]')].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+  const zoneOptions = zoneOptionsIn();
   check(
-    '时区改为选择列表且默认上海',
-    zoneTrigger !== null && zoneOptions.includes('Asia/Shanghai') && zoneOptions.includes('UTC'),
-    `候选 ${zoneOptions.length} 项`,
+    '时区候选是可搜索列表且带 UTC 偏移',
+    zoneTrigger !== null &&
+      zoneOptions.some((item) => item.startsWith('Asia/Shanghai') && item.includes('(UTC+8)')) &&
+      zoneOptions.some((item) => item.startsWith('UTC') && item.includes('(UTC+0)')),
+    `候选 ${zoneOptions.length} 项：${zoneOptions.slice(0, 3).join(' / ')}`,
   );
-  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  await flush(6);
+  check(
+    '时区默认上海并显示为「Asia/Shanghai (UTC+8)」',
+    zoneTrigger?.placeholder === 'Asia/Shanghai (UTC+8)',
+    zoneTrigger?.placeholder ?? '(无)',
+  );
+  if (zoneTrigger !== null) {
+    setInputValue(zoneTrigger, 'kolkata');
+    await flush(10);
+    const searched = zoneOptionsIn();
+    check(
+      '时区搜索命中全部 IANA 时区（含别名 Asia/Kolkata）',
+      searched.some((item) => item.startsWith('Asia/Kolkata') && item.includes('(UTC+5:30)')),
+      searched.join(' / ') || '(无候选)',
+    );
+    setInputValue(zoneTrigger, '');
+    zoneTrigger.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(6);
+  }
   const sortTrigger = view.container.querySelector('[aria-label="待办排序"]');
   if (sortTrigger instanceof window.HTMLElement) sortTrigger.click();
   await flush(10);
@@ -2003,8 +2664,45 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
-  // 应用诊断日志：开关 + 级别（dev 默认最详细）
+  // 应用诊断日志：开关 + 级别（dev 默认最详细）；日志区块在「诊断与维护」卡
+  await gotoDevices();
+  await openDeviceGroup('WebDAV 同步');
+  // I-08：WebDAV 地址旁的「?」与其它说明共用同一个浮层：限宽 + 断词，长 URL 不会横向溢出
+  const davHelp = view.container.querySelector<HTMLElement>('[aria-label="说明：WebDAV 地址"]');
+  davHelp?.click();
+  await flush(10);
+  const davHelpBody = document.querySelector('[data-role="help-body"]');
+  check(
+    'WebDAV 地址的「?」浮层限宽可断词',
+    davHelp !== null &&
+      davHelpBody !== null &&
+      davHelpBody.className.includes('max-w-[min(20rem,calc(100vw-2rem))]') &&
+      davHelpBody.className.includes('break-words') &&
+      (davHelpBody.textContent ?? '').includes('https://dav.example.com'),
+    (davHelpBody?.textContent ?? '(未打开)').slice(0, 40),
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
+  await openDeviceGroup('诊断与维护');
   const logBlock = view.container.querySelector('[data-role="log-settings"]');
+  // 诊断日志弹窗：直接查看/复制，不依赖文件导出（安卓导出失败时的兜底）
+  const diagnosticsOpen = view.container.querySelector<HTMLElement>('[data-role="diagnostics-open"]');
+  diagnosticsOpen?.click();
+  await flush(10);
+  const diagnosticsDialog = document.querySelector<HTMLElement>('[data-role="diagnostics-log-dialog"]');
+  check(
+    '诊断日志弹窗可查看与复制',
+    diagnosticsDialog !== null &&
+      diagnosticsDialog.querySelector('[data-role="diagnostics-log-copy"]') !== null &&
+      diagnosticsDialog.querySelector('[data-role="diagnostics-log-text"]') !== null,
+    diagnosticsDialog === null ? '(未打开弹窗)' : '',
+  );
+  const diagnosticsClose = [...(diagnosticsDialog?.querySelectorAll<HTMLElement>('button') ?? [])].find((item) =>
+    (item.textContent ?? '').includes('关闭'),
+  );
+  diagnosticsClose?.click();
+  await flush(8);
+
   const logLevelTrigger = view.container.querySelector('[aria-label="日志级别"]');
   if (logLevelTrigger instanceof window.HTMLElement) logLevelTrigger.click();
   await flush(10);
@@ -2013,7 +2711,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '应用诊断日志：开关、级别五档且 dev 默认 trace',
     logBlock !== null &&
       view.container.querySelector('[aria-label="启用应用诊断日志"]')?.getAttribute('aria-checked') === 'true' &&
-      view.container.querySelector('[aria-label="打开日志"]') !== null &&
+      view.container.querySelector('[aria-label="查看诊断日志"]') !== null &&
       logLevels.length === 5 &&
       logLevels.some((item) => item.startsWith('trace')) &&
       (logLevelTrigger?.textContent ?? '').trim() === 'trace',
@@ -2021,7 +2719,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+  await gotoSettings();
+  await openSettingsGroup(view.container, '学期设置');
   check('课程管理提供复制课程', view.container.querySelector('[aria-label^="复制课程"]') !== null, '');
+  // 周视图天数在「课表显示」分组里：先点进该组
+  await openSettingsGroup(view.container, '课表显示');
   // 周视图天数：1–7 天都可选
   const dayTrigger = view.container.querySelector('[aria-label="周视图天数"]');  if (dayTrigger instanceof window.HTMLElement) dayTrigger.click();
   await flush(10);
@@ -2036,8 +2738,187 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await flush(6);
+  // 课表视图开关：今天为第一天（默认开）、始终不显示周末（默认关）
+  const switchOf = (label: string): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>(`[role="switch"][aria-label="${label}"]`);
   check(
-    '课次时间可逐节编辑',
+    '课表视图开关与已保存设置一致：今天为第一天开、隐藏周末关',
+    switchOf('今天为第一天')?.getAttribute('aria-checked') === 'true' &&
+      switchOf('始终不显示周末')?.getAttribute('aria-checked') === 'false',
+    `${switchOf('今天为第一天')?.getAttribute('aria-checked')} / ${switchOf('始终不显示周末')?.getAttribute('aria-checked')}`,
+  );
+  // 打开「始终不显示周末」：列数仍按天数，但列里不再出现周六/周日
+  switchOf('始终不显示周末')?.click();
+  await flush(16);
+  clickByText(view.container, '课表');
+  await flush(16);
+  const columnDays = [...view.container.querySelectorAll('[data-day]')].map((node) =>
+    node.getAttribute('data-day'),
+  );
+  check(
+    '不显示周末后课表列里没有周六日',
+    columnDays.length === 7 && !columnDays.includes('6') && !columnDays.includes('7'),
+    `列=${columnDays.join(',')}`,
+  );
+  clickByText(view.container, '设置');
+  await flush(16);
+  await openSettingsGroup(view.container, '课表显示');
+  check(
+    '回到设置页可见两个视图开关',
+    switchOf('始终不显示周末') !== null && switchOf('今天为第一天') !== null,
+    `${switchOf('始终不显示周末') === null ? '无周末开关' : '有'} / ${switchOf('今天为第一天') === null ? '无首日开关' : '有'}`,
+  );
+  switchOf('始终不显示周末')?.click();
+  await flush(16);
+  check(
+    '关掉不显示周末后开关状态回关',
+    switchOf('始终不显示周末')?.getAttribute('aria-checked') === 'false',
+    `${switchOf('始终不显示周末')?.getAttribute('aria-checked')}`,
+  );
+  // 关掉「今天为第一天」：窗口从本周周一开头
+  switchOf('今天为第一天')?.click();
+  await flush(16);
+  check(
+    '关掉今天为第一天后开关状态回关',
+    switchOf('今天为第一天')?.getAttribute('aria-checked') === 'false',
+    `${switchOf('今天为第一天')?.getAttribute('aria-checked')}`,
+  );
+  clickByText(view.container, '课表');
+  await flush(16);
+  check(
+    '关掉今天为第一天后窗口从本周周一开头',
+    windowStartOf() === seededMonday,
+    `${windowStartOf()} / 本周周一 ${seededMonday}`,
+  );
+  clickByText(view.container, '设置');
+  await flush(16);
+  await openSettingsGroup(view.container, '课表显示');
+  switchOf('今天为第一天')?.click();
+  await flush(16);
+  clickByText(view.container, '课表');
+  await flush(16);
+  check(
+    '恢复默认后窗口重新从今天开头',
+    windowStartOf() === todayText,
+    windowStartOf(),
+  );
+  // 顶部栏只属于课表页；日模式把「第 N 周」换成日期翻页
+  check('课表页顶部栏是周次翻页', view.container.querySelector('[data-role="week-nav"]') !== null, '');
+  // 课程标签跟在课程名后面：同一个文本容器里既有课名又有「非本周」
+  const ghostNameLine = view.container.querySelector('[data-tone="ghost"]')?.firstElementChild ?? null;
+  check(
+    '课程卡标签紧跟课程名',
+    ghostNameLine !== null &&
+      ghostNameLine.tagName === 'SPAN' &&
+      (ghostNameLine.textContent ?? '').includes('大物') &&
+      (ghostNameLine.textContent ?? '').includes('非本周') &&
+      ghostNameLine.querySelector('span') !== null &&
+      !ghostNameLine.className.includes('justify-between'),
+    (ghostNameLine?.textContent ?? '(无)').trim(),
+  );
+  // 行高按卡片内容一次定高：卡片要带节次数，行高才量得出来
+  const lessonCells = [...view.container.querySelectorAll('[data-role="lesson-cell"]')];
+  check(
+    '课表卡片带节次数供行高换算',
+    lessonCells.length > 0 &&
+      lessonCells.every((cell) => Number(cell.getAttribute('data-span') ?? '0') >= 1),
+    `${lessonCells.length} 张`,
+  );
+  clickTab(view.container, '日');
+  await flush(12);
+  const dayDateText = (): string => (view.container.querySelector('[data-role="day-date"]')?.textContent ?? '').trim();
+  // 今天（周日）没有课：空态要给出下一步（文案），而不是只报「没有课」
+  const dayEmpty = view.container.querySelector<HTMLElement>('[data-role="day-empty"]');
+  check(
+    '日视图空态文案给出下一步',
+    dayEmpty !== null &&
+      (dayEmpty.textContent ?? '').includes('今天没有课') &&
+      (dayEmpty.textContent ?? '').includes('切换周视图可看本周安排'),
+    dayEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
+  );
+  check(
+    '日模式换成日期翻页',
+    view.container.querySelector('[data-role="day-nav"]') !== null &&
+      view.container.querySelector('[data-role="week-nav"]') === null &&
+      dayDateText() === '10/18 周日',
+    dayDateText(),
+  );
+  // 空态的主行动要真能切回周模式，不能是死按钮
+  const openWeekButton = view.container.querySelector<HTMLButtonElement>('[aria-label="查看周视图"]');
+  check('日视图空态提供「查看周视图」按钮', openWeekButton !== null, openWeekButton ? '有' : '无');
+  if (openWeekButton !== null) {
+    openWeekButton.click();
+    await flush(12);
+    check(
+      '点「查看周视图」切回周模式',
+      view.container.querySelector('[data-role="week-nav"]') !== null &&
+        view.container.querySelector('[data-role="day-nav"]') === null,
+      view.container.querySelector('[data-role="week-nav"]') !== null ? '已切回周' : '仍在日',
+    );
+    clickTab(view.container, '日');
+    await flush(12);
+  }
+  if (clickByLabel(view.container, '后一天')) await flush(12);
+  check('日模式翻到下一天', dayDateText() === '10/19 周一', dayDateText());
+  if (clickByLabel(view.container, '前一天')) await flush(12);
+  check('日模式翻回前一天', dayDateText() === '10/18 周日', dayDateText());
+
+  // P2-06：日视图课程行可点、可键盘打开详情（与周视图「点课程卡 → 调课」同一条路径）
+  // 周一（10/19）放假没有课：再翻一天到周二（线代第 5–6 节）
+  if (clickByLabel(view.container, '后一天')) await flush(12);
+  if (clickByLabel(view.container, '后一天')) await flush(12);
+  check('日视图翻到有课的一天', dayDateText() === '10/20 周二', dayDateText());
+  const dayRow = view.container.querySelector<HTMLElement>('[data-role="day-lesson"]');
+  check(
+    '日视图课程行是 role=button 且可聚焦',
+    dayRow !== null && dayRow.getAttribute('role') === 'button' && dayRow.tabIndex === 0,
+    `role=${dayRow?.getAttribute('role') ?? '(无)'} tabindex=${dayRow?.tabIndex ?? '(无)'}`,
+  );
+  if (dayRow !== null) {
+    dayRow.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await flush(12);
+    const dayDetailOpen = document.querySelector('[data-role="reminder-section"]') !== null;
+    check('日视图课程行回车打开课程详情', dayDetailOpen, dayDetailOpen ? '已打开' : '未打开');
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(12);
+    check(
+      'Esc 收起日视图打开的详情',
+      document.querySelector('[data-role="reminder-section"]') === null,
+      '',
+    );
+  }
+  if (clickByLabel(view.container, '前一天')) await flush(12);
+  if (clickByLabel(view.container, '前一天')) await flush(12);
+  check('日视图键盘用例后回到今天', dayDateText() === '10/18 周日', dayDateText());
+  check(
+    '日视图按查看日期显示课表',
+    (view.container.querySelector('[aria-label="日视图"]')?.textContent ?? '').includes('节课'),
+    (view.container.querySelector('[aria-label="日视图"]')?.textContent ?? '(无)').slice(0, 40),
+  );
+  if (clickByLabel(view.container, '回到今天')) await flush(12);
+  check('日模式回到今天', dayDateText() === '10/18 周日', dayDateText());
+  clickTab(view.container, '周');
+  await flush(12);
+  check(
+    '切回周模式恢复周次翻页',
+    view.container.querySelector('[data-role="week-nav"]') !== null &&
+      view.container.querySelector('[data-role="day-nav"]') === null,
+    '',
+  );
+  clickByText(view.container, '日程');
+  await flush(12);
+  check('日程页不显示课表顶部栏', view.container.querySelector('[data-role="window-nav"]') === null, '');
+  clickByText(view.container, '设置');
+  await flush(12);
+  check('设置页不显示课表顶部栏', view.container.querySelector('[data-role="window-nav"]') === null, '');
+  clickByText(view.container, '课表');
+  await flush(12);
+  clickByText(view.container, '设置');
+  await flush(16);
+  // 节次时间表在「作息与选校」卡里：先展开它
+  await openSettingsGroup(view.container, '作息与选校');
+  check(
+    '节次时间可逐节编辑',
     view.container.querySelector('input[aria-label="第 1 节开始时间"]') !== null &&
       view.container.querySelector('input[aria-label="第 1 节结束时间"]') !== null,
     '',
@@ -2077,7 +2958,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `占位=${presetInput?.placeholder ?? '(无)'} / 内置 ${BUILTIN_TIMETABLES.length} 套`,
   );
 
-  // 套用苏科大作息：时间表照抄预设课次，时长/课间同步成预设里最常见的 45 / 10
+  // 套用苏科大作息：时间表照抄预设节次，时长/课间同步成预设里最常见的 45 / 10
   const periodClock = (period: number, field: '开始' | '结束'): string =>
     view.container.querySelector<HTMLInputElement>(`input[aria-label="第 ${period} 节${field}时间"]`)?.value ?? '';
   // 先把两个输入改成别的值，才能证明套用预设时确实把它们同步了回来
@@ -2124,30 +3005,48 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     `第 3 节 ${periodClock(3, '开始')}–${periodClock(3, '结束')}，共 ${startInputs(view.container).length} 节，${presetSummary}`,
   );
 
-  const hadAppearance = (view.container.textContent ?? '').includes('主题风格');
-  if (clickByAriaPrefix(view.container, '外观')) await flush(8);
-  const collapsedAppearance = !(view.container.textContent ?? '').includes('主题风格');
-  check('设置项可收起', hadAppearance && collapsedAppearance, '');
-  if (clickByAriaPrefix(view.container, '外观')) await flush(8);
-  check('设置项可再展开', (view.container.textContent ?? '').includes('主题风格'), '');
+  // 外观与动效分组：点进后只挂载本组内容，切到别组后上一组卸载
+  await openSettingsGroup(view.container, '外观与动效');
+  const hadAppearance = groupPanelText().includes('主题风格');
+  await openSettingsGroup(view.container, '提醒设置');
+  check(
+    '切换分组后上一组内容卸载（按需挂载）',
+    hadAppearance && !groupPanelText().includes('主题风格'),
+    `外观=${hadAppearance ? '有' : '无'} / 切到提醒后=${groupPanelText().includes('主题风格') ? '仍挂载' : '已卸载'}`,
+  );
+  await openSettingsGroup(view.container, '外观与动效');
+  check('再点回外观分组仍能看到主题风格', groupPanelText().includes('主题风格'), '');
+  // 课表显示卡：非本周课程开关
+  await openSettingsGroup(view.container, '课表显示');
   check(
     '非本周课程开关存在',
     view.container.querySelector('[aria-label="周视图显示非本周课程"]') !== null,
     '',
   );
+  // 提醒设置卡：课前提醒默认值
+  await openSettingsGroup(view.container, '提醒设置');
   check(
     '课前提醒默认提前 20 分钟',
     view.container.querySelector('[aria-label="课前提醒"]') !== null &&
       view.container.querySelector('[aria-label="提前 20 分钟"]') !== null,
     '',
   );
+  // 悬浮窗与小组件卡：倒计时开关、悬浮窗样式与安卓小组件清单
+  await openSettingsGroup(view.container, '悬浮窗与小组件');
   check(
     '倒计时可开关',
     view.container.querySelector('[aria-label="开学倒计时"]') !== null &&
       view.container.querySelector('[aria-label="假期倒计时"]') !== null,
     '',
   );
-  check('悬浮窗样式可选四种', view.container.querySelector('[aria-label="悬浮窗样式"]') !== null, '');
+  check(
+    '设置页悬浮窗样式含考试倒计时',
+    WIDGET_VARIANTS.length === 5 &&
+      WIDGET_VARIANTS.includes('exam') &&
+      WIDGET_VARIANT_LABEL.exam.includes('考试倒计时') &&
+      view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
+    `样式 ${WIDGET_VARIANTS.join(' / ')}`,
+  );
   check(
     '手机端小组件清单与引导只在 Android 出现',
     MOBILE_WIDGETS.length === 4 &&
@@ -2158,49 +3057,613 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
     `组件 ${MOBILE_WIDGETS.map((item) => item.size).join(' / ')}；Web 平台=${hasMobileWidgets() ? '手机' : '桌面/浏览器'}`,
   );
-  // 卡片布局入口固定在设置页顶部，面板在对话框里：隐藏卡片后仍能改回来
-  const layoutOpened = clickByLabel(view.container, '卡片布局');
-  await flush(12);
-  const layoutTitles = [
-    ...document.querySelectorAll('[data-role="dialog-body"] span'),
-  ].map((item) => (item.textContent ?? '').trim());
+  const desktopPin = await pinWidget('next');
   check(
-    '卡片布局独立成对话框，可显隐排序并一键全部显示',
-    layoutOpened &&
-      document.querySelector('[aria-label="显示卡片：日程时间线"]') !== null &&
-      document.querySelector('[aria-label="上移卡片：倒计时"]') !== null &&
-      document.querySelector('[aria-label="卡片区域：日程时间线：主列"]') !== null &&
-      document.querySelector('[aria-label="恢复默认布局"]') !== null &&
-      document.querySelector('[aria-label="全部显示卡片"]') !== null &&
-      layoutTitles.filter((title) => title.includes('倒计时')).length === 1 &&
-      !layoutTitles.includes('日期与倒计时'),
-    `倒计时相关卡片 ${layoutTitles.filter((title) => title.includes('倒计时')).length} 张`,
+    '非安卓平台请求小组件按不支持处理',
+    desktopPin.status === 'unsupported',
+    desktopPin.status,
   );
-  if (clickByLabel(document.body, '关闭卡片布局')) await flush(8);
-  // 更新与维护卡片：检查更新、发布页、预设版本与仓库、运行权限在同一张卡片里
+  // 设置页改成分组导航后不再有卡片布局入口：显隐 / 排序 / 主侧列属于仍用卡片注册表的页面
+  const layoutEntryButtons = (): HTMLElement[] =>
+    [...view.container.querySelectorAll<HTMLElement>('button')].filter((item) =>
+      (item.getAttribute('aria-label') ?? '').includes('卡片布局'),
+    );
+  const settingsEntries = layoutEntryButtons();
+  check(
+    '设置页不再提供卡片布局入口',
+    settingsEntries.length === 0,
+    `${settingsEntries.length} 处：${settingsEntries.map((item) => item.getAttribute('aria-label')).join(' / ') || '(无)'}`,
+  );
+  await openSettingsGroup(view.container, '悬浮窗与小组件');
+  check(
+    '小组件分组不再提示设置页卡片显隐',
+    !(view.container.textContent ?? '').includes('卡片显隐'),
+    '',
+  );
+  // I-15：分组内容仍走 Card 外壳（dt-card-motion）；手风琴的折叠内容不再出现在设置页
+  const settingsPanelElement = settingsPanel(view.container);
+  check(
+    '分组内容沿用卡片外壳动效',
+    settingsPanelElement?.querySelector('.dt-card-motion') !== null,
+    `panel=${settingsPanelElement?.className ?? '(无)'}`,
+  );
+  check(
+    '设置页不再渲染折叠卡内容',
+    settingsPanelElement?.querySelector('.dt-collapse') === null &&
+      view.container.querySelector('.dt-collapse') === null,
+    '',
+  );
+  // 设备与同步页改成「分组导航 + 下钻」：不再有卡片布局入口与两列卡片网格
+  await gotoDevices();
+  const deviceLayoutEntries = [...view.container.querySelectorAll<HTMLElement>('button')].filter(
+    (item) => (item.getAttribute('aria-label') ?? '').includes('卡片布局'),
+  );
+  const deviceNav = view.container.querySelector<HTMLElement>('nav[aria-label="设备与同步分组"]');
+  const devicePanel = deviceNav?.parentElement?.querySelector('section') ?? null;
+  check(
+    '设备与同步页不再有卡片布局入口',
+    deviceLayoutEntries.length === 0,
+    `${deviceLayoutEntries.length} 处：${deviceLayoutEntries.map((item) => item.getAttribute('aria-label')).join(' / ') || '(无)'}`,
+  );
+  check(
+    '设备与同步页分组导航：七组清单 + Card 外壳内容',
+    deviceNav !== null &&
+      deviceNav.querySelectorAll('[data-role="settings-nav-item"]').length === 7 &&
+      devicePanel !== null &&
+      devicePanel.querySelector('.dt-card-motion') !== null,
+    `清单=${deviceNav?.querySelectorAll('[data-role="settings-nav-item"]').length ?? 0} 组 / 内容=${
+      devicePanel?.querySelector('.dt-card-motion') === null ? '无' : '有'
+    }`,
+  );
+  // 诊断与维护卡：预设版本与仓库；更新卡：检查更新与发布页入口
+  await openDeviceGroup('诊断与维护');
   const presetRepoLink = view.container.querySelector('[data-role="preset-repo-link"]');
   const presetRepoHref = presetRepoLink instanceof window.HTMLAnchorElement ? presetRepoLink.href : '';
   const presetRepoOpensOutside =
     presetRepoLink instanceof window.HTMLAnchorElement &&
     presetRepoLink.target === '_blank' &&
     /\bnoopener\b/.test(presetRepoLink.rel);
-  const releaseLink = view.container.querySelector('[data-role="release-page-link"]');
   check(
-    '更新与维护卡片：预设仓库外部链接与预设版本并列',
+    '诊断与维护卡：预设仓库外部链接与预设版本并列',
     presetRepoHref.includes('muyangplus/dawn-tick-presets') &&
       presetRepoOpensOutside &&
       presetRepoLink.parentElement?.querySelector('[data-role="preset-version"]') !== null,
     `${presetRepoHref} target=${presetRepoLink?.getAttribute('target') ?? '(无)'} rel=${presetRepoLink?.getAttribute('rel') ?? '(无)'}`,
   );
+  await openDeviceGroup('更新');
+  const releaseLink = view.container.querySelector('[data-role="release-page-link"]');
   check(
-    '更新与维护卡片：检查更新与发布页入口',
+    '更新卡：检查更新与发布页入口',
     view.container.querySelector('button[aria-label="检查更新"]') !== null &&
       releaseLink instanceof window.HTMLAnchorElement &&
       releaseLink.href.includes('muyangplus/dawn-tick/releases'),
     releaseLink?.getAttribute('href') ?? '(无)',
   );
 
+  // 更新弹窗：启动自检与手动检查共用同一份数据；发布说明按 Markdown 渲染，复制链接走剪贴板
+  const clipboardWrites: string[] = [];
+  Object.defineProperty(globalThis.navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: async (value: string) => {
+        clipboardWrites.push(value);
+      },
+    },
+  });
+  const releasePrompt: UpdateStatus = {
+    available: true,
+    error: null,
+    feed: 'beta',
+    source: 'github',
+    current: appVersion(),
+    latest: '0.5.0',
+    manifest: {
+      channel: 'release',
+      version: '0.5.0',
+      notes:
+        '### 更新内容\n\n- 新增 Markdown 发布说明\n- 修复发布页链接\n\n' +
+        '**Full Changelog**: https://github.com/muyangplus/dawn-tick/compare/v0.4.1...v0.5.0',
+    },
+  };
+  requestUpdatePrompt(releasePrompt);
+  await flush(12);
+  const updateDialog = document.querySelector<HTMLElement>('[data-role="update-dialog"]');
+  const updateNotes = document.querySelector<HTMLElement>('[data-role="update-notes"]');
+  const noteHeading = updateNotes?.querySelector('h3');
+  const noteItems = updateNotes?.querySelectorAll('li') ?? [];
+  const noteStrong = updateNotes?.querySelector('strong');
+  check(
+    '更新弹窗渲染 Markdown 标题、列表与 Full Changelog',
+    updateDialog !== null &&
+      (noteHeading?.textContent ?? '') === '更新内容' &&
+      noteItems.length === 2 &&
+      (noteStrong?.textContent ?? '') === 'Full Changelog' &&
+      updateNotes?.querySelector('a[href*="compare"]') !== null,
+    `标题=${noteHeading?.textContent ?? '(无)'} / 列表=${noteItems.length} 项`,
+  );
+  check(
+    '更新弹窗显示版本、当前版本与发布本身的渠道',
+    (updateDialog?.textContent ?? '').includes('发现新版本 0.5.0') &&
+      (updateDialog?.textContent ?? '').includes(`当前版本 ${appVersion()}`) &&
+      (updateDialog?.textContent ?? '').includes('发布渠道 正式版'),
+    (updateDialog?.textContent ?? '').slice(0, 48),
+  );
+  /** 打开更新弹窗的「更多」菜单并点其中一项：主操作之外的动作都收在这里 */
+  const clickUpdateMenuItem = async (role: string): Promise<boolean> => {
+    document.querySelector<HTMLElement>('[data-role="update-more"]')?.click();
+    await flush(2);
+    const item = document.querySelector<HTMLElement>(`[data-role="${role}"]`);
+    if (item === null) return false;
+    item.click();
+    await flush(6);
+    return true;
+  };
+  const copyReleaseClicked = await clickUpdateMenuItem('update-copy-link');
+  await flush(8);
+  check(
+    '更新弹窗「更多」里复制下载链接可用',
+    copyReleaseClicked &&
+      clipboardWrites[0] === RELEASES_URL &&
+      (document.body.textContent ?? '').includes('已复制下载链接'),
+    `剪贴板=${clipboardWrites[0] ?? '(空)'}`,
+  );
+  // 头部只留发布说明链接，不再有单独的复制 / 打开发布页按钮
+  check(
+    '更新弹窗头部只保留「详细说明」文本链接',
+    document.querySelector('[data-role="update-notes-link"]') !== null &&
+      (document.querySelector('[data-role="update-notes-link"]')?.textContent ?? '').includes('详细说明') &&
+      document.querySelector('[data-role="update-release-url"]') === null,
+    document.querySelector('[data-role="update-notes-link"]')?.textContent?.trim() ?? '(无)',
+  );
+  // 「忽略此版本」：记进 app_meta，设备页更新区出现已忽略版本与取消忽略；再弹同一个版本仍可取消忽略
+  const ignoreClicked = await clickUpdateMenuItem('update-ignore');
+  await flush(12);
+  const ignoredLine = view.container.querySelector<HTMLElement>('[data-role="ignored-version"]');
+  check(
+    '更新弹窗「更多」里可忽略此版本，设备页更新区给出已忽略版本与取消忽略',
+    ignoreClicked &&
+      document.querySelector('[data-role="update-dialog"]') === null &&
+      (ignoredLine?.textContent ?? '').includes('已忽略的版本：0.5.0') &&
+      view.container.querySelector('[data-role="unignore-version"]') !== null,
+    ignoredLine?.textContent?.trim() ?? '(无)',
+  );
+  requestUpdatePrompt(releasePrompt);
+  await flush(12);
+  check(
+    '忽略后手动检查仍能打开更新弹窗，并提示可取消忽略',
+    (document.querySelector('[data-role="update-ignored"]')?.textContent ?? '').includes('已忽略此版本，可在这里取消忽略') &&
+      document.querySelector('[data-role="update-unignore"]') !== null,
+    document.querySelector('[data-role="update-ignored"]')?.textContent?.trim() ?? '(无)',
+  );
+  const unignoreClicked = await clickUpdateMenuItem('update-unignore');
+  await flush(12);
+  check(
+    '取消忽略后弹窗与设备页都不再显示已忽略版本',
+    unignoreClicked &&
+      document.querySelector('[data-role="update-ignored"]') === null &&
+      view.container.querySelector('[data-role="ignored-version"]') === null,
+    view.container.querySelector('[data-role="ignored-version"]')?.textContent?.trim() ?? '(无)',
+  );
+  // —— I-03：桌面端更新弹窗给出「下载并安装」；下载失败给可读原因并可重试（全程用桩，不真实下载） ——
+  const updateTauriInternals = {
+    invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (command === 'plugin:path|resolve_directory') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\';
+      if (command === 'stage_update') return { name: String(args?.['name'] ?? ''), sha256: 'a'.repeat(64) };
+      if (command === 'run_installer') return String(args?.['name'] ?? '');
+      if (command === 'windows_install_kind') return 'installed';
+      if (command === 'prepare_portable_update') return 'C:\\Users\\tester\\AppData\\Local\\Temp\\dawn-tick-update-stub.cmd';
+      if (command === 'exit_for_update') return null;
+      // 桌面更新下载走原生 HTTP（plugin-http）：桩里直接断网，验证失败原因与重试入口
+      if (command === 'plugin:http|fetch') throw new Error('offline');
+      return undefined;
+    },
+    transformCallback: () => 0,
+  };
+  const installUpdateTauriStub = (): void => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = updateTauriInternals;
+    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = updateTauriInternals;
+  };
+  const clearUpdateTauriStub = (): void => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  };
+  installUpdateTauriStub();
+  try {
+    requestUpdatePrompt({
+      available: true,
+      error: null,
+      feed: 'release',
+      source: 'github',
+      current: appVersion(),
+      latest: '0.5.1',
+      manifest: {
+        channel: 'release',
+        version: '0.5.1',
+        checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.1-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.1-release-windows-x64-setup.exe',
+            size: 16,
+          },
+        },
+      },
+    });
+    await flush(12);
+    const updatePrimary = document.querySelector<HTMLElement>('[data-role="update-primary"]');
+    check(
+      '桌面端更新弹窗主操作只保留一个「立即更新」',
+      updatePrimary !== null &&
+        (updatePrimary.textContent ?? '').trim() === '立即更新' &&
+        document.querySelectorAll('[data-role="update-primary"]').length === 1,
+      updatePrimary?.textContent?.trim() ?? '(无)',
+    );
+    const installedKindLine = document.querySelector<HTMLElement>('[data-role="update-install-kind"]');
+    check(
+      '桌面端更新弹窗显示检测到的「安装版」',
+      (installedKindLine?.textContent ?? '').includes('安装版'),
+      installedKindLine?.textContent?.trim() ?? '(无)',
+    );
+    const rollbackButton = view.container.querySelector<HTMLElement>('[data-role="rollback-stable"]');
+    check(
+      '开发版 + 桌面端给出「回滚到正式版」入口',
+      rollbackButton !== null && (rollbackButton.textContent ?? '').includes('回滚到正式版'),
+      rollbackButton?.textContent?.trim() ?? '(无)',
+    );
+    updatePrimary?.click();
+    await waitFor(() => updateTaskSnapshot().status === 'failed', 40);
+    await flush(6);
+    const updateStatus = document.querySelector<HTMLElement>('[data-role="update-status"]');
+    check(
+      '更新下载失败直接显示原因，重试收在「更多」菜单里',
+      updateStatus !== null &&
+        (updateStatus.textContent ?? '').includes('下载更新失败') &&
+        (updateStatus.textContent ?? '').includes('offline') &&
+        document.querySelector('[data-role="update-retry"]') !== null &&
+        (document.querySelector('[data-role="update-primary"]')?.textContent ?? '').includes('立即更新'),
+      updateStatus?.textContent?.trim() ?? '(无)',
+    );
+
+    // —— 默认 1 次点击：下载 → 校验 → 自动交给安装器（假出口，不真实下载） ——
+    const autoBytes = new TextEncoder().encode('dawn-tick one-click smoke payload');
+    const autoDigest = await sha256Hex(autoBytes);
+    const autoCalls: { writes: string[]; installs: string[] } = { writes: [], installs: [] };
+    const autoHost: UpdateDownloadHost = {
+      fetchImpl: async () =>
+        new Response(autoBytes, { status: 200, headers: { 'content-length': String(autoBytes.length) } }),
+      readChecksum: async () => `${autoDigest}  DawnTick-0.5.6-release-windows-x64-setup.exe\n`,
+      write: async (name) => {
+        autoCalls.writes.push(name);
+        return `C:\\Temp\\${name}`;
+      },
+      install: async (path) => {
+        autoCalls.installs.push(path);
+        return { needsPermission: false };
+      },
+    };
+    setUpdateHostFactoryForTests(() => autoHost);
+    setWindowsInstallKindForTests('installed');
+    requestUpdatePrompt({
+      available: true,
+      error: null,
+      feed: 'release',
+      source: 'github',
+      current: appVersion(),
+      latest: '0.5.6',
+      manifest: {
+        channel: 'release',
+        version: '0.5.6',
+        checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.6-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.6-release-windows-x64-setup.exe',
+            size: autoBytes.length,
+          },
+        },
+      },
+    });
+    await flush(12);
+    document.querySelector<HTMLElement>('[data-role="update-primary"]')?.click();
+    const oneClickInstalled = await waitFor(() => autoCalls.installs.length === 1, 80);
+    await flush(6);
+    check(
+      '默认 1 次点击：下载校验后自动启动安装器',
+      oneClickInstalled &&
+        autoCalls.writes[0] === 'DawnTick-update.exe' &&
+        updateTaskSnapshot().installed === true &&
+        updateTaskSnapshot().status === 'ready',
+      `写盘=${autoCalls.writes.join(',') || '(无)'} 安装器=${autoCalls.installs.join(',') || '(无)'}`,
+    );
+    closeUpdatePrompt();
+    dismissUpdateTask();
+    await flush(4);
+
+    // 便携版同样 1 次点击：下载 → prepare_portable_update → 退出应用完成替换
+    const portableCalls: { writes: string[]; portables: string[]; exits: number } = {
+      writes: [],
+      portables: [],
+      exits: 0,
+    };
+    const autoPortableHost: UpdateDownloadHost = {
+      ...autoHost,
+      readChecksum: async () => `${autoDigest}  DawnTick-0.5.7-release-windows-x64-portable.zip\n`,
+      write: async (name) => {
+        portableCalls.writes.push(name);
+        return `C:\\Temp\\${name}`;
+      },
+      installPortable: async (path) => {
+        portableCalls.portables.push(path);
+        return 'C:\\Temp\\dawn-tick-update-auto.cmd';
+      },
+      exitForUpdate: async () => {
+        portableCalls.exits += 1;
+      },
+    };
+    setUpdateHostFactoryForTests(() => autoPortableHost);
+    setWindowsInstallKindForTests('portable');
+    requestUpdatePrompt({
+      available: true,
+      error: null,
+      feed: 'release',
+      source: 'github',
+      current: appVersion(),
+      latest: '0.5.7',
+      manifest: {
+        channel: 'release',
+        version: '0.5.7',
+        checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+        assets: {
+          windows: {
+            url: 'https://example.com/DawnTick-0.5.7-release-windows-x64-setup.exe',
+            name: 'DawnTick-0.5.7-release-windows-x64-setup.exe',
+            size: autoBytes.length,
+          },
+          windowsPortable: {
+            url: 'https://example.com/DawnTick-0.5.7-release-windows-x64-portable.zip',
+            name: 'DawnTick-0.5.7-release-windows-x64-portable.zip',
+            size: autoBytes.length,
+          },
+        },
+      },
+    });
+    await flush(12);
+    const portablePrimary = document.querySelector<HTMLElement>('[data-role="update-primary"]');
+    const portableKindLine = document.querySelector<HTMLElement>('[data-role="update-install-kind"]');
+    check(
+      '便携版：弹窗标注版本类型，主操作仍是「立即更新」',
+      (portableKindLine?.textContent ?? '').includes('便携版') &&
+        (portablePrimary?.textContent ?? '').trim() === '立即更新',
+      `${portableKindLine?.textContent?.trim() ?? '(无)'} / ${portablePrimary?.textContent?.trim() ?? '(无)'}`,
+    );
+    portablePrimary?.click();
+    const portablePrepared = await waitFor(() => portableCalls.exits === 1, 80);
+    await flush(6);
+    check(
+      '便携版默认 1 次点击：准备替换脚本并退出应用',
+      portablePrepared &&
+        portableCalls.writes[0] === 'DawnTick-update.zip' &&
+        portableCalls.portables[0] === 'C:\\Temp\\DawnTick-update.zip' &&
+        updateTaskSnapshot().installed === true,
+      `写盘=${portableCalls.writes.join(',') || '(无)'} 脚本=${portableCalls.portables.join(',') || '(无)'} 退出=${portableCalls.exits}`,
+    );
+    setUpdateHostFactoryForTests(null);
+  } finally {
+    // 先撤掉桌面桩再关弹窗：关闭会触发一次重渲染，平台判定回到 Web，
+    // 否则设备页会停留在「桌面端」渲染结果上，后面的浏览器端断言会误判。
+    setUpdateHostFactoryForTests(null);
+    clearUpdateTauriStub();
+    closeUpdatePrompt();
+    setWindowsInstallKindForTests(null);
+    await flush(8);
+  }
+
+  check('关闭更新弹窗后不再显示', document.querySelector('[data-role="update-dialog"]') === null, '');
+  check(
+    '浏览器端不提供「回滚到正式版」（只能刷新页面）',
+    view.container.querySelector('[data-role="rollback-stable"]') === null,
+    view.container.querySelector('[data-role="rollback-stable"]')?.textContent?.trim() ?? '(无)',
+  );
+
+  // —— 后台下载：关掉弹窗后设备页仍有同一任务的进度；ready 显示安装/刷新（注入假出口，不真实下载） ——
+  const backgroundBytes = new Uint8Array(320 * 1024);
+  for (let index = 0; index < backgroundBytes.length; index += 1) backgroundBytes[index] = index % 251;
+  const backgroundDigest = await sha256Hex(backgroundBytes);
+  const backgroundManifest: UpdateManifest = {
+    channel: 'release',
+    version: '0.5.3',
+    checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+    assets: {
+      windows: {
+        url: 'https://example.com/DawnTick-0.5.3-release-windows-x64-setup.exe',
+        name: 'DawnTick-0.5.3-release-windows-x64-setup.exe',
+        size: backgroundBytes.length,
+      },
+    },
+  };
+  /** 假出口：第一块立刻给，剩下的等冒烟断言完再放行——不靠 sleep 抢时间窗口 */
+  let releaseSlowChunk: (() => void) | null = null;
+  const slowUpdateHost: UpdateDownloadHost = {
+    fetchImpl: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(backgroundBytes.slice(0, 96 * 1024));
+            await new Promise<void>((resolve) => {
+              releaseSlowChunk = resolve;
+            });
+            controller.enqueue(backgroundBytes.slice(96 * 1024));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { 'content-length': String(backgroundBytes.length) } },
+      ),
+    readChecksum: async () => `${backgroundDigest}  DawnTick-0.5.3-release-windows-x64-setup.exe\n`,
+    write: async (name) => `C:\\Temp\\${name}`,
+    install: async () => ({ needsPermission: false }),
+  };
+  dismissUpdateTask();
+  const backgroundPrompt: UpdateStatus = {
+    available: true,
+    error: null,
+    feed: 'release',
+    source: 'gitee',
+    fallbackFrom: 'github',
+    current: appVersion(),
+    latest: '0.5.3',
+    manifest: backgroundManifest,
+  };
+  void startBackgroundUpdate(backgroundManifest, {
+    platform: 'windows',
+    installKind: 'installed',
+    host: slowUpdateHost,
+    source: 'gitee',
+  });
+  requestUpdatePrompt(backgroundPrompt);
+  await flush(2);
+  const dialogProgress = document.querySelector<HTMLElement>(
+    '[data-role="update-dialog"] [data-role="update-progress"]',
+  );
+  const dialogProgressDetail =
+    dialogProgress?.querySelector('[data-role="update-progress-detail"]')?.textContent ?? '';
+  check(
+    '更新弹窗：下载中给出进度、速度与剩余时间',
+    dialogProgress !== null && dialogProgressDetail.includes('速度') && dialogProgressDetail.includes('剩余'),
+    dialogProgressDetail || '(无)',
+  );
+  const backgroundClicked = await clickUpdateMenuItem('update-background');
+  await flush(2);
+  const backgroundTask = view.container.querySelector<HTMLElement>('[data-role="update-task"]');
+  const backgroundProgress = backgroundTask?.querySelector<HTMLElement>('[data-role="update-task-progress"]');
+  const backgroundDetail = backgroundProgress?.querySelector('[data-role="update-progress-detail"]')?.textContent ?? '';
+  check(
+    '下载中从「更多」后台下载并关闭：设备页仍显示后台任务与进度（含速度与剩余时间）',
+    backgroundClicked &&
+      document.querySelector('[data-role="update-dialog"]') === null &&
+      updateTaskSnapshot().status === 'downloading' &&
+      backgroundTask !== null &&
+      backgroundProgress !== null &&
+      backgroundDetail.includes('速度') &&
+      backgroundDetail.includes('剩余'),
+    backgroundDetail || backgroundTask?.textContent?.trim() || '(无)',
+  );
+  const backgroundSource = backgroundTask?.querySelector('[data-role="update-task-source"]')?.textContent ?? '';
+  check('后台任务显示下载来源（Gitee）', backgroundSource.includes('来源 Gitee'), backgroundSource || '(无)');
+  (releaseSlowChunk as (() => void) | null)?.();
+  await flush(8);
+  check(
+    '后台下载完成后设备页给出「安装」入口',
+    updateTaskSnapshot().status === 'ready' &&
+      (view.container.querySelector('[data-role="update-task-install"]')?.textContent ?? '').includes('安装'),
+    view.container.querySelector('[data-role="update-task-install"]')?.textContent?.trim() ?? '(无)',
+  );
+  requestUpdatePrompt(backgroundPrompt);
+  await flush(2);
+  check(
+    '再次打开更新弹窗：同一任务已就绪，主按钮变为「安装更新」',
+    (document.querySelector('[data-role="update-primary"]')?.textContent ?? '').includes('安装更新') &&
+      (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes('可以安装'),
+    document.querySelector('[data-role="update-primary"]')?.textContent?.trim() ?? '(无)',
+  );
+  closeUpdatePrompt();
+  await flush(2);
+  dismissUpdateTask();
+  await startBackgroundUpdate(
+    { channel: 'release', version: '0.5.4', assets: {} },
+    { platform: 'web' },
+  );
+  await flush(1);
+  check(
+    'Web 渠道：后台任务就绪后的动作是「刷新页面」',
+    updateTaskSnapshot().status === 'ready' &&
+      (view.container.querySelector('[data-role="update-task-install"]')?.textContent ?? '').includes('刷新页面'),
+    view.container.querySelector('[data-role="update-task-install"]')?.textContent?.trim() ?? '(无)',
+  );
+  dismissUpdateTask();
+  await flush(1);
+  check(
+    '清理后台任务后设备页不再显示下载进度',
+    view.container.querySelector('[data-role="update-task"]') === null,
+    view.container.querySelector('[data-role="update-task"]')?.textContent?.trim() ?? '(无)',
+  );
+
+  // —— 便携版后台任务：注入带 installPortable / exitForUpdate 的出口，点「更新并退出」只准备脚本 ——
+  const portableBytes = new TextEncoder().encode('dawn-tick portable payload');
+  const portableDigest = await sha256Hex(portableBytes);
+  const portableWrites: string[] = [];
+  const portableScripts: string[] = [];
+  let portableExits = 0;
+  const portableHost: UpdateDownloadHost = {
+    fetchImpl: async () =>
+      new Response(portableBytes, {
+        status: 200,
+        headers: { 'content-length': String(portableBytes.length) },
+      }),
+    readChecksum: async () => `${portableDigest}  DawnTick-0.5.5-release-windows-x64-portable.zip\n`,
+    write: async (name) => {
+      portableWrites.push(name);
+      return `C:\\Temp\\${name}`;
+    },
+    install: async () => ({ needsPermission: false }),
+    installPortable: async (path) => {
+      portableScripts.push(path);
+      return 'C:\\Temp\\dawn-tick-update-portable.cmd';
+    },
+    exitForUpdate: async () => {
+      portableExits += 1;
+    },
+  };
+  const portableManifest: UpdateManifest = {
+    channel: 'release',
+    version: '0.5.5',
+    checksumsUrl: 'https://example.com/SHA256SUMS.txt',
+    assets: {
+      windows: {
+        url: 'https://example.com/DawnTick-0.5.5-release-windows-x64-setup.exe',
+        name: 'DawnTick-0.5.5-release-windows-x64-setup.exe',
+        size: portableBytes.length,
+      },
+      windowsPortable: {
+        url: 'https://example.com/DawnTick-0.5.5-release-windows-x64-portable.zip',
+        name: 'DawnTick-0.5.5-release-windows-x64-portable.zip',
+        size: portableBytes.length,
+      },
+    },
+  };
+  dismissUpdateTask();
+  await startBackgroundUpdate(portableManifest, {
+    platform: 'windows',
+    installKind: 'portable',
+    host: portableHost,
+  });
+  await flush(1);
+  const portableTask = view.container.querySelector<HTMLElement>('[data-role="update-task"]');
+  const portableInstallButton = view.container.querySelector<HTMLElement>('[data-role="update-task-install"]');
+  check(
+    '便携版后台任务：下 zip 并标注「便携包（退出后替换）」',
+    updateTaskSnapshot().status === 'ready' &&
+      portableWrites[0] === 'DawnTick-update.zip' &&
+      (portableTask?.textContent ?? '').includes('便携包') &&
+      (portableTask?.textContent ?? '').includes('可以更新了') &&
+      (portableInstallButton?.textContent ?? '').includes('更新并退出'),
+    `${portableWrites[0] ?? '(无)'} / ${portableInstallButton?.textContent?.trim() ?? '(无)'}`,
+  );
+  portableInstallButton?.click();
+  await flush(8);
+  check(
+    '便携版：点「更新并退出」准备替换脚本并退出应用',
+    portableScripts.length === 1 &&
+      portableScripts[0] === 'C:\\Temp\\DawnTick-update.zip' &&
+      portableExits === 1 &&
+      updateTaskSnapshot().installed === true &&
+      (updateTaskSnapshot().message ?? '').includes('自动替换'),
+    `${portableScripts[0] ?? '(无)'} / 退出 ${portableExits}`,
+  );
+  dismissUpdateTask();
+  await flush(1);
+
   // 关于卡片：帮助与反馈（置顶）、应用与版本、致谢与第三方声明
+  await openDeviceGroup('关于');
   const helpBlock = view.container.querySelector('[data-role="about-help"]');
   const appBlock = view.container.querySelector('[data-role="about-app"]');
   const creditsBlock = view.container.querySelector('[data-role="about-credits"]');
@@ -2208,7 +3671,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '关于卡片：帮助与反馈置顶并给出仓库入口',
     helpBlock !== null &&
       (helpBlock.textContent ?? '').includes('帮助与反馈') &&
-      (helpBlock.textContent ?? '').includes('快捷键') &&
+      (helpBlock.textContent ?? '').includes('缺少学校适配？提交学校信息') &&
       view.container.querySelector('[data-role="issues-link"]') !== null &&
       (view.container.querySelector('[data-role="readme-link"]')?.getAttribute('href') ?? '').includes('#readme') &&
       (appBlock === null ||
@@ -2228,7 +3691,24 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (creditsBlock.querySelector('summary')?.textContent ?? '').includes('展开依赖与许可证'),
     `依赖 ${creditItems.length} 项：${creditItems.slice(0, 3).join(' / ')}`,
   );
+  // 近期更新：CHANGELOG 构建时内联，弹窗按版本倒序列出，离线也能看
+  view.container.querySelector<HTMLElement>('[data-role="recent-updates-open"]')?.click();
+  await flush(8);
+  const recentDialog = document.querySelector<HTMLElement>('[data-role="recent-updates-dialog"]');
+  const recentItems = [...(recentDialog?.querySelectorAll('[data-role="recent-update-item"]') ?? [])];
+  check(
+    '关于：近期更新弹窗列出最近几个版本的变更',
+    recentDialog !== null &&
+      recentItems.length >= 2 &&
+      /v\d+\.\d+\.\d+/.test(recentItems[0]?.textContent ?? '') &&
+      (recentItems[0]?.textContent ?? '').includes(`v${appVersion()}`) &&
+      recentItems.every((item) => /v\d+\.\d+\.\d+/.test(item.textContent ?? '')),
+    `版本 ${recentItems.map((item) => item.textContent?.slice(0, 12)).join(' / ')}`,
+  );
+  if (clickByText(document.body, '知道了')) await flush(6);
+  check('近期更新弹窗可以关闭', document.querySelector('[data-role="recent-updates-dialog"]') === null, '');
 
+  await openDeviceGroup('本地存储');
   check(
     '浏览器端不显示存储位置与日志模式开关',
     view.container.querySelector('[data-role="storage-location"]') === null &&
@@ -2236,17 +3716,38 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       (view.container.textContent ?? '').includes('本地存储：'),
     '',
   );
+  await openDeviceGroup('备份与恢复');
   check(
-    '数据页有自动备份开关、保留份数与快照列表',
+    '数据页有自动快照开关、保留份数与快照列表',
     view.container.querySelector('[data-role="backup-settings"]') !== null &&
-      view.container.querySelector('[role="switch"][aria-label="自动备份"]') !== null &&
-      view.container.querySelector('[role="switch"][aria-label="启动时备份"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="自动快照"]') !== null &&
+      view.container.querySelector('[role="switch"][aria-label="启动时快照"]') !== null &&
       view.container.querySelector('[data-role="backup-keep"]') !== null &&
       view.container.querySelector('[data-role="backup-kind"]')?.textContent?.includes('JSON 快照') === true &&
+      (view.container.querySelector('[data-role="snapshot-plain"]')?.textContent ?? '').includes('快照不加密') &&
       view.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
     (view.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').slice(0, 80),
   );
 
+  // —— P1-05 反馈双轨：动作结果走 toast，持续状态走带时间的 live region 状态行 ——
+  if (clickByText(view.container, '新建快照')) await flush(18);
+  const snapshotStatus = view.container.querySelector<HTMLElement>('[data-role="snapshot-message"]');
+  check(
+    '备份结果进 live region 状态行并带操作时间',
+    snapshotStatus !== null &&
+      snapshotStatus.getAttribute('role') === 'status' &&
+      snapshotStatus.getAttribute('aria-live') === 'polite' &&
+      (snapshotStatus.textContent ?? '').includes('已备份') &&
+      (snapshotStatus.textContent ?? '').includes('·'),
+    snapshotStatus?.textContent?.trim() ?? '(无)',
+  );
+  check(
+    '备份成功的动作结果同时有 toast',
+    (document.body.textContent ?? '').includes('已生成快照'),
+    (document.body.textContent ?? '').slice(-120),
+  );
+
+  await openDeviceGroup('WebDAV 同步');
   check(
     '数据页有 WebDAV 地址、账号密码与上传下载入口',
     view.container.querySelector('[data-role="webdav-settings"]') !== null &&
@@ -2259,6 +3760,743 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
+  // 密码只写不回显：输入后离开输入框即加密保存，状态行显示「已加密保存」，落库是 enc:v1 信封
+  const passwordInput = view.container.querySelector<HTMLInputElement>('[data-role="webdav-password"]');
+  if (passwordInput !== null) {
+    setInputValue(passwordInput, 'dav-secret');
+    await flush(6);
+    blurInput(passwordInput);
+    await flush(16);
+  }
+  const passwordStorage = validatedStorage(await openIndexedDbStorage());
+  const storedPassword = (await passwordStorage.readMeta('webdav_password')) ?? '';
+  const passwordStateLine = view.container.querySelector('[data-role="webdav-password-state"]');
+  check(
+    'WebDAV 密码加密保存且不回显',
+    passwordInput !== null &&
+      (passwordStateLine?.textContent ?? '').includes('已加密保存') &&
+      passwordInput.value === '' &&
+      storedPassword.startsWith('enc:v1:'),
+    `状态=${passwordStateLine?.textContent?.trim() ?? '(无)'} 落库=${storedPassword.slice(0, 20)}`,
+  );
+
+  await openDeviceGroup('局域网同步');
+  check(
+    '设备页有局域网同步：对方地址、配对码与范围勾选',
+    view.container.querySelector('[data-role="lan-sync"]') !== null &&
+      (view.container.querySelector('[data-role="lan-sync-title"]')?.textContent ?? '').includes('局域网同步') &&
+      view.container.querySelector('[data-role="lan-sync-peer"]') !== null &&
+      view.container.querySelector('[data-role="lan-sync-pair-code"]') !== null &&
+      view.container.querySelector('input[aria-label="同步 课表"]') !== null &&
+      view.container.querySelector('input[aria-label="同步 待办"]') !== null &&
+      view.container.querySelector('input[aria-label="同步 设置"]') !== null &&
+      view.container.querySelector('button[aria-label="从对方拉取"]')?.hasAttribute('disabled') === true &&
+      view.container.querySelector('button[aria-label="推送到对方"]')?.hasAttribute('disabled') === true,
+    (view.container.querySelector('[data-role="lan-sync"]')?.textContent ?? '').slice(0, 60),
+  );
+  check(
+    '浏览器端只做局域网同步发起方，不显示开启配对',
+    view.container.querySelector('[data-role="lan-sync-server"]') === null &&
+      view.container.querySelector('[data-role="lan-sync-server-hint"]') !== null &&
+      (view.container.querySelector('[data-role="lan-sync"]')?.textContent ?? '').includes('浏览器端'),
+    '',
+  );
+  // —— 多网络识别：候选排序 / 默认选择 / 切换地址（纯逻辑，不依赖真实网卡） ——
+  const networkCandidates: LanNetwork[] = [
+    { name: 'Tailscale', address: '192.168.9.9', isLan: true, kind: 'vpn', preferred: 0 },
+    { name: '以太网', address: '10.0.0.8', isLan: true, kind: 'ethernet', preferred: 1 },
+    { name: 'WLAN', address: '192.168.1.23', isLan: true, kind: 'wifi', preferred: 0 },
+    { name: 'VMnet8', address: '172.20.9.1', isLan: true, kind: 'vpn', preferred: 2 },
+  ];
+  const networkOrder = sortLanNetworks(networkCandidates).map((item) => item.address);
+  const smokeHostStore = new Map<string, string>();
+  const smokeHostStorage: LanHostStorage = {
+    getItem: (key) => smokeHostStore.get(key) ?? null,
+    setItem: (key, value) => {
+      smokeHostStore.set(key, value);
+    },
+    removeItem: (key) => {
+      smokeHostStore.delete(key);
+    },
+  };
+  saveStoredLanHost('10.0.0.8', smokeHostStorage);
+  const defaultNetwork = defaultLanNetwork(networkCandidates);
+  check(
+    '多网络识别：优先 192.168 局域网并降级 VPN，切换地址写入 dt.lan.host',
+    defaultNetwork?.address === '192.168.1.23' &&
+      networkOrder.join(',') === '192.168.1.23,10.0.0.8,192.168.9.9,172.20.9.1' &&
+      formatLanNetworkLine(defaultNetwork).startsWith('网络：192.168.1.23 · Wi-Fi') &&
+      readStoredLanHost(smokeHostStorage) === '10.0.0.8' &&
+      resolveLanHost(networkCandidates, '10.0.0.8') === '10.0.0.8',
+    `${networkOrder.join(' → ')} / ${readStoredLanHost(smokeHostStorage) ?? '(无)'}`,
+  );
+  // —— 局域网同步二期：发现设备 / 同步前预览 / 自动同步 ——
+  check(
+    '设备页有「发现设备」与「同步前预览」入口',
+    (view.container.querySelector('[data-role="lan-sync-discovery"]')?.textContent ?? '').includes('发现设备') &&
+      view.container.querySelector('button[aria-label="发现设备"]')?.hasAttribute('disabled') === false &&
+      (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '').includes('同步前预览'),
+    (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '(无预览说明)').slice(0, 40),
+  );
+  if (clickByLabel(view.container, '发现设备')) await flush(12);
+  const discoveredPeer = view.container.querySelector<HTMLElement>('[data-role="lan-sync-peers"] button');
+  check(
+    '发现设备列表显示「设备名 · IP」',
+    discoveredPeer !== null && (discoveredPeer.textContent ?? '').trim() === '书房电脑 · 192.168.1.5:8765',
+    (discoveredPeer?.textContent ?? '(无发现结果)').trim(),
+  );
+  discoveredPeer?.click();
+  await flush(6);
+  const filledPeer = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+  check(
+    '点击发现结果填入对方地址',
+    filledPeer?.value === '192.168.1.5:8765',
+    filledPeer?.value ?? '(未填入)',
+  );
+  const autoSwitch = view.container.querySelector<HTMLElement>('[data-role="lan-sync-auto"]');
+  check('设备页有自动同步开关', autoSwitch !== null, '');
+  for (let attempt = 0; attempt < 3 && autoSwitch?.getAttribute('aria-checked') !== 'true'; attempt += 1) {
+    autoSwitch?.click();
+    await flush(6);
+  }
+  await flush(6);
+  const autoFrequency = view.container.querySelector<HTMLElement>('[aria-label="自动同步频率"]');
+  if (autoFrequency !== null) {
+    autoFrequency.dispatchEvent(pointerEvent('pointerdown', { pointerId: 21, button: 0 }));
+    autoFrequency.click();
+  }
+  await flush(10);
+  const autoOptions = [...document.querySelectorAll('[role="option"]')].map((item) =>
+    (item.textContent ?? '').trim(),
+  );
+  check(
+    '打开自动同步后可选「每次启动 / 每 30 分钟」',
+    autoSwitch?.getAttribute('aria-checked') === 'true' &&
+      autoFrequency !== null &&
+      (autoOptions.includes('每次启动') || (autoFrequency.textContent ?? '').includes('每次启动')) &&
+      (autoOptions.includes('每 30 分钟') || (view.container.textContent ?? '').includes('每 30 分钟')),
+    `${autoSwitch?.getAttribute('aria-checked') ?? '(无开关)'} / ${autoOptions.join(' / ') || autoFrequency?.textContent?.trim() || '(无频率选择)'}`,
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(6);
+
+  // —— 局域网同步三期：安卓扫码桩 → 自动填入并配对 → 已配对列表 → 移除 ——
+  const lanScanText = formatPairPayload({
+    host: '192.168.1.5',
+    port: 8765,
+    code: '123456',
+    name: '书房电脑',
+  });
+  setPairScannerForTests({ scan: async () => lanScanText, available: true });
+  const originalLanFetch = globalThis.fetch;
+  const pairingToken = 'a'.repeat(32);
+  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = new URL(typeof input === 'string' ? input : String(input));
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (url.pathname === '/pair' && method === 'POST') {
+      return new Response(
+        JSON.stringify({ token: pairingToken, expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    if (url.pathname === '/pair/refresh') {
+      return new Response(
+        JSON.stringify({ token: 'b'.repeat(32), expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    if (url.pathname === '/pair/revoke') {
+      return new Response(JSON.stringify({ revoked: true, schemaVersion: 1 }), { status: 200 });
+    }
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  const lanStorage = validatedStorage(await openIndexedDbStorage());
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：不影响断言
+  }
+  const lanView = mount(
+    <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
+  );
+  await flush(10);
+  const scanButton = lanView.container.querySelector<HTMLElement>('button[aria-label="扫码配对"]');
+  check(
+    '安卓扫码桩：配对区出现「扫码配对」按钮',
+    scanButton !== null,
+    scanButton?.textContent?.trim() ?? '(无按钮)',
+  );
+  scanButton?.click();
+  const pairedShown = await waitFor(
+    () => lanView.container.querySelector('[data-role="lan-paired-item"]') !== null,
+    60,
+  );
+  const pairedItem = lanView.container.querySelector<HTMLElement>('[data-role="lan-paired-item"]');
+  const lanPeerField = lanView.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+  const lanCodeField = lanView.container.querySelector<HTMLInputElement>('[data-role="lan-sync-pair-code"]');
+  const storedPairings = window.localStorage.getItem('dt.lan.pairings.v1') ?? '';
+  check(
+    '扫码后自动填入地址与配对码并发起配对，已配对列表出现设备',
+    pairedShown &&
+      lanPeerField?.value === '192.168.1.5:8765' &&
+      lanCodeField?.value === '123456' &&
+      (pairedItem?.textContent ?? '').includes('书房电脑') &&
+      storedPairings.includes('192.168.1.5') &&
+      storedPairings.includes('书房电脑'),
+    `列表=${(pairedItem?.textContent ?? '(无)').slice(0, 60)}`,
+  );
+  const removePairing = [...lanView.container.querySelectorAll<HTMLElement>('button')].find((item) =>
+    (item.getAttribute('aria-label') ?? '').startsWith('移除配对'),
+  );
+  removePairing?.click();
+  const pairingRemoved = await waitFor(
+    () =>
+      lanView.container.querySelector('[data-role="lan-paired-item"]') === null &&
+      lanView.container.querySelector('[data-role="lan-paired-empty"]') !== null,
+    60,
+  );
+  check(
+    '已配对设备可移除，移除后列表回到空状态',
+    pairingRemoved && !(window.localStorage.getItem('dt.lan.pairings.v1') ?? '').includes('192.168.1.5'),
+    removePairing?.getAttribute('aria-label') ?? '(无移除按钮)',
+  );
+  lanView.root.unmount();
+  globalThis.fetch = originalLanFetch;
+  setPairScannerForTests(null);
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：无需清理
+  }
+
+  // —— 局域网同步：持久化配对 → 换 IP / 换端口靠 UDP 发现自动重连、离线退避 ——
+  const lanPersistedKey = 'dt.lan.pairings.v1';
+  const lanOldHost = '192.168.1.9';
+  const lanOldPort = 37993;
+  const lanNewPort = 38739;
+  const lanPairingRecord = {
+    id: 'peer-smoke',
+    deviceId: 'pc-smoke',
+    name: 'Windows 电脑',
+    discoveryName: '书房电脑',
+    host: lanOldHost,
+    port: lanOldPort,
+    token: 'a'.repeat(32),
+    pairedAt: Date.now() - 7 * 24 * 60 * 60_000,
+    lastSeen: null,
+    lastSyncAt: null,
+  };
+  const lanOldRequests: string[] = [];
+  let lanRecoveredView: ReturnType<typeof mount> | null = null;
+  try {
+    window.localStorage.setItem(lanPersistedKey, JSON.stringify([lanPairingRecord]));
+    setLanDiscoveryScannerForTests(async () => [
+      { name: '书房电脑', host: '10.0.0.8', port: lanNewPort, deviceId: 'pc-smoke', seenAt: Date.now() },
+    ]);
+    globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input));
+      if (url.host === `${lanOldHost}:${lanOldPort}`) lanOldRequests.push(url.pathname);
+      if (url.pathname === '/ping') {
+        if (url.host === `${lanOldHost}:${lanOldPort}`) {
+          throw new Error('由于目标计算机积极拒绝 (os error 10061)');
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      if (url.pathname === '/pair/refresh') {
+        return new Response(
+          JSON.stringify({ token: 'c'.repeat(32), expiresAt: Date.now() + 86_400_000, schemaVersion: 1 }),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    }) as typeof fetch;
+    const view = mount(
+      <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
+    );
+    lanRecoveredView = view;
+    const lanRecovered = await waitFor(
+      () => {
+        const persisted = window.localStorage.getItem(lanPersistedKey) ?? '';
+        return (
+          view.container.querySelector('[data-role="lan-paired-item"]')?.getAttribute('data-state') ===
+            'online' &&
+          persisted.includes('"host":"10.0.0.8"') &&
+          persisted.includes(`"port":${lanNewPort}`)
+        );
+      },
+      80,
+    );
+    const recoveredRecord = (JSON.parse(window.localStorage.getItem(lanPersistedKey) ?? '[]') as {
+      id?: string;
+      deviceId?: string;
+      name?: string;
+      discoveryName?: string;
+      host?: string;
+      port?: number;
+      token?: string;
+    }[])[0];
+    check(
+      '保存的配对换 IP/端口后：UDP 发现同一 deviceId，地址静默更新且只保留一条记录',
+      lanRecovered &&
+        recoveredRecord?.id === 'peer-smoke' &&
+        recoveredRecord?.deviceId === 'pc-smoke' &&
+        recoveredRecord?.name === 'Windows 电脑' &&
+        recoveredRecord?.discoveryName === '书房电脑' &&
+        recoveredRecord?.host === '10.0.0.8' &&
+        recoveredRecord?.port === lanNewPort &&
+        recoveredRecord?.token === 'c'.repeat(32) &&
+        (view.container.querySelectorAll('[data-role="lan-paired-item"]').length ?? 0) === 1 &&
+        (view.container.querySelector('[data-role="lan-paired-state"]')?.textContent ?? '').includes(
+          '在线',
+        ),
+      `存储=${JSON.stringify(recoveredRecord)} 旧地址请求=${lanOldRequests.join(',')}`,
+    );
+  } finally {
+    lanRecoveredView?.root.unmount();
+    globalThis.fetch = originalLanFetch;
+    setLanDiscoveryScannerForTests(null);
+    try {
+      window.localStorage.removeItem(lanPersistedKey);
+    } catch {
+      // localStorage 不可用：无需清理
+    }
+  }
+
+  // 发现不到新地址：显示离线 + 退避提示，提供「重新配对 / 移除」，且不对旧地址反复重试
+  const lanOfflineRecord = {
+    ...lanPairingRecord,
+    deviceId: 'pc-offline',
+    id: 'peer-offline',
+    name: '客厅电脑',
+    discoveryName: null,
+  };
+  const lanOfflineRequests: string[] = [];
+  let lanOfflineView: ReturnType<typeof mount> | null = null;
+  try {
+    window.localStorage.setItem(lanPersistedKey, JSON.stringify([lanOfflineRecord]));
+    setLanDiscoveryScannerForTests(async () => []);
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      // 只统计旧地址：上一个场景卸载时可能还有发往新地址的在途探测
+      if (url.host === `${lanOldHost}:${lanOldPort}`) {
+        lanOfflineRequests.push(`${url.host}${url.pathname}`);
+      }
+      throw new Error('由于目标计算机积极拒绝 (os error 10061)');
+    }) as typeof fetch;
+    const view = mount(
+      <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
+    );
+    lanOfflineView = view;
+    const lanOfflineShown = await waitFor(
+      () =>
+        view.container
+          .querySelector('[data-role="lan-paired-state"]')
+          ?.textContent?.includes('离线（端口可能已变化）') === true,
+      80,
+    );
+    const repairButton = view.container.querySelector<HTMLElement>('button[aria-label^="重新配对"]');
+    const removeButton = view.container.querySelector<HTMLElement>('button[aria-label^="移除配对"]');
+    await flush(20);
+    const offlineAttempts = [...lanOfflineRequests];
+    await flush(30);
+    const stillOffline = view.container.querySelector('[data-role="lan-paired-item"]');
+    check(
+      '离线设备显示「离线（端口可能已变化）」与重新配对/移除，重连失败不无限刷旧地址',
+      lanOfflineShown &&
+        (stillOffline?.textContent ?? '').includes('请让对方重新开启配对或重新扫码') &&
+        repairButton !== null &&
+        removeButton !== null &&
+        lanOfflineRequests.length === offlineAttempts.length &&
+        offlineAttempts.length <= 2,
+      `状态=${stillOffline?.textContent?.trim().slice(0, 60) ?? '(无)'} 旧地址请求=${lanOfflineRequests.join(',') || '(无)'}`,
+    );
+    repairButton?.click();
+    await flush(6);
+    const repairedPeer = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+    check(
+      '离线设备点「重新配对」把最近地址填回配对面板，等待新配对码',
+      repairedPeer?.value === `${lanOldHost}:${lanOldPort}` &&
+        (view.container.querySelector('[data-role="lan-sync-pair-code"]') as HTMLInputElement | null)
+          ?.value === '',
+      repairedPeer?.value ?? '(未填入)',
+    );
+  } finally {
+    lanOfflineView?.root.unmount();
+    globalThis.fetch = originalLanFetch;
+    setLanDiscoveryScannerForTests(null);
+    try {
+      window.localStorage.removeItem(lanPersistedKey);
+    } catch {
+      // localStorage 不可用：无需清理
+    }
+  }
+
+  // —— Android 网络空态：原生 status 区分「Wi-Fi 无 IPv4」/「只有移动数据」/ 其它 ——
+  const wifiNoIpv4Status = {
+    wifi: true,
+    ethernet: false,
+    mobile: false,
+    vpn: false,
+    ipv4Count: 0,
+    interfaceSummary: 'wlan0(up,1 个地址); rmnet0(up,2 个地址)',
+  };
+  setLanNetworkListerForTests(async () => ({ networks: [], status: wifiNoIpv4Status }));
+  let emptyDiagnosticsCopied = 0;
+  try {
+    const wifiStatusResult = await readLanNetworks();
+    check(
+      'readLanNetworks 解析原生 status：空候选 + 已连接 Wi-Fi',
+      wifiStatusResult.networks.length === 0 &&
+        wifiStatusResult.error === null &&
+        wifiStatusResult.status?.wifi === true &&
+        wifiStatusResult.status?.ipv4Count === 0,
+      `status=${JSON.stringify(wifiStatusResult.status)}`,
+    );
+    const wifiEmptyView = mount(
+      <LanSyncServerPanel
+        server={null}
+        pairing={null}
+        tokens={[]}
+        networks={[]}
+        selectedHost={null}
+        alwaysShowNetwork
+        networkStatus={wifiStatusResult.status}
+        failed={false}
+        busy={false}
+        deviceName="测试手机"
+        onStart={() => {}}
+        onStop={() => {}}
+        onNewCode={() => {}}
+        onChangeNetwork={() => {}}
+        onRefreshNetworks={() => {}}
+        onCopyDiagnostics={() => {
+          emptyDiagnosticsCopied += 1;
+        }}
+        onCopy={() => {}}
+      />,
+    );
+    await flush(6);
+    const wifiEmpty = wifiEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
+    const copyDiagnostics = wifiEmptyView.container.querySelector<HTMLElement>(
+      'button[aria-label="复制诊断信息"]',
+    );
+    copyDiagnostics?.click();
+    await flush(4);
+    check(
+      'Android 空态：已连接 Wi-Fi 但没有 IPv4 时提示重新连接 Wi-Fi',
+      (wifiEmpty?.textContent ?? '').includes('已连接 Wi-Fi，但没有拿到 IPv4 地址') &&
+        (wifiEmpty?.textContent ?? '').includes('仅 IPv6'),
+      wifiEmpty?.textContent?.trim() ?? '(无空态)',
+    );
+    check(
+      '空态旁「复制诊断信息」按钮可点击',
+      copyDiagnostics !== null && emptyDiagnosticsCopied === 1,
+      `按钮=${copyDiagnostics !== null} 复制次数=${emptyDiagnosticsCopied}`,
+    );
+    wifiEmptyView.root.unmount();
+  } finally {
+    setLanNetworkListerForTests(null);
+  }
+
+  const mobileOnlyStatus = {
+    wifi: false,
+    ethernet: false,
+    mobile: true,
+    vpn: false,
+    ipv4Count: 0,
+    interfaceSummary: 'rmnet0(up,2 个地址)',
+  };
+  setLanNetworkListerForTests(async () => ({ networks: [], status: mobileOnlyStatus }));
+  try {
+    const mobileResult = await readLanNetworks();
+    check(
+      'readLanNetworks 解析原生 status：只有移动数据',
+      mobileResult.status?.wifi === false && mobileResult.status?.mobile === true,
+      `status=${JSON.stringify(mobileResult.status)}`,
+    );
+    const mobileEmptyView = mount(
+      <LanSyncServerPanel
+        server={null}
+        pairing={null}
+        tokens={[]}
+        networks={[]}
+        selectedHost={null}
+        alwaysShowNetwork
+        networkStatus={mobileResult.status}
+        failed={false}
+        busy={false}
+        deviceName="测试手机"
+        onStart={() => {}}
+        onStop={() => {}}
+        onNewCode={() => {}}
+        onChangeNetwork={() => {}}
+        onRefreshNetworks={() => {}}
+        onCopyDiagnostics={() => {}}
+        onCopy={() => {}}
+      />,
+    );
+    await flush(6);
+    const mobileEmpty = mobileEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
+    check(
+      'Android 空态：只有移动数据时提示先连同一 Wi-Fi',
+      (mobileEmpty?.textContent ?? '').includes('当前没有 Wi-Fi/有线连接'),
+      mobileEmpty?.textContent?.trim() ?? '(无空态)',
+    );
+    mobileEmptyView.root.unmount();
+  } finally {
+    setLanNetworkListerForTests(null);
+  }
+
+  // 其它状态（无 Wi-Fi / 有线 / 移动数据，只有 VPN 或没有网卡）：原文案 + 诊断信息 + 刷新
+  let fallbackRefreshed = false;
+  const fallbackEmptyView = mount(
+    <LanSyncServerPanel
+      server={null}
+      pairing={null}
+      tokens={[]}
+      networks={[]}
+      selectedHost={null}
+      alwaysShowNetwork
+      networkStatus={{
+        wifi: false,
+        ethernet: false,
+        mobile: false,
+        vpn: false,
+        ipv4Count: 0,
+        interfaceSummary: '0 块网卡',
+      }}
+      failed={false}
+      busy={false}
+      deviceName="测试手机"
+      onStart={() => {}}
+      onStop={() => {}}
+      onNewCode={() => {}}
+      onChangeNetwork={() => {}}
+      onRefreshNetworks={() => {
+        fallbackRefreshed = true;
+      }}
+      onCopyDiagnostics={() => {}}
+      onCopy={() => {}}
+    />,
+  );
+  await flush(6);
+  const fallbackEmpty = fallbackEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
+  const fallbackDiagnostics = fallbackEmptyView.container.querySelector(
+    '[data-role="lan-sync-network-diagnostics"]',
+  );
+  fallbackEmptyView.container
+    .querySelector<HTMLElement>('button[aria-label="刷新本机网络"]')
+    ?.click();
+  await flush(4);
+  check(
+    'Android 空态：其它状态保留原文案并附诊断信息与刷新',
+    (fallbackEmpty?.textContent ?? '').includes('未发现局域网地址') &&
+      (fallbackDiagnostics?.textContent ?? '').includes('诊断信息：0 块网卡') &&
+      fallbackRefreshed,
+    `空态=${fallbackEmpty?.textContent?.trim() ?? '(无)'} 诊断=${fallbackDiagnostics?.textContent?.trim() ?? '(无)'} 刷新=${fallbackRefreshed}`,
+  );
+  fallbackEmptyView.root.unmount();
+
+  // —— Android 网络行：没有候选也显示空态与刷新；多候选可切换并触发重启 ——
+  let networkRefreshed = false;
+  let networkPicked = '';
+  const emptyNetworkView = mount(
+    <LanSyncServerPanel
+      server={null}
+      pairing={null}
+      tokens={[]}
+      networks={[]}
+      selectedHost={null}
+      alwaysShowNetwork
+      failed={false}
+      busy={false}
+      deviceName="测试手机"
+      onStart={() => {}}
+      onStop={() => {}}
+      onNewCode={() => {}}
+      onChangeNetwork={() => {}}
+      onRefreshNetworks={() => {
+        networkRefreshed = true;
+      }}
+      onCopy={() => {}}
+    />,
+  );
+  await flush(6);
+  const emptyNetwork = emptyNetworkView.container.querySelector('[data-role="lan-sync-network-empty"]');
+  const refreshNetwork = emptyNetworkView.container.querySelector<HTMLElement>(
+    'button[aria-label="刷新本机网络"]',
+  );
+  refreshNetwork?.click();
+  await flush(4);
+  check(
+    'Android 网络行始终显示：无候选给空态文案与刷新按钮',
+    emptyNetwork !== null &&
+      (emptyNetwork.textContent ?? '').includes('未发现局域网地址') &&
+      (emptyNetwork.textContent ?? '').includes('Wi-Fi/热点') &&
+      refreshNetwork !== null &&
+      networkRefreshed,
+    emptyNetwork?.textContent?.trim() ?? '(无空态)',
+  );
+  emptyNetworkView.root.unmount();
+
+  const networkOptions: LanNetwork[] = [
+    { name: 'WLAN', address: '192.168.1.23', isLan: true, kind: 'wifi', preferred: 0 },
+    { name: '以太网', address: '10.0.0.8', isLan: true, kind: 'ethernet', preferred: 1 },
+  ];
+  let optionsRefreshed = false;
+  const switchNetworkView = mount(
+    <LanSyncServerPanel
+      server={null}
+      pairing={null}
+      tokens={[]}
+      networks={networkOptions}
+      selectedHost="192.168.1.23"
+      alwaysShowNetwork
+      networkStatus={{ wifi: true, ethernet: true, mobile: false, vpn: false, ipv4Count: 2, interfaceSummary: 'wlan0(up,1 个地址); eth0(up,1 个地址)' }}
+      failed={false}
+      busy={false}
+      deviceName="测试手机"
+      onStart={() => {}}
+      onStop={() => {}}
+      onNewCode={() => {}}
+      onChangeNetwork={(address) => {
+        networkPicked = address;
+      }}
+      onRefreshNetworks={() => {
+        optionsRefreshed = true;
+      }}
+      onCopy={() => {}}
+    />,
+  );
+  await flush(6);
+  const networkTrigger = switchNetworkView.container.querySelector<HTMLElement>(
+    '[data-role="lan-sync-network-select"]',
+  );
+  networkTrigger?.dispatchEvent(pointerEvent('pointerdown', { pointerId: 91, button: 0 }));
+  networkTrigger?.click();
+  await flush(10);
+  const networkOptionLabels = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((item) =>
+    (item.textContent ?? '').trim(),
+  );
+  const ethernetOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) =>
+    (item.textContent ?? '').includes('10.0.0.8'),
+  );
+  ethernetOption?.click();
+  await flush(8);
+  switchNetworkView.container
+    .querySelector<HTMLElement>('button[aria-label="刷新本机网络"]')
+    ?.click();
+  await flush(4);
+  check(
+    'Android 网络下拉可看到多块网卡并切换地址',
+    networkTrigger !== null &&
+      networkOptionLabels.some((label) => label.includes('192.168.1.23 · Wi-Fi')) &&
+      networkOptionLabels.some((label) => label.includes('10.0.0.8 · 有线网络')) &&
+      networkPicked === '10.0.0.8' &&
+      optionsRefreshed,
+    `候选=${networkOptionLabels.join(' / ') || '(无)'} 选择=${networkPicked || '(无)'} 刷新=${optionsRefreshed}`,
+  );
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await flush(4);
+  switchNetworkView.root.unmount();
+
+  // —— 通用扫一扫：主界面入口 → 扫到配对信息 → 跳设备页并自动配对 ——
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：不影响断言
+  }
+  const universalPairText = formatPairPayload({
+    host: '192.168.1.77',
+    port: 8765,
+    code: '222222',
+    name: '扫码电脑',
+  });
+  const universalToken = 'c'.repeat(32);
+  const originalUniversalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = new URL(typeof input === 'string' ? input : String(input));
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (url.pathname === '/ping') return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    if (url.pathname === '/pair' && method === 'POST') {
+      return new Response(
+        JSON.stringify({ token: universalToken, expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    if (url.pathname === '/pair/refresh') {
+      return new Response(
+        JSON.stringify({ token: universalToken, expiresAt: Date.now() + 180 * 24 * 60 * 60_000, schemaVersion: 1 }),
+        { status: 200 },
+      );
+    }
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  setPairScannerForTests({ scan: async () => universalPairText, available: true });
+  if (clickByText(view.container, '课表')) await flush(12);
+  const universalScanButton = view.container.querySelector<HTMLElement>('button[aria-label="扫一扫"]');
+  check(
+    '通用扫一扫入口：Android 顶部工具区出现「扫一扫」图标按钮',
+    universalScanButton !== null && universalScanButton.getAttribute('data-role') === 'scan-entry',
+    universalScanButton?.getAttribute('aria-label') ?? '(无入口)',
+  );
+  universalScanButton?.click();
+  const universalPaired = await waitFor(
+    () => view.container.querySelector('[data-role="lan-paired-item"]') !== null,
+    80,
+  );
+  const universalPeer = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-peer"]');
+  const universalCode = view.container.querySelector<HTMLInputElement>('[data-role="lan-sync-pair-code"]');
+  const universalPairedItem = view.container.querySelector<HTMLElement>('[data-role="lan-paired-item"]');
+  const universalPairings = window.localStorage.getItem('dt.lan.pairings.v1') ?? '';
+  check(
+    '扫一扫识别配对信息：跳到设备页「局域网同步」并自动填入 / 配对',
+    universalPaired &&
+      activeDeviceGroup(view.container) === 'lan' &&
+      universalPeer?.value === '192.168.1.77:8765' &&
+      universalCode?.value === '222222' &&
+      (universalPairedItem?.textContent ?? '').includes('扫码电脑') &&
+      universalPairings.includes('192.168.1.77'),
+    `组=${activeDeviceGroup(view.container)} 地址=${universalPeer?.value ?? '(无)'} 列表=${(universalPairedItem?.textContent ?? '(无)').slice(0, 50)}`,
+  );
+
+  // 普通文本：进入结果面板，显示内容与复制按钮；未知 scheme 带说明
+  if (clickByText(view.container, '课表')) await flush(12);
+  setPairScannerForTests({ scan: async () => 'tel:10086', available: true });
+  view.container.querySelector<HTMLElement>('button[aria-label="扫一扫"]')?.click();
+  const scanResultShown = await waitFor(
+    () => document.querySelector('[data-role="scan-result-text"]') !== null,
+    60,
+  );
+  const scanResultText = document.querySelector<HTMLElement>('[data-role="scan-result-text"]');
+  const scanResultNote = document.querySelector<HTMLElement>('[data-role="scan-result-note"]');
+  const copyScanButton = document.querySelector<HTMLElement>('button[aria-label="复制扫码内容"]');
+  check(
+    '扫一扫识别普通文本：结果面板显示内容、复制与未知 scheme 说明',
+    scanResultShown &&
+      (scanResultText?.textContent ?? '').trim() === 'tel:10086' &&
+      (scanResultNote?.textContent ?? '').includes('暂不支持 tel://') &&
+      copyScanButton !== null,
+    `内容=${scanResultText?.textContent?.trim() ?? '(无)'} 说明=${scanResultNote?.textContent?.trim() ?? '(无)'}`,
+  );
+  document
+    .querySelector<HTMLElement>('button[aria-label="关闭扫码结果"]')
+    ?.click();
+  await flush(6);
+  globalThis.fetch = originalUniversalFetch;
+  setPairScannerForTests(null);
+  try {
+    window.localStorage.removeItem('dt.lan.pairings.v1');
+  } catch {
+    // localStorage 不可用：无需清理
+  }
+  if (clickByText(view.container, '设备与同步')) await flush(12);
+  check(
+    'Web / 桌面不显示通用扫一扫入口',
+    view.container.querySelector('button[aria-label="扫一扫"]') === null,
+    '',
+  );
+
   check(
     '主区底部留白按底部栏与悬浮按钮高度计算',
     (view.container.querySelector('[data-role="app-main"]')?.className ?? '').includes('--dt-bottom-nav') &&
@@ -2266,7 +4504,9 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
-  if (clickByText(view.container, '导出配置')) await flush(10);
+  // 导出/导入入口已下沉到「本地存储」分组：先进入该组再点
+  await openDeviceGroup('本地存储');
+  if (clickByText(view.container, '导出备份')) await flush(10);
   check(
     '导出可选模块',
     document.body.textContent?.includes('学期与节次') === true &&
@@ -2274,11 +4514,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.querySelector('input[aria-label="导出 提醒"]') !== null,
     '',
   );
-  // 整包 zip：可选把预设快照与日志一起打包，导出格式仍是三选一
+  // 整包 zip：可选把预设与日志一起打包，导出格式仍是三选一
   if (clickByLabel(document.body, '导出为整包 zip')) await flush(6);
   check(
     '整包 zip 可选打包预设与日志',
-    document.querySelector('input[aria-label="整包包含预设快照"]') !== null &&
+    document.querySelector('input[aria-label="整包包含预设"]') !== null &&
       document.querySelector('input[aria-label="整包包含日志文件"]') !== null,
     '',
   );
@@ -2302,11 +4542,227 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       document.body.textContent?.includes('复制文本') === true,
     `长度 ${base64Text.length}，解析=${base64Ok ? '成功' : '失败'}`,
   );
-  if (clickByText(document.body, '取消')) await flush(6);
-  // 导入配置：一个入口里既可选文件，也可粘贴文本；把刚生成的 Base64 贴回去应能识别模块
-  if (clickByLabel(view.container, '导入配置')) await flush(10);
+
+  // —— 导出加密：勾选后出现口令与确认，warning 说明忘记口令无法恢复 ——
+  const encryptionBox = document.querySelector<HTMLInputElement>('input[aria-label="用口令加密"]');
+  encryptionBox?.click();
+  await flush(6);
+  const exportPasswordInput = document.querySelector<HTMLInputElement>('input[aria-label="加密口令"]');
+  const exportPasswordConfirm = document.querySelector<HTMLInputElement>('input[aria-label="确认加密口令"]');
+  const encryptionWarning = document.querySelector<HTMLElement>('[data-role="export-password-warning"]');
+  const encryptionScope = document.querySelector<HTMLElement>('[data-role="export-encryption-scope"]');
   check(
-    '导入配置合并文件与粘贴两种方式',
+    '导出可选口令加密并警示忘记口令无法恢复',
+    encryptionBox?.checked === true &&
+      exportPasswordInput?.type === 'password' &&
+      exportPasswordConfirm?.type === 'password' &&
+      (encryptionWarning?.textContent ?? '').includes('忘记口令将无法恢复') &&
+      (encryptionScope?.textContent ?? '').includes('自动快照') &&
+      (encryptionScope?.textContent ?? '').includes('不加密'),
+    `勾选=${encryptionBox?.checked === true} 警示=${encryptionWarning?.textContent?.trim() ?? '(无)'}`,
+  );
+  if (exportPasswordInput !== null) setInputValue(exportPasswordInput, 'smoke-pass-8');
+  if (exportPasswordConfirm !== null) setInputValue(exportPasswordConfirm, 'smoke-pass-8');
+  await flush(4);
+  const encryptedSubmitted = clickByText(document.body, '生成文本');
+  await flush(30);
+  const encryptedBox = document.querySelector<HTMLTextAreaElement>('[data-role="export-base64"]');
+  const encryptedText = (encryptedBox?.value ?? '').trim();
+  check(
+    '加密导出生成 DAWNTICK-ENC 信封文本',
+    encryptedSubmitted && encryptedText.startsWith('DAWNTICK-ENC 1 ') && isEncryptedBackup(encryptedText),
+    `长度 ${encryptedText.length}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  // —— I-12：导出成功显示保存路径，并可「打开所在位置」（桌面端用 Tauri 桩） ——
+  const tauriCalls: string[] = [];
+  const writtenFiles: Array<{ path: string; content: string }> = [];
+  const binaryWrites: Array<{ path: string; base64: string }> = [];
+  const saveDefaultPaths: string[] = [];
+  let lastSaveOptions: Record<string, unknown> | null = null;
+  const stubSavePath = 'C:\\Users\\tester\\DawnTick-backup-2026-10-21.json';
+  const tauriInternals = {
+    invoke: async (command: string, args?: Record<string, unknown>): Promise<unknown> => {
+      tauriCalls.push(command);
+      // 导出由原生 save_file 弹「另存为」并写入：桩里同时记下对话框参数与写入内容
+      if (command === 'save_file') {
+        lastSaveOptions = {
+          defaultPath: String(args?.['defaultName'] ?? ''),
+          filters: [{ name: String(args?.['filterName'] ?? ''), extensions: [String(args?.['extension'] ?? '')] }],
+        };
+        saveDefaultPaths.push(String(args?.['defaultName'] ?? ''));
+        if (typeof args?.['text'] === 'string') {
+          writtenFiles.push({ path: stubSavePath, content: String(args['text']) });
+        } else {
+          binaryWrites.push({ path: stubSavePath, base64: String(args?.['base64'] ?? '') });
+        }
+        return stubSavePath;
+      }
+      if (command === 'reveal_path') return String(args?.['path'] ?? '');
+      return undefined;
+    },
+    transformCallback: () => 0,
+  };
+  const installTauriStub = (): void => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = tauriInternals;
+    (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = tauriInternals;
+  };
+  const clearTauriStub = (): void => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  };
+  installTauriStub();
+  // 走「本地存储」分组里的「导出备份」→ 对话框 JSON 导出这条真实入口：系统保存对话框与写盘都用桩
+  await openDeviceGroup('本地存储');
+  if (clickByText(view.container, '导出备份')) await flush(10);
+  if (clickByLabel(document.body, '导出为 JSON 文件')) await flush(6);
+  const exportSubmitted = clickByText(document.body, '导出');
+  await flush(24);
+  const savedToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+    (item.textContent ?? '').includes('已保存到'),
+  );
+  const revealSaved =
+    savedToast === undefined
+      ? undefined
+      : [...savedToast.querySelectorAll<HTMLButtonElement>('button')].find(
+          (item) => (item.textContent ?? '').trim() === '打开所在位置',
+        );
+  check(
+    '导出成功后 toast 显示保存路径并可打开所在位置',
+    exportSubmitted &&
+      tauriCalls.includes('save_file') &&
+      savedToast !== undefined &&
+      (savedToast.textContent ?? '').includes(stubSavePath) &&
+      revealSaved !== undefined,
+    `写盘=${tauriCalls.includes('save_file') ? '已调用' : '未调用'}；提示=${
+      savedToast?.textContent?.trim() ?? '(无)'
+    }`,
+  );
+  revealSaved?.click();
+  await flush(8);
+  check(
+    '「打开所在位置」调用 reveal_path',
+    tauriCalls.includes('reveal_path'),
+    `原生调用：${[...new Set(tauriCalls)].join('、')}`,
+  );
+
+  // —— R-01：设备页导出课表（ICS） ——
+  const icsEntry = clickByText(view.container, '导出课表（ICS）');
+  await flush(16);
+  const icsDialog = document.querySelector<HTMLElement>('[data-role="ics-export-dialog"]');
+  const icsDialogText = icsDialog?.textContent ?? '';
+  const icsLessonBox = document.querySelector<HTMLInputElement>('input[aria-label="导出 课表"]');
+  const icsEventBox = document.querySelector<HTMLInputElement>('input[aria-label="导出 日程"]');
+  check(
+    '设备页导出课表（ICS）入口按 Q17 展示学期与模块勾选',
+    icsEntry &&
+      icsDialog !== null &&
+      icsDialogText.includes('2026-2027 第一学期') &&
+      /课程 \d+ 门/.test(icsDialogText) &&
+      /排课 \d+ 条/.test(icsDialogText) &&
+      icsLessonBox?.checked === true &&
+      icsLessonBox?.disabled === true &&
+      icsEventBox?.checked === false &&
+      icsEventBox?.disabled === false &&
+      icsDialogText.includes('停课不导出'),
+    `入口=${icsEntry} 对话框=${icsDialog === null ? '无' : '有'} 课表=${
+      icsLessonBox?.checked === true ? '已选' : '未选'
+    } 日程=${icsEventBox?.checked === true ? '已选' : '未选'}`,
+  );
+  // 勾选日程后导出：写入 .ics，沿用「已保存到路径」toast
+  icsEventBox?.click();
+  await flush(8);
+  const icsSubmitted = clickByText(document.body, '导出');
+  await flush(24);
+  const icsFile = [...writtenFiles].reverse().find((item) => item.content.includes('BEGIN:VCALENDAR'));
+  const icsToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+    (item.textContent ?? '').includes('已导出课表（ICS'),
+  );
+  const icsDefaultPath = String(lastSaveOptions?.['defaultPath'] ?? '');
+  check(
+    '勾选日程后导出课表（ICS）写入 .ics 并提示保存路径',
+    icsSubmitted &&
+      icsFile !== undefined &&
+      icsFile.content.includes('SUMMARY:高等数学') &&
+      icsFile.content.includes('SUMMARY:组会') &&
+      /^DawnTick-2026-2027 第一学期-\d{4}-\d{2}-\d{2}\.ics$/.test(icsDefaultPath) &&
+      icsToast !== undefined &&
+      (icsToast.textContent ?? '').includes(stubSavePath),
+    `文件名=${icsDefaultPath || '(无)'} 内容=${icsFile === undefined ? '无' : '已写入'} 提示=${
+      icsToast?.textContent?.trim() ?? '(无)'
+    }`,
+  );
+
+  // —— R-02：设备页导出课表图片（PNG）与课表 PDF ——
+  // Canvas 2D 用桩（jsdom 没有），二进制写盘沿用上面的 Tauri 桩，PNG 编码与 PDF 组装走真实实现
+  const restoreCanvas = installCanvas2dStub();
+  try {
+    const pngEntry = view.container.querySelector<HTMLElement>('[data-role="export-timetable-png"]');
+    const pdfEntry = view.container.querySelector<HTMLElement>('[data-role="export-timetable-pdf"]');
+    const pngBefore = binaryWrites.length;
+    pngEntry?.click();
+    await waitFor(() => binaryWrites.length > pngBefore, 80);
+    await flush(8);
+    const pngWrite = binaryWrites[pngBefore];
+    const pngToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+      (item.textContent ?? '').includes('已导出课表图片（PNG'),
+    );
+    const pngPath =
+      [...saveDefaultPaths].reverse().find((path) => path.endsWith('.png')) ?? '';
+    check(
+      '导出课表图片（PNG）按 2x 画布生成并写入 PNG 文件',
+      pngEntry !== null &&
+        pngWrite !== undefined &&
+        pngWrite.base64.startsWith('iVBORw0KGgo') &&
+        /^DawnTick-2026-2027 第一学期-\d{4}-\d{2}-\d{2}\.png$/.test(pngPath) &&
+        pngToast !== undefined,
+      `入口=${pngEntry === null ? '无' : '有'} 文件名=${pngPath || '(无)'} Base64=${pngWrite?.base64.length ?? 0} 字符`,
+    );
+
+    const pdfBefore = binaryWrites.length;
+    pdfEntry?.click();
+    await waitFor(() => binaryWrites.length > pdfBefore, 80);
+    await flush(8);
+    const pdfWrite = binaryWrites[pdfBefore];
+    const pdfToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+      (item.textContent ?? '').includes('已导出课表 PDF'),
+    );
+    const pdfPath =
+      [...saveDefaultPaths].reverse().find((path) => path.endsWith('.pdf')) ?? '';
+    check(
+      '导出课表 PDF 嵌入 PNG 图像并写入 PDF 文件',
+      pdfEntry !== null &&
+        pdfWrite !== undefined &&
+        pdfWrite.base64.startsWith('JVBERi0xLjQ') &&
+        /^DawnTick-2026-2027 第一学期-\d{4}-\d{2}-\d{2}\.pdf$/.test(pdfPath) &&
+        pdfToast !== undefined,
+      `入口=${pdfEntry === null ? '无' : '有'} 文件名=${pdfPath || '(无)'} Base64=${pdfWrite?.base64.length ?? 0} 字符`,
+    );
+  } finally {
+    restoreCanvas();
+  }
+  clearTauriStub();
+  // 没有原生（浏览器下载）时没有本地路径：提示里不出现「打开所在位置」按钮
+  toastSaved('无路径保存提示', null);
+  await flush(6);
+  const plainToast = [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].find((item) =>
+    (item.textContent ?? '').includes('无路径保存提示'),
+  );
+  check(
+    '没有原生路径时不显示打开所在位置',
+    plainToast !== undefined &&
+      ![...plainToast.querySelectorAll('button')].some(
+        (item) => (item.textContent ?? '').trim() === '打开所在位置',
+      ),
+    `提示=${plainToast?.textContent?.trim() ?? '(无)'}`,
+  );
+
+  // 导入备份：入口已下沉到「本地存储」，一个入口里既可选文件也可粘贴文本
+  await openDeviceGroup('本地存储');
+  if (clickByLabel(view.container, '导入备份')) await flush(10);
+  check(
+    '导入备份合并文件与粘贴两种方式',
     document.querySelector('[data-role="import-text"]') !== null &&
       document.body.textContent?.includes('选择备份文件') === true,
     '',
@@ -2317,7 +4773,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   const pasteParsed = clickByText(document.body, '从文本导入');
   await flush(14);
   check(
-    '粘贴 Base64 文本可导入配置',
+    '粘贴 Base64 文本可导入备份',
     pasteParsed &&
       document.body.textContent?.includes('按修改时间合并') === true &&
       document.querySelector('input[aria-label="导入 课程与排课"]') !== null,
@@ -2325,11 +4781,58 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
+  // —— 导入加密备份：先要口令，输错可重试，对口令后照常进入模块选择 ——
+  await openDeviceGroup('本地存储');
+  if (clickByLabel(view.container, '导入备份')) await flush(10);
+  const encryptedImportBox = document.querySelector<HTMLTextAreaElement>('[data-role="import-text"]');
+  if (encryptedImportBox !== null) setInputValue(encryptedImportBox, encryptedText);
+  await flush(6);
+  const encryptedImportSubmitted = clickByText(document.body, '从文本导入');
+  await flush(20);
+  const unlockDialog = document.querySelector<HTMLElement>('[data-role="unlock-backup-dialog"]');
+  const unlockInput = document.querySelector<HTMLInputElement>('input[aria-label="备份口令"]');
+  check(
+    '导入加密备份时提示输入口令',
+    encryptedImportSubmitted && unlockDialog !== null && unlockInput?.type === 'password',
+    `对话框=${unlockDialog === null ? '无' : '有'}`,
+  );
+  if (unlockInput !== null) setInputValue(unlockInput, 'wrong-pass-8');
+  await flush(4);
+  const wrongSubmitted = clickByText(document.body, '解密并导入');
+  await flush(30);
+  const unlockError = document.querySelector<HTMLElement>(
+    '[data-role="unlock-backup-dialog"] [role="alert"]',
+  );
+  check(
+    '错误口令给出可读错误并允许重试',
+    wrongSubmitted &&
+      document.querySelector('[data-role="unlock-backup-dialog"]') !== null &&
+      (unlockError?.textContent ?? '').includes('口令错误') &&
+      document.querySelector('input[aria-label="备份口令"]') !== null,
+    `错误=${unlockError?.textContent?.trim() ?? '(无)'}`,
+  );
+  const retryInput = document.querySelector<HTMLInputElement>('input[aria-label="备份口令"]');
+  if (retryInput !== null) setInputValue(retryInput, 'smoke-pass-8');
+  await flush(4);
+  const retrySubmitted = clickByText(document.body, '解密并导入');
+  await flush(40);
+  check(
+    '口令正确后解密并进入导入模块选择',
+    retrySubmitted &&
+      document.body.textContent?.includes('按修改时间合并') === true &&
+      document.querySelector('input[aria-label="导入 课程与排课"]') !== null,
+    (document.body.textContent ?? '').slice(-60),
+  );
+  if (clickByText(document.body, '取消')) await flush(6);
+
+  await gotoSettings();
+  // 节次时间表在「作息与选校」卡里：先展开它
+  await openSettingsGroup(view.container, '作息与选校');
   const beforePeriods = startInputs(view.container).length;
-  if (clickByText(view.container, '自动生成课次')) await flush(26);
+  if (clickByText(view.container, '自动生成节次')) await flush(26);
   const generated = startInputs(view.container);
   check(
-    '自动生成课次按固定时长重算',
+    '自动生成节次按固定时长重算',
     generated.length >= 10 && generated[2]?.value === '09:50',
     `生成后 ${generated.length} 节，第三节课 ${generated[2]?.value ?? '?'} 起`,
   );
@@ -2364,7 +4867,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   await flush(10);
   check(
     '失焦后弹出调整范围对话框',
-    scopeDialogCount() === 1 && scopeText().includes('这次改动要应用到哪些课次'),
+    scopeDialogCount() === 1 && scopeText().includes('这次改动要应用到哪些节次'),
     `对话框 ${scopeDialogCount()} 个：${scopeText().slice(0, 30)}`,
   );
   check(
@@ -2451,8 +4954,11 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   }
 
   // —— 锚点顺延：把第 3 节开始时间改成 09:55 → 从这一节起按每节 45 分钟、课间 10 分钟顺延 ——
-  if (durationInput !== null) setInputValue(durationInput, '45');
-  if (breakInput !== null) setInputValue(breakInput, '10');
+  // 中途切过设备与同步页，设置页已重挂，这里按当前 DOM 重新取时长/课间输入框
+  const durationInputNow = view.container.querySelector<HTMLInputElement>('input[aria-label="每节时长（分钟）"]');
+  const breakInputNow = view.container.querySelector<HTMLInputElement>('input[aria-label="课间（分钟）"]');
+  if (durationInputNow !== null) setInputValue(durationInputNow, '45');
+  if (breakInputNow !== null) setInputValue(breakInputNow, '10');
   await flush(8);
   const anchorStart = clockInput(3, '开始');
   const anchorBefore = anchorStart?.value ?? '';
@@ -2526,12 +5032,69 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       .join(' / '),
   );
 
+  // I-11 端到端：把一次课改成考试 → 写一条考试（进课表、开倒计时）并把原课次按停课移除。
+  // 放在 view 卸载前：此时课表里还有课程与排课，写库结果不影响后面的设置页用例。
+  {
+    const switched = clickByText(view.container, '日程');
+    await flush(14);
+    const adjustOpened = clickMenu(view.container, '更多操作', '调课');
+    await flush(14);
+    const openedSurface = document.querySelector('[data-role="adjust-dialog"]');
+    const switchedExam = clickByText(document.body, '改为考试');
+    await flush(10);
+    const examDateInput = document.querySelector<HTMLInputElement>('input[aria-label="考试日期"]');
+    const examDate = examDateInput?.value ?? '';
+    // 模式按钮带 aria-pressed，页脚主按钮没有：按这个差异点主按钮，避免又点回模式切换
+    const adjustSurface = document.querySelector('[data-role="adjust-dialog"]');
+    const submitExam = [...(adjustSurface?.querySelectorAll('button') ?? [])].find(
+      (item) => (item.textContent ?? '').trim() === '改为考试' && item.getAttribute('aria-pressed') === null,
+    );
+    submitExam?.click();
+    await flush(24);
+    const toasts = document.body.textContent ?? '';
+    const probeStorage = validatedStorage(await openIndexedDbStorage());
+    const rows = await probeStorage.collection<Record<string, unknown>>('events').getAll();
+    const examRow = rows.find((row) => row['type'] === 'exam' && row['on_date'] === examDate && row['deleted_at'] === null);
+    const removedRow = rows.find(
+      (row) =>
+        row['type'] === 'reschedule' &&
+        row['action'] === 'cancel' &&
+        String(row['title'] ?? '').startsWith('改为考试：') &&
+        row['deleted_at'] === null,
+    );
+    check(
+      'I-11 端到端：日程页调课弹窗可切到改为考试',
+      switched && adjustOpened && openedSurface !== null && switchedExam && examDate !== '',
+      `课表→日程=${switched ? 'ok' : '无'} / 弹窗=${openedSurface === null ? '无' : '有'} / 切模式=${
+        switchedExam ? 'ok' : '无'
+      } / 日期=${examDate === '' ? '(无)' : examDate} / 主按钮=${
+        submitExam === undefined ? '无' : (submitExam as HTMLButtonElement).disabled ? '禁用' : '可点'
+      }`,
+    );
+    check(
+      'I-11 改为考试落库：写考试并从课表移除原课次',
+      submitExam !== undefined &&
+        toasts.includes('已改为考试') &&
+        examRow !== undefined &&
+        examRow['start_time'] !== null &&
+        examRow['end_time'] !== null &&
+        examRow['countdown'] === 1 &&
+        examRow['show_in_timetable'] === 1 &&
+        removedRow !== undefined,
+      `提示=${toasts.includes('已改为考试') ? '有' : '无'} / 考试=${
+        examRow === undefined ? '无' : String(examRow['on_date'])
+      } / 移除记录=${removedRow === undefined ? '无' : '有'}`,
+    );
+  }
+
+
   // 会话级：重新挂载（相当于切页面再回来）后仍然是「不再询问」。
   // 注意：从这里起 view 已卸载，后续一律以 remounted 为锚点。
   view.root.unmount();
   const remounted = mount(<App />);
   await flush(20);
   if (clickByText(remounted.container, '设置')) await flush(14);
+  await openSettingsGroup(remounted.container, '作息与选校');
   const remountEnd = document.querySelector<HTMLInputElement>('input[aria-label="第 2 节结束时间"]');
   if (remountEnd !== null) setInputValue(remountEnd, '10:55');
   await flush(10);
@@ -2584,7 +5147,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '该校暂无专属作息时套用通用作息并提示',
     genericPicked?.getAttribute('data-adapted') === 'false' &&
       schoolTimetableMessage().includes('该校暂无专属作息，已套用通用作息') &&
-      schoolTimetableStatus().includes('当前 12 节课次'),
+      schoolTimetableStatus().includes('当前 12 个节次'),
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
 
@@ -2593,7 +5156,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '已适配学校套用该校专属作息',
     exclusivePicked?.getAttribute('data-adapted') === 'true' &&
       schoolTimetableMessage().includes('已套用 苏州科技大学 的作息（14 节）') &&
-      schoolTimetableStatus().includes('当前 14 节课次'),
+      schoolTimetableStatus().includes('当前 14 个节次'),
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
 
@@ -2616,6 +5179,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(document.body, '取消')) await flush(10);
 
+  await openSettingsGroup(remounted.container, '学期设置');
   check('学期设置显示编辑与删除入口', clickByLabel(remounted.container, '编辑学期'), '');
   await flush(6);
   const editDialogText = document.body.textContent ?? '';
@@ -2653,8 +5217,116 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       !(remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
     (remounted.container.textContent ?? '').slice(0, 60),
   );
+  // 空态三态（真空课表 / 只有非本周 / 学期外）：每种空态只有 1 个主行动，文案可区分
+  const vacuumEmpty = remounted.container.querySelector<HTMLElement>('[data-role="week-empty"]');
+  check(
+    '真空课表空态：给唯一主行动「导入课表」',
+    vacuumEmpty?.getAttribute('data-empty-state') === 'vacuum' &&
+      (vacuumEmpty.textContent ?? '').includes('这段时间没有课程') &&
+      vacuumEmpty.querySelectorAll('button').length === 1 &&
+      vacuumEmpty.querySelector('button[aria-label="导入课表"]') !== null &&
+      !(remounted.container.textContent ?? '').includes('导入页'),
+    `空态=${vacuumEmpty?.getAttribute('data-empty-state') ?? '(无)'} 按钮=${vacuumEmpty?.querySelectorAll('button').length ?? 0}`,
+  );
+
+  // 日程页的空态也要给下一步：倒计时卡固定分区，空条目区给「加考试」；时间线空态给「添加待办」
+  if (clickByText(remounted.container, '日程')) await flush(20);
+  const countdownEntries = remounted.container.querySelector<HTMLElement>('[data-role="countdown-entries"]');
+  const countdownBadges = remounted.container.querySelector<HTMLElement>('[data-role="countdown-badges"]');
+  check(
+    '倒计时卡徽标区与条目区固定分区，空条目区给「加考试」',
+    countdownBadges !== null &&
+      countdownEntries !== null &&
+      (countdownEntries.textContent ?? '').includes('暂无倒计时条目') &&
+      countdownEntries.querySelectorAll('button').length === 1 &&
+      (countdownEntries.querySelector('button')?.textContent ?? '').trim() === '加考试',
+    `徽标区=${countdownBadges === null ? '无' : '有'} 条目区=${countdownEntries?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
+  );
+  // 倒计时空态按钮与打开的表单类型一致：点「加考试」后类型按钮必须是考试
+  [...(countdownEntries?.querySelectorAll('button') ?? [])][0]?.click();
+  await flush(14);
+  const countdownExamKind = document.querySelector('[aria-label="待办类型：考试"]');
+  check(
+    'P1-01 倒计时空态「加考试」打开考试表单',
+    countdownExamKind?.getAttribute('aria-pressed') === 'true' &&
+      document.querySelector('[aria-label="开考时间"]') !== null,
+    `类型选中=${countdownExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+  );
+  if (clickByText(document.body, '取消')) await flush(10);
+  const timelineEmpty = remounted.container.querySelector<HTMLElement>('[data-role="timeline-empty"]');
+  check(
+    '日程时间线空态给「添加待办」主行动',
+    timelineEmpty !== null &&
+      (timelineEmpty.textContent ?? '').includes('切换日期可看其他日期') &&
+      timelineEmpty.querySelectorAll('button').length === 1 &&
+      (timelineEmpty.querySelector('button')?.textContent ?? '').trim() === '添加待办',
+    timelineEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
+  );
+  if (clickByText(remounted.container, '课表')) await flush(20);
+
+  // 把学期挪到过去：Q6 决定停在学期边界 —— 窗口被夹回最后一周，不再出现「学期外」状态
+  const emptyStore = validatedStorage(await openIndexedDbStorage());
+  const emptySemester = await activeSemester(emptyStore, USER_ID);
+  if (emptySemester !== undefined) {
+    await updateSemester(emptyStore, String(emptySemester['id']), { start_date: '2025-01-01' });
+  }
+  // 直接改库不会推送给应用：点一次「下一屏」触发重载，重载时窗口按新学期的边界重新夹
+  if (clickByLabel(remounted.container, '下一屏')) await flush(40);
+  const pastNav = remounted.container.querySelector('[data-role="window-nav"]');
+  const pastPrev = remounted.container.querySelector<HTMLButtonElement>('button[aria-label="上一屏"]');
+  const pastNext = remounted.container.querySelector<HTMLButtonElement>('button[aria-label="下一屏"]');
+  const pastEmpty = remounted.container.querySelector<HTMLElement>('[data-role="week-empty"]');
+  check(
+    '学期整体过去后窗口停在最后一周（不越过学期边界）',
+    pastNav?.getAttribute('data-window-week') === '20' &&
+      pastPrev !== null &&
+      pastPrev.disabled === false &&
+      pastNext !== null &&
+      pastNext.disabled === true,
+    `起=${pastNav?.getAttribute('data-window-start') ?? '(无)'} 周=${pastNav?.getAttribute('data-window-week') ?? '(无)'} 上一屏=${
+      pastPrev?.disabled === true ? '置灰' : '可点'
+    } 下一屏=${pastNext?.disabled === true ? '置灰' : '可点'}`,
+  );
+  check(
+    '学期外不再出现「学期外」空态（Q6：不加学期外水印）',
+    pastEmpty?.getAttribute('data-empty-state') !== 'outside-semester' &&
+      !(remounted.container.textContent ?? '').includes('学期外没有课程'),
+    `空态=${pastEmpty?.getAttribute('data-empty-state') ?? '(无)'}`,
+  );
+
+  // 恢复学期起始日，再造「只有非本周」：只排第 1 周，翻到后续周次后虚线课卡可见时不得再报「没有课程」
+  if (emptySemester !== undefined) {
+    await updateSemester(emptyStore, String(emptySemester['id']), {
+      start_date: String(emptySemester['start_date']),
+    });
+    const ghostCourse = await createCourse(emptyStore, {
+      semesterId: String(emptySemester['id']),
+      name: '只在第一周',
+    });
+    await createSchedule(emptyStore, {
+      courseId: String(ghostCourse['id']),
+      dayOfWeek: 1,
+      periodStart: 5,
+      periodEnd: 6,
+      weeks: [1],
+    });
+  }
+  // 直接改库同样不会刷新：先用「上一屏」触发重载（窗口被夹回第 1 周），再翻到第 2 周看第 1 周的虚线课
+  if (clickByLabel(remounted.container, '上一屏')) await flush(40);
+  if (clickByLabel(remounted.container, '下一屏')) await flush(40);
+  check(
+    '只有非本周课时不再出现「没有课程」空态',
+    (remounted.container.textContent ?? '').includes('只在第一周') &&
+      remounted.container.querySelector('[data-role="week-empty"]') === null &&
+      remounted.container.querySelector('[data-tone="ghost"]') !== null,
+    `周=${remounted.container.querySelector('[data-role="window-nav"]')?.getAttribute('data-window-week') ?? '(无)'} 空态=${
+      remounted.container.querySelector('[data-role="week-empty"]')?.getAttribute('data-empty-state') ?? '无'
+    }`,
+  );
+
   // 删掉这个默认学期，后面的「选校建学期」用例仍从引导页开始
   if (clickByText(remounted.container, '设置')) await flush(16);
+  await openSettingsGroup(remounted.container, '学期设置');
   clickByLabel(remounted.container, '删除学期');
   await flush(10);
   if (clickByText(document.body, '确认删除')) await flush(24);
@@ -2664,8 +5336,44 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     '',
   );
 
+  // 引导页导入与设置页对齐：文件接受 JSON / Base64 文本 / 整包 zip，提示同一句话
+  const onboardFileInput = remounted.container.querySelector<HTMLInputElement>('input[aria-label="选择备份文件"]');
+  const onboardImportText = remounted.container.querySelector<HTMLTextAreaElement>(
+    '[data-role="onboarding-import-text"]',
+  );
+  const onboardFormats =
+    remounted.container.querySelector('[data-role="onboarding-import-formats"]')?.textContent?.trim() ?? '';
+  check(
+    '引导页导入支持整包 zip 且格式提示与设置页一致',
+    onboardFileInput !== null &&
+      onboardFileInput.accept.includes('.zip') &&
+      onboardFileInput.accept.includes('.json') &&
+      onboardImportText !== null &&
+      onboardFormats.includes('支持晓刻导出的 JSON、Base64 文本与整包 zip'),
+    `accept=${onboardFileInput?.accept ?? '(无)'} 提示=${onboardFormats || '(无)'}`,
+  );
+  // 粘贴 Base64 走同一套解析：解析成功后先出现覆盖后果，再让用户确认
+  if (onboardImportText !== null) {
+    setInputValue(
+      onboardImportText,
+      toBase64Utf8(
+        JSON.stringify({ format: 'dawn-tick-backup', version: 1, exportedAt: 0, stores: {}, meta: {} }),
+      ),
+    );
+  }
+  await flush(8);
+  if (clickByLabel(remounted.container, '从文本导入')) await flush(12);
+  check(
+    '引导页粘贴 Base64 后提示覆盖后果',
+    (remounted.container.textContent ?? '').includes('将覆盖设备上的现有数据，不可撤销') &&
+      remounted.container.querySelector('button[aria-label="确认导入"]') !== null,
+    (remounted.container.textContent ?? '').slice(-120),
+  );
+  // 取消解析结果，后面的选校建学期用例仍从干净引导页开始
+  if (clickByLabel(remounted.container, '取消导入')) await flush(8);
+
   // 外部链接确认弹窗在引导页也要能弹出（曾经没挂，点了没反应）
-  // —— 首次引导：先选学校，创建学期时即按该校作息排好课次 ——
+  // —— 首次引导：先选学校，创建学期时即按该校作息排好节次 ——
   const onboardScroll = remounted.container.querySelector<HTMLElement>('[data-role="onboarding-scroll"]');
   const onboardAdvanced = remounted.container.querySelector<HTMLDetailsElement>('[data-role="onboarding-advanced"]');
   check(
@@ -2722,6 +5430,7 @@ export async function runSmoke(): Promise<SmokeResult[]> {
   );
   if (clickByText(remounted.container, '创建并开始')) await flush(30);
   if (clickByText(remounted.container, '设置')) await flush(16);
+  await openSettingsGroup(remounted.container, '作息与选校');
   const onboardClock = (period: number, field: '开始' | '结束'): string =>
     remounted.container.querySelector<HTMLInputElement>(`input[aria-label="第 ${period} 节${field}时间"]`)?.value ?? '';
   check(
@@ -2736,8 +5445,17 @@ export async function runSmoke(): Promise<SmokeResult[]> {
 
   // —— 悬浮窗外壳：整窗作为拖动区（deep），关闭按钮自身仍是可点元素 ——
   let hidden = 0;
+  let opened = 0;
   const mini = mount(
-    <MiniShell variant="bar" onHide={() => { hidden += 1; }}>
+    <MiniShell
+      variant="bar"
+      onHide={() => {
+        hidden += 1;
+      }}
+      onOpen={() => {
+        opened += 1;
+      }}
+    >
       <div className="mini-title">高等数学</div>
       <div className="mini-row">
         <span className="mini-count">09:55</span>
@@ -2752,16 +5470,104 @@ export async function runSmoke(): Promise<SmokeResult[]> {
       mini.container.querySelector('.mini-title')?.getAttribute('data-tauri-drag-region') === null,
     `拖动区=${miniRoot?.getAttribute('data-tauri-drag-region') ?? '(无)'}`,
   );
+  check(
+    '悬浮窗默认背景挂浅色类名',
+    miniRoot?.classList.contains('mini-bg-light') === true &&
+      miniRoot.getAttribute('data-background') === 'light',
+    `${miniRoot?.className ?? '(无)'}`,
+  );
+  const miniDark = mount(
+    <MiniShell variant="today" background="dark" onHide={() => {}}>
+      <div className="mini-empty">暂无课程</div>
+    </MiniShell>,
+  );
+  await flush(2);
+  const miniDarkRoot = miniDark.container.querySelector('main.mini');
+  check(
+    '悬浮窗背景设置映射为 mini-bg-* 类名',
+    miniDarkRoot?.classList.contains('mini-bg-dark') === true &&
+      miniDarkRoot.getAttribute('data-background') === 'dark' &&
+      miniDarkRoot.classList.contains('mini-today'),
+    `${miniDarkRoot?.className ?? '(无)'}`,
+  );
+  miniDark.root.unmount();
+  const miniOpen = mini.container.querySelector<HTMLElement>('button.mini-open');
+  check(
+    '悬浮窗标题栏有「打开」且不占用拖动区',
+    miniOpen !== null && miniOpen.tagName === 'BUTTON' && miniOpen.getAttribute('data-tauri-drag-region') === null,
+    miniOpen?.textContent?.trim() ?? '(无按钮)',
+  );
+  miniOpen?.click();
+  await flush(4);
+  check('悬浮窗「打开」打开主窗口', opened === 1, `打开 ${opened} 次`);
+  miniRoot?.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+  await flush(4);
+  check('悬浮窗双击整窗打开主窗口', opened === 2, `打开 ${opened} 次`);
   const miniClose = mini.container.querySelector<HTMLElement>('button.mini-close');
   check(
     '悬浮窗关闭按钮仍是可点击元素',
     miniClose !== null && miniClose.tagName === 'BUTTON' && miniClose.getAttribute('data-tauri-drag-region') === null,
     miniClose?.tagName ?? '(无按钮)',
   );
+  miniClose?.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+  await flush(4);
+  check('双击关闭按钮不会打开主窗口', opened === 2, `打开 ${opened} 次`);
   miniClose?.click();
   await flush(4);
   check('悬浮窗关闭按钮触发隐藏', hidden === 1, `隐藏 ${hidden} 次`);
   mini.root.unmount();
+
+  // —— 考试倒计时样式：用桩数据断言悬浮窗正文（最近一场 + 共 N 场 / 无考试空态） ——
+  const examNow = Date.parse('2026-10-18T18:30:00+08:00');
+  const examStub = [
+    { title: '大学英语四级', on_date: '2026-10-25', start_at: Date.parse('2026-10-25T09:00:00+08:00') },
+    { title: '高等数学期末', on_date: '2026-10-21', start_at: Date.parse('2026-10-21T09:00:00+08:00') },
+    { title: '已过期考试', on_date: '2026-10-01', start_at: Date.parse('2026-10-01T09:00:00+08:00') },
+  ];
+  const examMini = mount(
+    <MiniShell variant="exam" background="light" label="考试倒计时" onHide={() => {}}>
+      <ExamWidgetBody exams={examStub} now={examNow} timeZone="Asia/Shanghai" />
+    </MiniShell>,
+  );
+  await flush(4);
+  const examRoot = examMini.container.querySelector('main.mini');
+  const examTitle =
+    examMini.container.querySelector('[data-role="mini-exam-title"]')?.textContent?.trim() ?? '';
+  const examCountdown =
+    examMini.container.querySelector('[data-role="mini-exam-countdown"]')?.textContent?.trim() ?? '';
+  const examMeta =
+    examMini.container.querySelector('[data-role="mini-exam-meta"]')?.textContent?.trim() ?? '';
+  check(
+    '考试倒计时悬浮窗显示最近一场与总场数',
+    examRoot?.className.includes('mini-exam') === true &&
+      examTitle === '高等数学期末' &&
+      examCountdown === '还有 3 天' &&
+      examMeta.includes('10/21') &&
+      examMeta.includes('共 2 场'),
+    `标题=${examTitle || '(无)'} / ${examCountdown || '(无)'} / ${examMeta || '(无)'}`,
+  );
+  examMini.root.unmount();
+
+  const examEmpty = mount(
+    <MiniShell variant="exam" background="light" onHide={() => {}}>
+      <ExamWidgetBody exams={[]} now={examNow} timeZone="Asia/Shanghai" />
+    </MiniShell>,
+  );
+  await flush(4);
+  const examEmptyText =
+    examEmpty.container.querySelector('[data-role="mini-exam-empty"]')?.textContent?.trim() ?? '';
+  check('考试倒计时悬浮窗无考试时空态', examEmptyText === '暂无考试', examEmptyText || '(无)');
+  examEmpty.root.unmount();
+
+  const examStore = validatedStorage(await openIndexedDbStorage());
+  const examSaved = await writeSettings(examStore, { widgetVariant: 'exam' });
+  check(
+    '考试倒计时样式可切换并落库',
+    examSaved.widgetVariant === 'exam',
+    examSaved.widgetVariant,
+  );
+  // 还原，避免影响同一份库上后续的断言
+  await writeSettings(examStore, { widgetVariant: 'bar' });
 
   // —— 日志时间戳：与原生 startup.log 同一口径（本地时间 + 偏移，毫秒） ——
   const sampleTime = formatLogTimestamp(Date.UTC(2026, 9, 13, 10, 1, 34, 123));
@@ -2787,6 +5593,1057 @@ export async function runSmoke(): Promise<SmokeResult[]> {
     tomorrowPreviewLessons([1, 2, 3, 4, 5, 6]).length === 4,
     `共 ${tomorrowPreviewLessons([1, 2, 3, 4, 5, 6]).length} 节`,
   );
+
+  // P0-05：独立挂一个 App，完整走一遍导入，验证步骤标签与「完成」收起导入区
+  {
+    const importApp = mount(<App />);
+    await flush(12);
+    clickByText(importApp.container, '设置');
+    await flush(12);
+    await openSettingsGroup(importApp.container, '学期设置');
+    const importSummary = importApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]');
+    importSummary?.click();
+    await flush(10);
+    const importStepText = importApp.container.querySelector('[aria-label="导入步骤"]')?.textContent ?? '';
+    check(
+      '导入步骤第 4 步叫完成',
+      importStepText.includes('选择方式') &&
+        importStepText.includes('获取课表') &&
+        importStepText.includes('预览') &&
+        importStepText.includes('完成') &&
+        !importStepText.includes('确认'),
+      importStepText,
+    );
+    const compactStepBefore =
+      importApp.container.querySelector('[data-role="step-compact"]')?.textContent?.trim() ?? '';
+    check(
+      '窄屏步骤收成「第 1/4 步 · 选择方式」',
+      compactStepBefore.includes('第 1/4 步') && compactStepBefore.includes('选择方式'),
+      compactStepBefore,
+    );
+    const channelCards = [...importApp.container.querySelectorAll<HTMLElement>('[data-role="channel-card"]')];
+    check(
+      '导入入口列清三个渠道',
+      channelCards.length === 3 &&
+        ['paste', 'window', 'manual'].every((id) =>
+          channelCards.some((card) => card.getAttribute('data-channel') === id),
+        ) &&
+        channelCards.every(
+          (card) => (card.textContent ?? '').includes('适用：') && (card.textContent ?? '').includes('产出：'),
+        ),
+      channelCards.map((card) => card.getAttribute('data-channel') ?? '?').join(' / '),
+    );
+    if (clickByTextStart(importApp.container, '粘贴文本')) await flush(10);
+    const compactStepAfter =
+      importApp.container.querySelector('[data-role="step-compact"]')?.textContent?.trim() ?? '';
+    check(
+      '窄屏步骤在第二屏显示「第 2/4 步 · 获取课表」',
+      compactStepAfter.includes('第 2/4 步') && compactStepAfter.includes('获取课表'),
+      compactStepAfter,
+    );
+    const pasteTabs = importApp.container.querySelector('[data-role="paste-source-tabs"]');
+    check(
+      '粘贴渠道内分「粘贴网页课表 / 选择文件」两种取材',
+      pasteTabs !== null &&
+        (pasteTabs.textContent ?? '').includes('粘贴网页课表') &&
+        (pasteTabs.textContent ?? '').includes('选择文件'),
+      '',
+    );
+    if (clickByText(importApp.container, '选择文件')) await flush(8);
+    const fileBox = importApp.container.querySelector<HTMLInputElement>('input[aria-label="选择课表文件"]');
+    check(
+      '文件取材接受 CSV / Excel / ICS',
+      fileBox !== null &&
+        fileBox.accept.includes('.csv') &&
+        fileBox.accept.includes('.xlsx') &&
+        fileBox.accept.includes('.ics'),
+      fileBox?.accept ?? '(无)',
+    );
+    if (clickByText(importApp.container, '粘贴网页课表')) await flush(8);
+    const importPaste = importApp.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="粘贴课表页面内容"]',
+    );
+
+    // P2-02：识别失败就地给出手动映射入口，点了会展开并把焦点放到表头行
+    if (importPaste instanceof window.HTMLTextAreaElement) {
+      setInputValue(
+        importPaste,
+        '<html><body><p>没有可识别的课表</p><table>' +
+          '<tr><th>学号</th><th>姓名</th></tr><tr><td>2026001</td><td>张三</td></tr>' +
+          '</table></body></html>',
+      );
+      await flush(6);
+      if (clickByText(importApp.container, '识别并预览')) await flush(22);
+    }
+    const failureBlock = importApp.container.querySelector('[data-role="import-recognize-error"]');
+    const manualButton = [
+      ...(failureBlock?.querySelectorAll<HTMLButtonElement>('button') ?? []),
+    ].find((item) => (item.textContent ?? '').trim() === '改用手动指定表格');
+    check(
+      '识别失败就地出现手动指定表格入口',
+      failureBlock !== null &&
+        (failureBlock.textContent ?? '').includes('识别失败') &&
+        manualButton !== undefined,
+      failureBlock?.textContent?.trim() ?? '(无)',
+    );
+
+    // 识别诊断：失败时默认展开，摘要给出表格数与疑似课表数
+    const diagToggle = importApp.container.querySelector<HTMLElement>(
+      '[data-role="import-diagnostics-toggle"]',
+    );
+    const diagMetric = (key: string): string =>
+      importApp.container.querySelector(`[data-role="import-diagnostics-summary"] [data-metric="${key}"]`)
+        ?.textContent?.trim() ?? '(无)';
+    check(
+      '识别失败默认展开「查看识别诊断」',
+      diagToggle !== null &&
+        (diagToggle.textContent ?? '').includes('查看识别诊断') &&
+        diagToggle.getAttribute('aria-expanded') === 'true' &&
+        diagMetric('tables') === '1' &&
+        diagMetric('kbTables') === '0',
+      `表格数=${diagMetric('tables')} 疑似课表=${diagMetric('kbTables')} 展开=${diagToggle?.getAttribute('aria-expanded') ?? '(无)'}`,
+    );
+
+    const diagClipboard: string[] = [];
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (value: string) => {
+          diagClipboard.push(value);
+        },
+      },
+    });
+    if (clickByText(importApp.container, '复制诊断信息')) await flush(8);
+    const copiedDiagnostics = diagClipboard[0] ?? '';
+    check(
+      '复制诊断信息写入剪贴板（含版本、来源与样例行）',
+      copiedDiagnostics.includes('DawnTick 导入识别诊断') &&
+        copiedDiagnostics.includes('应用版本：') &&
+        copiedDiagnostics.includes('导入来源：粘贴网页课表') &&
+        copiedDiagnostics.includes('页面诊断 JSON') &&
+        copiedDiagnostics.includes('表格数：1') &&
+        copiedDiagnostics.includes('前 3 行样例') &&
+        !copiedDiagnostics.includes('?'),
+      copiedDiagnostics.slice(0, 60),
+    );
+
+    manualButton?.click();
+    await flush(10);
+    const mappingSheet = document.querySelector('[data-role="manual-mapping"]');
+    const headerRowBox = mappingSheet?.querySelector<HTMLInputElement>('input[aria-label="表头行"]');
+    check(
+      '识别失败打开手动映射抽屉并聚焦表头行',
+      mappingSheet !== null &&
+        mappingSheet.getAttribute('data-container') === 'sheet' &&
+        headerRowBox !== null &&
+        document.activeElement === headerRowBox,
+      `sheet=${mappingSheet === null ? '无' : '有'} focus=${
+        document.activeElement instanceof window.HTMLInputElement
+          ? document.activeElement.getAttribute('aria-label')
+          : '(非输入框)'
+      }`,
+    );
+    if (clickByLabel(document.body, '关闭手动映射')) await flush(8);
+
+    if (importPaste instanceof window.HTMLTextAreaElement) {
+      setInputValue(importPaste, PAGE_SAMPLE);
+      await flush(6);
+      if (clickByText(importApp.container, '识别并预览')) await flush(22);
+    }
+
+    // 识别成功：诊断入口收在取材步骤底部，回到第 2 步时才展开
+    if (clickContentBack(importApp.container)) await flush(12);
+    const successToggle = importApp.container.querySelector<HTMLElement>(
+      '[data-role="import-diagnostics-toggle"]',
+    );
+    const successSummary = importApp.container.querySelector('[data-role="import-diagnostics-summary"]');
+    check(
+      '识别成功后诊断入口在取材步骤底部折叠',
+      successToggle !== null &&
+        successToggle.getAttribute('aria-expanded') === 'false' &&
+        (successSummary === null || successSummary.closest('[hidden]') !== null),
+      `展开=${successToggle?.getAttribute('aria-expanded') ?? '(无)'}`,
+    );
+    if (clickByText(importApp.container, '识别并预览')) await flush(22);
+    // P2-02：预览支持全选 / 清空 / 反选
+    const preview = importApp.container.querySelector('[data-role="import-preview"]');
+    const previewBoxes = (): HTMLInputElement[] => [
+      // 排除 P2-16 的「只看冲突项」开关：这里数的是行勾选框
+      ...(preview?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:not([data-role])') ?? []),
+    ];
+    const previewText = (): string => preview?.textContent ?? '';
+    let batchOk =
+      preview !== null && previewBoxes().length > 0 && previewBoxes().every((box) => box.checked);
+    const batchBar = preview?.querySelector<HTMLElement>('[data-role="import-batch"]');
+    if (batchBar !== null && batchBar !== undefined) {
+      clickByText(batchBar, '清空');
+      await flush(8);
+      batchOk =
+        batchOk &&
+        previewBoxes().every((box) => !box.checked) &&
+        previewText().includes('已选 0 条');
+      clickByText(batchBar, '全选');
+      await flush(8);
+      batchOk =
+        batchOk &&
+        previewBoxes().length > 0 &&
+        previewBoxes().every((box) => box.checked) &&
+        previewText().includes(`已选 ${previewBoxes().length} 条`);
+      clickByText(batchBar, '反选');
+      await flush(8);
+      batchOk =
+        batchOk &&
+        previewBoxes().every((box) => !box.checked) &&
+        previewText().includes('已选 0 条');
+      clickByText(batchBar, '全选');
+      await flush(8);
+    }
+    check(
+      '预览支持全选 / 清空 / 反选',
+      batchOk,
+      `勾选=${previewBoxes().filter((box) => box.checked).length}/${previewBoxes().length} ${previewText().slice(0, 24)}`,
+    );
+    const previewRows = [
+      ...(preview?.querySelectorAll<HTMLElement>('[data-role="import-row"], [data-role="import-conflict-row"]') ??
+        []),
+    ];
+    check(
+      '预览改为卡片行（窄屏不再横向挤表格）',
+      preview !== null && preview.querySelector('table') === null && previewRows.length > 0,
+      `行 ${previewRows.length} / 表格 ${preview?.querySelectorAll('table').length ?? 0}`,
+    );
+
+    if (clickByText(importApp.container, '确认导入')) await flush(30);
+    const importFinished = (importApp.container.textContent ?? '').includes('导入完成');
+    if (clickByText(importApp.container, '完成')) await flush(12);
+    const importDetails = importApp.container.querySelector<HTMLDetailsElement>('[data-role="course-import"]');
+    check(
+      '点完成后导入区收起',
+      importFinished && importDetails !== null && importDetails.open === false,
+      `完成页=${importFinished} / open=${importDetails?.open ?? '(无)'}`,
+    );
+    importApp.root.unmount();
+  }
+
+  // P2-16：导入预览「只看冲突项」——冲突行标注、筛选隐藏非冲突行、无冲突时给空提示
+  {
+    const conflictApp = mount(<App />);
+    await flush(12);
+    clickByText(conflictApp.container, '设置');
+    await flush(12);
+    await openSettingsGroup(conflictApp.container, '学期设置');
+    conflictApp.container.querySelector<HTMLElement>('[aria-label="导入课表"]')?.click();
+    await flush(10);
+    if (clickByTextStart(conflictApp.container, '粘贴文本')) await flush(10);
+
+    const previewBox = (): HTMLElement | null =>
+      conflictApp.container.querySelector('[data-role="import-preview"]');
+    const conflictRows = (): HTMLElement[] => [
+      ...(previewBox()?.querySelectorAll<HTMLElement>('[data-role="import-conflict-row"]') ?? []),
+    ];
+    const plainRows = (): HTMLElement[] => [
+      ...(previewBox()?.querySelectorAll<HTMLElement>('[data-role="import-row"]') ?? []),
+    ];
+    const rowCheckboxes = (): HTMLInputElement[] => [
+      ...(previewBox()?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:not([data-role])') ?? []),
+    ];
+    const previewText = (): string => previewBox()?.textContent ?? '';
+    const filterBox = (): HTMLInputElement | null =>
+      previewBox()?.querySelector<HTMLInputElement>('input[data-role="import-conflict-only"]') ?? null;
+
+    const paste = conflictApp.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="粘贴课表页面内容"]',
+    );
+    if (paste instanceof window.HTMLTextAreaElement) {
+      setInputValue(paste, PAGE_MIXED_DUPLICATE_SAMPLE);
+      await flush(6);
+      if (clickByText(conflictApp.container, '识别并预览')) await flush(10);
+    }
+
+    const marked = await waitFor(
+      () =>
+        conflictRows().length === 2 &&
+        plainRows().length === 1 &&
+        previewText().includes('其中 2 条重复'),
+    );
+    check(
+      '预览标出重复条目',
+      marked &&
+        conflictRows().every((row) => (row.textContent ?? '').includes('重复，将被跳过')) &&
+        plainRows().every((row) => !(row.textContent ?? '').includes('重复，将被跳过')),
+      `${conflictRows().length} 条重复 / ${plainRows().length} 条非重复`,
+    );
+
+    const filter = filterBox();
+    filter?.click();
+    await flush(6);
+    const visibleRows = [
+      ...(previewBox()?.querySelectorAll<HTMLElement>(
+        '[data-role="import-row"], [data-role="import-conflict-row"]',
+      ) ?? []),
+    ];
+    check(
+      '只看冲突项：冲突行可见，非冲突行隐藏',
+      filter !== null &&
+        filter.checked &&
+        visibleRows.length === 2 &&
+        visibleRows.every((row) => row.getAttribute('data-role') === 'import-conflict-row') &&
+        !previewText().includes('无冲突新增课程') &&
+        previewText().includes('筛选态：批选只作用于可见行'),
+      `可见 ${visibleRows.length} 行 / ${conflictRows().length} 条冲突`,
+    );
+
+    // 筛选态下批选只作用于可见行：隐藏行（那条新排课）的勾选状态保持不动
+    const batchBar = previewBox()?.querySelector<HTMLElement>('[data-role="import-batch"]');
+    let batchOk = batchBar !== null && batchBar !== undefined;
+    if (batchBar !== null && batchBar !== undefined) {
+      clickByText(batchBar, '清空');
+      await flush(6);
+      batchOk =
+        batchOk &&
+        rowCheckboxes().every((box) => !box.checked) &&
+        previewText().includes('已选 1 条');
+      clickByText(batchBar, '全选');
+      await flush(6);
+      batchOk =
+        batchOk &&
+        rowCheckboxes().length === 2 &&
+        rowCheckboxes().every((box) => box.checked) &&
+        previewText().includes('已选 3 条');
+      clickByText(batchBar, '反选');
+      await flush(6);
+      batchOk =
+        batchOk &&
+        rowCheckboxes().every((box) => !box.checked) &&
+        previewText().includes('已选 1 条');
+    }
+    check(
+      '筛选态下批选只作用于可见行',
+      batchOk,
+      `${rowCheckboxes().filter((box) => box.checked).length}/${rowCheckboxes().length} 已勾选 ${previewText().slice(0, 30)}`,
+    );
+
+    // 没有冲突项：筛选打开后列表为空，并给一句提示
+    if (clickContentBack(conflictApp.container)) await flush(8);
+    const pasteAgain = conflictApp.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="粘贴课表页面内容"]',
+    );
+    if (pasteAgain instanceof window.HTMLTextAreaElement) {
+      setInputValue(pasteAgain, PAGE_NO_DUPLICATE_SAMPLE);
+      await flush(6);
+      if (clickByText(conflictApp.container, '识别并预览')) await flush(10);
+    }
+    const ready = await waitFor(() => {
+      const box = filterBox();
+      return box !== null && !box.disabled && previewText().includes('解析到 1 条排课');
+    });
+    filterBox()?.click();
+    await flush(6);
+    const emptyHint = previewBox()?.querySelector('[data-role="import-no-conflict"]');
+    check(
+      '没有冲突项时提示出现',
+      ready &&
+        filterBox()?.checked === true &&
+        (previewBox()?.querySelectorAll('[data-role="import-row"], [data-role="import-conflict-row"]').length ??
+          -1) === 0 &&
+        emptyHint != null &&
+        (emptyHint.textContent ?? '').includes('没有冲突项'),
+      `提示=${emptyHint?.textContent?.trim() ?? '(无)'} 行=${
+        previewBox()?.querySelectorAll('[data-role="import-row"], [data-role="import-conflict-row"]').length ?? -1
+      }`,
+    );
+    conflictApp.root.unmount();
+  }
+
+  // P0-01：条目删除入口（详情页删除 → 确认 → 时间线消失）
+  {
+    // 前面的用例删过学期，这里先补一条今天的待办供删除使用
+    const todoStorage = validatedStorage(await openIndexedDbStorage());
+    const semesterRows = await todoStorage.collection<Record<string, unknown>>('semesters').getAll();
+    const smokeUserId = String(semesterRows[0]?.['user_id'] ?? 'u1');
+    const activeSemesterRow = (await activeSemester(todoStorage, smokeUserId)) ?? semesterRows[0];
+    if (activeSemesterRow !== undefined) {
+      await createEvent(todoStorage, {
+        userId: String(activeSemesterRow['user_id']),
+        semesterId: String(activeSemesterRow['id']),
+        type: 'todo',
+        title: '删除入口验证',
+        onDate: new Date().toISOString().slice(0, 10),
+      });
+    }
+    const todoApp = mount(<App />);
+    await flush(12);
+    const scheduleTab = [...todoApp.container.querySelectorAll<HTMLElement>('[data-role="bottom-nav"] button')]
+      .find((node) => (node.textContent ?? '').trim() === '日程');
+    scheduleTab?.click();
+    await flush(12);
+    let firstEvent = todoApp.container.querySelector<HTMLElement>('[data-role="timeline-event"]');
+    for (let step = 0; step < 4 && firstEvent === null; step += 1) {
+      todoApp.container.querySelector<HTMLElement>('[aria-label="后一天"]')?.click();
+      await flush(10);
+      firstEvent = todoApp.container.querySelector<HTMLElement>('[data-role="timeline-event"]');
+    }
+    for (let step = 0; step < 6 && firstEvent === null; step += 1) {
+      todoApp.container.querySelector<HTMLElement>('[aria-label="前一天"]')?.click();
+      await flush(10);
+      firstEvent = todoApp.container.querySelector<HTMLElement>('[data-role="timeline-event"]');
+    }
+    const eventLabel = firstEvent?.getAttribute('aria-label') ?? '';
+    const eventTitle = eventLabel.replace('编辑日程：', '');
+    check(
+      '时间线行可进入条目详情',
+      firstEvent !== null && eventTitle.length > 0,
+      eventLabel,
+    );
+    firstEvent?.click();
+    await flush(8);
+    const deleteEntry = document.querySelector<HTMLElement>('[aria-label^="删除条目 "]');
+    check(
+      '条目详情提供删除入口',
+      deleteEntry !== null,
+      deleteEntry?.getAttribute('aria-label') ?? '(无)',
+    );
+    deleteEntry?.click();
+    await flush(8);
+    check('删除条目前先弹确认', (document.body.textContent ?? '').includes('将删除'), '');
+    if (clickByText(document.body, '取消')) await flush(8);
+    check(
+      '取消删除后条目仍在',
+      [...todoApp.container.querySelectorAll('[data-role="timeline-event"]')].some((node) =>
+        (node.getAttribute('aria-label') ?? '').includes(eventTitle),
+      ),
+      '',
+    );
+    firstEvent?.click();
+    await flush(8);
+    const deleteAgain = document.querySelector<HTMLElement>('[aria-label^="删除条目 "]');
+    deleteAgain?.click();
+    await flush(8);
+    if (clickByText(document.body, '确认删除')) await flush(20);
+    check(
+      '确认删除后条目从时间线消失',
+      ![...(todoApp.container.querySelectorAll('[data-role="timeline-event"]'))].some((node) =>
+        (node.getAttribute('aria-label') ?? '').includes(eventTitle),
+      ),
+      '',
+    );
+    todoApp.root.unmount();
+  }
+
+  // P1-07：原生库失败 → 回退可见、设备页标「临时回退」、写入口只读拦截
+  {
+    // 回退也要有数据可看：前面的用例可能删过学期，这里补一个最小学期
+    const fallbackSeed = validatedStorage(await openIndexedDbStorage());
+    const existingSemesters = await fallbackSeed
+      .collection<Record<string, unknown>>('semesters')
+      .getAll();
+    if (existingSemesters.length === 0) {
+      await createSemester(fallbackSeed, {
+        userId: USER_ID,
+        name: '回退冒烟学期',
+        startDate: todayText,
+        totalWeeks: 20,
+        timeZone: 'Asia/Shanghai',
+      });
+      await writeSettings(fallbackSeed, { viewDays: 7 });
+    }
+    setStorageOpenerForTests(async () =>
+      markStorageFallback(
+        validatedStorage(await openIndexedDbStorage()),
+        'smoke 模拟原生库打不开',
+      ),
+    );
+    const fallbackApp = mount(<App />);
+    await flush(20);
+    const banner = fallbackApp.container.querySelector('[data-role="storage-fallback-banner"]');
+    const bannerButtons = [...(banner?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      'P1-07 回退时首屏出现常驻警告条（含重试/打开日志）',
+      banner !== null &&
+        (banner.textContent ?? '').includes('原生数据库不可用，已临时使用浏览器存储（本机数据未删除）') &&
+        bannerButtons.includes('重试') &&
+        bannerButtons.includes('打开日志'),
+      banner?.textContent?.trim().slice(0, 80) ?? '(无警告条)',
+    );
+
+    clickByText(fallbackApp.container, '设备与同步');
+    await flush(14);
+    // 分组内容按需挂载：先点进「本地存储」组再断言存储类型
+    await openDeviceGroup('本地存储', fallbackApp.container);
+    await flush(12);
+    check(
+      'P1-07 设备页存储类型标「临时回退」',
+      (fallbackApp.container.textContent ?? '').includes('本地存储：浏览器 IndexedDB · 临时回退'),
+      (fallbackApp.container.textContent ?? '').slice(-60),
+    );
+
+    clickByText(fallbackApp.container, '课表');
+    await flush(12);
+    const fab = fallbackApp.container.querySelector<HTMLElement>('button[aria-label="添加"]');
+    fab?.click();
+    await flush(10);
+    if (clickByText(document.body, '加课程')) await flush(8);
+    check(
+      'P1-07 回退期间写入口被拦截并提示只读',
+      (document.body.textContent ?? '').includes('临时只读，修复存储后再改') &&
+        document.querySelector('[aria-label="起始节"]') === null,
+      (document.body.textContent ?? '').slice(-60),
+    );
+    fallbackApp.root.unmount();
+    setStorageOpenerForTests(null);
+  }
+
+  // P1-09：初始化失败页按损坏/其它给不同按钮组
+  {
+    setStorageOpenerForTests(async () => {
+      throw new Error('database disk image is malformed');
+    });
+    const corruptApp = mount(<App />);
+    await flush(20);
+    const corruptScreen = corruptApp.container.querySelector('[data-role="error-screen"]');
+    const corruptButtons = [...(corruptScreen?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      'P1-09 损坏错误页渲染恢复按钮组',
+      corruptScreen !== null &&
+        (corruptScreen.textContent ?? '').includes('载入失败') &&
+        corruptButtons.includes('从备份文件恢复') &&
+        corruptButtons.includes('打开备份目录'),
+      corruptScreen?.textContent?.trim().slice(0, 80) ?? '(无错误页)',
+    );
+    corruptApp.root.unmount();
+
+    setStorageOpenerForTests(async () => {
+      throw new Error('native storage unavailable');
+    });
+    const failedApp = mount(<App />);
+    await flush(20);
+    const errorScreen = failedApp.container.querySelector('[data-role="error-screen"]');
+    const errorButtons = [...(errorScreen?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      'P1-09 初始化失败页渲染「重试」与「打开日志」',
+      errorScreen !== null &&
+        (errorScreen.textContent ?? '').includes('载入失败') &&
+        errorButtons.includes('重试') &&
+        errorButtons.includes('打开日志'),
+      errorScreen?.textContent?.trim().slice(0, 80) ?? '(无错误页)',
+    );
+    failedApp.root.unmount();
+    setStorageOpenerForTests(null);
+  }
+
+  // 运行中数据库损坏：恢复对话框只弹一次、三个动作齐全，恢复失败给可读原因
+  {
+    resetCorruptGuardForTests();
+    const corruptDialog = mount(<DatabaseCorruptDialog />);
+    await flush(4);
+    check(
+      '损坏恢复对话框初始不显示',
+      document.querySelector('[data-role="corrupt-dialog"]') === null,
+      '',
+    );
+
+    reportCorrupt(
+      new Error('error returned from database: (code: 11) database disk image is malformed'),
+    );
+    await flush(8);
+    const dialog = document.querySelector('[data-role="corrupt-dialog"]');
+    const dialogButtons = [...(dialog?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      '运行中损坏弹出恢复对话框（含三个动作）',
+      dialog !== null &&
+        isCorruptLocked() &&
+        (dialog.textContent ?? '').includes('数据库文件损坏') &&
+        (dialog.textContent ?? '').includes('已停止写入') &&
+        dialogButtons.includes('立即恢复并重启') &&
+        dialogButtons.includes('打开数据目录') &&
+        dialogButtons.includes('稍后'),
+      dialog?.textContent?.trim().slice(0, 80) ?? '(无对话框)',
+    );
+
+    // 「稍后」只关闭对话框；同一会话再报损坏不会重弹
+    if (clickByText(document.body, '稍后')) await flush(8);
+    check(
+      '损坏对话框「稍后」关闭后不再自动重弹',
+      document.querySelector('[data-role="corrupt-dialog"]') === null,
+      '',
+    );
+    reportCorrupt(new Error('(code: 26) file is not a database'));
+    await flush(8);
+    check(
+      '同一会话只触发一次恢复对话框',
+      document.querySelector('[data-role="corrupt-dialog"]') === null,
+      '',
+    );
+    corruptDialog.root.unmount();
+
+    // 重新挂载会立即拿到已损坏状态；冒烟环境没有原生桥，恢复失败必须给可读原因
+    const retryDialog = mount(<DatabaseCorruptDialog />);
+    await flush(8);
+    if (clickByText(document.body, '立即恢复并重启')) await flush(12);
+    const failure = document.querySelector('[data-role="corrupt-dialog-failure"]');
+    check(
+      '恢复失败在对话框里给出可读原因',
+      failure !== null && (failure.textContent ?? '').includes('当前平台不支持自动恢复'),
+      failure?.textContent?.trim().slice(0, 80) ?? '(无失败提示)',
+    );
+    retryDialog.root.unmount();
+    resetCorruptGuardForTests();
+  }
+
+  // P1-09：加载页 3 秒后追加进度文案
+  {
+    const loading = mount(<LoadingScreen slowAfterMs={120} />);
+    await flush(3);
+    const initialLoadingText = loading.container.textContent ?? '';
+    await new Promise((resolve) => setTimeout(resolve, 220));
+    await flush(2);
+    const slowLoadingText = loading.container.textContent ?? '';
+    check(
+      'P1-09 加载 3 秒后追加「仍在载入…」',
+      LOADING_SLOW_MS === 3000 &&
+        initialLoadingText.includes('正在载入…') &&
+        !initialLoadingText.includes('仍在载入…') &&
+        slowLoadingText.includes('仍在载入…'),
+      `阈值=${LOADING_SLOW_MS}ms 初=${initialLoadingText.trim()} 后=${slowLoadingText.trim()}`,
+    );
+    loading.root.unmount();
+  }
+
+  // P1-01：桌面工具栏是统一「＋」主按钮 + 下拉，四项与移动端、日程页同源
+  {
+    const toolbarStore = validatedStorage(await openIndexedDbStorage());
+    if ((await activeSemester(toolbarStore, USER_ID)) === undefined) {
+      await createSemester(toolbarStore, {
+        userId: USER_ID,
+        name: '工具栏冒烟学期',
+        startDate: todayText,
+        totalWeeks: 20,
+        timeZone: 'Asia/Shanghai',
+      });
+      await writeSettings(toolbarStore, { viewDays: 7 });
+    }
+    // 冒烟默认是移动端断点：这一段临时把 matchMedia 报成桌面，验证完再还原
+    const originalMatchMedia = globalThis.matchMedia;
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: (query: string) => ({
+        matches: /min-width: (?:1024|1440)px/.test(query),
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+      configurable: true,
+      writable: true,
+    });
+    const desktopApp = mount(<App />);
+    await flush(24);
+    const desktopAddLabels = [
+      ...desktopApp.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]'),
+    ].map((item) => (item.textContent ?? '').trim());
+    check(
+      'P1-01 桌面工具栏「＋」菜单含四项新增动作',
+      desktopApp.container.querySelector('[data-role="app-sidebar"]') !== null &&
+        desktopAddLabels.join('/') === EXPECTED_ADD_ACTIONS.join('/'),
+      desktopAddLabels.join(' / ') || '(无工具栏菜单)',
+    );
+    if (clickMenu(desktopApp.container, '添加', '加考试')) await flush(14);
+    const desktopExamKind = document.querySelector('[aria-label="待办类型：考试"]');
+    check(
+      'P1-01 桌面「＋」点加考试打开考试表单且类型选中',
+      desktopExamKind?.getAttribute('aria-pressed') === 'true' &&
+        document.querySelector('[aria-label="开考时间"]') !== null,
+      `类型选中=${desktopExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+    );
+    if (clickByText(document.body, '取消')) await flush(10);
+    if (clickByText(desktopApp.container, '日程')) await flush(16);
+    const desktopScheduleLabels = [
+      ...desktopApp.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]'),
+    ].map((item) => (item.textContent ?? '').trim());
+    check(
+      'P1-01 日程「添加」菜单与桌面工具栏同源',
+      desktopScheduleLabels.join('/') === EXPECTED_ADD_ACTIONS.join('/'),
+      desktopScheduleLabels.join(' / ') || '(无)',
+    );
+    desktopApp.root.unmount();
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: originalMatchMedia,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  // P2-17：加课 / 加待办 / 调课三个高频短表单按断点换容器 —— 移动端底部 Sheet，桌面仍居中 Dialog
+  {
+    const originalMatchMedia = globalThis.matchMedia;
+    const setViewport = (desktop: boolean): void => {
+      Object.defineProperty(globalThis, 'matchMedia', {
+        value: (query: string) => ({
+          matches: desktop && /min-width: (?:1024|1440)px/.test(query),
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }),
+        configurable: true,
+        writable: true,
+      });
+    };
+    const surfaceOf = (role: string): Element | null => document.querySelector(`[data-role="${role}"]`);
+    const asSheet = (role: string): boolean => {
+      const element = surfaceOf(role);
+      return (
+        element instanceof HTMLElement &&
+        element.dataset.container === 'sheet' &&
+        element.className.includes('dt-sheet')
+      );
+    };
+    const asDialog = (role: string): boolean => {
+      const element = surfaceOf(role);
+      return (
+        element instanceof HTMLElement &&
+        element.dataset.container === 'dialog' &&
+        element.className.includes('dt-panel')
+      );
+    };
+    const closeByCancel = async (): Promise<void> => {
+      if (clickByText(document.body, '取消')) await flush(10);
+    };
+    const openFromAddMenu = async (app: { container: HTMLElement }, desktop: boolean, label: string): Promise<void> => {
+      if (desktop) {
+        clickMenu(app.container, '添加', label);
+      } else {
+        const fab = app.container.querySelector<HTMLElement>('button[aria-label="添加"]');
+        fab?.click();
+        await flush(8);
+        clickByText(document.body, label);
+      }
+      await flush(14);
+    };
+    // 与用户路径一致：课表点课程卡开详情，再从详情点「调课」
+    const openAdjustFromDetail = async (app: { container: HTMLElement }): Promise<boolean> => {
+      const card = app.container.querySelector<HTMLElement>('[data-role="course-card"]');
+      if (card === null) return false;
+      card.click();
+      await flush(14);
+      if (!clickByLabel(document.body, '调课')) return false;
+      await flush(14);
+      return surfaceOf('adjust-dialog') !== null;
+    };
+
+    // 移动视口：冒烟默认 matchMedia 全 false，与底部导航同口径（非桌面即移动形态）
+    setViewport(false);
+    const mobileFormApp = mount(<App />);
+    await flush(24);
+    await openFromAddMenu(mobileFormApp, false, '加课程');
+    const mobileCourseSheet = asSheet('course-form');
+    await closeByCancel();
+    await openFromAddMenu(mobileFormApp, false, '加待办');
+    const mobileTodoSheet = asSheet('todo-form');
+    await closeByCancel();
+    const mobileAdjustOpened = await openAdjustFromDetail(mobileFormApp);
+    const mobileAdjustSheet = asSheet('adjust-dialog');
+    await closeByCancel();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(8);
+    check(
+      'P2-17 移动视口加课/加待办/调课渲染为底部 Sheet',
+      mobileCourseSheet && mobileTodoSheet && mobileAdjustOpened && mobileAdjustSheet,
+      `加课=${mobileCourseSheet ? 'sheet' : '非 sheet'} / 加待办=${mobileTodoSheet ? 'sheet' : '非 sheet'} / 调课=${
+        mobileAdjustOpened ? (mobileAdjustSheet ? 'sheet' : '非 sheet') : '未打开'
+      }`,
+    );
+    mobileFormApp.root.unmount();
+
+    // 桌面视口：三个表单仍是居中 Dialog
+    setViewport(true);
+    const desktopFormApp = mount(<App />);
+    await flush(24);
+    await openFromAddMenu(desktopFormApp, true, '加课程');
+    const desktopCourseDialog = asDialog('course-form');
+    await closeByCancel();
+    await openFromAddMenu(desktopFormApp, true, '加待办');
+    const desktopTodoDialog = asDialog('todo-form');
+    await closeByCancel();
+    const desktopAdjustOpened = await openAdjustFromDetail(desktopFormApp);
+    const desktopAdjustDialog = asDialog('adjust-dialog');
+    await closeByCancel();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush(8);
+    check(
+      'P2-17 桌面视口加课/加待办/调课仍为居中 Dialog',
+      desktopCourseDialog && desktopTodoDialog && desktopAdjustOpened && desktopAdjustDialog,
+      `加课=${desktopCourseDialog ? 'dialog' : '非 dialog'} / 加待办=${
+        desktopTodoDialog ? 'dialog' : '非 dialog'
+      } / 调课=${desktopAdjustOpened ? (desktopAdjustDialog ? 'dialog' : '非 dialog') : '未打开'}`,
+    );
+    desktopFormApp.root.unmount();
+
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: originalMatchMedia,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  // 设备与同步页的分组导航：桌面左列清单 + 右栏内容；移动端清单 → 子页 → 返回。
+  // 冒烟默认是移动断点，这一段先验移动形态，再按 P2-07 的方式临时报成桌面验左列常驻。
+  {
+    const originalMatchMedia = globalThis.matchMedia;
+    const setViewport = (desktop: boolean): void => {
+      Object.defineProperty(globalThis, 'matchMedia', {
+        value: (query: string) => ({
+          matches: desktop && /min-width: (?:1024|1440)px/.test(query),
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        }),
+        configurable: true,
+        writable: true,
+      });
+    };
+    const navOf = (container: HTMLElement): HTMLElement | null =>
+      container.querySelector<HTMLElement>('nav[aria-label="设备与同步分组"]');
+    const navItemOf = (container: HTMLElement, group: string): HTMLElement | null =>
+      container.querySelector<HTMLElement>(`[data-role="settings-nav-item"][data-group="${group}"]`);
+    const panelOf = (container: HTMLElement): HTMLElement | null =>
+      navOf(container)?.parentElement?.querySelector('section') ?? null;
+    const navText = (container: HTMLElement, group: string): string =>
+      (navItemOf(container, group)?.textContent ?? '').trim();
+
+    // 移动视口：先清单，点进子页，再返回清单
+    setViewport(false);
+    const mobileApp = mount(<App />);
+    await flush(24);
+    clickByText(mobileApp.container, '设备与同步');
+    await flush(16);
+    check(
+      '移动端设备页先显示分组清单（内容区隐藏）',
+      navOf(mobileApp.container) !== null &&
+        !navOf(mobileApp.container)?.classList.contains('hidden') &&
+        panelOf(mobileApp.container) !== null &&
+        panelOf(mobileApp.container)?.classList.contains('hidden') === true &&
+        navItemOf(mobileApp.container, 'storage')?.getAttribute('aria-current') === 'page',
+      `nav=${navOf(mobileApp.container)?.className ?? '(无)'} / panel=${panelOf(mobileApp.container)?.className ?? '(无)'}`,
+    );
+    const mobileEnteredBackup = await openDeviceGroup('备份与恢复', mobileApp.container);
+    check(
+      '移动端点分组进入子页：清单隐藏且只挂当前组',
+      mobileEnteredBackup &&
+        navOf(mobileApp.container)?.classList.contains('hidden') === true &&
+        panelOf(mobileApp.container)?.classList.contains('hidden') === false &&
+        mobileApp.container.querySelector('[data-role="backup-settings"]') !== null &&
+        mobileApp.container.querySelector('[data-role="settings-nav-back"]') !== null,
+      `nav=${navOf(mobileApp.container)?.className ?? '(无)'} / 备份块=${
+        mobileApp.container.querySelector('[data-role="backup-settings"]') === null ? '无' : '有'
+      }`,
+    );
+    if (clickByLabel(mobileApp.container, '返回设备与同步列表')) await flush(12);
+    check(
+      '移动端从子页返回后回到分组清单并卸载子页内容',
+      navOf(mobileApp.container) !== null &&
+        !navOf(mobileApp.container)?.classList.contains('hidden') &&
+        panelOf(mobileApp.container)?.classList.contains('hidden') === true &&
+        mobileApp.container.querySelector('[data-role="backup-settings"]') === null,
+      `nav=${navOf(mobileApp.container)?.className ?? '(无)'}`,
+    );
+    // 顶部快捷动作行已整体移除：入口都在各分组内
+    check(
+      '移动端设备页顶部同样没有快捷动作行',
+      mobileApp.container.querySelector('[data-role="devices-actions"]') === null,
+      '',
+    );
+    const mobileStorageEntered = await openDeviceGroup('本地存储', mobileApp.container);
+    const mobileStorageActions = mobileApp.container.querySelector<HTMLElement>(
+      '[data-role="storage-transfer-actions"]',
+    );
+    check(
+      '移动端在「本地存储」分组内找到导出备份 / 导入备份 / ICS 入口',
+      mobileStorageEntered &&
+        mobileStorageActions !== null &&
+        ['导出备份', '导入备份', '导出课表（ICS）'].every((label) =>
+          (mobileStorageActions.textContent ?? '').includes(label),
+        ),
+      (mobileStorageActions?.textContent ?? '(无)').trim(),
+    );
+    const mobileBackupEntered = await openDeviceGroup('备份与恢复', mobileApp.container);
+    check(
+      '移动端「备份与恢复」分组保留新建快照与快照列表',
+      mobileBackupEntered &&
+        (mobileApp.container.querySelector('[data-role="backup-settings"]')?.textContent ?? '').includes('新建快照') &&
+        mobileApp.container.querySelector('[data-role="snapshot-list"], [data-role="snapshot-empty"]') !== null,
+      mobileApp.container.querySelector('[data-role="backup-settings"]')?.textContent?.slice(0, 50) ?? '(无)',
+    );
+    // 移动端从设备列表进入帮助页（底栏不占帮助位）
+    const mobileHelpButton = mobileApp.container.querySelector<HTMLElement>('[data-role="settings-nav-help"]');
+    mobileHelpButton?.click();
+    await flush(12);
+    check(
+      '移动端从设备列表进入帮助页',
+      mobileApp.container.querySelector('[data-role="help-view"]') !== null,
+      mobileHelpButton?.textContent?.trim() ?? '(无入口)',
+    );
+    mobileApp.root.unmount();
+
+    // 桌面视口：左列常驻，点分组只换右栏内容
+    setViewport(true);
+    const desktopApp = mount(<App />);
+    await flush(24);
+    clickByText(desktopApp.container, '设备与同步');
+    await flush(16);
+    check(
+      '桌面设备页左列分组清单常驻、右侧显示默认组内容',
+      navOf(desktopApp.container) !== null &&
+        !navOf(desktopApp.container)?.classList.contains('hidden') &&
+        navItemOf(desktopApp.container, 'storage')?.getAttribute('aria-current') === 'page' &&
+        panelOf(desktopApp.container) !== null &&
+        panelOf(desktopApp.container)?.className.includes('desktop:block') === true &&
+        (panelOf(desktopApp.container)?.textContent ?? '').includes('本地存储：'),
+      `清单=${navOf(desktopApp.container)?.querySelectorAll('[data-role="settings-nav-item"]').length ?? 0} 组`,
+    );
+    const desktopEnteredUpdate = await openDeviceGroup('更新', desktopApp.container);
+    check(
+      '桌面点「更新」后右侧出现检查更新并卸载上一组',
+      desktopEnteredUpdate &&
+        navItemOf(desktopApp.container, 'update')?.getAttribute('aria-current') === 'page' &&
+        desktopApp.container.querySelector('button[aria-label="检查更新"]') !== null &&
+        !(panelOf(desktopApp.container)?.textContent ?? '').includes('本地存储：'),
+      `当前=${navItemOf(desktopApp.container, 'update')?.getAttribute('aria-current') ?? '(无)'}`,
+    );
+    check(
+      '分组清单摘要行随当前状态更新',
+      navText(desktopApp.container, 'update').includes(`${appVersion()} · ${CHANNEL_LABEL[CHANNEL]}`) &&
+        navText(desktopApp.container, 'webdav').includes('未配置') &&
+        navText(desktopApp.container, 'lan').includes('同局域网直传') &&
+        navText(desktopApp.container, 'maintenance').includes('日志级别 ') &&
+        navText(desktopApp.container, 'about').includes(`v${appVersion()}`) &&
+        navText(desktopApp.container, 'backup').includes('快照'),
+      `更新=${navText(desktopApp.container, 'update')} / 备份=${navText(desktopApp.container, 'backup')} / 关于=${navText(
+        desktopApp.container,
+        'about',
+      )}`,
+    );
+    desktopApp.root.unmount();
+
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: originalMatchMedia,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  // —— 帮助模块：顶部「?」入口、分类卡片、搜索过滤/空态、展开步骤与「去设置」——
+  // 前面的用例删过默认学期，这里补一个学期后单独挂载，避免主视图停在引导页
+  const helpStore = validatedStorage(await openIndexedDbStorage());
+  if ((await activeSemester(helpStore, USER_ID)) === undefined) {
+    await createSemester(helpStore, {
+      userId: USER_ID,
+      name: '帮助冒烟学期',
+      startDate: todayText,
+      totalWeeks: 20,
+      timeZone: 'Asia/Shanghai',
+    });
+    await writeSettings(helpStore, { viewDays: 7 });
+  }
+  const helpApp = mount(<App />);
+  await flush(24);
+  if (clickByText(helpApp.container, '知道了')) await flush(8);
+  const helpToolbarButton = helpApp.container.querySelector<HTMLElement>('button[aria-label="帮助"]');
+  helpToolbarButton?.click();
+  await flush(12);
+  const helpView = helpApp.container.querySelector<HTMLElement>('[data-role="help-view"]');
+  const helpSearch = helpApp.container.querySelector<HTMLInputElement>('[data-role="help-search"]');
+  const helpCategoryCards = [
+    ...helpApp.container.querySelectorAll<HTMLElement>('[data-role="help-category"]'),
+  ];
+  const helpEntries = [...helpApp.container.querySelectorAll<HTMLElement>('[data-role="help-entry"]')];
+  check(
+    '主界面顶部「?」打开帮助：引导式分类卡片与条目齐全',
+    helpToolbarButton !== null &&
+      helpView !== null &&
+      helpSearch !== null &&
+      helpCategoryCards.length === 8 &&
+      helpEntries.length >= 10 &&
+      (helpView?.textContent ?? '').includes('帮助与使用指引'),
+    `分类=${helpCategoryCards.length} 条目=${helpEntries.length} 工具栏=${
+      helpToolbarButton !== null ? '有' : '无'
+    } 帮助页=${helpView !== null ? '有' : '无'} 当前=${(
+      helpApp.container.querySelector('[data-role="view-root"]')?.textContent ?? ''
+    ).slice(0, 50)}`,
+  );
+  if (helpSearch !== null) setInputValue(helpSearch, '下载源');
+  await flush(8);
+  const filteredEntries = [...helpApp.container.querySelectorAll<HTMLElement>('[data-role="help-entry"]')];
+  const filteredCount = helpApp.container.querySelector<HTMLElement>('[data-role="help-result-count"]')?.textContent ?? '';
+  check(
+    '帮助搜索按关键词过滤并实时显示结果计数',
+    filteredEntries.length >= 1 &&
+      filteredEntries.length < helpEntries.length &&
+      filteredCount.includes('找到') &&
+      filteredEntries.some((entry) => (entry.textContent ?? '').includes('下载源')),
+    `${filteredCount.trim()} / 命中 ${filteredEntries.length} 条`,
+  );
+  if (helpSearch !== null) setInputValue(helpSearch, '绝对不存在的帮助关键词zzz');
+  await flush(8);
+  check(
+    '帮助搜索无结果时给出空态',
+    helpApp.container.querySelector('[data-role="help-empty"]') !== null &&
+      (helpApp.container.querySelector('[data-role="help-result-count"]')?.textContent ?? '').includes('找到 0 条'),
+    helpApp.container.querySelector('[data-role="help-result-count"]')?.textContent?.trim() ?? '(无)',
+  );
+  if (helpSearch !== null) setInputValue(helpSearch, '');
+  await flush(8);
+  const firstHelpEntry = helpApp.container.querySelector<HTMLDetailsElement>('[data-role="help-entry"]');
+  firstHelpEntry?.querySelector('summary')?.click();
+  await flush(6);
+  const firstHelpSteps = firstHelpEntry?.querySelectorAll('[data-role="help-steps"] li') ?? [];
+  check(
+    '帮助条目可展开，按 1/2/3 显示有序步骤',
+    firstHelpEntry !== null &&
+      firstHelpEntry.open === true &&
+      firstHelpSteps.length >= 2 &&
+      firstHelpEntry.querySelector('[data-role="help-goto"]') !== null,
+    `${firstHelpEntry?.querySelector('[data-role="help-steps"]')?.textContent?.slice(0, 40) ?? '(无)'} / 步骤 ${firstHelpSteps.length} 条`,
+  );
+  const gotoUpdate = helpApp.container.querySelector<HTMLElement>(
+    '[data-role="help-goto"][data-goto-page="devices"][data-goto-group="update"]',
+  );
+  gotoUpdate?.click();
+  await flush(16);
+  check(
+    '帮助「去设置」跳转到设备页并直接打开「更新」分组',
+    helpApp.container.querySelector('[data-role="devices-view"]') !== null &&
+      helpApp.container.querySelector('[data-role="devices-actions"]') === null &&
+      activeDeviceGroup(helpApp.container) === 'update',
+    `当前组=${activeDeviceGroup(helpApp.container) || '(无)'}`,
+  );
+  if (clickByText(helpApp.container, '设置')) await flush(12);
+  const settingsHelpButton = helpApp.container.querySelector<HTMLElement>('[data-role="settings-nav-help"]');
+  settingsHelpButton?.click();
+  await flush(12);
+  check(
+    '移动端也可从设置列表进入帮助页',
+    settingsHelpButton !== null && helpApp.container.querySelector('[data-role="help-view"]') !== null,
+    settingsHelpButton?.textContent?.trim() ?? '(无入口)',
+  );
+  helpApp.root.unmount();
 
   return results;
 }

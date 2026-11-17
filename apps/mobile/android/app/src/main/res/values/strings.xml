@@ -8,13 +8,16 @@
     <string name="widget_in_class">正在上课</string>
     <string name="widget_today_label">今日课表</string>
     <string name="widget_no_lesson">暂无后续课程</string>
-    <string name="widget_no_data">尚未同步数据</string>
+    <string name="widget_no_data">尚未创建学期</string>
+    <!-- 库文件存在但打开/解析失败：提示重试，避免误报成「尚未创建学期」 -->
+    <string name="widget_read_error">读取数据失败，请打开晓刻后重试</string>
     <string name="widget_today_header">今日课表 · 第 %1$d 周</string>
     <string name="widget_today_empty">今天没有课</string>
-    <string name="widget_week_label">本周课表</string>
-    <string name="widget_week_header">本周课表 · 第 %1$d 周</string>
+    <string name="widget_week_label">一周概览</string>
+    <string name="widget_week_header">一周概览 · 第 %1$d 周</string>
     <string name="widget_week_no_lesson">本周没有课</string>
     <string name="widget_cancelled_suffix">（停课）</string>
     <string name="widget_exam_label">考试倒计时</string>
     <string name="widget_exam_none">暂无考试</string>
+    <string name="widget_week_more">还有 %1$d 节</string>
 </resources>

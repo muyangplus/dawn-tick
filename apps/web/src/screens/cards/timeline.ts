@@ -1,12 +1,10 @@
-import { dateWallClockToEpoch, formatDate, formatTime, type EventRow } from '@dawn-tick/core';
+import { dateWallClockToEpoch, formatDate, formatTime, LAB_COLOR, WEEKDAY_LABELS, type EventRow } from '@dawn-tick/core';
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
-import { formatDayCountdown } from '../../lib/format.ts';
+import { formatDayCountdown, formatPeriodRange } from '../../lib/format.ts';
 
-export const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-
-/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→其他。 */
-export type TimelineNature = '课程' | '调整' | '其他' | '作业' | '考试' | '实验';
+/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→日程。 */
+export type TimelineNature = '课程' | '调整' | '日程' | '作业' | '考试' | '实验';
 
 export interface TimelineItem {
   key: string;
@@ -18,7 +16,7 @@ export interface TimelineItem {
   rank: number;
   /** 渲染用的粗分类；考试与实验单独一种，便于用 data-kind 定位 */
   kind: 'lesson' | 'adjust' | 'todo' | 'exam' | 'lab';
-  /** 类型标签文案（课程 / 调整 / 其他 / 考试） */
+  /** 类型标签文案（课程 / 调整 / 日程 / 考试） */
   nature: TimelineNature;
   title: string;
   /** 次要说明（关联课程、倒计时、备注）；课程条目为空，不再显示节次 */
@@ -53,7 +51,7 @@ export function dateLabel(date: string | null, timeZone: string): string {
   if (date === null) return '未排期';
   const [year, month, day] = date.split('-').map(Number);
   const weekday =
-    WEEKDAYS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7];
+    WEEKDAY_LABELS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7] ?? '';
   void timeZone;
   return `${month} 月 ${day} 日 ${weekday}`;
 }
@@ -130,13 +128,17 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (itemDate !== null && itemDate !== date) continue;
     // 停课只说明这节课不上了，不是待办：默认已完成，直接进「已完成」分组，不计入未完成安排
     const cancelled = item.action === 'cancel';
+    const newPeriod =
+      item.new_period_start === null
+        ? ''
+        : ` ${formatPeriodRange(item.new_period_start, item.new_period_end ?? item.new_period_start)}`;
     const detail =
       item.type === 'makeup'
         ? '调休'
         : cancelled
           ? '停课'
           : item.new_date !== null
-            ? `改至 ${item.new_date} 第 ${item.new_period_start ?? ''}-${item.new_period_end ?? ''} 节`
+            ? `改至 ${item.new_date}${newPeriod}`
             : '调课';
     const startAt = item.start_at ?? null;
     const endEpoch = item.end_at ?? null;
@@ -201,7 +203,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: data.todoSort === 'type' ? todoIndex : minuteOf(endEpoch, data.timeZone),
       rank: 2,
       kind: isExam ? 'exam' : 'todo',
-      nature: isExam ? '考试' : isHomework ? '作业' : '其他',
+      nature: isExam ? '考试' : isHomework ? '作业' : '日程',
       title: todo.title,
       detail: parts.join(' · '),
       location: todo.location,
@@ -236,7 +238,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       kind: 'lab',
       nature: '实验',
       title: lab.title,
-      detail: tail > head ? `第 ${head}–${tail} 节` : `第 ${head} 节`,
+      detail: formatPeriodRange(head, tail),
       location: lab.location,
       startText: startSlot?.start_time ?? null,
       endText: endSlot?.end_time ?? null,
@@ -247,7 +249,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       completed: lab.done === 1,
       checkable: true,
       countdownText: null,
-      color: '#8E7CC3',
+      color: LAB_COLOR,
       event: lab,
     });
   }

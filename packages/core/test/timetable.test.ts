@@ -2,13 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addMinutes,
+  durationBetween,
   formatClock,
   generatePeriods,
+  isClockText,
   nextPeriod,
   parseClock,
+  periodAtClock,
+  periodsForClockRange,
+  presetSpacing,
+  rangesOverlap,
   reflowPeriods,
   regenerateSections,
   sectionOf,
+  weeksIntersect,
 } from '../src/timetable.ts';
 
 test('时刻解析与格式化', () => {
@@ -79,11 +86,12 @@ test('非法参数被拒绝', () => {
         durationMinutes: 45,
         breakMinutes: 10,
         blocks: [
-          { section: 'am', startTime: '08:00', count: 20 },
-          { section: 'pm', startTime: '14:00', count: 20 },
+          { section: 'am', startTime: '00:00', count: 20 },
+          { section: 'pm', startTime: '12:00', count: 20 },
+          { section: 'night', startTime: '23:00', count: 1 },
         ],
       }),
-    /不能超过 30 节/,
+    /不能超过 40 节/,
   );
 });
 
@@ -252,7 +260,7 @@ test('锚点顺延重排：锚点缺失或参数越界时报错', () => {
   assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 300, breakMinutes: 10 }), /上课时长/);
   assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: -1 }), /课间间隔/);
   assert.throws(() => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 200 }), /课间间隔/);
-  assert.throws(() => reflowPeriods([], { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 }), /课次列表不能为空/);
+  assert.throws(() => reflowPeriods([], { anchorPeriodNo: 1, durationMinutes: 45, breakMinutes: 10 }), /节次列表不能为空/);
   assert.throws(
     () =>
       reflowPeriods(
@@ -262,7 +270,7 @@ test('锚点顺延重排：锚点缺失或参数越界时报错', () => {
         ],
         { anchorPeriodNo: 2, durationMinutes: 45, breakMinutes: 10 },
       ),
-    /课次编号重复/,
+    /节次编号重复/,
   );
   assert.doesNotThrow(
     () => reflowPeriods(periods, { anchorPeriodNo: 1, durationMinutes: 45.2, breakMinutes: 10.4 }),
@@ -286,3 +294,131 @@ test('锚点顺延重排：duration + break 的固定步长与 generatePeriods �
   );
 });
 
+const slots = [
+  { period_no: 1, start_time: '08:00', end_time: '08:45' },
+  { period_no: 2, start_time: '08:55', end_time: '09:40' },
+  { period_no: 3, start_time: '10:00', end_time: '10:45' },
+  { period_no: 4, start_time: '10:55', end_time: '11:40' },
+];
+
+test('节次区间相交：含首含尾，相邻不算重叠', () => {
+  assert.equal(rangesOverlap(1, 2, 3, 4), false, '相邻（1–2 与 3–4）不重叠');
+  assert.equal(rangesOverlap(3, 4, 1, 2), false, '入参顺序无关');
+  assert.equal(rangesOverlap(1, 2, 2, 4), true, '共用边界 2 算重叠');
+  assert.equal(rangesOverlap(2, 2, 1, 4), true, '单节落在连堂里');
+  assert.equal(rangesOverlap(2, 2, 2, 2), true, '同一单节');
+  assert.equal(rangesOverlap(1, 3, 2, 4), true);
+  assert.equal(rangesOverlap(4, 2, 1, 2), true, '倒序区间归一化后仍相交');
+});
+
+test('周次相交：跨周同一节次不算重叠', () => {
+  assert.equal(rangesOverlap(3, 3, 3, 3), true, '节次本身重叠');
+  assert.equal(weeksIntersect([1, 3, 5], [2, 4, 6]), false, '周次无交集 → 不冲突');
+  assert.equal(weeksIntersect([1, 3, 5], [3, 7]), true);
+  assert.equal(weeksIntersect([2], [1, 2, 3]), true);
+  assert.equal(weeksIntersect([], [1]), false, '空周次集不与任何周次相交');
+  assert.equal(weeksIntersect([1], []), false);
+  assert.equal(weeksIntersect([], []), false);
+});
+
+test('钟点落到节次：重叠取该节，无重叠取最近的一节', () => {
+  assert.equal(periodAtClock(slots, '08:10'), 1);
+  assert.equal(periodAtClock(slots, '08:00'), 1, '含起点');
+  assert.equal(periodAtClock(slots, '10:44'), 3);
+  // 08:45–08:55 是课间：贴到更近的第 2 节（10 分钟）而不是第 1 节（45 分钟）
+  assert.equal(periodAtClock(slots, '08:50'), 2);
+  assert.equal(periodAtClock(slots, '12:30'), 4, '超出最后一节贴到最后一节');
+  assert.equal(periodAtClock(slots, '07:00'), 1, '早于第一节贴到第一节');
+  assert.equal(periodAtClock(slots, null), null);
+  assert.equal(periodAtClock(slots, ''), null);
+  assert.equal(periodAtClock([], '08:00'), null);
+  assert.equal(periodAtClock(slots, '8点'), null, '解析不出的钟点返回 null');
+  assert.equal(periodAtClock(slots, '8:05'), 1, '接受一位小时');
+});
+
+test('钟点范围换算节次范围：覆盖多节取最小到最大', () => {
+  assert.deepEqual(periodsForClockRange(slots, '08:30', '10:10'), { periodStart: 1, periodEnd: 3 });
+  assert.deepEqual(periodsForClockRange(slots, '08:00', '08:45'), { periodStart: 1, periodEnd: 1 });
+  assert.deepEqual(
+    periodsForClockRange(slots, '09:30', '10:00'),
+    { periodStart: 2, periodEnd: 2 },
+    '结束时刻正好等于下一节开始，不算覆盖下一节',
+  );
+  assert.deepEqual(
+    periodsForClockRange(slots, '10:00', '10:10'),
+    { periodStart: 3, periodEnd: 3 },
+    '开始时刻正好等于本节开始',
+  );
+  assert.deepEqual(
+    periodsForClockRange([...slots].reverse(), '08:30', '10:10'),
+    { periodStart: 1, periodEnd: 3 },
+    '与入参顺序无关',
+  );
+});
+
+test('钟点范围换算节次范围：无重叠时贴到开始时间最近的一节', () => {
+  assert.deepEqual(periodsForClockRange(slots, '12:00', '13:00'), { periodStart: 4, periodEnd: 4 });
+  assert.deepEqual(periodsForClockRange(slots, '08:46', '08:54'), { periodStart: 2, periodEnd: 2 });
+  assert.equal(periodsForClockRange([], '08:00', '09:00'), null);
+  assert.equal(periodsForClockRange(slots, '', '09:00'), null);
+});
+
+test('时刻输入判定：完整时刻才算数', () => {
+  assert.equal(isClockText('08:00'), true);
+  assert.equal(isClockText('8:05'), true);
+  assert.equal(isClockText(' 08:00 '), true);
+  assert.equal(isClockText('08:0'), false);
+  assert.equal(isClockText('8点'), false);
+  assert.equal(isClockText('24:00'), false);
+  assert.equal(isClockText(''), false);
+});
+
+test('由起止时间推算单节时长', () => {
+  assert.equal(durationBetween('08:00', '08:45'), 45);
+  assert.equal(durationBetween('09:55', '10:40'), 45);
+  assert.equal(durationBetween('08:00', '08:00'), null, '时长为 0 不算有效');
+  assert.equal(durationBetween('09:00', '08:00'), null, '倒序不算有效');
+  assert.equal(durationBetween('08:0', '09:00'), null);
+  assert.equal(durationBetween('8点', '09:00'), null);
+});
+
+test('从作息预设推算节距：取最常见的时长与课间', () => {
+  // 苏科大作息：每节 45 分钟，课间 10 分钟
+  const spacing = presetSpacing([
+    { start: '08:00', end: '08:45' },
+    { start: '08:55', end: '09:40' },
+    { start: '09:50', end: '10:35' },
+    { start: '10:55', end: '11:40' },
+  ]);
+  assert.deepEqual(spacing, { durationMinutes: 45, breakMinutes: 10 });
+});
+
+test('从作息预设推算节距：并列取较小值，越界返回 null', () => {
+  // 时长 40/45 各两次、课间 10/20 各一次 → 都取较小的那个
+  const mixed = presetSpacing([
+    { start: '08:00', end: '08:40' },
+    { start: '08:50', end: '09:30' },
+    { start: '09:50', end: '10:35' },
+    { start: '10:45', end: '11:30' },
+  ]);
+  assert.deepEqual(mixed, { durationMinutes: 40, breakMinutes: 10 });
+
+  // 只有一节：没有课间可算，时长照常有
+  assert.deepEqual(presetSpacing([{ start: '08:00', end: '08:45' }]), {
+    durationMinutes: 45,
+    breakMinutes: null,
+  });
+
+  // 时长越界（超出 10–240）时判为不可用
+  assert.deepEqual(presetSpacing([{ start: '08:00', end: '09:00' }, { start: '09:10', end: '15:10' }]), {
+    durationMinutes: 60,
+    breakMinutes: 10,
+  });
+  assert.equal(presetSpacing([{ start: '08:00', end: '08:05' }]).durationMinutes, null);
+  // 解析不了的时刻直接跳过
+  assert.deepEqual(presetSpacing([{ start: '8点', end: '09:00' }, { start: '09:00', end: '09:45' }]), {
+    durationMinutes: 45,
+    breakMinutes: null,
+  });
+  assert.deepEqual(presetSpacing([]), { durationMinutes: null, breakMinutes: null });
+});

@@ -24,7 +24,7 @@ export function SchoolPickerDialog({
 }: SchoolPickerDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="选择学校" description="选中一所学校：创建学期时按该校作息排好课次">
+      <DialogContent title="选择学校" description="选中一所学校：创建学期时按该校作息排好节次">
         <SchoolPicker
           context={context}
           selectedId={selectedId}

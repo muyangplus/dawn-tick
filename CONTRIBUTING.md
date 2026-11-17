@@ -68,7 +68,7 @@
 | 分支 | 渠道 | 标签 |
 |---|---|---|
 | `dev` | 开发版 | `dev-latest`（滚动） |
-| `main` | 公测版 | `vX.Y.Z-beta.<n>` |
+| `main` | 测试版 | `vX.Y.Z-beta.<n>` |
 | `main` | 正式版 | `vX.Y.Z` |
 
 版本号以根 `package.json` 为唯一来源，由 `tools/release/version.mjs` 同步到各端。渠道差异见 [发布与版本](docs/06-发布与版本.md)。

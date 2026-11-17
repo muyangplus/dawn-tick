@@ -1,34 +1,39 @@
-import { MapPin, Timer } from 'lucide-react';
-import { formatTime } from '@dawn-tick/core';
+import { CalendarDays, MapPin, Timer } from 'lucide-react';
+import { formatTime, weekOfDate, type Occurrence } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { Countdown } from '../components/countdown.tsx';
+import { Button } from '../components/ui/button.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { cn } from '../lib/cn.ts';
-import { formatRemaining } from '../lib/format.ts';
+import { formatPeriodRange, formatRemaining } from '../lib/format.ts';
 import { useNowTick } from '../lib/use-now.ts';
 
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-
-function dateLabel(date: string, timeZone: string): string {
-  const [year, month, day] = date.split('-').map(Number);
-  const weekday = WEEKDAYS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7];
-  return `${month} 月 ${day} 日 ${weekday}`;
+export interface TodayViewProps {
+  data: AppData;
+  /** 日模式查看的日期（YYYY-MM-DD）：顶部日期翻页决定 */
+  date: string;
+  /** 查看的是不是今天：只有今天才显示「正在上课」「下一节课」 */
+  isToday: boolean;
+  /** 空态主按钮：切回周视图看本周安排（由上层提供；没有入口时不渲染按钮） */
+  onOpenWeek?: () => void;
+  /** 课程行可点：点开当天这次课的详情（详情里有调课入口，与周视图同一条路径） */
+  onSelectLesson: (lesson: Occurrence) => void;
 }
 
-export function TodayView({ data }: { data: AppData }) {
+export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: TodayViewProps) {
   const now = useNowTick(1000);
-  const current = data.currentLesson;
-  const next = data.nextLesson;
-  const nextIsToday = next !== undefined && data.todayLessons.some((item) => item.startAt === next.startAt);
+  const lessons = data.lessonsByDate.get(date) ?? [];
+  const current = isToday ? data.currentLesson : undefined;
+  const next = isToday ? data.nextLesson : undefined;
+  const nextIsToday = next !== undefined && lessons.some((item) => item.startAt === next.startAt);
+  const week = data.semester === null ? 0 : weekOfDate(date, data.semester.start_date);
+  const inSemester = data.semester !== null && week >= 1 && week <= data.semester.total_weeks;
 
   return (
-    <section className="flex flex-col gap-3" aria-label="今日视图">
-      <div className="flex flex-col gap-1">
-        <span className="text-lg font-semibold text-ink">今天 {dateLabel(data.today, data.timeZone)}</span>
-        <span className="text-xs text-muted">
-          第 {data.week} 周 · {data.todayLessons.length} 节课
-        </span>
-      </div>
+    <section className="flex flex-col gap-3" aria-label="日视图">
+      <span className="text-xs text-muted">
+        {inSemester ? `第 ${week} 周 · ${lessons.length} 节课` : `${lessons.length} 节课`}
+      </span>
 
       {current !== undefined && (
         <div
@@ -69,23 +74,49 @@ export function TodayView({ data }: { data: AppData }) {
         </div>
       )}
 
-      {data.todayLessons.length === 0 ? (
-        <EmptyState title="今天没有课" description="可切换到周视图查看本周安排" />
+      {lessons.length === 0 ? (
+        <div data-role="day-empty">
+          <EmptyState
+            icon={CalendarDays}
+            title={isToday ? '今天没有课' : '这一天没有课'}
+            description="切换周视图可看本周安排"
+            action={
+              onOpenWeek === undefined ? undefined : (
+                <Button size="sm" variant="secondary" aria-label="查看周视图" onClick={onOpenWeek}>
+                  查看周视图
+                </Button>
+              )
+            }
+          />
+        </div>
       ) : (
         <ul className="flex flex-col gap-2">
-          {data.todayLessons.map((lesson) => {
+          {lessons.map((lesson) => {
             const isNext = nextIsToday && next !== undefined && next.startAt === lesson.startAt;
             const running = lesson.startAt <= now && lesson.endAt > now;
             const finished = lesson.endAt <= now;
             return (
+              // 课程行整体可点：鼠标、触控与键盘（Enter / Space）都打开同一次课的详情，
+              // 调课在详情里操作，与周视图的「点课程卡 → 调课」是同一条路径。
               <li
                 key={`${lesson.scheduleId}-${lesson.startAt}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`查看课程详情：${lesson.courseName}`}
+                data-role="day-lesson"
                 className={cn(
-                  'flex items-center gap-3 rounded-lg border bg-surface p-3',
+                  'flex min-h-tap cursor-pointer items-center gap-3 rounded-lg border bg-surface p-3 text-left',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-2 focus-visible:ring-offset-page',
                   isNext || running ? 'border-primary-strong shadow-sm' : 'border-line',
                   finished && 'opacity-60',
                 )}
                 style={{ borderLeft: `4px solid ${lesson.color}` }}
+                onClick={() => onSelectLesson(lesson)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  onSelectLesson(lesson);
+                }}
               >
                 <div className="tabular flex w-24 shrink-0 flex-col text-xs text-ink">
                   <span>{formatTime(lesson.startAt, data.timeZone)}</span>
@@ -94,8 +125,7 @@ export function TodayView({ data }: { data: AppData }) {
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-sm font-medium text-ink">{lesson.courseName}</span>
                   <span className="flex items-center gap-2 truncate text-xs text-muted">
-                    第 {lesson.periodStart}
-                    {lesson.periodEnd > lesson.periodStart ? `-${lesson.periodEnd}` : ''} 节
+                    {formatPeriodRange(lesson.periodStart, lesson.periodEnd)}
                     {lesson.room !== null && (
                       <span className="flex items-center gap-1">
                         <MapPin className="size-3" aria-hidden />

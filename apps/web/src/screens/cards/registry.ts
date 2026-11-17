@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import type { EventRow, Storage } from '@dawn-tick/core';
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
+import type { ScheduleActions } from './use-schedule-actions.ts';
 
-/** 卡片所在页面 */
-export type CardScope = 'schedule' | 'settings';
+/** 卡片所在页面：设置页已改成分组导航，不再走卡片注册表 */
+export type CardScope = 'schedule' | 'devices';
 /** 卡片所在区域：主列 / 侧列 */
 export type CardZone = 'main' | 'side';
 
@@ -34,10 +35,12 @@ export interface ScheduleCardContext {
   onAddExam: () => void;
   /** 单击时间线里的日程：进入详情编辑 */
   onOpenEvent: (event: EventRow) => void;
-  /** 打开课程调整弹窗；null 表示不预选某节课 */
+  /** 打开调课弹窗；null 表示不预选某节课 */
   onOpenAdjust: (target: AdjustTarget | null) => void;
   /** 新增调课、调整、节假日后刷新数据 */
   onChanged: () => void;
+  /** 卡片写库动作：卡片只发 intent，写库与提示都在 `useScheduleActions` 里 */
+  actions: ScheduleActions;
   /** 显示开学倒计时 */
   semesterCountdown: boolean;
   /** 显示下一个假期倒计时 */
@@ -46,14 +49,14 @@ export interface ScheduleCardContext {
   tomorrowPreview: boolean;
 }
 
-/** 设置页卡片的渲染上下文 */
-export interface SettingsCardContext {
-  scope: 'settings';
+/** 设备与同步页卡片的渲染上下文：同样只由布局注册表驱动 */
+export interface DevicesCardContext {
+  scope: 'devices';
   layout: LayoutConfig;
   onLayoutChange: (layout: LayoutConfig) => void;
 }
 
-export type CardContext = ScheduleCardContext | SettingsCardContext;
+export type CardContext = ScheduleCardContext | DevicesCardContext;
 
 /** 某页面自己的上下文类型 */
 export type CardContextOf<S extends CardScope> = Extract<CardContext, { scope: S }>;
@@ -106,11 +109,6 @@ export function listCards(scope: CardScope): readonly CardDef[] {
   return [...(REGISTRY.get(scope)?.values() ?? [])];
 }
 
-/** 取某页面的一张卡片 */
-export function getCard(scope: CardScope, id: string): CardDef | undefined {
-  return REGISTRY.get(scope)?.get(id);
-}
-
 function zoneOf(def: CardDef, state: CardState | undefined): CardZone {
   return state?.zone ?? def.defaultZone;
 }
@@ -157,13 +155,6 @@ export function renderCard<S extends CardScope>(card: ResolvedCard, ctx: CardCon
 /** 某页面某个区域要渲染的卡片 */
 export function cardsInZone(scope: CardScope, config: LayoutConfig, zone: CardZone): ResolvedCard[] {
   return resolveCards(scope, config).filter((card) => card.zone === zone);
-}
-
-/** 写入配置的纯函数：切换某张卡片的显示状态 */
-export function toggleCardVisible(config: LayoutConfig, scope: CardScope, id: string): LayoutConfig {
-  const card = resolveAllCards(scope, config).find((item) => item.def.id === id);
-  if (card === undefined) return config;
-  return { ...config, [id]: { ...config[id], visible: !card.visible } };
 }
 
 /** 写入配置的纯函数：把卡片切到另一个区域，落位在该区域末尾 */

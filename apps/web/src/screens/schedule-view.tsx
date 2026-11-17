@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react';
-import { MapPin } from 'lucide-react';
 import type { EventRow, Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { AdjustDialog, type AdjustTarget } from '../components/adjust-dialog.tsx';
-import { Button } from '../components/ui/button.tsx';
 import { cardsInZone, renderCard, type LayoutConfig, type ScheduleCardContext } from './cards/registry.ts';
 import { readLayout } from './cards/layout-store.ts';
 import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
+import { semesterStatsCard } from './cards/semester-stats-card.tsx';
+import { useScheduleActions } from './cards/use-schedule-actions.ts';
 
 // 显式引用这几张卡片，保证注册先于首次渲染完成。
-void [actionsCard, timelineCard, examsCard, tomorrowCard];
+void [actionsCard, timelineCard, examsCard, tomorrowCard, semesterStatsCard];
 
 export interface ScheduleViewProps {
   data: AppData;
   storage: Storage;
   onChanged: () => void;
+  /** 查看的日期：由 App 持有，搜索命中时可直接定位到那一天 */
+  viewDate: string;
+  onViewDateChange: (date: string) => void;
   onAddTodo: () => void;
   onAddExam: () => void;
   /** 单击时间线里的日程：进入详情编辑 */
@@ -32,6 +35,8 @@ export function ScheduleView({
   data,
   storage,
   onChanged,
+  viewDate,
+  onViewDateChange,
   onAddTodo,
   onAddExam,
   onOpenEvent,
@@ -39,10 +44,11 @@ export function ScheduleView({
   semesterCountdown,
   holidayCountdown,
 }: ScheduleViewProps) {
-  const [viewDate, setViewDate] = useState(data.today);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustTarget, setAdjustTarget] = useState<AdjustTarget | null>(null);
   const [layout, setLayout] = useState<LayoutConfig>({});
+  // 卡片写库统一入口：卡片拿到的是 intent，不直接持有 core 的 mutations
+  const actions = useScheduleActions({ storage, data, onChanged });
 
   useEffect(() => {
     let cancelled = false;
@@ -62,7 +68,7 @@ export function ScheduleView({
     layout,
     onLayoutChange: setLayout,
     viewDate,
-    onViewDateChange: setViewDate,
+    onViewDateChange,
     onAddTodo,
     onAddExam,
     onOpenEvent,
@@ -71,6 +77,7 @@ export function ScheduleView({
       setAdjustOpen(true);
     },
     onChanged,
+    actions,
     semesterCountdown,
     holidayCountdown,
     tomorrowPreview,
@@ -96,16 +103,6 @@ export function ScheduleView({
           ))}
         </aside>
       )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <MapPin className="size-3 text-muted" aria-hidden />
-        <span className="text-xs text-muted">
-          今天第 {data.week} 周 · 共 {data.todayLessons.length} 节课 · {data.todos.length} 条待办
-        </span>
-        <Button variant="ghost" size="sm" onClick={() => onChanged()}>
-          刷新
-        </Button>
-      </div>
 
       <AdjustDialog
         open={adjustOpen}

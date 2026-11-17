@@ -1,24 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   createCourse,
   createSchedule,
   deleteCourse,
   listManagedCourses,
+  WEEKDAY_LABELS,
   type ManagedCourse,
   type Storage,
   type ThemePreset,
   type TimeSlotRow,
 } from '@dawn-tick/core';
 import { Button } from '../components/ui/button.tsx';
-import { CollapsibleCard } from '../components/ui/collapsible-card.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
-import { toast } from '../components/ui/toaster.tsx';
+import { SectionCard } from '../components/ui/collapsible-card.tsx';
+import { DangerDialog, Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { EmptyState } from '../components/ui/empty-state.tsx';
+import { COUNT, DELETE } from '../copy/zh.ts';
+import { countForCourse, type CourseCounts } from '../delete-counts.ts';
+import { useAction } from '../lib/action.ts';
 import { CourseForm } from './course-form.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { logInfo } from '../log.ts';
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 export function weeksLabel(weeks: readonly number[]): string {
   if (weeks.length === 0) return '未标注周次';
@@ -49,7 +51,7 @@ function summarize(course: ManagedCourse): string {
           ? `${schedule.periodStart}`
           : `${schedule.periodStart}-${schedule.periodEnd}`;
       const room = schedule.room === null ? '' : ` ${schedule.room}`;
-      return `${WEEKDAYS[schedule.dayOfWeek - 1]} ${periods}节${room} ${weeksLabel(schedule.weeks)}`;
+      return `${WEEKDAY_LABELS[schedule.dayOfWeek - 1] ?? ''} ${periods}节${room} ${weeksLabel(schedule.weeks)}`;
     })
     .join(' ｜ ');
 }
@@ -76,11 +78,15 @@ export function CourseManager({
   const [courses, setCourses] = useState<ManagedCourse[]>([]);
   const [editing, setEditing] = useState<ManagedCourse | null>(null);
   const [removing, setRemoving] = useState<ManagedCourse | null>(null);
+  /** 删除课程确认句里的排课与提醒条数 */
+  const [removeCounts, setRemoveCounts] = useState<CourseCounts | null>(null);
   /** 复制课程：先选只复制课程信息，还是连排课一起复制 */
   const [copying, setCopying] = useState<ManagedCourse | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   /** 新建课程：导入子项里的「手动添加」也会用它打开表单 */
   const [creating, setCreating] = useState(false);
+  /** 导入课表折叠区：「完成」要把它收起 */
+  const importRef = useRef<HTMLDetailsElement>(null);
 
   const reload = useCallback(async () => {
     setCourses(await listManagedCourses(storage, semesterId));
@@ -90,67 +96,78 @@ export function CourseManager({
     void reload();
   }, [reload]);
 
+  /** 删除前先数一遍排课与提醒，确认句里给数量 */
+  async function requestRemove(course: ManagedCourse): Promise<void> {
+    setRemoveCounts(await countForCourse(storage, course.id));
+    setRemoving(course);
+  }
+
   /** 复制课程：可选只复制课程信息，或连同全部排课一起复制。 */
   async function confirmCopy(withSchedules: boolean): Promise<void> {
     if (copying === null) return;
-    setBusy(true);
-    try {
-      const source = copying;
-      const created = await createCourse(storage, {
-        semesterId,
-        name: `${source.name} 副本`,
-        shortName: source.shortName,
-        teacher: source.teacher,
-        location: source.location,
-        color: source.color,
-        note: source.note,
-      });
-      const id = String(created['id']);
-      if (withSchedules) {
-        for (const schedule of source.schedules) {
-          await createSchedule(storage, {
-            courseId: id,
-            dayOfWeek: schedule.dayOfWeek,
-            periodStart: schedule.periodStart,
-            periodEnd: schedule.periodEnd,
-            weeks: schedule.weeks,
-            room: schedule.room,
-            startTime: schedule.startTime,
-            endTime: schedule.endTime,
-          });
+    const source = copying;
+    await run({
+      scope: 'course',
+      label: '正在复制课程…',
+      ok: withSchedules
+        ? `已复制「${source.name}」及 ${source.schedules.length} 段排课`
+        : `已复制「${source.name}」`,
+      fail: { what: '复制课程失败', next: '请重试；仍失败请重新打开课程管理。' },
+      task: async () => {
+        const created = await createCourse(storage, {
+          semesterId,
+          name: `${source.name} 副本`,
+          shortName: source.shortName,
+          teacher: source.teacher,
+          location: source.location,
+          color: source.color,
+          note: source.note,
+        });
+        const id = String(created['id']);
+        if (withSchedules) {
+          for (const schedule of source.schedules) {
+            await createSchedule(storage, {
+              courseId: id,
+              dayOfWeek: schedule.dayOfWeek,
+              periodStart: schedule.periodStart,
+              periodEnd: schedule.periodEnd,
+              weeks: schedule.weeks,
+              room: schedule.room,
+              startTime: schedule.startTime,
+              endTime: schedule.endTime,
+            });
+          }
         }
-      }
-      logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
-      toast.success(
-        withSchedules ? `已复制「${source.name}」及 ${source.schedules.length} 段排课` : `已复制「${source.name}」`,
-      );
-      setCopying(null);
-      await reload();
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+        logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
+        setCopying(null);
+        await reload();
+        onChanged();
+      },
+    });
   }
 
   async function confirmRemove(): Promise<void> {
     if (removing === null) return;
-    setBusy(true);
-    try {
-      await deleteCourse(storage, removing.id);
-      logInfo('course', '删除课程', { id: removing.id, schedules: removing.schedules.length });
-      toast.success(`已删除课程「${removing.name}」`);
-      setRemoving(null);
-      await reload();
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    const target = removing;
+    await run({
+      scope: 'course',
+      label: '正在删除课程…',
+      ok: `已删除课程「${target.name}」`,
+      fail: { what: '删除课程失败', next: '请重试；仍失败请重开应用后再删。' },
+      task: async () => {
+        await deleteCourse(storage, target.id);
+        logInfo('course', '删除课程', { id: target.id, schedules: target.schedules.length });
+        setRemoving(null);
+        await reload();
+        onChanged();
+      },
+    });
   }
 
   return (
-    <CollapsibleCard id="courses" title="课程管理" icon={BookOpen} badge={`${courses.length} 门`}>
+    <SectionCard title="课程管理" icon={BookOpen} badge={`${courses.length} 门`}>
       {courses.length === 0 ? (
-        <span className="text-xs text-muted">当前学期没有课程，可在导入页添加或导入</span>
+        <EmptyState size="sm" tone="muted" title="当前学期没有课程，可在下方导入课表" />
       ) : (
         <ul className="flex flex-col gap-2">
           {courses.map((course) => (
@@ -193,7 +210,7 @@ export function CourseManager({
                 variant="ghost"
                 aria-label={`删除课程 ${course.name}`}
                 disabled={busy}
-                onClick={() => setRemoving(course)}
+                onClick={() => void requestRemove(course)}
               >
                 <Trash2 className="size-4 text-danger-strong" aria-hidden />
               </Button>
@@ -203,7 +220,7 @@ export function CourseManager({
       )}
 
       {/* 导入课表是课程管理的子项：展开后走同一套导入流程 */}
-      <details className="rounded-md border border-line bg-surface p-2" data-role="course-import">
+      <details ref={importRef} className="rounded-md border border-line bg-surface p-2" data-role="course-import">
         <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm font-medium text-ink" aria-label="导入课表">
           导入课表
           <span className="text-xs text-muted">网页课表 / 教务窗口 / ICS / CSV / Excel</span>
@@ -219,7 +236,14 @@ export function CourseManager({
                 onChanged();
               })();
             }}
-            onClose={() => undefined}
+            onClose={() => {
+              // 「完成」= 收起导入区并刷新列表，用户不必再手动收起
+              if (importRef.current !== null) importRef.current.open = false;
+              void (async () => {
+                await reload();
+                onChanged();
+              })();
+            }}
           />
         </div>
       </details>
@@ -262,10 +286,10 @@ export function CourseManager({
           }
         >
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" disabled={busy} onClick={() => void confirmCopy(false)}>
+            <Button variant="secondary" loading={busy} onClick={() => void confirmCopy(false)}>
               只复制课程信息
             </Button>
-            <Button variant="primary" disabled={busy} onClick={() => void confirmCopy(true)}>
+            <Button variant="primary" loading={busy} onClick={() => void confirmCopy(true)}>
               连排课一起复制
             </Button>
           </div>
@@ -277,30 +301,23 @@ export function CourseManager({
         </DialogContent>
       </Dialog>
 
-      <Dialog
+      <DangerDialog
         open={removing !== null}
         onOpenChange={(open) => {
           if (!open) setRemoving(null);
         }}
-      >
-        <DialogContent
-          title="删除课程"
-          description={
-            removing === null
-              ? ''
-              : `将删除「${removing.name}」及其 ${removing.schedules.length} 条排课与相关提醒，本操作不可撤销`
-          }
-        >
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setRemoving(null)}>
-              取消
-            </Button>
-            <Button variant="danger" disabled={busy} onClick={() => void confirmRemove()}>
-              确认删除
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </CollapsibleCard>
+        title="删除课程"
+        description={
+          removing === null
+            ? ''
+            : DELETE(removing.name, [
+                `排课 ${COUNT('schedule', removeCounts?.schedules ?? removing.schedules.length)}`,
+                `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
+              ])
+        }
+        submitting={busy}
+        onConfirm={() => void confirmRemove()}
+      />
+    </SectionCard>
   );
 }

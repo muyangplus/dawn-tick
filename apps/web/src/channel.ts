@@ -13,7 +13,7 @@ export const CHANNEL: Channel = (() => {
 
 export const CHANNEL_LABEL: Record<Channel, string> = {
   dev: '开发版',
-  beta: '公测版',
+  beta: '测试版',
   release: '正式版',
 };
 

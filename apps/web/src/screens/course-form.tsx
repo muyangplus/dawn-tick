@@ -2,9 +2,13 @@ import { useEffect, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   createCourse,
+  DEFAULT_COURSE_COLOR,
   listManagedCourses,
+  rangesOverlap,
   setSchedules,
   updateCourse,
+  WEEKDAY_LABELS,
+  weeksIntersect,
   type ManagedCourse,
   type Storage,
   type ThemePreset,
@@ -12,29 +16,26 @@ import {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { Button } from '../components/ui/button.tsx';
-import { Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
+import { WeekPicker } from '../components/week-picker.tsx';
+import { DialogFooter } from '../components/ui/dialog.tsx';
+import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { logError, logInfo } from '../log.ts';
+import { useBusyAction } from '../lib/busy.ts';
+import { errorMessage } from '../lib/errors.ts';
 import { cn } from '../lib/cn.ts';
-
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+import { formatPeriodRange } from '../lib/format.ts';
 
 function allWeeks(total: number): number[] {
   return Array.from({ length: total }, (_, index) => index + 1);
 }
 
-function oddWeeks(total: number): number[] {
-  return allWeeks(total).filter((week) => week % 2 === 1);
-}
-
-function evenWeeks(total: number): number[] {
-  return allWeeks(total).filter((week) => week % 2 === 0);
-}
-
 interface ScheduleDraft {
   key: string;
+  /** 已保存排课的 id：保存时原地更新，保留其上的调课、停课与提醒 */
+  id?: string;
   dayOfWeek: number;
   periodStart: number;
   periodEnd: number;
@@ -78,11 +79,6 @@ export interface CourseFormPreset {
   weeks?: readonly number[] | undefined;
 }
 
-/** 节次范围文案：单节「第 3 节」，连堂「第 3–4 节」。 */
-function formatPeriods(start: number, end: number): string {
-  return start >= end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
-}
-
 interface ScheduleShape {
   dayOfWeek: number;
   periodStart: number;
@@ -101,8 +97,8 @@ function findOverlap(
     for (const other of course.schedules) {
       for (const draft of schedules) {
         if (other.dayOfWeek !== draft.dayOfWeek) continue;
-        if (other.periodEnd < draft.periodStart || other.periodStart > draft.periodEnd) continue;
-        if (!other.weeks.some((week) => draft.weeks.includes(week))) continue;
+        if (!rangesOverlap(other.periodStart, other.periodEnd, draft.periodStart, draft.periodEnd)) continue;
+        if (!weeksIntersect(other.weeks, draft.weeks)) continue;
         return { name: course.name, start: other.periodStart, end: other.periodEnd };
       }
     }
@@ -124,6 +120,8 @@ export interface CourseFormProps {
   course?: ManagedCourse | null;
   /** 新建时的预填星期与节次范围（编辑模式忽略） */
   presetDraft?: CourseFormPreset | null | undefined;
+  /** 容器形态由挂载处按断点决定：移动端底部 Sheet，桌面端居中 Dialog */
+  container?: FormContainer;
 }
 
 export function CourseForm({
@@ -137,6 +135,7 @@ export function CourseForm({
   onCreated,
   course = null,
   presetDraft = null,
+  container = 'dialog',
 }: CourseFormProps) {
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
@@ -147,11 +146,13 @@ export function CourseForm({
   const [colorIndex, setColorIndex] = useState(0);
   const [drafts, setDrafts] = useState<ScheduleDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** 保存是唯一提交入口：busy 期间按钮转圈 + 整页蒙版，重复点击被忽略 */
+  const { busy, run } = useBusyAction();
 
   const palette = PRESETS[preset].courses;
   const firstPeriod = slots[0]?.period_no ?? 1;
   const lastPeriod = slots.at(-1)?.period_no ?? firstPeriod + 1;
+  const nameEmpty = name.trim().length === 0;
 
   useEffect(() => {
     if (!open) return;
@@ -200,6 +201,7 @@ export function CourseForm({
             const weeks = [...schedule.weeks].sort((left, right) => left - right);
             return {
               key: `draft-${draftSeed}`,
+              id: schedule.id,
               dayOfWeek: schedule.dayOfWeek,
               periodStart: schedule.periodStart,
               periodEnd: schedule.periodEnd,
@@ -218,292 +220,263 @@ export function CourseForm({
   }
 
   async function submit(): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      const payload = {
-        name: name.trim(),
-        shortName: shortName.trim().length > 0 ? shortName.trim() : null,
-        teacher: teacher.trim().length > 0 ? teacher.trim() : null,
-        location: location.trim().length > 0 ? location.trim() : null,
-        color: palette[colorIndex % palette.length] ?? '#4F8DFD',
-        credits: credits.trim().length > 0 ? Number(credits) : null,
-        note: note.trim().length > 0 ? note.trim() : null,
-      };
-      const schedules = drafts.map((draft) => ({
-        dayOfWeek: draft.dayOfWeek,
-        periodStart: Math.min(draft.periodStart, draft.periodEnd),
-        periodEnd: Math.max(draft.periodStart, draft.periodEnd),
-        weeks: [...draft.weeks].sort((left, right) => left - right),
-        room: draft.room.trim().length > 0 ? draft.room.trim() : null,
-        startTime: draft.customTime ? draft.startTime : null,
-        endTime: draft.customTime ? draft.endTime : null,
-      }));
+    // 空名在 UI 层已禁用保存，这里再挡一次：回车/程序触发也不写空白课卡
+    if (nameEmpty) return;
+    await run('正在保存课程…', async () => {
+      setError(null);
+      try {
+        const payload = {
+          name: name.trim(),
+          shortName: shortName.trim().length > 0 ? shortName.trim() : null,
+          teacher: teacher.trim().length > 0 ? teacher.trim() : null,
+          location: location.trim().length > 0 ? location.trim() : null,
+          color: palette[colorIndex % palette.length] ?? DEFAULT_COURSE_COLOR,
+          credits: credits.trim().length > 0 ? Number(credits) : null,
+          note: note.trim().length > 0 ? note.trim() : null,
+        };
+        const schedules = drafts.map((draft) => ({
+          id: draft.id,
+          dayOfWeek: draft.dayOfWeek,
+          periodStart: Math.min(draft.periodStart, draft.periodEnd),
+          periodEnd: Math.max(draft.periodStart, draft.periodEnd),
+          weeks: [...draft.weeks].sort((left, right) => left - right),
+          room: draft.room.trim().length > 0 ? draft.room.trim() : null,
+          startTime: draft.customTime ? draft.startTime : null,
+          endTime: draft.customTime ? draft.endTime : null,
+        }));
 
-      logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
-        name: payload.name,
-        schedules: schedules.map((item) => ({
-          day: item.dayOfWeek,
-          periods: `${item.periodStart}-${item.periodEnd}`,
-          weeks: item.weeks.length,
-          time: item.startTime === null ? null : `${item.startTime}-${item.endTime}`,
-        })),
-      });
-      let savedId: string;
-      if (course === null) {
-        const created = await createCourse(storage, { semesterId, ...payload });
-        savedId = String(created['id']);
-        await setSchedules(storage, savedId, schedules);
-        logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
-        toast.success('已添加课程');
-      } else {
-        savedId = course.id;
-        await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
-        await setSchedules(storage, course.id, schedules);
-        logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
-        toast.success('已保存课程');
+        logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
+          name: payload.name,
+          schedules: schedules.map((item) => ({
+            day: item.dayOfWeek,
+            periods: `${item.periodStart}-${item.periodEnd}`,
+            weeks: item.weeks.length,
+            time: item.startTime === null ? null : `${item.startTime}-${item.endTime}`,
+          })),
+        });
+        let savedId: string;
+        if (course === null) {
+          const created = await createCourse(storage, { semesterId, ...payload });
+          savedId = String(created['id']);
+          await setSchedules(storage, savedId, schedules, { totalWeeks });
+          logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
+          toast.success('已添加课程');
+        } else {
+          savedId = course.id;
+          await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
+          await setSchedules(storage, course.id, schedules, { totalWeeks });
+          logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
+          toast.success('已保存课程');
+        }
+        // 重叠只提醒不阻止：课程此时已经保存成功
+        const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
+        if (overlap !== null) {
+          toast.info(`与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
+        }
+        onCreated();
+        onOpenChange(false);
+      } catch (cause: unknown) {
+        // 保存失败同时写日志与界面提示，避免只留一句「无反应」
+        const message = errorMessage(cause);
+        logError('course', '保存课程失败', { message, id: course?.id ?? null });
+        setError(message);
+        toast.error(`保存课程失败：${message}`);
       }
-      // 重叠只提醒不阻止：课程此时已经保存成功
-      const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
-      if (overlap !== null) {
-        toast.info(`与「${overlap.name}」${formatPeriods(overlap.start, overlap.end)}重叠，已同时保留`);
-      }
-      onCreated();
-      onOpenChange(false);
-    } catch (cause: unknown) {
-      // 保存失败同时写日志与界面提示，避免只留一句「无反应」
-      const message = cause instanceof Error ? cause.message : String(cause);
-      logError('course', '保存课程失败', { message, id: course?.id ?? null });
-      setError(message);
-      toast.error(`保存课程失败：${message}`);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title={course === null ? '添加课程' : '编辑课程'} description="课程信息与排课时段">
-        <Field label="课程名">
-          <Input value={name} onChange={(event) => setName(event.target.value)} />
+    <FormSurface
+      open={open}
+      onOpenChange={onOpenChange}
+      container={container}
+      title={course === null ? '添加课程' : '编辑课程'}
+      description="课程信息与排课时段"
+      contentAttrs={{ 'data-role': 'course-form' }}
+    >
+      <Field label="课程名">
+        <Input
+          value={name}
+          aria-required="true"
+          aria-invalid={nameEmpty}
+          aria-describedby={nameEmpty ? 'course-name-error' : undefined}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </Field>
+      {nameEmpty && (
+        <p id="course-name-error" className="text-xs text-danger-strong">
+          课程名不能为空
+        </p>
+      )}
+      <div className="grid gap-2 tablet:grid-cols-3">
+        <Field label="简称">
+          <Input value={shortName} onChange={(event) => setShortName(event.target.value)} />
         </Field>
-        <div className="grid gap-2 tablet:grid-cols-3">
-          <Field label="简称">
-            <Input value={shortName} onChange={(event) => setShortName(event.target.value)} />
-          </Field>
-          <Field label="教师">
-            <Input value={teacher} onChange={(event) => setTeacher(event.target.value)} />
-          </Field>
-          <Field label="地点">
-            <Input value={location} onChange={(event) => setLocation(event.target.value)} />
-          </Field>
-        </div>
-        <div className="grid gap-2 tablet:grid-cols-2">
-          <Field label="学分">
-            <Input type="number" step="0.5" value={credits} onChange={(event) => setCredits(event.target.value)} />
-          </Field>
-          <Field label="备注">
-            <Input value={note} onChange={(event) => setNote(event.target.value)} />
-          </Field>
-        </div>
+        <Field label="教师">
+          <Input value={teacher} onChange={(event) => setTeacher(event.target.value)} />
+        </Field>
+        <Field label="地点">
+          <Input value={location} onChange={(event) => setLocation(event.target.value)} />
+        </Field>
+      </div>
+      <div className="grid gap-2 tablet:grid-cols-2">
+        <Field label="学分">
+          <Input type="number" step="0.5" value={credits} onChange={(event) => setCredits(event.target.value)} />
+        </Field>
+        <Field label="备注">
+          <Input value={note} onChange={(event) => setNote(event.target.value)} />
+        </Field>
+      </div>
 
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted">排课时段</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setDrafts((current) => [...current, newDraft(totalWeeks, 1, firstPeriod)])}
-            >
-              <Plus className="size-4" aria-hidden />
-              增加时段
-            </Button>
-          </div>
-          {drafts.map((draft) => (
-            <div key={draft.key} className="flex flex-col gap-2 rounded-md border border-line p-2">
-              <div className="grid grid-cols-3 gap-2">
-                <Select
-                  value={String(draft.dayOfWeek)}
-                  onValueChange={(value) => patchDraft(draft.key, { dayOfWeek: Number(value) })}
-                >
-                  <SelectTrigger aria-label="星期">
-                    <span>{WEEKDAYS[draft.dayOfWeek - 1]}</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WEEKDAYS.map((label, index) => (
-                      <SelectItem key={label} value={String(index + 1)}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={String(draft.periodStart)}
-                  onValueChange={(value) => patchDraft(draft.key, { periodStart: Number(value) })}
-                >
-                  <SelectTrigger aria-label="起始节">
-                    <span>第 {draft.periodStart} 节</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {slots.map((slot) => (
-                      <SelectItem key={slot.period_no} value={String(slot.period_no)}>
-                        第 {slot.period_no} 节
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={String(draft.periodEnd)}
-                  onValueChange={(value) => patchDraft(draft.key, { periodEnd: Number(value) })}
-                >
-                  <SelectTrigger aria-label="结束节">
-                    <span>第 {draft.periodEnd} 节</span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {slots.map((slot) => (
-                      <SelectItem key={slot.period_no} value={String(slot.period_no)}>
-                        第 {slot.period_no} 节
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex min-h-tap items-center gap-2 text-xs text-muted">
-                  <Switch
-                    aria-label="自定义时间"
-                    checked={draft.customTime}
-                    onCheckedChange={(checked) => patchDraft(draft.key, { customTime: checked })}
-                  />
-                  自定义时间
-                </label>
-                {draft.customTime && (
-                  <>
-                    <Input
-                      type="time"
-                      className="w-28"
-                      aria-label="开始时间"
-                      value={draft.startTime}
-                      onChange={(event) => patchDraft(draft.key, { startTime: event.target.value })}
-                    />
-                    <Input
-                      type="time"
-                      className="w-28"
-                      aria-label="结束时间"
-                      value={draft.endTime}
-                      onChange={(event) => patchDraft(draft.key, { endTime: event.target.value })}
-                    />
-                  </>
-                )}
-              </div>
-              <div className="flex flex-col gap-2 rounded-md border border-line p-2">
-                <div className="flex flex-wrap items-end gap-2">
-                  <Field label="周次">
-                    <div className="flex flex-wrap gap-1">
-                      {(
-                        [
-                          { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
-                          { id: 'odd', label: '单周', weeks: oddWeeks(totalWeeks) },
-                          { id: 'even', label: '双周', weeks: evenWeeks(totalWeeks) },
-                          { id: 'none', label: '清空', weeks: [] },
-                        ] as const
-                      ).map((item) => (
-                        <Button
-                          key={item.id}
-                          size="sm"
-                          variant="secondary"
-                          aria-label={`周次${item.label}`}
-                          onClick={() => patchDraft(draft.key, { weeks: [...item.weeks] })}
-                        >
-                          {item.label}
-                        </Button>
-                      ))}
-                    </div>
-                  </Field>
-                  <span className="text-xs text-muted">
-                    已选 {draft.weeks.length}/{totalWeeks} 周
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-1" role="group" aria-label="周次选择">
-                  {allWeeks(totalWeeks).map((week) => {
-                    const selected = draft.weeks.includes(week);
-                    return (
-                      <button
-                        key={week}
-                        type="button"
-                        aria-label={`第 ${week} 周`}
-                        aria-pressed={selected}
-                        onClick={() =>
-                          patchDraft(draft.key, {
-                            weeks: selected
-                              ? draft.weeks.filter((item) => item !== week)
-                              : [...draft.weeks, week].sort((left, right) => left - right),
-                          })
-                        }
-                        className={cn(
-                          'tabular size-tap rounded-sm border text-xs',
-                          selected ? 'border-primary-strong bg-primary text-on-primary' : 'border-line text-muted',
-                        )}
-                      >
-                        {week}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-end gap-2">
-                <Field label="教室">
-                  <Input
-                    className="w-28"
-                    value={draft.room}
-                    onChange={(event) => patchDraft(draft.key, { room: event.target.value })}
-                  />
-                </Field>
-                {drafts.length > 1 && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="删除此时段"
-                    onClick={() => setDrafts((current) => current.filter((item) => item.key !== draft.key))}
-                  >
-                    <Trash2 className="size-4 text-danger-strong" aria-hidden />
-                  </Button>
-                )}
-              </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted">排课时段</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setDrafts((current) => [...current, newDraft(totalWeeks, 1, firstPeriod)])}
+          >
+            <Plus className="size-4" aria-hidden />
+            增加时段
+          </Button>
+        </div>
+        {drafts.map((draft) => (
+          <div key={draft.key} className="flex flex-col gap-2 rounded-md border border-line p-2">
+            <div className="grid grid-cols-3 gap-2">
+              <Select
+                value={String(draft.dayOfWeek)}
+                onValueChange={(value) => patchDraft(draft.key, { dayOfWeek: Number(value) })}
+              >
+                <SelectTrigger aria-label="星期">
+                  <span>{WEEKDAY_LABELS[draft.dayOfWeek - 1]}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKDAY_LABELS.map((label, index) => (
+                    <SelectItem key={label} value={String(index + 1)}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={String(draft.periodStart)}
+                onValueChange={(value) => patchDraft(draft.key, { periodStart: Number(value) })}
+              >
+                <SelectTrigger aria-label="起始节">
+                  <span>第 {draft.periodStart} 节</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {slots.map((slot) => (
+                    <SelectItem key={slot.period_no} value={String(slot.period_no)}>
+                      第 {slot.period_no} 节
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={String(draft.periodEnd)}
+                onValueChange={(value) => patchDraft(draft.key, { periodEnd: Number(value) })}
+              >
+                <SelectTrigger aria-label="结束节">
+                  <span>第 {draft.periodEnd} 节</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {slots.map((slot) => (
+                    <SelectItem key={slot.period_no} value={String(slot.period_no)}>
+                      第 {slot.period_no} 节
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex min-h-tap items-center gap-2 text-xs text-muted">
+                <Switch
+                  aria-label="自定义时间"
+                  checked={draft.customTime}
+                  onCheckedChange={(checked) => patchDraft(draft.key, { customTime: checked })}
+                />
+                自定义时间
+              </label>
+              {draft.customTime && (
+                <>
+                  <Input
+                    type="time"
+                    className="w-28"
+                    aria-label="开始时间"
+                    value={draft.startTime}
+                    onChange={(event) => patchDraft(draft.key, { startTime: event.target.value })}
+                  />
+                  <Input
+                    type="time"
+                    className="w-28"
+                    aria-label="结束时间"
+                    value={draft.endTime}
+                    onChange={(event) => patchDraft(draft.key, { endTime: event.target.value })}
+                  />
+                </>
+              )}
+            </div>
+            <div className="flex flex-col gap-2 rounded-md border border-line p-2">
+              <WeekPicker
+                totalWeeks={totalWeeks}
+                value={draft.weeks}
+                onValueChange={(weeks) => patchDraft(draft.key, { weeks })}
+              />
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="教室">
+                <Input
+                  className="w-28"
+                  value={draft.room}
+                  onChange={(event) => patchDraft(draft.key, { room: event.target.value })}
+                />
+              </Field>
+              {drafts.length > 1 && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="删除此时段"
+                  onClick={() => setDrafts((current) => current.filter((item) => item.key !== draft.key))}
+                >
+                  <Trash2 className="size-4 text-danger-strong" aria-hidden />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-muted">颜色</span>
+        <div className="flex flex-wrap gap-2">
+          {palette.map((color, index) => (
+            <button
+              key={color}
+              type="button"
+              aria-label={`课程色 ${index + 1}`}
+              aria-pressed={index === colorIndex}
+              onClick={() => setColorIndex(index)}
+              className={cn('size-tap rounded-full border-2', index === colorIndex ? 'border-ink' : 'border-transparent')}
+              style={{ backgroundColor: color }}
+            />
           ))}
         </div>
-
-        <div className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-muted">颜色</span>
-          <div className="flex flex-wrap gap-2">
-            {palette.map((color, index) => (
-              <button
-                key={color}
-                type="button"
-                aria-label={`课程色 ${index + 1}`}
-                aria-pressed={index === colorIndex}
-                onClick={() => setColorIndex(index)}
-                className={cn('size-tap rounded-full border-2', index === colorIndex ? 'border-ink' : 'border-transparent')}
-                style={{ backgroundColor: color }}
-              />
-            ))}
-          </div>
-        </div>
-        {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            disabled={busy || name.trim().length === 0 || drafts.length === 0 || lastPeriod < firstPeriod}
-            onClick={() => void submit()}
-          >
-            保存
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+      {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
+      <DialogFooter>
+        <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
+          取消
+        </Button>
+        <Button
+          variant="primary"
+          loading={busy}
+          disabled={nameEmpty || drafts.length === 0 || lastPeriod < firstPeriod}
+          onClick={() => void submit()}
+        >
+          保存
+        </Button>
+      </DialogFooter>
+    </FormSurface>
   );
 }

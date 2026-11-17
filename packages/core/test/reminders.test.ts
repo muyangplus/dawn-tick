@@ -5,7 +5,7 @@ import { expand } from '../src/expand.ts';
 import { loadExpandInput } from '../src/repository.ts';
 import type { EventRow, ReminderRow } from '../src/types.ts';
 import type { Storage } from '../src/storage.ts';
-import { NOW, createStorage, eventRow, seedStorage } from './helpers.ts';
+import { NOW, createStorage, eventRow, seedStorage } from './kit/index.ts';
 
 function reminder(overrides: Partial<ReminderRow> & Pick<ReminderRow, 'id' | 'target_id'>): ReminderRow {
   return {
@@ -97,6 +97,46 @@ test('超出前瞻窗口或已过时刻被忽略', async () => {
 
   const shortHorizon = computeReminders({ ...base, horizonMs: 60 * 1000 });
   assert.equal(shortHorizon.length, 0);
+});
+
+test('A1 since 下界：补上两次扫描之间刚到点的提醒', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const base = await buildInput(storage, [reminder({ id: 'r-1', target_id: 'c-1', advance_minutes: 10 })]);
+  const trigger = MONDAY_0800 - 10 * 60 * 1000;
+  const of = (input: Parameters<typeof computeReminders>[0]) =>
+    computeReminders(input).filter((item) => item.triggerAt === trigger).length;
+
+  // 刚过到点 20 秒：不带 since 就丢了，带上一轮扫描时刻作为下界即可补上
+  assert.equal(of({ ...base, now: trigger + 20_000 }), 0);
+  assert.equal(of({ ...base, now: trigger + 20_000, since: trigger - 10_000 }), 1);
+  // 下界不含：上一轮恰在到点时刻扫描过，本轮不再重复
+  assert.equal(of({ ...base, now: trigger + 20_000, since: trigger }), 0);
+});
+
+test('A3 作业、待办、实验的提醒也会触发；只有截止时刻时以截止时刻为准', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const due = MONDAY_0800 + 2 * 60 * 60 * 1000;
+  const events = [
+    eventRow('e-hw', 'homework', { due_at: due }),
+    eventRow('e-todo', 'todo', { start_at: due }),
+    eventRow('e-lab', 'lab', { start_at: due, on_date: '2026-09-21' }),
+  ];
+  const base = await buildInput(storage, [
+    reminder({ id: 'r-hw', target_type: 'event', target_id: 'e-hw', advance_minutes: 30 }),
+    reminder({ id: 'r-todo', target_type: 'event', target_id: 'e-todo', advance_minutes: 30 }),
+    reminder({ id: 'r-lab', target_type: 'event', target_id: 'e-lab', advance_minutes: 30 }),
+  ]);
+  const items = computeReminders({ ...base, events }).filter((item) => item.source === 'event');
+  assert.deepEqual(
+    items.map((item) => [item.targetId, item.triggerAt, item.detail]).sort(),
+    [
+      ['e-hw', due - 30 * 60 * 1000, '作业'],
+      ['e-lab', due - 30 * 60 * 1000, '实验'],
+      ['e-todo', due - 30 * 60 * 1000, '待办'],
+    ],
+  );
 });
 
 test('调课取消的课次不提醒，改期后按新时间提醒', async () => {

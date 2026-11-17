@@ -1,128 +1,55 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Plus } from 'lucide-react';
-import { addDays, dayOfWeek as nextDayOfWeek, weekOfDate } from '@dawn-tick/core';
+import { BookOpen, CalendarClock, CalendarX, ChevronDown, ChevronUp, Plus } from 'lucide-react';
+import { dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../data.ts';
 import { CourseCard } from '../components/course-card.tsx';
 import { NowIndicator } from '../components/now-indicator.tsx';
+import { Button } from '../components/ui/button.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import { cn } from '../lib/cn.ts';
+import { formatMonthDayRange } from '../lib/dates.ts';
+import { formatPeriodRange } from '../lib/format.ts';
+import {
+  LONG_PRESS_MS,
+  MOVE_TOLERANCE,
+  SUPPRESS_SLOT_CLICK_MS,
+  beginLessonPress,
+  bodyRangeOf,
+  clashLabel,
+  dragRows,
+  emptyDragEdgeOf,
+  firstClash,
+  lessonDraggable,
+  lessonDropChanged,
+  lessonDropPeriod,
+  lessonLongPress,
+  lessonPressMove,
+  lessonTouchAction,
+  periodAt,
+  resizeEmptyRange,
+  stepEmptyRange,
+  wheelRangeOf,
+  type EmptyDragMode,
+  type EmptyDragState,
+  type EmptyTarget,
+  type LessonPress,
+} from './timetable/drag-session.ts';
 import { gridMetrics, minuteOf, minuteToY, padLabel } from '../lib/grid-metrics.ts';
+import { isHolidayRunStart, lessonsOf, occupied } from './timetable/week-grid-helpers.ts';
 import { localMinuteOfDay } from '../lib/timeline.ts';
-import { logDebug, logWarn } from '../log.ts';
+import { weekEmptyKind } from '../lib/week-empty.ts';
+import { useRowHeight } from './timetable/use-row-height.ts';
 
-const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-const ROW_HEIGHT = 56;
-/** 行高自适应范围：内容挤不下就整体加高，但不超过上限。 */
-const ROW_HEIGHT_MIN = 56;
-const ROW_HEIGHT_MAX = 96;
-/** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
-const LONG_PRESS_MS = 350;
-/** 长按期间允许的手指/鼠标抖动半径（像素），超过就取消长按。 */
-const MOVE_TOLERANCE = 8;
-/** 拖动占位块松手后，抑制紧随那次 click 的时间窗（毫秒）。 */
-const SUPPRESS_SLOT_CLICK_MS = 500;
-
-/** 表头显示月日。 */
-function formatMonthDay(date: string): string {
-  const [, month, day] = date.split('-');
-  return `${Number(month)}/${Number(day)}`;
-}
-
-/** 日期区间文案：同月省略重复的月份，例如 8/19–23。 */
-function formatDateRange(from: string, to: string): string {
-  if (from === to) return formatMonthDay(from);
-  const [fromYear, fromMonth] = from.split('-');
-  const [toYear, toMonth] = to.split('-');
-  if (fromYear === toYear && fromMonth === toMonth) return `${formatMonthDay(from)}–${Number(to.split('-')[2])}`;
-  return `${formatMonthDay(from)}–${formatMonthDay(to)}`;
-}
-
-/** 节次范围文案：单节显示「第 3 节」，连堂显示「第 3–4 节」。 */
-function formatPeriods(start: number, end: number): string {
-  return start === end ? `第 ${start} 节` : `第 ${start}–${end} 节`;
-}
-
-/** 多天假期第一天：当天放假且前一天不放假。 */
-/** 放假判定用 data.holidayLabels（内置节假日 ∪ 手工 holiday，已扣除手工非假日）。 */
-function isHolidayRunStart(data: AppData, date: string): boolean {
-  if (!data.holidayLabels.has(date)) return false;
-  return !data.holidayLabels.has(addDays(date, -1));
-}
-
-/** 连堂与「停课」等占多节的条目：节次落在其覆盖范围内即算该格被占用。 */
-function occupied(data: AppData, date: string, period: number): boolean {
-  for (let current = period; current >= 1; current -= 1) {
-    const cells = data.grid.get(`${date}:${current}`) ?? [];
-    if (cells.some((cell) => period >= current && period <= Math.max(cell.periodStart, cell.periodEnd))) return true;
-  }
-  return false;
-}
-
-/** 落点所在的节次（按列高度换算，越界夹到首尾节）；padTop 是头部补白的高度。 */
-function periodAt(
-  clientY: number,
-  columnTop: number,
-  periodCount: number,
-  rowHeightPx: number,
-  padTop = 0,
-): number {
-  return Math.min(periodCount, Math.max(1, Math.floor((clientY - columnTop - padTop) / rowHeightPx) + 1));
-}
-
-/** 该范围里已经排了哪些课（同一门课的连堂只算一次）。 */
-function clashingLessons(data: AppData, date: string, start: number, end: number): LessonCell[] {
-  const out: LessonCell[] = [];
-  const seen = new Set<string>();
-  for (const list of data.grid.values()) {
-    for (const cell of list) {
-      if (!cell.inWeek || cell.date !== date) continue;
-      if (cell.periodEnd < start || cell.periodStart > end) continue;
-      if (seen.has(cell.scheduleId)) continue;
-      seen.add(cell.scheduleId);
-      out.push(cell);
-    }
-  }
-  return out;
-}
-
-interface Clash {
-  name: string;
-  start: number;
-  end: number;
-}
-
-/** 范围里第一门重叠的课，用课程全名，提示文案更清楚。 */
-function firstClash(data: AppData, date: string, start: number, end: number): Clash | null {
-  const cell = clashingLessons(data, date, start, end)[0];
-  if (cell === undefined) return null;
-  const name = data.courses.find((course) => course.id === cell.courseId)?.name ?? cell.name;
-  return { name, start: cell.periodStart, end: cell.periodEnd };
-}
-
-/** 重叠提示：与「高等数学」第 1–2 节重叠。 */
-function clashLabel(clash: Clash): string {
-  return `与「${clash.name}」${formatPeriods(clash.start, clash.end)}重叠`;
-}
-
-/** 按住的位置决定哪条边跟着指针：单节时上下都算扩展，否则按上半/下半取边。 */
-function emptyDragEdgeOf(
-  element: HTMLElement,
-  clientY: number,
-  target: EmptyTarget,
-  mode: EmptyDragMode,
-): EmptyDragEdge {
-  if (mode === 'wheel' || target.start === target.end) return 'both';
-  const bounds = element.getBoundingClientRect();
-  return clientY < bounds.top + bounds.height / 2 ? 'top' : 'bottom';
-}
-
-interface EmptyTarget {
-  /** 目标日期（YYYY-MM-DD）：空白格与拖动落点都按日期定位 */
-  date: string;
-  start: number;
-  end: number;
-}
+/**
+ * 44px 透明命中区：视觉尺寸不变，用伪元素把命中区外扩到触控口径（见 `--spacing-tap` 的 min-h-tap / size-tap 口径）。
+ * 往上多扩 28px 是因为占位块只有一节高时，向下外扩会被 overflow-hidden 裁掉；左右各 14px 只占相邻留白。
+ */
+const TAP_AREA =
+  "relative after:absolute after:content-[''] after:-top-7 after:bottom-0 after:-left-3.5 after:-right-3.5";
+/** 滚轮条只上下外扩：左右外扩会盖住相邻的「上一节 / 下一节」。 */
+const WHEEL_TAP_AREA =
+  "relative after:absolute after:content-[''] after:-top-7 after:bottom-0 after:-left-1 after:-right-1";
 
 interface DragState {
   cell: LessonCell;
@@ -132,32 +59,12 @@ interface DragState {
   y: number;
 }
 
-interface DragSession {
-  pointerId: number;
+/** 拖动中的课次会话：纯状态在 drag-session，按时器与捕获节点留在视图。 */
+interface LessonDragSession extends LessonPress {
   lesson: LessonCell;
-  startX: number;
-  startY: number;
   timer: number;
-  active: boolean;
   /** 长按生效后接收指针事件的卡片节点：指针移出卡片后事件仍可达 */
   element: HTMLElement | null;
-}
-
-/** 占位块的拖动方式：滚轮条整段平移，块本体按边伸缩，空白格按下直接拖出范围。 */
-type EmptyDragMode = 'wheel' | 'body' | 'select';
-
-/** 块本体拖动时跟着指针的边：both 为上下都扩展，否则按按住位置取 top / bottom。 */
-type EmptyDragEdge = 'both' | 'top' | 'bottom';
-
-interface EmptyDragState {
-  pointerId: number;
-  mode: EmptyDragMode;
-  edge: EmptyDragEdge;
-  startY: number;
-  startPeriod: number;
-  endPeriod: number;
-  /** 是否已经超过点击抖动阈值：仅实际拖动过才在松手时弹窗 */
-  moved: boolean;
 }
 
 /** 拖动过程中需要的最小指针信息：React 合成事件与原生 PointerEvent 都满足。 */
@@ -181,32 +88,10 @@ export interface WeekViewProps {
   onQuickCreate: (preset: QuickCreatePreset) => void;
   onPrevWindow: () => void;
   onNextWindow: () => void;
-}
-
-function lessonsOf(data: AppData): LessonCell[] {
-  const out: LessonCell[] = [];
-  for (const list of data.grid.values()) out.push(...list);
-  return out;
-}
-
-/** 量一次课表卡片是否被裁：卡片本身与所有后代 span 都要看（truncate/line-clamp 量不到卡片）。 */
-function measureCardFit(): { cards: number; clipped: boolean; overflow: number } {
-  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-role="course-card"]')).filter(
-    (card) => card.closest('[data-role="drag-ghost"]') === null,
-  );
-  let overflow = 0;
-  let clipped = false;
-  for (const card of cards) {
-    const cardOverflow = card.scrollHeight - card.clientHeight;
-    if (cardOverflow > overflow) overflow = cardOverflow;
-    if (cardOverflow > 2) clipped = true;
-    for (const node of Array.from(card.querySelectorAll<HTMLElement>('span'))) {
-      const spanOverflow = node.scrollHeight - node.clientHeight;
-      if (spanOverflow > overflow) overflow = spanOverflow;
-      if (spanOverflow > 2) clipped = true;
-    }
-  }
-  return { cards: cards.length, clipped, overflow };
+  /** 空态主按钮：切到设置页并打开导入 */
+  onImport: () => void;
+  /** 移动端文案分支 */
+  compact: boolean;
 }
 
 export function WeekView({
@@ -217,21 +102,22 @@ export function WeekView({
   onQuickCreate,
   onPrevWindow,
   onNextWindow,
+  onImport,
+  compact,
 }: WeekViewProps) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [empty, setEmpty] = useState<EmptyTarget | null>(null);
   const [emptyDragMode, setEmptyDragMode] = useState<EmptyDragMode | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  /** 行高：内容显示不全时整体加高，范围 56–96，避免个别长标题把整页撑开 */
-  const [rowHeight, setRowHeight] = useState(ROW_HEIGHT_MIN);
   const touchStart = useRef<number | null>(null);
-  const session = useRef<DragSession | null>(null);
+  const session = useRef<LessonDragSession | null>(null);
   const suppressNextClick = useRef(false);
   const columns = useRef(new Map<string, HTMLElement>());
   const dropRef = useRef<{ date: string; period: number } | null>(null);
   const emptyRef = useRef<EmptyTarget | null>(null);
   const wheelAt = useRef(0);
   const sectionRef = useRef<HTMLElement | null>(null);
+  const rowHeight = useRowHeight(sectionRef, data);
   const emptyDrag = useRef<EmptyDragState | null>(null);
   /** 是否已显示拖动中的实时反馈：pointermove 里不读 state，避免拿到过期值 */
   const emptyVisual = useRef(false);
@@ -256,6 +142,23 @@ export function WeekView({
     () => lessons.filter((lesson) => lesson.inWeek || showOtherWeeks),
     [lessons, showOtherWeeks],
   );
+  /** 窗口完全落在学期外：每一列都在第 1 周之前或总周数之后 */
+  const outsideSemester = useMemo(() => {
+    const semester = data.semester;
+    if (semester === null) return false;
+    return data.windowDates.every((date) => {
+      const week = weekOfDate(date, semester.start_date);
+      return week < 1 || week > semester.total_weeks;
+    });
+  }, [data.semester, data.windowDates]);
+  /** 窗口里存在非本周课（虚线课）：据此把「真空课表」与「这段只有别周的课」区分开 */
+  const onlyOtherWeeks = lessons.some((lesson) => !lesson.inWeek);
+  /** 空态三态：有可见课程（含按设置显示的虚线课）时不显示空态 */
+  const emptyKind = weekEmptyKind({
+    visibleLessons: shownLessons.length,
+    outsideSemester,
+    hasOtherWeekLessons: onlyOtherWeeks,
+  });
   const periodCount = slots.length;
   /** 头部/尾部补白随自定义时间条目伸缩：节次轴、时间线与拖动换算都跟着平移 */
   const metrics = useMemo(() => gridMetrics(slots, shownLessons, rowHeight), [slots, shownLessons, rowHeight]);
@@ -263,51 +166,6 @@ export function WeekView({
   const nowMinute = localMinuteOfDay(nowTick, data.timeZone);
   const ratio =
     gridHeight === 0 ? null : minuteToY(nowMinute, slots, rowHeight, metrics) / gridHeight;
-
-  // 内容自适应行高：卡片被裁就整体加高（上限 ROW_HEIGHT_MAX），变宽不挤了逐级收回
-  useEffect(() => {
-    if (typeof globalThis.requestAnimationFrame !== 'function') return;
-    const handle = globalThis.requestAnimationFrame(() => {
-      const { cards, clipped, overflow } = measureCardFit();
-      if (cards === 0) return;
-      logDebug('layout', '行高自适应', { rowHeight, cards, clipped, overflow });
-      if (clipped && rowHeight >= ROW_HEIGHT_MAX) {
-        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight, overflow, cards });
-        return;
-      }
-      if (clipped) {
-        setRowHeight((current) => Math.min(ROW_HEIGHT_MAX, current + 8));
-      } else if (rowHeight > ROW_HEIGHT_MIN) {
-        setRowHeight((current) => Math.max(ROW_HEIGHT_MIN, current - 4));
-      }
-    });
-    return () => {
-      if (typeof globalThis.cancelAnimationFrame === 'function') globalThis.cancelAnimationFrame(handle);
-    };
-  }, [rowHeight, data, lessons]);
-
-  // 真实窗口里的行高自检：启动时日志级别还没同步到原生，等布局稳定后再量一次并留痕
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const fit = measureCardFit();
-      if (fit.cards === 0) return;
-      logDebug('layout', '行高自检', {
-        rowHeight,
-        cards: fit.cards,
-        clipped: fit.clipped,
-        overflow: fit.overflow,
-        height: gridHeight,
-        padTop: metrics.padTop,
-        padBottom: metrics.padBottom,
-      });
-      if (fit.clipped && rowHeight >= ROW_HEIGHT_MAX) {
-        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight, overflow: fit.overflow, cards: fit.cards });
-      }
-    }, 2500);
-    return () => clearTimeout(timer);
-    // 只在挂载后量一次：后续行高变化由上面的自适应逻辑负责
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(
     () => () => {
@@ -414,13 +272,17 @@ export function WeekView({
 
   /** 调整占位节次：delta > 0 向下、delta < 0 向上；只受节次上下限约束，重叠仍可继续。 */
   function step(target: EmptyTarget, delta: number): void {
-    let start = target.start;
-    let end = target.end;
-    if (delta > 0) end = Math.min(periodCount, end + delta);
-    else if (start > 1) start = start - 1;
-    start = Math.max(1, Math.min(start, end));
-    setEmptyTarget({ date: target.date, start, end });
-    warnClash(target.date, start, end);
+    const next = stepEmptyRange(target, delta, periodCount);
+    setEmptyTarget(next);
+    warnClash(next.date, next.start, next.end);
+  }
+
+  /** 键盘调范围：↓ 把结束节向下扩一节（最多到总节数），↑ 收回一节（最少回到起始节）。 */
+  function resizeRange(target: EmptyTarget, direction: -1 | 1): void {
+    const next = resizeEmptyRange(target, direction, periodCount);
+    if (next === null) return;
+    setEmptyTarget(next);
+    warnClash(next.date, next.start, next.end);
   }
 
   /** 按下占位块（滚轮条或块本体）：记录起点，之后由 pointermove 改范围。 */
@@ -435,7 +297,7 @@ export function WeekView({
     emptyDrag.current = {
       pointerId: event.pointerId,
       mode,
-      edge: emptyDragEdgeOf(event.currentTarget, event.clientY, current, mode),
+      edge: emptyDragEdgeOf(event.currentTarget.getBoundingClientRect(), event.clientY, current, mode),
       startY: event.clientY,
       startPeriod: current.start,
       endPeriod: current.end,
@@ -469,7 +331,7 @@ export function WeekView({
     const current = emptyRef.current;
     if (current === null) return;
     event.preventDefault();
-    const rows = Math.round((event.clientY - active.startY) / rowHeight);
+    const rows = dragRows(active.startY, event.clientY, rowHeight);
     if (active.mode === 'select') {
       // 按下的那一次若只是轻微抖动，仍算单击选格；真的跨了一节才当拖动
       if (rows !== 0) {
@@ -479,33 +341,10 @@ export function WeekView({
     } else if (Math.abs(event.clientY - active.startY) > MOVE_TOLERANCE) {
       active.moved = true;
     }
-    const range = active.mode === 'wheel' ? wheelRangeOf(active, rows) : bodyRangeOf(active, rows);
+    const range =
+      active.mode === 'wheel' ? wheelRangeOf(active, rows, periodCount) : bodyRangeOf(active, rows, periodCount);
     setEmptyTarget({ date: current.date, start: range.start, end: range.end });
     warnClash(current.date, range.start, range.end);
-  }
-
-  /** 滚轮条：整段上下平移。 */
-  function wheelRangeOf(active: EmptyDragState, rows: number): { start: number; end: number } {
-    const start = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
-    const end = Math.min(periodCount, Math.max(start, active.endPeriod + rows));
-    return { start, end };
-  }
-
-  /** 块本体：按住的那条边跟着指针走，另一边不动（起始单节时上下都算扩展）。 */
-  function bodyRangeOf(active: EmptyDragState, rows: number): { start: number; end: number } {
-    if (active.edge === 'top') {
-      const start = Math.min(active.endPeriod, Math.max(1, active.startPeriod + rows));
-      return { start, end: active.endPeriod };
-    }
-    if (active.edge === 'bottom') {
-      const end = Math.min(periodCount, Math.max(active.startPeriod, active.endPeriod + rows));
-      return { start: active.startPeriod, end };
-    }
-    const pointer = Math.min(periodCount, Math.max(1, active.startPeriod + rows));
-    return {
-      start: Math.min(active.startPeriod, pointer),
-      end: Math.max(active.endPeriod, pointer),
-    };
   }
 
   function endEmptyDrag(event: DragPointer): void {
@@ -518,7 +357,7 @@ export function WeekView({
     if (current === null) return;
     if (active.mode === 'wheel') {
       const changed = current.start !== active.startPeriod || current.end !== active.endPeriod;
-      if (changed) toast.success(`已调整为 ${formatPeriods(current.start, current.end)}`);
+      if (changed) toast.success(`已调整为 ${formatPeriodRange(current.start, current.end)}`);
       return;
     }
     // 仅点击了块内空白：交给按钮自身的 click，本处不弹窗
@@ -556,7 +395,9 @@ export function WeekView({
     session.current = null;
   }
 
-  function releaseCapture(active: DragSession): void {
+  function releaseCapture(active: LessonDragSession): void {
+    if (!active.captured) return;
+    active.captured = false;
     try {
       active.element?.releasePointerCapture(active.pointerId);
     } catch {
@@ -564,37 +405,42 @@ export function WeekView({
     }
   }
 
-  /** 长按 350ms 后进入拖动；未达时长前抬手仍是单击（打开课程详情）。停课的课次不参与拖动。 */
+  /** 长按生效（或鼠标拖起来）：把这次课次挂到拖动鬼影上，落点按按下位置算。 */
+  function startLessonDrag(active: LessonDragSession, x: number, y: number): void {
+    active.active = true;
+    dropRef.current = targetCellOf(x, y);
+    setDrag({
+      cell: active.lesson,
+      date: dropRef.current?.date ?? active.lesson.date,
+      period: dropRef.current?.period ?? active.lesson.periodStart,
+      x,
+      y,
+    });
+  }
+
+  /**
+   * 课次卡片的拖动入口：触屏长按 350ms，鼠标/触控笔越过抖动阈值即可拖；
+   * 指针捕获推迟到真正移动之后（先让滚动与单击优先）。停课等不参与拖动的卡片直接跳过。
+   */
   function onLessonPointerDown(event: React.PointerEvent<HTMLDivElement>, lesson: LessonCell): void {
     // 每次按下都先复位一次性抑制标记，避免上一次拖动留下的状态吃掉这次单击
     suppressNextClick.current = false;
-    if (event.button !== 0 || !lesson.inWeek || lesson.cancelled || lesson.movedOut || lesson.movedIn) return;
+    if (event.button !== 0 || !lessonDraggable(lesson)) return;
     clearSession();
-    const active: DragSession = {
-      pointerId: event.pointerId,
+    const active: LessonDragSession = {
+      ...beginLessonPress({
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        x: event.clientX,
+        y: event.clientY,
+      }),
       lesson,
-      startX: event.clientX,
-      startY: event.clientY,
       timer: 0,
-      active: false,
       element: event.currentTarget,
     };
     active.timer = window.setTimeout(() => {
-      if (session.current !== active) return;
-      active.active = true;
-      try {
-        active.element?.setPointerCapture(active.pointerId);
-      } catch {
-        // 某些环境（jsdom 等）不支持指针捕获，退化为普通事件流
-      }
-      dropRef.current = targetCellOf(active.startX, active.startY);
-      setDrag({
-        cell: lesson,
-        date: dropRef.current?.date ?? lesson.date,
-        period: dropRef.current?.period ?? lesson.periodStart,
-        x: active.startX,
-        y: active.startY,
-      });
+      if (session.current !== active || !lessonLongPress(active)) return;
+      startLessonDrag(active, active.startX, active.startY);
     }, LONG_PRESS_MS);
     session.current = active;
   }
@@ -602,11 +448,24 @@ export function WeekView({
   function onLessonPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
     const active = session.current;
     if (active === null || active.pointerId !== event.pointerId) return;
-    if (!active.active) {
-      const moved = Math.hypot(event.clientX - active.startX, event.clientY - active.startY);
-      if (moved > MOVE_TOLERANCE) clearSession();
+    const step = lessonPressMove(active, event.clientX, event.clientY);
+    if (step.outcome === 'cancel') {
+      clearSession();
       return;
     }
+    if (step.outcome === 'activate') {
+      window.clearTimeout(active.timer);
+      startLessonDrag(active, event.clientX, event.clientY);
+    }
+    if (step.capture && !active.captured) {
+      active.captured = true;
+      try {
+        active.element?.setPointerCapture(active.pointerId);
+      } catch {
+        // 某些环境（jsdom 等）不支持指针捕获，退化为普通事件流
+      }
+    }
+    if (!active.active) return;
     event.preventDefault();
     const drop = targetCellOf(event.clientX, event.clientY);
     dropRef.current = drop;
@@ -637,10 +496,8 @@ export function WeekView({
     dropRef.current = null;
     if (drop === null || periodCount === 0) return;
     // 落回原处（同一天同一节）不算调整
-    if (drop.date === lesson.date && drop.period === lesson.periodStart) return;
-    const span = lesson.periodEnd - lesson.periodStart + 1;
-    const period = Math.min(periodCount - span + 1, Math.max(1, drop.period));
-    onMoveLesson(lesson, drop.date, period);
+    if (!lessonDropChanged(lesson, drop.date, drop.period)) return;
+    onMoveLesson(lesson, drop.date, lessonDropPeriod(drop.period, lesson, periodCount));
   }
 
   function onLessonPointerCancel(event: React.PointerEvent<HTMLDivElement>): void {
@@ -677,16 +534,64 @@ export function WeekView({
         else onNextWindow();
       }}
     >
-      {!data.hasLessons && (
-        <EmptyState
-          title={
-            data.windowDates.length <= 1
-              ? `${formatMonthDay(data.windowStart)} 没有课程`
-              : `${formatDateRange(data.windowStart, data.windowDates[data.windowDates.length - 1] as string)} 没有课程`
-          }
-          description="从右上角加课，或到导入页导入"
-        />
-      )}
+      {/* 空态判据＝窗口内没有任何可见课程：非本周虚线课算可见，只有非本周 / 学期外 / 真空课表分开说 */}
+      {emptyKind !== 'none' &&
+        (emptyKind === 'outside-semester' ? (
+          <div data-role="week-empty" data-empty-state="outside-semester">
+            <EmptyState
+              icon={CalendarX}
+              title="学期外没有课程"
+              description="当前窗口不在学期内，回到学期内可看安排"
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={
+                    data.windowStart < (data.semester?.start_date ?? data.windowStart) ? onNextWindow : onPrevWindow
+                  }
+                >
+                  回到学期内
+                </Button>
+              }
+            />
+          </div>
+        ) : emptyKind === 'other-weeks' ? (
+          <div data-role="week-empty" data-empty-state="other-weeks">
+            <EmptyState
+              icon={CalendarClock}
+              title="这段时间只有非本周课程"
+              description="打开「显示非本周课程」可看到虚线课卡，也可以直接添加一门课"
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    openQuickCreate({ date: data.windowDates[0] ?? data.windowStart, start: 1, end: 1 })
+                  }
+                >
+                  添加课程
+                </Button>
+              }
+            />
+          </div>
+        ) : (
+          <div data-role="week-empty" data-empty-state="vacuum">
+            <EmptyState
+              icon={BookOpen}
+              title="这段时间没有课程"
+              description={
+                compact
+                  ? '点右下角「＋」添加，或在设置里导入课表'
+                  : '从右上角「＋」添加，或在设置里导入课表'
+              }
+              action={
+                <Button size="sm" variant="secondary" aria-label="导入课表" onClick={onImport}>
+                  导入课表
+                </Button>
+              }
+            />
+          </div>
+        ))}
 
       {/* 不横向滚动：列宽按容器等分，窄屏压缩节次轴与卡片间距；节次轴始终显示起止时间 */}
       <div className="rounded-lg border border-line bg-surface [--dt-axis:2.75rem] tablet:[--dt-axis:3.5rem]">
@@ -697,7 +602,7 @@ export function WeekView({
           >
             <div className="px-2 py-2 text-center text-xs text-muted">节次</div>
             {data.windowDates.map((date) => {
-              const label = WEEKDAYS[nextDayOfWeek(date) - 1] ?? '';
+              const label = WEEKDAY_LABELS[nextDayOfWeek(date) - 1] ?? '';
               const isToday = date === data.today;
               const isHoliday = data.holidayLabels.has(date);
               return (
@@ -710,7 +615,7 @@ export function WeekView({
                 >
                   <span className="flex flex-col items-center gap-0.5">
                     <span className="truncate">{label}</span>
-                    <span className="tabular text-[9px] text-muted tablet:text-[10px]">{formatMonthDay(date)}</span>
+                    <span className="tabular text-[9px] text-muted tablet:text-[10px]">{formatMonthDayRange(date)}</span>
                     {isToday && <span className="text-[9px] text-muted tablet:text-[10px]">今天</span>}
                     {isHoliday && <span className="text-[9px] text-muted tablet:text-[10px]">放假</span>}
                   </span>
@@ -726,7 +631,7 @@ export function WeekView({
               height: `${gridHeight}px`,
             }}
           >
-            <div className="relative border-r border-line">
+            <div aria-hidden data-role="period-axis" className="relative border-r border-line">
               {slots.map((slot, index) => (
                 <div
                   key={slot.periodNo}
@@ -767,6 +672,8 @@ export function WeekView({
               // 放假优先于非本周；多天假期只有第一天显示假期名称，之后只显示「放假」
               const holidayFirstDay = isHolidayRunStart(data, columnDate);
               const holidayName = data.holidayLabels.get(columnDate);
+              const weekday = WEEKDAY_LABELS[nextDayOfWeek(columnDate) - 1] ?? '';
+              const week = data.semester === null ? null : Math.max(1, weekOfDate(columnDate, data.semester.start_date));
               const dayLessons = lessons
                 .filter((lesson) => lesson.date === columnDate)
                 .filter((lesson) => lesson.inWeek || showOtherWeeks);
@@ -779,6 +686,8 @@ export function WeekView({
               return (
                 <div
                   key={`column-${columnDate}`}
+                  role="group"
+                  aria-label={`${weekday} ${formatMonthDayRange(columnDate)}`}
                   ref={(element) => {
                     if (element === null) columns.current.delete(columnDate);
                     else columns.current.set(columnDate, element);
@@ -869,7 +778,11 @@ export function WeekView({
                         <button
                           type="button"
                           aria-label="在此新建课程"
-                          className="flex size-5 shrink-0 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted"
+                          className={cn(
+                            'flex size-5 shrink-0 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted',
+                            TAP_AREA,
+                          )}
+                          data-tap-area="44"
                           style={{ touchAction: 'none' }}
                           onClick={(event) => {
                             event.stopPropagation();
@@ -888,7 +801,7 @@ export function WeekView({
                             className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm bg-surface"
                           >
                             <span className="tabular rounded-sm bg-primary px-1.5 py-0.5 text-[11px] text-on-primary shadow-sm">
-                              {formatPeriods(placeholder.start, placeholder.end)}
+                              {formatPeriodRange(placeholder.start, placeholder.end)}
                             </span>
                             {placeholderClash !== null && (
                               <span
@@ -905,7 +818,11 @@ export function WeekView({
                         <button
                           type="button"
                           aria-label="上一节"
-                          className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink"
+                          className={cn(
+                            'flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink',
+                            TAP_AREA,
+                          )}
+                          data-tap-area="44"
                           onClick={(event) => {
                             event.stopPropagation();
                             const current = emptyRef.current;
@@ -916,26 +833,58 @@ export function WeekView({
                         </button>
                         <div
                           role="spinbutton"
+                          tabIndex={0}
                           aria-label="节次范围"
-                          aria-valuemin={1}
+                          aria-valuemin={placeholder.start}
                           aria-valuemax={periodCount}
-                          aria-valuenow={placeholder.start}
-                          aria-valuetext={formatPeriods(placeholder.start, placeholder.end)}
+                          aria-valuenow={placeholder.end}
+                          aria-valuetext={formatPeriodRange(placeholder.start, placeholder.end)}
                           data-role="period-wheel"
-                          title="上下拖动（或滚动鼠标滚轮）调整节次范围"
-                          className="tabular cursor-ns-resize select-none whitespace-nowrap rounded-sm px-1 text-ink"
+                          data-tap-area="44"
+                          title="拖动、滚轮或 ↑/↓ 调整节次范围；Enter 新建课程，Esc 取消"
+                          className={cn(
+                            'tabular cursor-ns-resize select-none whitespace-nowrap rounded-sm px-1 text-ink',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
+                            WHEEL_TAP_AREA,
+                          )}
                           style={{ touchAction: 'none' }}
+                          onKeyDown={(event) => {
+                            const current = emptyRef.current;
+                            if (current === null) return;
+                            // ↑/↓ 调整范围：↓ 向下一节扩展、↑ 收回一节；Enter 直接新建，Esc 取消
+                            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              resizeRange(current, event.key === 'ArrowDown' ? 1 : -1);
+                              return;
+                            }
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openQuickCreate(current);
+                              return;
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setEmptyTarget(null);
+                            }
+                          }}
                           onPointerDown={(event) => beginEmptyDrag(event, 'wheel')}
                           onPointerMove={moveEmptyDrag}
                           onPointerUp={endEmptyDrag}
                           onPointerCancel={cancelEmptyDrag}
                         >
-                          {formatPeriods(placeholder.start, placeholder.end)}
+                          {formatPeriodRange(placeholder.start, placeholder.end)}
                         </div>
                         <button
                           type="button"
                           aria-label="下一节"
-                          className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink"
+                          className={cn(
+                            'flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink',
+                            TAP_AREA,
+                          )}
+                          data-tap-area="44"
                           onClick={(event) => {
                             event.stopPropagation();
                             const current = emptyRef.current;
@@ -962,15 +911,22 @@ export function WeekView({
                     // 补白已按分钟展开，这里只兜底：极端值仍保证卡片落在网格内可见
                     const height = Math.min(rawHeight, gridHeight);
                     const top = Math.max(0, Math.min(rawTop, gridHeight - height));
+                    // 读屏播报：星期 + 节次 + 课程名 + 周次 + 地点（有则加）
+                    const ariaParts = [weekday, formatPeriodRange(lesson.periodStart, lesson.periodEnd), lesson.name];
+                    if (week !== null) ariaParts.push(`第 ${week} 周`);
+                    if (lesson.room !== null && lesson.room !== '') ariaParts.push(lesson.room);
                     return (
                     <div
                       key={`${lesson.courseId}-${lesson.periodStart}`}
                       className={cn('absolute inset-x-1 min-w-0', drag?.cell === lesson && 'opacity-40')}
+                      data-role="lesson-cell"
+                      data-span={Math.max(1, lesson.periodEnd - lesson.periodStart + 1)}
                       data-custom-time={custom ? 'true' : undefined}
                       style={{
                         top: `${top}px`,
                         height: `${height}px`,
-                        ...(lesson.inWeek ? { touchAction: 'none' as const } : {}),
+                        // 可拖的卡片独占手势；停课/已调课/非本周只留纵向滚动，页面照常滚
+                        touchAction: lessonTouchAction(lesson),
                       }}
                       onPointerDown={(event) => onLessonPointerDown(event, lesson)}
                       onPointerMove={onLessonPointerMove}
@@ -982,6 +938,7 @@ export function WeekView({
                         color={lesson.color}
                         room={lesson.room}
                         teacher={lesson.teacher}
+                        ariaLabel={ariaParts.join(' ')}
                         meta={
                           lesson.lab
                             ? [lesson.courseLabel, custom ? `${lesson.customStart}-${lesson.customEnd}` : `${lesson.startTime}-${lesson.endTime}`]
@@ -1006,14 +963,14 @@ export function WeekView({
                         badge={
                           lesson.lab ? (
                             <span
-                              className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-accent-strong"
+                              className="inline-block rounded-sm bg-surface px-1 text-[10px] text-accent-strong"
                               data-role="lab-label"
                             >
                               {lesson.eventLabel ?? '日程'}
                             </span>
                           ) : lesson.movedIn ? (
                             <span
-                              className="shrink-0 rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
+                              className="inline-block rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
                               data-role="moved-in-label"
                             >
                               调课
@@ -1029,10 +986,7 @@ export function WeekView({
                           }
                           onSelectLesson(lesson);
                         }}
-                        className={cn(
-                          'h-full',
-                          lesson.inWeek && !lesson.cancelled && !lesson.movedOut && !lesson.movedIn && !lesson.lab && 'cursor-grab select-none',
-                        )}
+                        className={cn('h-full', lessonDraggable(lesson) && 'cursor-grab select-none')}
                       />
                     </div>
                     );
@@ -1058,7 +1012,7 @@ export function WeekView({
           <CourseCard
             name={drag.cell.name}
             color={drag.cell.color}
-            meta={formatPeriods(drag.cell.periodStart, drag.cell.periodEnd)}
+            meta={formatPeriodRange(drag.cell.periodStart, drag.cell.periodEnd)}
           />
         </div>
       )}

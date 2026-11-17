@@ -1,28 +1,33 @@
 import {
   BACKUP_MODULES,
   exportBackup,
-  importBackup,
-  parseBackup,
-  zipStore,
   type AppSettings,
   type BackupModule,
   type BackupPayload,
   type ImportResult,
   type Storage,
 } from '@dawn-tick/core';
-import { detectPlatform } from './platform-detect.ts';
-import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './preset-update.ts';
+import { supportsNativeHttp } from './lib/capabilities.ts';
+import { readWebdavPassword, revealSecret } from './lib/credentials.ts';
+import { errorMessage } from './lib/errors.ts';
+import { readMetaNumber } from './lib/meta.ts';
+import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
 import { logInfo, logWarn } from './log.ts';
-import { pickBackupText, readZipEntries } from './zip-read.ts';
+import {
+  applyBackupPackage,
+  buildPackageBytes,
+  readPackageEntries,
+  readPresetExtras,
+} from './package.ts';
 
 /** WebDAV 同步：整库快照 + 设置与预设打成一个 zip 传到远端目录。 */
 /** Windows 走 Tauri 官方 http 插件，Android 由 Capacitor 接管 fetch，Web 用浏览器 fetch。 */
 
 const FIXED_NAME = 'DawnTick-backup.zip';
-/** 上次上传时间：判断远端是不是更新的依据 */
-const LAST_UPLOAD_KEY = 'webdav_last_upload';
+/** 上次上传时间：判断远端是不是更新的依据（裸数字串，不改成 JSON 以免旧版本读不懂） */
+const LAST_UPLOAD_KEY = WEBDAV_LAST_UPLOAD_META_KEY;
 /** 上次自动同步日期，用于「每天一次」 */
-const LAST_SYNC_KEY = 'webdav_last_sync';
+const LAST_SYNC_KEY = WEBDAV_LAST_SYNC_META_KEY;
 
 export interface DavSettings {
   webdavUrl: string;
@@ -49,6 +54,15 @@ function basicAuth(user: string, password: string): string {
   return `Basic ${btoa(binary)}`;
 }
 
+/**
+ * 请求头的鉴权值：`webdavPassword` 可能已经是 `enc:v1:` 信封（设置页读出来的原值），
+ * 这里在内存里透明解密；旧版明文原样使用。解密失败抛出可读错误，由各动作归一成状态。
+ */
+async function davAuthorization(settings: DavSettings): Promise<string> {
+  const password = await revealSecret(settings.webdavPassword);
+  return basicAuth(settings.webdavUser, password);
+}
+
 /** 开启「保留历史多份」时按时间戳命名，否则固定名覆盖。 */
 export function remoteName(now: number, history: boolean): string {
   if (!history) return FIXED_NAME;
@@ -62,12 +76,32 @@ export function remoteUrl(settings: Pick<AppSettings, 'webdavUrl'>, name: string
   return `${normalizeDavUrl(settings.webdavUrl)}/${name}`;
 }
 
-async function davFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  if (detectPlatform() === 'tauri') {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    return tauriFetch(url, init);
+/** 探测类请求的超时；上传按包体积另算。 */
+const DAV_PROBE_TIMEOUT_MS = 15_000;
+const DAV_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** 上传超时：基础 60 秒，再按约 50 KB/s 的最低速度给足传输时间。 */
+export function davUploadTimeoutMs(bytes: number): number {
+  return 60_000 + Math.ceil(bytes / 50_000) * 1000;
+}
+
+/** 带超时的请求：用 AbortController + setTimeout，旧版 WebView 没有 AbortSignal.timeout 也能用。 */
+async function davFetch(url: string, init: RequestInit = {}, timeoutMs = DAV_PROBE_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const request = { ...init, signal: controller.signal };
+    if (supportsNativeHttp()) {
+      const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+      return await tauriFetch(url, request);
+    }
+    return await globalThis.fetch(url, request);
+  } catch (cause: unknown) {
+    if (controller.signal.aborted) throw new Error(`WebDAV 服务器 ${Math.round(timeoutMs / 1000)} 秒内没有响应`);
+    throw cause;
+  } finally {
+    clearTimeout(timer);
   }
-  return globalThis.fetch(url, init);
 }
 
 export interface DavStatus {
@@ -78,10 +112,6 @@ export interface DavStatus {
   lastModified: number | null;
   size: number | null;
   error: string | null;
-}
-
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function statusOf(response: Response): DavStatus {
@@ -100,8 +130,8 @@ function statusOf(response: Response): DavStatus {
 /** 探测远端固定名备份：先 HEAD，服务器不支持就退回带 Range 的 GET。 */
 export async function remoteStatus(settings: DavSettings): Promise<DavStatus> {
   const url = remoteUrl(settings, FIXED_NAME);
-  const headers = { Authorization: basicAuth(settings.webdavUser, settings.webdavPassword) };
   try {
+    const headers = { Authorization: await davAuthorization(settings) };
     const head = await davFetch(url, { method: 'HEAD', headers });
     if (head.status !== 405 && head.status !== 501) return statusOf(head);
     const ranged = await davFetch(url, { method: 'GET', headers: { ...headers, Range: 'bytes=0-0' } });
@@ -113,7 +143,7 @@ export async function remoteStatus(settings: DavSettings): Promise<DavStatus> {
       status: 0,
       lastModified: null,
       size: null,
-      error: describe(cause),
+      error: errorMessage(cause),
     };
   }
 }
@@ -150,17 +180,25 @@ export async function buildPackage(
   now = Date.now(),
 ): Promise<{ bytes: Uint8Array; payload: BackupPayload }> {
   const payload = await exportBackup(storage, { now, modules: BACKUP_MODULES });
-  const encoder = new TextEncoder();
-  const entries = [{ name: 'backup.json', data: encoder.encode(JSON.stringify(payload, null, 2)) }];
-  const snapshot = await storage.readMeta(PRESET_SNAPSHOT_META_KEY);
-  if (snapshot !== undefined) {
-    entries.push({ name: 'presets/snapshot.json', data: encoder.encode(snapshot) });
+  const presets = await readPresetExtras(storage);
+  const bytes = buildPackageBytes({
+    backupJson: JSON.stringify(payload, null, 2),
+    presets,
+    now,
+  });
+  return { bytes, payload };
+}
+
+/** 刚上传文件在服务器上的修改时间：优先取 PUT 响应头，没有就 HEAD 一次；都拿不到时返回 null。 */
+async function uploadedModifiedAt(settings: DavSettings, name: string, put: Response): Promise<number | null> {
+  const fromPut = put.headers.get('last-modified');
+  if (fromPut !== null) {
+    const parsed = Date.parse(fromPut);
+    if (Number.isFinite(parsed)) return parsed;
   }
-  const content = await storage.readMeta(PRESET_CONTENT_META_KEY);
-  if (content !== undefined) {
-    entries.push({ name: 'presets/content.json', data: encoder.encode(content) });
-  }
-  return { bytes: zipStore(entries, { date: new Date(now) }), payload };
+  if (name !== FIXED_NAME) return null;
+  const status = await remoteStatus(settings);
+  return status.exists ? status.lastModified : null;
 }
 
 export async function uploadPackage(
@@ -177,19 +215,22 @@ export async function uploadPackage(
     const response = await davFetch(remoteUrl(settings, name), {
       method: 'PUT',
       headers: {
-        Authorization: basicAuth(settings.webdavUser, settings.webdavPassword),
+        Authorization: await davAuthorization(settings),
         'Content-Type': 'application/zip',
       },
       body: new Uint8Array(bytes) as unknown as BodyInit,
-    });
+    }, davUploadTimeoutMs(bytes.length));
     if (!response.ok) {
       return { ok: false, name, bytes: bytes.length, error: `服务器返回 ${response.status}` };
     }
-    await storage.writeMeta(LAST_UPLOAD_KEY, String(now));
-    logInfo('webdav', '已上传同步包', { name, bytes: bytes.length });
+    // 记服务器上的修改时间而非本机时刻：上传耗时与两端时钟偏差都会让本机时刻早于服务器记录，
+    // 之后自己的上传会被误判为「远端更新」并从此不再上传
+    const serverModified = await uploadedModifiedAt(settings, name, response);
+    await storage.writeMeta(LAST_UPLOAD_KEY, String(serverModified ?? Date.now()));
+    logInfo('webdav', '已上传同步包', { name, bytes: bytes.length, serverModified });
     return { ok: true, name, bytes: bytes.length, error: null };
   } catch (cause: unknown) {
-    const error = describe(cause);
+    const error = errorMessage(cause);
     logWarn('webdav', '上传失败', { name, error });
     return { ok: false, name, bytes: 0, error };
   }
@@ -211,10 +252,11 @@ export async function downloadPackage(
     return { ok: false, name, bytes: null, error: '请先填写 WebDAV 地址' };
   }
   try {
-    const response = await davFetch(remoteUrl(settings, name), {
-      method: 'GET',
-      headers: { Authorization: basicAuth(settings.webdavUser, settings.webdavPassword) },
-    });
+    const response = await davFetch(
+      remoteUrl(settings, name),
+      { method: 'GET', headers: { Authorization: await davAuthorization(settings) } },
+      DAV_DOWNLOAD_TIMEOUT_MS,
+    );
     if (!response.ok) {
       return { ok: false, name, bytes: null, error: `服务器返回 ${response.status}` };
     }
@@ -222,7 +264,7 @@ export async function downloadPackage(
     logInfo('webdav', '已下载同步包', { name, bytes: buffer.byteLength });
     return { ok: true, name, bytes: new Uint8Array(buffer), error: null };
   } catch (cause: unknown) {
-    const error = describe(cause);
+    const error = errorMessage(cause);
     logWarn('webdav', '下载失败', { name, error });
     return { ok: false, name, bytes: null, error };
   }
@@ -248,30 +290,14 @@ export async function applyPackage(
   mode: ApplyMode,
 ): Promise<ApplyOutcome> {
   try {
-    const entries = await readZipEntries(bytes);
-    const text = pickBackupText(entries);
-    if (text === null) {
-      return { ok: false, error: '同步包里没有 backup.json', full: null, settings: null, presets: false };
-    }
-    const payload = parseBackup(text);
+    const { payload, extras } = await readPackageEntries(bytes);
     const modules: readonly BackupModule[] = mode === 'all' ? BACKUP_MODULES : ['settings'];
-    const result = await importBackup(storage, payload, {
+    const result = await applyBackupPackage(storage, payload, {
       mode: mode === 'all' ? 'clear' : 'overwrite',
-      modules: [...modules],
-      now: Date.now(),
+      modules,
+      extras,
     });
-
-    let presets = false;
-    const snapshot = entries.get('presets/snapshot.json');
-    if (snapshot !== undefined) {
-      await storage.writeMeta(PRESET_SNAPSHOT_META_KEY, new TextDecoder().decode(snapshot));
-      presets = true;
-    }
-    const content = entries.get('presets/content.json');
-    if (content !== undefined) {
-      await storage.writeMeta(PRESET_CONTENT_META_KEY, new TextDecoder().decode(content));
-      presets = true;
-    }
+    const presets = result.presets;
     logInfo('webdav', '已应用同步包', {
       mode,
       imported: result.imported,
@@ -286,7 +312,7 @@ export async function applyPackage(
       presets,
     };
   } catch (cause: unknown) {
-    const error = describe(cause);
+    const error = errorMessage(cause);
     logWarn('webdav', '应用同步包失败', { mode, error });
     return { ok: false, error, full: null, settings: null, presets: false };
   }
@@ -340,16 +366,27 @@ export async function maybeAutoSync(
   if (options.startup && !settings.webdavOnStart && lastSync === today) {
     return { action: 'skipped', name: FIXED_NAME, detail: null };
   }
-  const status = await remoteStatus(settings);
+  // 密码从存储现读：设置页改过密码后，内存里的 settings 可能还带着旧信封
+  const stored = await readWebdavPassword(storage);
+  if (stored.state === 'error') {
+    return { action: 'error', name: FIXED_NAME, detail: stored.message ?? '无法读取已保存的 WebDAV 密码' };
+  }
+  const dav: DavSettings = {
+    webdavUrl: settings.webdavUrl,
+    webdavUser: settings.webdavUser,
+    webdavPassword: stored.password,
+    webdavHistory: settings.webdavHistory,
+  };
+  const status = await remoteStatus(dav);
   if (status.error !== null) {
     return { action: 'error', name: FIXED_NAME, detail: status.error };
   }
-  const lastUpload = Number((await storage.readMeta(LAST_UPLOAD_KEY)) ?? 0);
+  const lastUpload = await readMetaNumber(storage, LAST_UPLOAD_KEY, 0, { scope: 'webdav' });
   if (status.exists && status.lastModified !== null && status.lastModified > lastUpload + 1000) {
     await storage.writeMeta(LAST_SYNC_KEY, today);
     return { action: 'remote-newer', name: FIXED_NAME, detail: '远端备份比本机上传的新' };
   }
-  const uploaded = await uploadPackage(storage, settings, now);
+  const uploaded = await uploadPackage(storage, dav, now);
   await storage.writeMeta(LAST_SYNC_KEY, today);
   return uploaded.ok
     ? { action: 'uploaded', name: uploaded.name, detail: null }

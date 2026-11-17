@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MemoryRemote, SYNC_STORES, activeSemester, syncAll, weekView, type Storage } from '@dawn-tick/core';
+import { STORE_NAMES, activeSemester, weekView, type Storage } from '@dawn-tick/core';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { SAMPLE_SEMESTER, SAMPLE_USER, seedSample } from '../src/db/sample.ts';
 
@@ -57,23 +57,9 @@ test('元数据读写', async () => {
   await storage.close();
 });
 
-test('IndexedDB 库与内存库经同一套同步逻辑互通', async () => {
-  const storage = await open('case-sync');
-  const remote = new MemoryRemote();
-
-  const report = await syncAll(storage, remote);
-  assert.equal(report.pushed, 14);
-  assert.equal(report.conflicts.length, 0);
-
-  const again = await syncAll(storage, remote);
-  assert.equal(again.pushed, 0);
-  assert.equal(again.pulled, 0);
-  await storage.close();
-});
-
 test('集合清单与 SQLite 端一致', async () => {
   const storage = await open('case-stores');
-  for (const store of SYNC_STORES) {
+  for (const store of STORE_NAMES) {
     const rows = await storage.collection(store).getAll();
     assert.ok(Array.isArray(rows), `${store} 应可读取`);
   }

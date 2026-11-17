@@ -1,0 +1,228 @@
+# Android 插件契约
+
+Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**跨语言手写同构**的：TS 侧拼错或 Android 侧改名，运行时会静默拿到 `undefined`，不会编译报错。这份文档是两端唯一的对照表。
+
+- TS 侧唯一定义：`apps/web/src/lib/plugins.ts`（插件名 `PLUGIN_NAMES`、方法清单 `PLUGIN_METHODS`、接口 `*Plugin`）。
+- 加载唯一入口：`loadPlugin()`（`apps/web/src/lib/plugins.ts`）→ `loadCapacitorPlugin()`（`apps/web/src/lib/native.ts`）→ Capacitor `registerPlugin`。
+- Android 侧实现：
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/system/SystemActionsPlugin.java`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/school/SchoolWindowPlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/widget/WidgetPinPlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/widget/WidgetRefreshPlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/install/ApkInstallerPlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/share/FileSharePlugin.kt`
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/LanSyncPlugin.kt`
+    （局域网同步的传输层在 `.../lan/LanSyncServer.kt`，网络枚举在 `.../lan/LanNetworks.kt`，
+    网络状态在 `.../lan/LanNetworkStatus.kt`，
+    UDP 发现在 `.../lan/LanDiscovery.kt`；`share/` 与 `install/` 共用的路径校验与 FileProvider 换算在 `.../app/files/LocalFile.kt`）
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/reminder/ReminderActionsPlugin.kt`
+    （提醒投递在 `.../reminder/ReminderNotifier.kt`、`.../reminder/ReminderAlarms.kt`，动作按钮与离线队列在 `.../reminder/ReminderReceivers.kt`、`.../reminder/ReminderStore.kt`）
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/secret/SecretStorePlugin.kt`
+    （AndroidKeyStore AES-GCM 实现在 `.../secret/SecretVault.kt`；Windows 对应实现在 `apps/desktop/src-tauri/src/secret_store.rs`）
+  - 原生诊断日志：`apps/mobile/android/app/src/main/java/com/dawntick/app/diag/NativeLog.kt`
+    （教务窗口、外部链接、小组件读取的失败原因都写 `filesDir/diag/native.log`；由 `SystemActions.readNativeLog` 读出）
+- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–9 节，`plugins.test.ts` 与其余插件一并对齐。
+- 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库用 `gradlew.bat :app:compileDebugKotlin --no-daemon` 做 Android 编译检查，真机验证在打包机上执行 `pnpm android:dev`。
+
+## 维护规则
+
+1. 插件名与 `@CapacitorPlugin(name = "…")` 逐字一致。
+2. 方法名在 TS 接口、`PLUGIN_METHODS`、Android `@PluginMethod` 与本文件四处逐字一致。
+3. 参数与返回字段用 camelCase；Android 侧可以不 `put` 可选字段，TS 侧必须按可选处理。
+4. 返回字段只增不改名；新增字段先加到 TS 接口与本文件，再改 Android 实现。
+5. 页面导入协议（`<<<DAWNTICK>>>` / 诊断字段）不属于插件契约，见 `packages/core/src/import/page-tables.ts` 的 `PAGE_DIAGNOSTICS_FIELDS`。
+
+## 1. SystemActions
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `SystemActions` |
+| TS 接口 | `SystemActionsPlugin` |
+| Android 实现 | `SystemActionsPlugin.java` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `openExternal` | `url: string` | `opened: boolean` | 只接受 http/https；没有可打开的应用时 reject，`message` 为 `<异常类>: <原始 message>`（同时写 `native.log`） |
+| `isIgnoringBatteryOptimizations` | 无 | `ignoring: boolean` | 是否已在电池优化白名单 |
+| `requestIgnoreBatteryOptimizations` | 无 | `ignoring?: boolean`、`requested?: boolean` | 已在白名单返回 `ignoring`，否则跳系统页并返回 `requested` |
+| `notificationStatus` | `asked: boolean` | `appEnabled?: boolean`、`runtime?: string`、`asked?: boolean`、`channelId?: string \| null`、`channelName?: string \| null`、`channelMuted?: boolean` | `runtime` 取值 `granted` / `denied` / `prompt` / `permanently-denied` |
+| `openNotificationSettings` | `channelId?: string` | `opened: boolean` | 有渠道 id 时直达该渠道 |
+| `readNativeLog` | `maxBytes?: number` | `text?: string`、`path?: string`、`bytes?: number` | 读 `filesDir/diag/native.log` 最近约 200 行；默认读尾部 256KB，`maxBytes` 限制读取字节数 |
+| `clearNativeLog` | 无 | `cleared: boolean` | 清空当前日志与滚动文件 `native.log.1` |
+| `abi` | 无 | `primary?: string`、`abis?: string[]` | Android 更新拆包的设备 ABI：`Build.SUPPORTED_ABIS` 原序返回，`primary` 取第一个；客户端据此在 arm64-v8a / armeabi-v7a 包中选择（见 `apps/web/src/lib/android-abi.ts`）。旧安装包没有本方法时调用失败，Web 层按 arm64-v8a 回退 |
+
+### 1.1 原生诊断日志
+
+真机没有 logcat 时，用这段日志排查「内嵌教务窗口打不开 / 外部链接确认后没反应 / 小组件空白」：
+
+- 位置：`<app files>/diag/native.log`（应用私有目录，卸载即清除）。
+- 格式：`2026-11-07 14:20:10.123 I [SchoolWindow] open 入口 url=https://…/path length=64`；
+  级别 `I` / `W` / `E`，标签对应插件或组件（`startup`、`SchoolWindow`、`SchoolWeb`、`SystemActions`、
+  `WidgetStore`、`WidgetRefresher`、`WidgetPin`）。
+- 滚动：单文件约 512KB，写满后改名为 `native.log.1`（旧的 `.1` 丢弃）。
+- 读取：`SystemActions.readNativeLog`（应用内「导出诊断日志」使用）→ 返回文本与绝对路径；
+  `clearNativeLog` 清空。
+- 记录点：`MainActivity` 启动版本与插件自检、`SchoolWindow.open` 入口/构造 Intent/`startActivityForResult`、
+  `SchoolWebActivity` 的 `onCreate` / `onPageStarted` / `onPageFinished` / `onReceivedError` / 控制台 ERROR、
+  `openExternal` 入口/scheme 校验/`startActivity` 成功与异常、`WidgetStore.load` 的候选库存在性/打开异常/
+  snapshot 行是否为空/JSON 解析异常、`WidgetRefresher` 刷新触发与结果、`WidgetPin.requestPin` 各分支、
+  `LanSync` 的 `start/stop/networks/scanDiscovery` 入口与结果、`LanNetworks.list` 摘要、socket bind
+  与 UDP 广播 / multicast lock 失败（标签 `DawnTickLanSync` / `DawnTickLanDiscovery`）。
+- 隐私：URL 只记 scheme + host + path（查询串可能带登录 token，不写日志）。
+
+
+## 2. SchoolWindow
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `SchoolWindow` |
+| TS 接口 | `SchoolWindowPlugin` |
+| Android 实现 | `SchoolWindowPlugin.kt`（页面在 `SchoolWebActivity.kt`） |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `open` | `url: string` | `payload?: string` | 打开内嵌教务窗口；用户取消或失败时 `payload` 为空串，页面内容带 `<<<DAWNTICK>>>` 标记时由 Web 层解析。入口、Intent 构造与 `startActivityForResult` 异常都写 `native.log` 并 reject 原始 message |
+| `available` | 无 | `platform?: string`、`supported?: boolean` | 当前平台是否支持内嵌窗口；安卓恒为 `{ platform: "android", supported: true }` |
+
+## 3. DawnTickWidget
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `DawnTickWidget` |
+| TS 接口 | `WidgetPinPlugin` |
+| Android 实现 | `WidgetPinPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `readStates` | 无 | `supported?: boolean`、`widgets?: { provider?: string; added?: boolean; enabled?: boolean }[]` | 每种尺寸一行；`enabled === false` 表示被系统或启动器停用 |
+| `requestPin` | `provider: string`（`next` / `today` / `week` / `exam`） | `status?: string`、`reason?: string` | `status` 取值 `added` / `already-added` / `cancelled` / `unsupported` / `disabled` / `rejected`；`reason` 只用于排查 |
+
+## 4. WidgetRefresh
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `WidgetRefresh` |
+| TS 接口 | `WidgetRefreshPlugin` |
+| Android 实现 | `WidgetRefreshPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `refresh` | 无 | 无（resolve 空） | Web 层写完小组件快照后请求立即重绘 |
+
+## 5. ApkInstaller
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `ApkInstaller` |
+| TS 接口 | `ApkInstallerPlugin` |
+| Android 实现 | `ApkInstallerPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `installApk` | `path: string` | `opened: boolean`、`needsPermission?: boolean` | `path` 只接受应用缓存 / 外部私有下载目录内的绝对路径或 `file://` URI，且扩展名必须是 `.apk`；未授权「安装未知应用」时跳本应用设置页并返回 `opened: false`、`needsPermission: true`，用户授权后重试一次 |
+
+## 6. FileShare
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `FileShare` |
+| TS 接口 | `FileSharePlugin` |
+| Android 实现 | `FileSharePlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `shareFile` | `path: string`、`mimeType?: string` | `shared: boolean` | `ACTION_SEND` + FileProvider 分享；`mimeType` 缺省按扩展名推断，推不出按 `application/octet-stream` |
+| `revealFile` | `path: string` | `opened: boolean`、`via?: string` | Android 没有「打开所在文件夹」：先开系统文件应用的所在目录，失败退 `content://` 目录，再失败回退分享面板；`via` 取值 `documents` / `content` / `share` |
+
+## 7. LanSync
+
+局域网同步（I-14）的 Android 服务端。插件只做监听、排队、取请求与回响应；
+配对码、长期令牌（只落哈希）、范围与数据导出导入全在 TS，协议见
+`apps/mobile/docs/lan-sync.contract.md`。socket **绑定通配地址**（`ServerSocket(0)` 不指定网卡），
+对外广播/展示的是选中网卡的局域网 IPv4；每个请求仍校验来源必须是局域网地址。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `LanSync` |
+| TS 接口 | `LanSyncPlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `lan/LanSyncPlugin.kt`（服务在 `lan/LanSyncServer.kt`，UDP 发现在 `lan/LanDiscovery.kt`） |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `start` | `host?: string`、`deviceId?: string` | `host?: string`、`port?: number`、`listening?: boolean` | 用通配地址 + 系统分配端口监听，`host` 只决定对外展示/广播地址；`deviceId` 是本机稳定设备 id，写进 UDP 广播（非法值只丢字段，不影响开配对）。resolve 前确认 socket 已 bind，返回 `listening:true`。`host` 未传或已不在本机网卡上时回退 `LanNetworks.preferredAddress()`；仍失败时 reject **异常类: message**（界面显示 `开启配对失败：<原因>`）。成功后开始 UDP 广播（不含配对码）；广播 / multicast lock 失败只记日志，不影响 resolve。后台线程另有 **10 秒看门狗** |
+| `stop` | 无 | 无（resolve 空） | 关监听、停广播并释放 multicast lock；**幂等**，重复调用仍 resolve |
+| `networks` | 无 | `networks?: { name?: string; address?: string; isLan?: boolean; kind?: string; preferred?: number }[]`、`status?: { wifi?: boolean; ethernet?: boolean; mobile?: boolean; vpn?: boolean; ipv4Count?: number; interfaceSummary?: string }` | 枚举本机 IPv4：排除回环，`kind` 取 `wifi` / `ethernet` / `vpn` / `other`；VPN 与虚拟网卡降级排序。`status` 由 `ConnectivityManager` + `NetworkCapabilities` 判断当前传输类型（只需 `ACCESS_NETWORK_STATE`，无运行时权限），读取失败时全为 false 并写 `native.log`。枚举失败时 reject 可读原因（不再返回空数组），界面显示「读取本机网络失败：…」；候选为空时把全部网卡（含 IPv6 / 回环）写日志 |
+| `poll` | 无 | `id?: number`、`method?: string`、`path?: string`、`query?: string`、`authorization?: string`、`body?: string`、`receivedAt?: number` | 队列空时无字段；字段与 Rust `lan_sync_poll` 一致 |
+| `respond` | `id: number`、`status: number`、`body: string` | 无（resolve 空） | 写回 HTTP 响应；请求已超时（10 秒）时 reject |
+| `scanDiscovery` | `timeoutMs?: number` | `peers?: { name?: string; host?: string; port?: number; deviceId?: string }[]` | UDP 短超时扫描同网设备；返回设备名 / 地址 / 端口 / 稳定 `deviceId`，按 host:port 去重。旧版本广播没有 `deviceId`，字段可缺省 |
+
+HTTP 路径白名单（原生层只放行这些，其余 404/405）：`/ping`、`/pair`、`/pair/refresh`、
+`/pair/revoke`、`/export`、`/import`，另有 `OPTIONS` 预检。
+
+### 7.1 相机扫码依赖与权限
+
+应用内扫码不是自研插件，而是第三方 Capacitor 插件；方法名与字段以该包自身契约为准，
+本仓库在 `apps/web/src/lib/scan.ts` 里动态加载（配对面板经 `lan-pair-scan.ts` 转发）：
+
+| 项 | 内容 |
+|---|---|
+| 依赖 | `@capacitor-mlkit/barcode-scanning@^8.2.1`（`apps/mobile/package.json` 与 `apps/web/package.json` 都声明） |
+| Android 插件类 | `io.capawesome.capacitorjs.plugins.mlkit.barcodescanning.BarcodeScannerPlugin`（`cap sync android` 后写入 `capacitor.plugins.json`） |
+| 权限 | `AndroidManifest.xml`：`android.permission.CAMERA`；`<uses-feature android:name="android.hardware.camera" android:required="false"/>` |
+| 使用的方法 | `isSupported` / `requestPermissions` / `startScan` / `stopScan` / `addListener('barcodesScanned')` / `addListener('scanError')` |
+| 为什么不用 `scan()` | `scan()` 依赖 Google Play 服务的条码模块，无 GMS / 国产 ROM 会直接失败；`startScan()` 用打包进 APK 的 ML Kit 模型 |
+
+## 8. ReminderActions
+
+提醒动作（R-07）：课前/日程提醒的定时、投递与通知按钮。插件只接管提醒投递，`LocalNotifications` 的其它用途保持原样；动作语义（贪睡 10 分钟 / 完成 / 勿扰 1 小时）与纯函数在 TS `apps/web/src/lib/reminder-actions.ts`，Android 只负责排定、展示通知、回传动作，并在进程不在线时把动作排队。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `ReminderActions` |
+| TS 接口 | `ReminderActionsPlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `reminder/ReminderActionsPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `schedule` | `id: number`、`title: string`、`body?: string`、`at: number`、`kind: string`、`targetId?: string` | 无（resolve 空） | `at` 是 epoch 毫秒；`kind` 决定动作集合（见下表）；同一 `id` 重复调用按最后一次覆盖 |
+| `cancel` | `id: number` | 无（resolve 空） | 取消闹钟并清掉已展示的通知 |
+| `pending` | 无 | `reminders?: { id?: number; at?: number }[]` | 持久化里的全部提醒（含已展示、等待动作回传的）；前端按 `at > now` 过滤后与扫描结果对账 |
+| `requestPermissionInfo` | 无 | `notifications?: string`、`exactAlarm?: string` | 只报告不弹窗；取值 `granted` / `denied` |
+| `pollActions` | 无 | `actions?: { id?: number; action?: string; targetId?: string; kind?: string }[]` | 取走进程不在线时堆积的动作；队列空时为空数组 |
+
+动作集合（与 TS `reminder-actions.ts`、Rust `reminder_actions.rs` 逐项一致）：
+
+| `kind` | 通知动作 |
+|---|---|
+| `class`（课前提醒） | `snooze`、`mute` |
+| `todo` / `homework` / `exam` / `lab`（日程提醒） | `snooze`、`done`、`mute` |
+
+动作回传：插件在线时通过 `notifyListeners("actionPerformed", { id, action, targetId, kind })` 交给 JS；进程重启后由前端 `pollActions()` 补取。原生会先按同一语义执行一次（贪睡重排、完成/勿扰取消闹钟与通知），JS 负责写回 `events.done` 与维护勿扰窗口。
+
+## 9. SecretStore
+
+本机密钥库（WebDAV 密码加密）。Android 用 AndroidKeyStore 里的 AES-256-GCM 密钥，
+Win 端对应 DPAPI（`apps/desktop/src-tauri/src/secret_store.rs`，Tauri 命令 `secret_encrypt` / `secret_decrypt`）。
+插件只收发 Base64 密文；`enc:v1:` 信封与旧明文迁移在 TS `apps/web/src/lib/credentials.ts`。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `SecretStore` |
+| TS 接口 | `SecretStorePlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `secret/SecretStorePlugin.kt`（加解密在 `secret/SecretVault.kt`） |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `encrypt` | `value: string` | `ciphertext?: string` | 返回 Base64(12 字节 IV + GCM 密文与标签)；空串由 Web 层拦截，不走原生 |
+| `decrypt` | `ciphertext: string` | `value?: string` | 密钥丢失、密文被改动或来自别的设备时 reject |
+| `isAvailable` | 无 | `available?: boolean` | 密钥库不可用时 Web 层回退明文并在设置页显式提示 |
+
+## 10. 变更检查清单
+
+改插件契约时按顺序过一遍：
+
+- [ ] `apps/web/src/lib/plugins.ts`：接口、`PLUGIN_METHODS`、必要时 `PLUGIN_NAMES`
+- [ ] Android 实现：`@PluginMethod` 方法名与 `JSObject` 返回字段
+- [ ] 本文件的插件名 / 方法 / 参数 / 返回字段表
+- [ ] `pnpm -C apps/web test`（或仓库根 `node --test apps/web/test/plugins.test.ts`）
+- [ ] 打包机上 `pnpm android:dev`，在真机走一遍对应入口

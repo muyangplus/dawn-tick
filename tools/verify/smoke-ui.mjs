@@ -1,13 +1,36 @@
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
+
+// 固定产品主时区：CI runner 默认 UTC 会让首次启动的「系统时区对齐」把设置改成 UTC，时间文案断言全飘
+process.env.TZ = 'Asia/Shanghai';
 
 const repo = process.cwd();
 const webDir = join(repo, 'apps/web');
 const outDir = join(webDir, 'smoke-dist');
 const entryUrl = pathToFileURL(join(outDir, 'entry.js')).href;
+
+/** 冒烟固定在当前时钟上：断言按「今天」推算日期，真实日期一变就会飘。 */
+const FIXED_NOW = Date.parse('2026-10-18T18:30:00+08:00');
+
+function freezeClock() {
+  const RealDate = Date;
+  class FrozenDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(FIXED_NOW);
+      else super(...args);
+    }
+    static now() {
+      return FIXED_NOW;
+    }
+  }
+  Object.defineProperty(globalThis, 'Date', { value: FrozenDate, configurable: true, writable: true });
+  if (typeof globalThis.window === 'object' && globalThis.window !== null) {
+    Object.defineProperty(globalThis.window, 'Date', { value: FrozenDate, configurable: true, writable: true });
+  }
+}
 
 function build() {
   execSync('pnpm exec vite build --ssr smoke/entry.tsx --outDir smoke-dist --emptyOutDir', {
@@ -45,6 +68,20 @@ function setupDom() {
 
   window.matchMedia = mediaQueryStub;
   window.scrollTo = () => {};
+  // jsdom 没有 Notification：给一个可切换权限的桩，让「未申请 / 已允许 / 已拒绝」三态可断言
+  class NotificationStub {
+    static get permission() {
+      return globalThis.__notifyPermission ?? 'default';
+    }
+    static requestPermission() {
+      return Promise.resolve(globalThis.__notifyPermission ?? 'default');
+    }
+  }
+  Object.defineProperty(globalThis, 'Notification', {
+    value: NotificationStub,
+    configurable: true,
+    writable: true,
+  });
   window.ResizeObserver = ObserverStub;
   window.IntersectionObserver = ObserverStub;
   window.Element.prototype.scrollIntoView = () => {};
@@ -97,6 +134,7 @@ async function main() {
   build();
 
   const dom = setupDom();
+  freezeClock();
   const rejections = [];
   process.on('unhandledRejection', (reason) => rejections.push(reason));
 
@@ -108,9 +146,24 @@ async function main() {
   };
 
   const module = await import(entryUrl);
-  const results = await module.runSmoke();
+  const results = [];
+  let aborted = null;
+  try {
+    await module.runSmoke(results);
+  } catch (error) {
+    aborted = error;
+  }
 
   let failed = 0;
+  if (aborted !== null) {
+    // 抛错不再吞掉已跑完的断言：照常输出，并标出中断位置
+    const last = results.at(-1)?.name ?? '(尚无断言)';
+    results.push({
+      name: `冒烟中途抛错（上一条断言：${last}）`,
+      ok: false,
+      detail: aborted instanceof Error ? (aborted.stack ?? aborted.message) : String(aborted),
+    });
+  }
   for (const result of results) {
     console.log(`${result.ok ? '[PASS]' : '[FAIL]'} ${result.name}${result.detail === '' ? '' : `  ${result.detail}`}`);
     if (!result.ok) failed += 1;
@@ -125,6 +178,13 @@ async function main() {
   if (realErrors.length > 0) {
     failed += 1;
     console.error(`控制台错误 ${realErrors.length} 条：${realErrors.slice(0, 3).join(' | ')}`);
+  }
+
+  // 断言总数下限：拆分或改写冒烟时防止整段断言被静默丢掉
+  const { minChecks } = JSON.parse(readFileSync(new URL('../../apps/web/smoke/baseline.json', import.meta.url), 'utf8'));
+  if (aborted === null && results.length < minChecks) {
+    failed += 1;
+    console.error(`断言数 ${results.length} 少于基线 ${minChecks}（apps/web/smoke/baseline.json）`);
   }
 
   dom.window.close();

@@ -53,7 +53,8 @@ export function describeWeeks(mask: number, totalWeeks: number = MAX_WEEKS): str
   const isArithmetic = (step: number): boolean =>
     weeks.every((week, index) => week === first + index * step);
 
-  if (weeks.length > 1 && isArithmetic(2)) {
+  if (weeks.length === 1) return `${first}周`;
+  if (isArithmetic(2)) {
     return `${first}-${last}周${first % 2 === 1 ? '(单)' : '(双)'}`;
   }
   if (isArithmetic(1)) return `${first}-${last}周`;

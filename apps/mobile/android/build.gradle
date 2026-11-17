@@ -3,11 +3,13 @@
 buildscript {
     
     repositories {
+        // 官方仓库优先：CI（海外 runner）走 google/mavenCentral 更稳；阿里云镜像作为国内兜底
+        // （镜像偶尔 502 时 Gradle 会直接失败，不会继续尝试后面的仓库）
+        google()
+        mavenCentral()
         maven { url 'https://maven.aliyun.com/repository/public' }
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
-        google()
-        mavenCentral()
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.13.0'
@@ -23,11 +25,13 @@ apply from: "variables.gradle"
 
 allprojects {
     repositories {
+        // 官方仓库优先：CI（海外 runner）走 google/mavenCentral 更稳；阿里云镜像作为国内兜底
+        // （镜像偶尔 502 时 Gradle 会直接失败，不会继续尝试后面的仓库）
+        google()
+        mavenCentral()
         maven { url 'https://maven.aliyun.com/repository/public' }
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
-        google()
-        mavenCentral()
     }
 }
 

@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import process from 'node:process';
 
-export const VERDICTS = ['success', 'failure', 'running', 'missing'];
+export const VERDICTS = ['success', 'failure', 'cancelled', 'running', 'missing'];
 
-/** 由某个提交上的 CI 运行列表得出判定：成功优先，其次运行中，最后失败。 */
+/** 由某个提交上的 CI 运行列表得出判定：成功优先，其次运行中，再次全部取消，最后失败。 */
 export function verdictForRuns(runs) {
   const list = Array.isArray(runs) ? runs : [];
   if (list.length === 0) return 'missing';
   if (list.some((run) => run.status === 'completed' && run.conclusion === 'success')) return 'success';
   if (list.some((run) => run.status !== 'completed')) return 'running';
+  // 全是被取消的：单独报出来，提示重跑 CI，而不是当成代码有问题
+  if (list.every((run) => run.conclusion === 'cancelled')) return 'cancelled';
   return 'failure';
 }
 
@@ -56,7 +58,7 @@ export async function awaitCi(
     log(`CI 状态 ${verdict}`);
 
     if (verdict === 'success') return { ok: true, sha, verdict };
-    if (verdict === 'failure') return { ok: false, sha, verdict };
+    if (verdict === 'failure' || verdict === 'cancelled') return { ok: false, sha, verdict };
     if (Date.now() >= deadline) return { ok: false, sha, verdict: 'timeout' };
 
     await sleep(intervalSeconds);
@@ -75,7 +77,8 @@ async function main() {
 
   const result = await awaitCi({ repo, token, ...options });
   if (!result.ok) {
-    console.error(`CI 未通过（${result.verdict}），停止发布 ${result.sha}`);
+    const hint = result.verdict === 'cancelled' ? '：该提交的 CI 被取消，重跑 CI 后再发布' : '';
+    console.error(`CI 未通过（${result.verdict}）${hint}，停止发布 ${result.sha}`);
     return 1;
   }
   console.log(`::notice::CI 通过 ${result.sha}`);

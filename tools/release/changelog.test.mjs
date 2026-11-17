@@ -59,6 +59,6 @@ test('发版后留空的「未发布」段仍算结构正常', () => {
 });
 
 test('预发布版本号也能取段', () => {
-  const text = '## [0.1.0-beta.1] - 2026-10-14\n\n- 首个公测版\n';
-  assert.equal(extractSection(text, '0.1.0-beta.1'), '- 首个公测版');
+  const text = '## [0.1.0-beta.1] - 2026-10-14\n\n- 首个测试版\n';
+  assert.equal(extractSection(text, '0.1.0-beta.1'), '- 首个测试版');
 });

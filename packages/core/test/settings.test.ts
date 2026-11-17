@@ -2,12 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
+  DOWNLOAD_SOURCE_CHOICES,
   VIEW_DAY_OPTIONS,
   WAL_MODES,
+  WIDGET_VARIANT_LABEL,
+  WIDGET_VARIANTS,
   readSettings,
   writeSettings,
 } from '../src/settings.ts';
-import { createStorage } from './helpers.ts';
+import { createStorage } from './kit/index.ts';
 
 test('周视图天数可选 1–7 天', async () => {
   assert.deepEqual([...VIEW_DAY_OPTIONS], [1, 2, 3, 4, 5, 6, 7]);
@@ -24,6 +27,33 @@ test('周视图天数超出范围被拒绝', async () => {
   await assert.rejects(() => writeSettings(storage, { viewDays: 0 }), /周视图天数/);
   await assert.rejects(() => writeSettings(storage, { viewDays: 8 }), /周视图天数/);
   assert.equal((await readSettings(storage)).viewDays, DEFAULT_SETTINGS.viewDays);
+});
+
+test('课表视图开关：今天为第一天、不显示周末默认都开', async () => {
+  const storage = createStorage();
+  const defaults = await readSettings(storage);
+  assert.equal(defaults.weekStartsToday, true);
+  assert.equal(defaults.hideWeekends, true);
+
+  const changed = await writeSettings(storage, { weekStartsToday: false, hideWeekends: false });
+  assert.equal(changed.weekStartsToday, false);
+  assert.equal(changed.hideWeekends, false);
+  assert.equal(await storage.readMeta('week_starts_today'), '0');
+  assert.equal(await storage.readMeta('hide_weekends'), '0');
+
+  const reloaded = await readSettings(storage);
+  assert.equal(reloaded.weekStartsToday, false);
+  assert.equal(reloaded.hideWeekends, false);
+});
+
+test('旧库缺少 hide_weekends 时按新默认（不显示周末开）读取', async () => {
+  const storage = createStorage();
+  // 只写旧版本已有的键：hide_weekends 缺失，模拟从旧版本升上来的库
+  await storage.writeMeta('view_days', '7');
+  await storage.writeMeta('week_starts_today', '1');
+  const settings = await readSettings(storage);
+  assert.equal(settings.hideWeekends, true, '缺失时跟随默认值，不落库也能读到新默认');
+  assert.equal(await storage.readMeta('hide_weekends'), undefined, '读取默认值不写库');
 });
 
 test('日志模式默认跟随存储位置，可手动开或关', async () => {
@@ -66,4 +96,85 @@ test('备份设置默认开、保留 10 份且范围受限', async () => {
   await assert.rejects(() => writeSettings(storage, { backupKeep: 0 }), /保留份数/);
   await assert.rejects(() => writeSettings(storage, { backupKeep: 101 }), /保留份数/);
   assert.equal((await readSettings(storage)).backupKeep, 3, '非法值不落库');
+});
+
+test('悬浮窗样式包含考试倒计时，默认仍是紧凑条', async () => {
+  assert.deepEqual([...WIDGET_VARIANTS], ['bar', 'today', 'minimal', 'combo', 'exam']);
+  assert.ok(WIDGET_VARIANT_LABEL.exam.includes('考试倒计时'));
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).widgetVariant, 'bar');
+});
+
+test('旧库悬浮窗样式读取兼容，未知值回退 bar', async () => {
+  const storage = createStorage();
+  // 旧版本已落库的四种样式原样保留
+  for (const variant of ['bar', 'today', 'minimal', 'combo'] as const) {
+    await storage.writeMeta('widget_variant', variant);
+    assert.equal((await readSettings(storage)).widgetVariant, variant);
+  }
+  // 新增样式可读写并持久化
+  const saved = await writeSettings(storage, { widgetVariant: 'exam' });
+  assert.equal(saved.widgetVariant, 'exam');
+  assert.equal(await storage.readMeta('widget_variant'), 'exam');
+  assert.equal((await readSettings(storage)).widgetVariant, 'exam');
+  // 未知值（旧库/未来版本写坏）回退 bar，不抛异常
+  await storage.writeMeta('widget_variant', 'exam-future');
+  assert.equal((await readSettings(storage)).widgetVariant, 'bar');
+  // 写入未知值被拒绝，库里的值保持不变
+  await assert.rejects(
+    () => writeSettings(storage, { widgetVariant: 'exam-future' as unknown as 'exam' }),
+    /悬浮窗样式/,
+  );
+  assert.equal(await storage.readMeta('widget_variant'), 'exam-future');
+});
+
+test('下载源默认自动检测，可切国内 / 国际并持久化', async () => {
+  assert.deepEqual([...DOWNLOAD_SOURCE_CHOICES], ['auto', 'gitee', 'github']);
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).downloadSource, 'auto', '新装默认自动检测');
+  const saved = await writeSettings(storage, { downloadSource: 'gitee' });
+  assert.equal(saved.downloadSource, 'gitee');
+  assert.equal(await storage.readMeta('download_source'), 'gitee');
+  assert.equal((await readSettings(storage)).downloadSource, 'gitee');
+  assert.equal((await writeSettings(storage, { downloadSource: 'github' })).downloadSource, 'github');
+});
+
+test('旧库缺少 download_source 时按自动检测读取，非法值被拒', async () => {
+  const storage = createStorage();
+  // 只写旧版本已有的键：download_source 缺失，模拟从旧版本升上来的库
+  await storage.writeMeta('view_days', '7');
+  assert.equal((await readSettings(storage)).downloadSource, 'auto');
+  assert.equal(await storage.readMeta('download_source'), undefined, '读取默认值不写库');
+
+  // 旧库/未来版本写坏的值回退 auto，不抛异常
+  await storage.writeMeta('download_source', 'gitlab');
+  assert.equal((await readSettings(storage)).downloadSource, 'auto');
+
+  await assert.rejects(
+    () => writeSettings(storage, { downloadSource: 'gitlab' as unknown as 'gitee' }),
+    /下载源/,
+  );
+  assert.equal(await storage.readMeta('download_source'), 'gitlab', '非法值不落库');
+});
+
+test('一次写入里有一项不合法时整批不写', async () => {
+  const storage = createStorage();
+  await assert.rejects(writeSettings(storage, { viewDays: 3, classReminderMinutes: 999 }), /1 到 180/);
+  assert.equal((await readSettings(storage)).viewDays, DEFAULT_SETTINGS.viewDays, '合法的那项也没写');
+});
+
+test('主题、配色与动效写入前校验取值', async () => {
+  const storage = createStorage();
+  await assert.rejects(writeSettings(storage, { theme: 'neon' as never }), /主题/);
+  await assert.rejects(writeSettings(storage, { themePreset: 'rainbow' as never }), /配色/);
+  const next = await writeSettings(storage, { theme: 'dark', themePreset: 'mono', motion: 'off' });
+  assert.deepEqual([next.theme, next.themePreset, next.motion], ['dark', 'mono', 'off']);
+});
+
+test('接收测试版没设置过时为 null，写 null 不落库', async () => {
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).receiveBeta, null);
+  await writeSettings(storage, { receiveBeta: null });
+  assert.equal(await storage.readMeta('receive_beta'), undefined);
+  assert.equal((await writeSettings(storage, { receiveBeta: false })).receiveBeta, false);
 });

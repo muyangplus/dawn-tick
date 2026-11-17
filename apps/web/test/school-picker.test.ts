@@ -1,17 +1,23 @@
 /**
- * SchoolPicker 的**纯逻辑**测试：筛选、按省份分组、适配徽标判定、学校作息定位、
+ * SchoolPicker 的**纯逻辑**测试：渲染截断、按省份分组、入口匹配、适配徽标判定、学校作息定位、
  * 「请求适配」地址。
  *
  * 为什么只测逻辑：node --test 直接在 Node 里跑源码，而 Node 的类型剥离不支持 `.tsx`
  * （JSX 是语法，不是类型），组件渲染断言只能放冒烟（`apps/web/smoke/entry.tsx`）。
  * 逻辑本身住在 `src/screens/school-picker-model.ts`，组件只是把它渲染出来。
  *
- * 排序口径**不在这里重复实现**：断言直接依赖 core `searchSchools` 的既定排序
- * （精确 > 前缀 > 包含；同分 985 > 211 > 双一流 > 其他），避免两套排序漂移。
+ * 检索只有一条路径：断言直接调 core 的 `searchSchools`（组件里也是它），
+ * 不再经过 web 侧的包装，排序口径只有一份。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BUILTIN_PRESET_VERSION, MemoryStorage, findTimetable, type SchoolEntry } from '@dawn-tick/core';
+import {
+  BUILTIN_PRESET_VERSION,
+  MemoryStorage,
+  findTimetable,
+  searchSchools,
+  type SchoolEntry,
+} from '@dawn-tick/core';
 import {
   OTHER_PROVINCE,
   PRESET_ISSUE_NEW_URL,
@@ -20,7 +26,6 @@ import {
   adapterBadgeText,
   adapterInfo,
   extraSchoolTags,
-  filterSchools,
   groupSchoolsByProvince,
   limitSchools,
   loadPresetContext,
@@ -36,7 +41,7 @@ import {
 
 /** 目录里的真实学校（跑的是 2659 所那份数据，不是造出来的假条目）。 */
 function findByName(name: string): School {
-  const school = filterSchools(name).find((item) => item.name === name);
+  const school = searchSchools(name).find((item) => item.name === name);
   assert.ok(school !== undefined, `目录里应该有 ${name}`);
   return school;
 }
@@ -57,23 +62,23 @@ test('筛选行只露出 985 / 211 / 双一流，其余折叠', () => {
 });
 
 test('搜索排序沿用 core 的 searchSchools（精确 > 前缀 > 包含，同分先看层次）', () => {
-  assert.equal(filterSchools('清华')[0]?.name, '清华大学');
-  assert.equal(filterSchools('beida')[0]?.name, '北京大学', '简称全拼要能压过校名全拼');
-  assert.equal(filterSchools('qhdx')[0]?.name, '清华大学', '缩写撞车时同分先出 985');
-  assert.equal(filterSchools('北京大学')[0]?.name, '北京大学');
-  assert.equal(filterSchools('这所学校肯定不存在').length, 0, '搜不到就是空结果（界面据此显示空态）');
+  assert.equal(searchSchools('清华')[0]?.name, '清华大学');
+  assert.equal(searchSchools('beida')[0]?.name, '北京大学', '简称全拼要能压过校名全拼');
+  assert.equal(searchSchools('qhdx')[0]?.name, '清华大学', '缩写撞车时同分先出 985');
+  assert.equal(searchSchools('北京大学')[0]?.name, '北京大学');
+  assert.equal(searchSchools('这所学校肯定不存在').length, 0, '搜不到就是空结果（界面据此显示空态）');
 });
 
 test('985 与地区筛选可叠加，且只保留满足条件的学校', () => {
-  const elite = filterSchools('', { tag: '985' });
+  const elite = searchSchools('', { tags: ['985'] });
   assert.equal(elite.length, 39);
   assert.ok(elite.every((school) => school.tags.includes('985')));
 
-  const jiangsu = filterSchools('', { province: '江苏' });
+  const jiangsu = searchSchools('', { province: '江苏' });
   assert.ok(jiangsu.length > 100, `江苏学校数量异常：${jiangsu.length}`);
   assert.ok(jiangsu.every((school) => (school.province ?? '').startsWith('江苏')));
 
-  const both = filterSchools('', { tag: '985', province: '北京' });
+  const both = searchSchools('', { tags: ['985'], province: '北京' });
   assert.ok(both.length > 0 && both.length < elite.length);
   assert.ok(both.every((school) => school.tags.includes('985') && school.province === '北京市'));
   assert.ok(both.some((school) => school.name === '清华大学'));
@@ -96,7 +101,7 @@ test('结果按省份分组：已知省份跟下拉同序，没有省份的归�
   assert.deepEqual(groups.at(-1)?.schools.map((school) => school.name), ['丙大学']);
 
   // 真实数据：搜「清华」的两所都在北京市那一组
-  const real = groupSchoolsByProvince(filterSchools('清华'));
+  const real = groupSchoolsByProvince(searchSchools('清华'));
   assert.equal(real[0]?.province, '北京市');
   assert.ok(real[0]?.schools.some((school) => school.name === '清华大学'));
 
@@ -105,11 +110,11 @@ test('结果按省份分组：已知省份跟下拉同序，没有省份的归�
 });
 
 test('结果区只渲染前若干所，避免一次铺 2600 多行', () => {
-  const all = filterSchools('');
+  const all = searchSchools('');
   assert.ok(all.length > SCHOOL_RENDER_LIMIT, `目录应有 ${SCHOOL_RENDER_LIMIT} 所以上`);
   assert.equal(limitSchools(all).length, SCHOOL_RENDER_LIMIT);
 
-  const few = filterSchools('清华');
+  const few = searchSchools('清华');
   assert.equal(limitSchools(few).length, few.length);
 });
 
@@ -200,18 +205,24 @@ test('请求适配地址集中在一处，标题带上校名', () => {
   assert.equal(requestSchoolUrl('  '), generic, '空白校名按通用入口处理');
 });
 
-test('已保存的教务条目补成一组，且不与目录结果重名', () => {
+test('已保存的教务条目只做入口匹配与 URL 构造，不再作为检索路径', () => {
   const entries: SchoolEntry[] = [
     { id: 'usts', name: '苏州科技大学', system: 'jwglxt', url: 'https://jwgl.usts.edu.cn/', source: 'builtin' },
     { id: 'user-a', name: '我的学校', system: 'other', url: 'jw.mine.edu.cn', source: 'user' },
   ];
-  const directory = filterSchools('');
-  const extra = matchingEntrySchools(entries, '', directory);
-  assert.deepEqual(extra.map((school) => school.name), ['我的学校'], '目录里有的同名学校不重复补一行');
-  assert.equal(extra[0]?.system, 'other', '合成行要带上教务系统，适配判定才能按系统维度走');
+  const usts = findByName('苏州科技大学');
+  const match = matchingEntrySchools(entries, usts);
+  assert.equal(match?.entry.id, 'usts', '先按 id 匹配目录学校');
+  assert.equal(
+    match?.url,
+    'https://jwgl.usts.edu.cn/jwglxt/xtgl/login_slogin.html',
+    '只有域名时按系统模板补入口路径',
+  );
 
-  assert.deepEqual(matchingEntrySchools([], '我的', directory), []);
-  assert.deepEqual(matchingEntrySchools(entries, '苏州科技大学', directory), []);
+  // 目录学校没有对应条目 → 没有入口（调用方回退到手动补齐）
+  assert.equal(matchingEntrySchools(entries, findByName('清华大学')), undefined);
+  // 用户自定义条目即使有校名也不进检索结果：检索只走 searchSchools
+  assert.equal(searchSchools('我的学校').length, 0, '条目不应再出现在目录检索里');
 });
 
 test('次要行是「标签 · 门类」，空标签不留下孤零零的分隔符', () => {

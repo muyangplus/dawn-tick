@@ -25,6 +25,9 @@ export interface ExpandSchedule {
   period_end: number;
   weeks_mask: number;
   room: string | null;
+  /** 自定义上课时间（HH:MM）：非空时按真实时间，不查节次表 */
+  start_time?: string | null;
+  end_time?: string | null;
 }
 
 export interface ExpandTimeSlot {
@@ -84,6 +87,14 @@ const SOURCE_RANK: Record<HolidaySource, number> = {
   builtin: 3,
 };
 
+/**
+ * 假期/调休判定的来源优先级，数字小的优先：手工 > 学校 > 内置。
+ * 没有来源的是用户在界面上的「设为假日/非假日」，与 manual 同级。
+ */
+export function holidaySourceRank(source: HolidaySource | null | undefined): number {
+  return source === null || source === undefined ? SOURCE_RANK.manual : SOURCE_RANK[source];
+}
+
 /** 同一日期多条判定时按来源优先级取一条。 */
 export function resolveDayKind(kinds: readonly ExpandDayKind[]): Map<string, ExpandDayKind> {
   const out = new Map<string, ExpandDayKind>();
@@ -93,9 +104,7 @@ export function resolveDayKind(kinds: readonly ExpandDayKind[]): Map<string, Exp
       out.set(kind.on_date, kind);
       continue;
     }
-    const rank = kind.source === null ? 4 : SOURCE_RANK[kind.source];
-    const existingRank = existing.source === null ? 4 : SOURCE_RANK[existing.source];
-    if (rank < existingRank) out.set(kind.on_date, kind);
+    if (holidaySourceRank(kind.source) < holidaySourceRank(existing.source)) out.set(kind.on_date, kind);
   }
   return out;
 }
@@ -113,9 +122,17 @@ export function expand(input: ExpandInput): Occurrence[] {
 
   const occurrences: Occurrence[] = [];
 
-  for (const date of dateRange(from, to)) {
+  // 原日期在窗口外、但调到窗口内的课：也要从原日期展开
+  const sourceDates = new Set(dateRange(from, to));
+  for (const item of input.reschedules ?? []) {
+    if (item.action === 'move' && item.new_date !== null && item.new_date >= from && item.new_date <= to) {
+      sourceDates.add(item.on_date);
+    }
+  }
+
+  for (const date of [...sourceDates].sort()) {
     const kind = dayKinds.get(date);
-    if (kind?.type === 'holiday') continue;
+    const sourceHoliday = kind?.type === 'holiday';
 
     const effectiveDayOfWeek =
       kind?.type === 'makeup' && kind.as_day_of_week !== null
@@ -133,17 +150,35 @@ export function expand(input: ExpandInput): Occurrence[] {
       if (course === undefined) continue;
 
       const override = rescheduleByKey.get(`${schedule.id}|${date}`);
+      const moved = override?.action === 'move' && override.new_date !== null;
+      // 放假日的课不上——除非已被调到别的日子（典型的「假期调课到补课日」）
+      if (sourceHoliday && !moved) continue;
       const cancelled = override?.action === 'cancel';
       if (cancelled && !includeCancelled) continue;
 
-      const targetDate =
-        override?.action === 'move' && override.new_date !== null ? override.new_date : date;
+      const targetDate = moved && override.new_date !== null ? override.new_date : date;
+      if (targetDate < from || targetDate > to) continue;
+      const periodOverridden = override?.new_period_start != null || override?.new_period_end != null;
       const periodStart = override?.new_period_start ?? schedule.period_start;
       const periodEnd = override?.new_period_end ?? schedule.period_end;
 
-      const startSlot = slotByPeriod.get(periodStart);
-      const endSlot = slotByPeriod.get(periodEnd);
-      if (startSlot === undefined || endSlot === undefined) continue;
+      // 自定义时间优先；调课改了节次时按新节次的时间
+      const custom =
+        !periodOverridden && schedule.start_time != null && schedule.end_time != null
+          ? { start: schedule.start_time, end: schedule.end_time }
+          : null;
+      let startTime: string;
+      let endTime: string;
+      if (custom !== null) {
+        startTime = custom.start;
+        endTime = custom.end;
+      } else {
+        const startSlot = slotByPeriod.get(periodStart);
+        const endSlot = slotByPeriod.get(periodEnd);
+        if (startSlot === undefined || endSlot === undefined) continue;
+        startTime = startSlot.start_time;
+        endTime = endSlot.end_time;
+      }
 
       const room = override?.new_room ?? schedule.room ?? course.location;
 
@@ -157,8 +192,8 @@ export function expand(input: ExpandInput): Occurrence[] {
         color: course.color,
         periodStart,
         periodEnd,
-        startAt: dateWallClockToEpoch(targetDate, startSlot.start_time, semester.time_zone),
-        endAt: dateWallClockToEpoch(targetDate, endSlot.end_time, semester.time_zone),
+        startAt: dateWallClockToEpoch(targetDate, startTime, semester.time_zone),
+        endAt: dateWallClockToEpoch(targetDate, endTime, semester.time_zone),
         room,
         cancelled,
       });

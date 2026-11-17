@@ -1,65 +1,146 @@
 import { toBase64Bytes } from '@dawn-tick/core';
-import { detectPlatform } from './platform-detect.ts';
+import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
+import { invokeNative, nativeErrorMessage } from './lib/native.ts';
+import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from './lib/plugins.ts';
+import { writeAndroidFile } from './lib/export-files.ts';
 import { logInfo, logWarn } from './log.ts';
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+
+/** 插件接口定义已集中到 `lib/plugins.ts`，这里保留原导出路径供旧调用方使用。 */
+export type { SystemActionsPlugin } from './lib/plugins.ts';
+
+export interface OpenExternalResult {
+  ok: boolean;
+  /** 失败原因（用户可读）；成功或已降级为可读文案时为 null */
+  error: string | null;
+}
+
+/**
+ * 用系统默认浏览器打开链接，并返回可展示的失败原因。
+ *
+ * 与 [openExternalUrl] 的区别：调用方需要在界面上说明「为什么没打开」时用它；
+ * 只关心成功与否的老调用方继续用布尔版本。
+ */
+export async function openExternalUrlDetailed(url: string): Promise<OpenExternalResult> {
+  const result = await openExternalWithReason(url);
+  return { ok: result.ok, error: result.error };
 }
 
 /** 用系统默认浏览器打开链接：桌面端走原生命令，Android 走原生 ACTION_VIEW（WebView 的 window.open 会卡包可见性），Web 开新窗口。 */
 export async function openExternalUrl(url: string): Promise<boolean> {
-  const platform = detectPlatform();
-  if (platform === 'tauri') {
+  return (await openExternalWithReason(url)).ok;
+}
+
+async function openExternalWithReason(url: string): Promise<OpenExternalResult> {
+  if (isDesktopApp()) {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('open_external_url', { url });
+      await invokeNative('open_external_url', { url });
       logInfo('link', '用默认浏览器打开', { url });
-      return true;
+      return { ok: true, error: null };
     } catch (cause: unknown) {
-      logWarn('link', '打开默认浏览器失败', { url, message: describe(cause) });
-      return false;
+      const error = nativeErrorMessage(cause);
+      logWarn('link', '打开默认浏览器失败', { url, message: error });
+      return { ok: false, error: `系统浏览器打开失败：${error}` };
     }
   }
-  if (platform === 'capacitor') {
+  const plugin = await loadSystemActions();
+  if (plugin !== null) {
     try {
       if (await openWithSystem(url)) {
         logInfo('link', '交给系统浏览器打开', { url });
-        return true;
+        return { ok: true, error: null };
       }
     } catch (cause: unknown) {
-      logWarn('link', '原生打开失败，改用新窗口', { url, message: describe(cause) });
+      const error = nativeErrorMessage(cause);
+      logWarn('link', '原生打开失败，改用新窗口', { url, message: error });
+      // 原生明确失败时不再静默降级：把原因交给界面，避免「点确认没反应」
+      if (isAndroidApp()) return { ok: false, error: `调用系统浏览器失败：${error}` };
     }
   }
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
   if (opened === null) {
     logWarn('link', '新窗口被拦截', { url });
-    return false;
+    return { ok: false, error: '浏览器新窗口被拦截，请改用「复制链接」' };
   }
   logInfo('link', '在新窗口打开', { url });
-  return true;
+  return { ok: true, error: null };
 }
 
-/** 安卓侧的原生系统动作插件（打开链接、电池优化白名单）。 */
-export interface SystemActionsPlugin {
-  openExternal(options: { url: string }): Promise<{ opened: boolean }>;
-  isIgnoringBatteryOptimizations(): Promise<{ ignoring: boolean }>;
-  requestIgnoreBatteryOptimizations(): Promise<{ ignoring?: boolean; requested?: boolean }>;
+/** 原生读到的通知状态：应用级开关 + 运行时权限 + 渠道静音。 */export interface NotifyStatusDetail {
+  appEnabled: boolean;
+  runtime: 'granted' | 'denied' | 'prompt' | 'permanently-denied';
+  channelId: string | null;
+  channelName: string | null;
+  channelMuted: boolean;
+}
+
+function runtimeOf(value: string | undefined): NotifyStatusDetail['runtime'] {
+  if (value === 'granted' || value === 'denied' || value === 'prompt' || value === 'permanently-denied') {
+    return value;
+  }
+  return 'granted';
+}
+
+/** 通知状态：安卓走原生精确查询，其它平台返回 null 由调用方兜底。 */
+export async function readNativeNotifyStatus(asked: boolean): Promise<NotifyStatusDetail | null> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return null;
+  try {
+    const result = await plugin.notificationStatus({ asked });
+    return {
+      appEnabled: result?.appEnabled !== false,
+      runtime: runtimeOf(result?.runtime),
+      channelId: typeof result?.channelId === 'string' && result.channelId !== '' ? result.channelId : null,
+      channelName: typeof result?.channelName === 'string' && result.channelName !== '' ? result.channelName : null,
+      channelMuted: result?.channelMuted === true,
+    };
+  } catch (cause: unknown) {
+    logWarn('permission', '读取通知状态失败', { message: nativeErrorMessage(cause) });
+    return null;
+  }
+}
+
+/** 跳系统通知设置页；给了渠道 id 就直达该渠道。 */
+export async function openNotifySettings(channelId?: string | null): Promise<boolean> {
+  const plugin = await loadSystemActions();
+  if (plugin === null) return false;
+  try {
+    const result = await plugin.openNotificationSettings(channelId === null || channelId === undefined ? {} : { channelId });
+    logInfo('permission', '已跳转通知设置页', { channelId: channelId ?? null, opened: result?.opened === true });
+    return true;
+  } catch (cause: unknown) {
+    logWarn('permission', '跳转通知设置页失败', { message: nativeErrorMessage(cause) });
+    return false;
+  }
 }
 
 async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
-  if (detectPlatform() !== 'capacitor') return null;
   try {
-    const { registerPlugin } = await import('@capacitor/core');
-    return registerPlugin<SystemActionsPlugin>('SystemActions');
+    return await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
   } catch (cause: unknown) {
-    logWarn('link', '系统动作插件不可用', { message: describe(cause) });
+    logWarn('link', '系统动作插件不可用', { message: nativeErrorMessage(cause) });
     return null;
+  }
+}
+
+/** 原生调用加超时：插件未注册或桥卡住时给可读失败，而不是让按钮一直转圈。 */
+async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
 async function openWithSystem(url: string): Promise<boolean> {
   const plugin = await loadSystemActions();
   if (plugin === null) return false;
-  const result = await plugin.openExternal({ url });
+  const result = await withTimeout(plugin.openExternal({ url }), 8_000, '调用系统浏览器超时');
   return result.opened === true;
 }
 
@@ -70,7 +151,7 @@ export async function isIgnoringBatteryOptimizations(): Promise<boolean | null> 
   try {
     return (await plugin.isIgnoringBatteryOptimizations()).ignoring === true;
   } catch (cause: unknown) {
-    logWarn('link', '读取电池优化状态失败', { message: describe(cause) });
+    logWarn('link', '读取电池优化状态失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -87,7 +168,7 @@ export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
     });
     return true;
   } catch (cause: unknown) {
-    logWarn('link', '跳转电池优化设置页失败', { message: describe(cause) });
+    logWarn('link', '跳转电池优化设置页失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -116,22 +197,40 @@ export async function copyText(text: string): Promise<boolean> {
     if (!copied) logWarn('link', '复制链接失败', { length: text.length });
     return copied;
   } catch (cause: unknown) {
-    logWarn('link', '复制链接异常', { message: describe(cause) });
+    logWarn('link', '复制链接异常', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
 
 /** 在资源管理器中打开日志目录；返回目录路径，平台不支持时为 null。 */
 export async function openLogDirectory(): Promise<string | null> {
-  if (detectPlatform() !== 'tauri') return null;
+  if (!isDesktopApp()) return null;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const dir = await invoke<string>('open_log_dir');
+    const dir = await invokeNative<string>('open_log_dir');
+    if (dir === undefined) return null;
     logInfo('log', '打开日志目录', { dir });
     return dir;
   } catch (cause: unknown) {
-    logWarn('log', '打开日志目录失败', { message: describe(cause) });
+    logWarn('log', '打开日志目录失败', { message: nativeErrorMessage(cause) });
     return null;
+  }
+}
+
+/**
+ * 在资源管理器中定位文件或目录（`reveal_path`）。
+ *
+ * 文件会在所在文件夹里选中，目录直接打开；平台不支持、路径不存在或调用失败返回 false。
+ */
+export async function revealPath(path: string): Promise<boolean> {
+  if (!isDesktopApp()) return false;
+  try {
+    const shown = await invokeNative<string>('reveal_path', { path });
+    if (shown === undefined) return false;
+    logInfo('export', '已在资源管理器中定位', { path: shown });
+    return true;
+  } catch (cause: unknown) {
+    logWarn('export', '打开所在位置失败', { path, message: nativeErrorMessage(cause) });
+    return false;
   }
 }
 
@@ -148,36 +247,48 @@ export interface SaveTextResult {
 export async function saveTextFile(
   name: string,
   content: string,
-  options: { filterName?: string; extension?: string } = {},
+  options: { filterName?: string; extension?: string; mime?: string } = {},
 ): Promise<SaveTextResult> {
   const extension = options.extension ?? 'txt';
-  if (detectPlatform() === 'tauri') {
+  if (isDesktopApp()) {
     try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const chosen = await save({
-        defaultPath: name,
-        filters: [{ name: options.filterName ?? '文本文件', extensions: [extension] }],
+      // 由原生弹「另存为」并写入：前端不再把路径交给写文件命令
+      const path = await invokeNative<string | null>('save_file', {
+        defaultName: name,
+        filterName: options.filterName ?? '文本文件',
+        extension,
+        text: content,
       });
-      if (chosen === null) {
+      if (path === null) {
         logInfo('export', '用户取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      const { invoke } = await import('@tauri-apps/api/core');
-      const path = await invoke<string>('write_text_file', { path: chosen, content });
+      if (path === undefined) throw new Error('当前平台不支持写入文件');
       logInfo('export', '已写入文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
-      const message = describe(cause);
+      const message = nativeErrorMessage(cause);
+      logWarn('export', '写入文件失败', { name, message });
+      return { ok: false, cancelled: false, path: null, error: message };
+    }
+  }
+  if (isAndroidApp()) {
+    try {
+      const path = await writeAndroidFile(name, content);
+      logInfo('export', '已写入文件', { path, bytes: content.length });
+      return { ok: true, cancelled: false, path, error: null };
+    } catch (cause: unknown) {
+      const message = nativeErrorMessage(cause);
       logWarn('export', '写入文件失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
   }
   try {
-    downloadInBrowser(name, content);
+    downloadInBrowser(name, content, options.mime);
     logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('export', '浏览器下载失败', { name, message });
     return { ok: false, cancelled: false, path: null, error: message };
   }
@@ -205,26 +316,34 @@ export async function saveBinaryFile(
   options: { filterName?: string; extension?: string } = {},
 ): Promise<SaveTextResult> {
   const extension = options.extension ?? 'bin';
-  if (detectPlatform() === 'tauri') {
+  if (isDesktopApp()) {
     try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const chosen = await save({
-        defaultPath: name,
-        filters: [{ name: options.filterName ?? '文件', extensions: [extension] }],
+      const path = await invokeNative<string | null>('save_file', {
+        defaultName: name,
+        filterName: options.filterName ?? '文件',
+        extension,
+        base64: toBase64Bytes(content),
       });
-      if (chosen === null) {
+      if (path === null) {
         logInfo('export', '用户取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      const { invoke } = await import('@tauri-apps/api/core');
-      const path = await invoke<string>('write_binary_file', {
-        path: chosen,
-        base64: toBase64Bytes(content),
-      });
+      if (path === undefined) throw new Error('当前平台不支持写入文件');
       logInfo('export', '已写入二进制文件', { path, bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
-      const message = describe(cause);
+      const message = nativeErrorMessage(cause);
+      logWarn('export', '写入二进制文件失败', { name, message });
+      return { ok: false, cancelled: false, path: null, error: message };
+    }
+  }
+  if (isAndroidApp()) {
+    try {
+      const path = await writeAndroidFile(name, content);
+      logInfo('export', '已写入二进制文件', { path, bytes: content.length });
+      return { ok: true, cancelled: false, path, error: null };
+    } catch (cause: unknown) {
+      const message = nativeErrorMessage(cause);
       logWarn('export', '写入二进制文件失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
@@ -234,7 +353,7 @@ export async function saveBinaryFile(
     logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
-    const message = describe(cause);
+    const message = nativeErrorMessage(cause);
     logWarn('export', '浏览器下载失败', { name, message });
     return { ok: false, cancelled: false, path: null, error: message };
   }

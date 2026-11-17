@@ -1,3 +1,13 @@
+/**
+ * 节次范围文案：单节「第 3 节」，连堂「第 3–5 节」。
+ * 连接符固定为 en dash（U+2013）；倒序输入按小→大归一化，避免出现「第 5–3 节」。
+ */
+export function formatPeriodRange(start: number, end: number): string {
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  return from === to ? `第 ${from} 节` : `第 ${from}–${to} 节`;
+}
+
 export function formatCountdown(milliseconds: number): string {
   if (milliseconds <= 0) return '即将开始';
   const totalSeconds = Math.floor(milliseconds / 1000);

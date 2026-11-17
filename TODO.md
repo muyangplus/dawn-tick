@@ -1,49 +1,140 @@
 # TODO
 
-## 课表布局
+> 当前版本 `v0.7.0`（2026-11-17 正式版）。已完成任务的细节不再保留（查 git log 与 CHANGELOG.md）；本文件只留现状、待验收清单、未完成方向、决策与边界。
 
-- [x] 网格按真实分钟向上/向下扩展：头部与尾部补白随自定义时间条目伸缩（`grid-metrics.ts`：补白 = 超出第一节/最后一节的分钟 × 每行分钟折算，最多各三行），节次轴、当前时间线、空白格落点与拖动换算一起平移；补白区标出真实时间范围（`data-role="grid-pad-top"` / `data-role="grid-pad-bottom"`）
-- [x] 行高自适应真实窗口复核：卡片探针一直量不到东西——可点击的课表卡片渲染成 `<button>` 且没带 `data-role="course-card"`（只有只读 `div` 带），已给两种形态都补上；1000×720 实测 12 张卡片 `clipped:false, overflow:0`，窄到 336px 时按 8px 逐级加到上限 96 仍被裁（宽度不够，非高度问题）并写 `行高已到上限仍有内容被裁` 告警
+## 0. 现状快照
 
-## 数据层重构
+- **版本**：`0.7.0`（`versionCode 700`）。正式版 `v0.1.0`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.6.0`–`v0.6.3`、`v0.7.0`；测试版 `v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.6.4-beta.1`、`v0.6.5`–`v0.6.12`（纯版本号 + `[prerelease]`）。`dev` 分支推送自动滚动发布 `dev-latest`。
+- **验证**：`pnpm test`（core 314 / web 658 / core-sqlite 314 / tools 65）、`pnpm ui:smoke`（489 项，固定 `Asia/Shanghai` 与时钟）、`cargo test`（112 + 6）、`tools/verify/verify-all.ps1`、小组件契约检查；Windows 专属 Rust 代码可在 Linux 上 `cargo check --target x86_64-pc-windows-gnu` 交叉检查。
+- **CI**：`node`（typecheck / test / 冒烟 / a11y / 小组件契约 / CHANGELOG）、`schema`（迁移回放 + 工作流断言）、`rust`（含 Windows 上的许可证清单校验）、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
+- **本地安卓编译**（无需 CI 往返）：`JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6`、`ANDROID_HOME=E:\work\dsh\android-sdk`，在 `apps/mobile/android` 跑 `gradlew.bat :app:compileDebugKotlin --no-daemon`。
+- **结构**：core 写入按领域拆在 `mutations/`，学期快照 `loadSemesterSnapshot` + `expandInputOf` 一次读齐；设置为描述表；网页表格识别共用 `import/html-grid.ts`。web 的 `data.ts`、`schedule-cards.tsx` 为汇总导出；大表单的状态与回填/重置逻辑在旁边的纯模块里测试。Rust 按存储、备份、日志、实例、托盘、自启、提权、窗口几何、教务窗口拆模块，`lib.rs` 只留命令注册与迁移。冒烟的种子与桩在 `smoke/kit.tsx`。
+- **运维工具**：`tools/repair/repair-db.mjs --dir=<数据目录> [--dry-run] [--stage=<快照>]` 检查/恢复损坏数据库；正常启动也会自检并从最新健康快照恢复。
+- **单点**：文案 `copy/zh.ts`；节次范围 `lib/format.ts`；节次上限 `MAX_PERIODS`（40，core `timetable.ts`）；课程色 `core/colors.ts`；原生桥 `lib/native.ts`（命令与 Rust 一一对应）；插件契约 `lib/plugins.ts` + `apps/mobile/docs/plugins.contract.md`；`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`；局域网协议 `apps/mobile/docs/lan-sync.contract.md`。
 
-- [x] 存储位置：便携版默认程序同目录（名为 `DawnTick.exe` 且不在 `%LOCALAPPDATA%\DawnTick`），安装版 `%APPDATA%\com.dawntick.app`；设置里可填自定义绝对/相对路径（相对程序目录），改完复制数据库、窗口几何与日志并重启生效；数据目录不可写时回退默认并提示
-- [x] 数据库日志模式：设置页「启用 WAL 日志模式」开关，默认便携版关闭（`journal_mode=DELETE`、单文件、无 `-wal`/`-shm`）、安装版与 Android 开启
-- [x] 数据管理模块：导出与导入抽成 `data-management` 模块；导出 JSON 文件 / Base64 文本 / 整包 zip（可选一并打包预设快照与日志），导入支持 JSON、Base64 文本与整包 zip，冲突处理为跳过 / 覆盖 / 清空所选模块后导入 / 按修改时间合并；设置键清单补全（`auto_check_update`、`todo_sort`、`dev_features`、`log_enabled`、`log_level`、`wal_mode`）
-- [x] 备份与恢复：Windows 用 `VACUUM INTO` 在数据目录 `backups/` 写整库文件快照，Web 与 Android 把 JSON 快照存进库内；自动备份总开关 + 「启动时」「每天」两个开关 + 保留份数 1–100（默认 10）；设置页列出快照（时间、大小）可查看 / 恢复 / 删除，恢复前自动备一份当前库，文件快照恢复后提示并给「立即重启」
-- [x] WebDAV 云同步：一个包上传整库快照 + 设置与预设；下载可选「恢复全部」（提示重启）或「只应用设置与预设」（当场热加载），下载前先自动备份本机；地址/用户名/密码存本机设置（密码不进导出）；远端文件名可选固定覆盖或保留历史多份；自动同步为启动 + 每天一次且可配置，远端更新时提示下载、否则上传；Windows 走 Tauri 官方 http 插件，Android 由 Capacitor 接管 fetch，Web 用浏览器 fetch
-- [x] Windows 起不来（`failed to initialize plugin http: 拒绝访问`）：http 插件默认特性带 cookies，初始化要在 `%LOCALAPPDATA%\com.dawntick.app\cache` 建 `.cookies` 文件，权限稍有问题就整个应用启动失败；已关掉 `cookies` 特性（只留 rustls-tls / http2 / charset / system-proxy），WebDAV 用 Basic 认证不需要 cookie
-- [ ] 老库兼容：Windows 侧迁移由原生插件的 `_sqlx_migrations` 记账，若某个库是早期纯 JS 迁移建的（没有该表），插件的迁移会从 001 重跑并因「表已存在」失败，表现为回退 IndexedDB（本机现有库都有该表，未触发）
+## 1. 已交付（均已通过 CI）
 
-## 界面
+| 批次 | 内容 | 版本 |
+|---|---|---|
+| P0（8 条） | 删除入口与确认框、详情关闭出口、设置页快捷动作与单一导入入口、备份键清单、整包打包共用、`weeks_raw` 派生 | 0.3.0-beta.1 |
+| P1（13 条） | 设备与同步页、统一「＋」菜单、搜索直达、调课合并、待重启条、通知六态、回退只读、错误页、空态三态、键盘可达、版本号兜底等 | 0.3.0-beta.1 / 0.4.0 |
+| P2（17 条） | 表单语义、导入冲突筛选与手动映射、引导页统一、校验与忙碌态、侧列布局、移动端 Sheet、悬浮窗与小组件文案、命名与文风统一等 | 0.3.0-beta.1 / 0.4.0 |
+| A 系列（18 条） | 时间/颜色/文案单源、重叠与钟点纯函数、原生桥收口、大文件拆分、组件基元、快照索引、CI 冒烟与安卓编译、视图过渡等（A-16 按重合度关闭） | 0.4.1 |
+| 体验反馈（15 条） | 更新判定与 Markdown 弹窗、三端自动更新、渠道警告、悬浮窗自适应与拉伸、时区偏移与搜索、默认周视图、课表滚动与拖动、调课改考试、导出路径、导入重构、局域网同步一期、统一动效 | 0.5.0 |
+| R 系列（11 条） | ICS 导出、考试倒计时悬浮窗、主题联动悬浮窗与小组件、提醒动作、更新运营（忽略/回滚）、局域网二期（发现/二维码/预览/自动同步）、备份导出加密、课表图片与 PDF、学期统计、WebDAV 凭据加密、导入诊断 | 0.6.0 |
+| 分发与稳定性 | 国内下载源（Gitee / assets 仓库、`version.json` v2）、安卓 ABI 拆包与瘦身、扫一扫、帮助模块、更新弹窗精简、全局 busy 看门狗与原生超时、局域网 deviceId 与离线退避 | 0.6.5–0.6.12 / 0.7.0 |
+| 审计重构 | 提醒投递与对账、备份导入校验与合并、ICS / 网页表格解析、级联删除、夏令时、设置校验；导出与更新包路径收口、CSP、局域网防重绑定、教务窗口校验值；发布同一构建提交、dev-latest 原地更新；core / web / Rust / 冒烟按职责拆分，测试按目录重组 | 0.7.0 |
 
-- [ ] 「我的」页面内容（当前为建设中占位）
-- [x] 引导页可滚动：`data-role="onboarding-scroll"`（`h-full` + `overflow-y-auto` + 内层 `my-auto` 居中），解决被 `#root { overflow: hidden }` 裁掉、滚不动的问题
-- [x] 学校选择收进首启页「高级设置」`<details>`（默认收起，`summary` 显示已选学校；「已有数据：直接导入」保持可见）
-- [x] 底部栏与悬浮按钮留白：`--dt-bottom-nav` / `--dt-bottom-fab` 变量，`app-main` 的 `padding-bottom`（含 `tablet:` 断点，原先被 `tablet:p-4` 覆盖成 16px）与「快速添加」按钮位置同源；实测 1000×720 `navHeight 56 / mainPadBottom 120`、336×656 同样通过
-- [x] 布局自检写日志：`layout: 视口变化`（视口 / shell / main / 底部栏高度 / 主区留白 / 卡片数 / 补白是否存在）、`layout: 行高自适应` 与 `layout: 行高自检`；留白小于栏高、行高到上限仍被裁都会告警
-- [x] 日志级别从未同步到原生：`App.tsx` 里 `applyLogSettings` 只导入未调用，已在设置变化时同步（修好后 `dawn-tick.log` 才能看到 `[debug]`/`[trace]`）
-- [x] 引导页「请求适配 / 提交学校信息」点了没反应：`ExternalLinkConfirm` 只挂在主壳里，引导页分支没挂（所以创建学期后弹窗才冒出来）→ 引导页也挂上
-- [x] 选校改弹窗：首启页「高级设置」里只留一行「已选：X」+「选择学校」按钮，点开 `SchoolPickerDialog`（搜索 / 筛选 / 列表，选中即关），不再把长列表铺在页面上
-- [x] 卡片布局独立成对话框：设置页顶部固定一个「卡片布局」按钮（不受卡片显隐影响），面板里新增「全部显示」把被隐藏的卡片一次改回可见
-- [x] 倒计时块宽屏只占一半：按你的要求**不改**（它在侧列，需要时在「卡片布局」里把「倒计时」切到主列即可占满整行）
-- [x] 去掉便携目录里的 EBWebView 与 window.json：WebView2 用户数据目录固定到 `%LOCALAPPDATA%\com.dawntick.app\EBWebView`（首次运行把旧的 `<数据目录>\EBWebView` 整体搬过去；新位置已有数据就清掉残留；搬迁失败继续用旧位置），窗口几何改存数据库 `app_meta.window_geometry` 并在窗口显示前由原生侧读出应用（实测：启动即按 1250×900 恢复、无跳动；`window.json` 启动时清理）
-- [x] 「倒计时」与「日期与倒计时」合并成一张卡：开学/假期徽标在上、逐条作业与考试倒计时在下（`data-role="countdown-badges"` / `countdown-row` 同属一张卡）；卡片 id 仍用 `exams`（不动 id，已保存的布局不失效），`countdownsCard` 与「日期与倒计时」标题删除
-- [x] 开发者特性默认关闭：dev 构建也按正式版特性运行，诊断入口（导出日志 / 打开日志目录 / 日志级别）需要手动打开开关才显示；`DEFAULT_SETTINGS.devFeatures = false`
-- [x] 首次引导页可跳过：「跳过，先用默认学期」直接用默认值建「我的学期」（本周一开学、20 周、内置默认作息）进入应用，之后在设置里随时可改；建学期逻辑与「创建并开始」共用同一段
-- [x] beta 更新源对齐：客户端原来查滚动标签 `beta-latest`（流水线只发 `vX.Y.Z-beta.N`，永远查不到）→ 改为查发布列表，取「最新 beta 预发布」与「最新正式版」中版本更高的那个；正式版发布后测试版用户可直接更到正式版
-- [x] 首次 beta 发版：`v0.1.0-beta.1`（提交 `1aac20a`，预发布，Windows 安装包 / 便携包 / release 签名 APK / Web 包各带 sha256）
-- [x] 安卓明文与外部链接：清单加 `usesCleartextTraffic`（教务站点多为 http）与 http/https 的 `<queries>`（Android 11+ 不声明包可见性时一律判为打开失败）；外部链接改走原生 `ACTION_VIEW`
-- [x] 安卓启动索取权限：启动申请通知（Android 13+），课前提醒开着且精确闹钟未授权时跳一次系统页；设置页「提醒设置」加精确闹钟与电池优化白名单状态与入口
-- [x] 倒计时卡片实时刷新：正文抽成组件 + `useNowTick(15s)`，不再等别处的数据刷新
-- [x] 课表卡片去边框、文字完整显示：去掉块边框与左侧色条边框（改内阴影色条），课名/地点/教师强制换行，去掉 `line-clamp` 与 `truncate`；行高自适应继续按实际高度加高
-- [x] 界面动效可自定义：新增「界面动效」设置（跟随系统 / 始终播放 / 关闭动效），弹窗、抽屉与视图进入走 150–200ms 过渡，`data-motion` 落到根节点统一控制
-- [x] 加载动画与防重复点击：`runBusy` 蒙版 + `Button loading`（自动禁用与转圈）+ `useBusyAction` 忽略重复触发
-- [ ] 局域网多端同步（路线图）：同一局域网内配对后自动同步；一期计划为「一端生成配对码 → 另一端输码建立信任 → 按范围（课表 / 待办 / 设置）与覆盖方向互传」，后续再做后台自动同步与冲突合并
-- [x] 移除 beta 分支：`dev` 改 PR 合入 `main`，beta 与 release 都用 `main` 的提交打标签（beta 打 `vX.Y.Z-beta.N`）
-- [x] 周视图改为「从今天开始的 N 天窗口」：网格按日期键（跨周两周的课都进来）、拖动/碰撞/空白新建/调课预填全按日期、上一屏与下一屏按 N 天平移、`T` 回今天；冒烟补 7 条窗口断言（从今天起、列数=设置天数、前后平移、回到今天、← → 与 T）后 215 项全过
+## 2. 待验收（需要真机 / 实机证据）
+
+- **Windows 桌面**：悬浮窗按内容自适应与拉伸记忆、双击唤主窗口、托盘「提醒」菜单动作、自动更新下载→启动安装（0.7.0 起更新包写私有暂存目录并复核 SHA-256）、导出改为原生「另存为」后的备份/课表/日志导出与「打开所在位置」、教务导入窗口带校验值交回、DPAPI 凭据加密后的 WebDAV 同步、启用 CSP 后各页面无白屏。
+- **Android 真机**：通知动作（贪睡/完成/勿扰）、提醒一次排完前瞻窗口并与系统已排通知对账（删课/改时后不再按旧时刻弹）、开机与杀进程后的提醒投递、APK 自动更新与系统安装器、导出分享、Keystore 凭据加密、小组件主题配色与「还有 N 节」、beta/release 包确认 WebView 远程调试已关。
+- **双设备**：局域网同步配对、UDP 自动发现、deviceId 认回、预览后合并（两边当前学期不同时的选择弹窗）、30 分钟自动同步；防火墙放行；同步包不再带本机专属设置。
+- **发布链路**：`v0.7.0` Release 产物、`SHA256SUMS.txt`、`version.json` v2 与 assets 仓库同步；自动更新能从 0.6.12 测试版与 0.6.3 正式版升到 0.7.0；`dev-latest` 原地更新时客户端始终能下到完整一版。
+
+## 3. 未完成方向
+
+### 待定口径
+
+- **R-05 教务系统在线抓取**：卡在 Q15（内嵌会话是否复用、凭据是否落盘、抓取合规边界）。定了才能开，入口放导入流程内。
+
+### 暂不做（有前置条件）
+
+| 编号 | 内容 | 原因 |
+|---|---|---|
+| R-06 | 调课实时推送 | 依赖服务端与账号 |
+| R-08 | 服务端、账号登录、多端同步 | 无服务端规划 |
+| R-09 | 增量同步与字段级冲突解决 | 与 WebDAV/LAN 整包路线冲突 |
+| R-10 | iOS 端 | 平台能力抽象已就绪，投入产出未验证 |
+| R-11 | Windows 11 小组件面板 | 需 WinRT/MSIX |
+| R-12 | 局域网同步三期（后台常驻/发现增强） | 一期二期已交付，三期需真机验收后再定 |
+| — | 社交共享课表、成绩管理、收费内购 | 需求未提及，不立项 |
+
+### 候选（按价值排序，待你拍板）
+
+1. **更多教务模板与浏览器扩展**：在现有 bookmarklet + 内嵌窗口基础上扩充识别模板；导入诊断已就位，便于收集失败样本。
+2. **统计增强**：出勤明细、课程/考试趋势、可导出报表（当前只有学期概览卡片）。
+3. **提醒增强**：位置提醒、考试倒计时主题、提醒时间段与勿扰日程化。
+4. **分享**：只读课表分享链接/文件（当前可导出 PNG/PDF/ICS）。
+5. **平台扩展**：iOS（能力抽象已就绪）、PWA 可安装（Q8 目前不做）。
+6. **数据安全二期**：备份口令加密的找回策略、快照加密（后台无口令，需设计）。
+
+## 4. 已定决策
+
+| 编号 | 结论 |
+|---|---|
+| Q1–Q8 | 设备与同步页；导入不占导航；非 Web 端补原生状态；硬删+确认；回退只读；学期边界置灰；不做撤销；文档改「本地优先」 |
+| Q9–Q12 | Release 资产与 `.sha256` 已核；`gh secret list` 待你执行；发布产物带 `version.json`；0.2.0 段改 beta |
+| Q13–Q19 | 旧库只检测提示；A-16 先量重合度；R-05 不落盘凭据；R-06 只做轮询；ICS 导出勾选模块；社交/成绩/内购不立项；P0 按数据风险排序 |
+| Q20–Q26 | A-16 量后关闭；P1/P2 发 0.4.0、A 系列发 0.4.1；冒烟固定时区；Full Changelog 由发布脚本拼；侧列保留；移动端 Sheet；R-02 并入 P1-02 |
+| Q27–Q33 | 下一阶段顺序；三端自动更新；局域网一期；动画只做动效；悬浮窗自适应+记忆；渠道警告频率；时区偏移+搜索 |
+| 0.7.0 审计 | 本机专属设置（WAL、开机自启、启动隐藏、WebDAV 账号）不随备份与同步走；导入时两边当前学期不同由用户在弹窗里选；本轮不做更新包签名；beta 标签方案维持现状；允许破坏性调整（迁移 006、调课动作只留 move / cancel） |
+
+## 5. 不建议现在做
+
+1. 全局撤销与操作历史——用二次确认 + 快照恢复兜底。
+2. 周视图改真 ARIA grid/table——会动绝对定位渲染与拖拽命中。
+3. 完整键盘拖拽调课——已有「详情 → 调课」等价路径。
+4. 全部 Dialog 改底部 Sheet——只把高频短表单改成 Sheet。
+5. PWA / Service Worker 与 Web mini 入口裁剪。
+6. 主题间距密度重做、账号与社交体系。
+7. 「管理员权限注册开机启动」写 HKLM——需 UAC 链路。
+8. 行级同步（跨设备一律走整包导入）、局域网后台常驻。
+9. 学校名录双数据源合并——依赖仓库外生成链。
+10. 便携版数据目录 ACL/WebView2 写权限问题——现阶段靠提权与「已有实例」提示兜底。
+11. i18n 全量 `t()`、状态管理库、卡片注册表插件化。
+12. 更新包 Ed25519 签名——目前靠 HTTPS + `SHA256SUMS.txt` + 安装前复核；要做需先定密钥保管与轮换。
+
+### 可做的整理（不影响行为）
+
+- Rust 测试从 `lib.rs` 挪进各自模块。
+- 冒烟按场景拆成互相独立的用例（现在共用一次启动的状态，只抽了 `smoke/kit.tsx`）。
+- 工作流里的 action 固定到提交号；CI 失败日志改存构建产物，替代推 `ci-debug` 分支。
+
+## 6. 发版与批次记录
+
+| 版本 | 内容 |
+|---|---|
+| `v0.1.0-beta.1` / `v0.1.0` | 首个公测版与正式版：课表、日程、导入、提醒、备份、WebDAV、悬浮窗与小组件、渠道更新 |
+| `v0.2.0-beta.1` | 加载蒙版、动效设置、N 天窗口、通知权限引导、卡片布局对话框、启动自检 |
+| `v0.3.0-beta.1` | P0 批次 + 第一批 6 条 |
+| `v0.4.0` | P1/P2 产品体验批次 |
+| `v0.4.1` | A 系列架构收口 + 两处修复 |
+| `v0.5.0` | 体验反馈 15 条（更新/渠道/悬浮窗/时区/导入/局域网一期/动效） |
+| `v0.6.0` | R 系列 11 项（导出、提醒动作、更新运营、局域网二期、加密、统计、诊断） |
+| `v0.6.1` | 更新下载后台化 + 并发 Range 分片 + 更新 UI 重排；发布校验回退单一 `SHA256SUMS.txt` |
+| `v0.6.2` | 设置页与设备页配置卡片各拆为 7 张、手风琴展开；`dev` 推送自动滚动发布 `dev-latest` |
+| `v0.6.3` | Windows 更新区分便携版/安装版；局域网同步修复安卓配对卡死、Windows 代理导致失败、多网卡自动选择与切换 |
+| `v0.6.4-beta.1` | 设置页与设备页改为分组导航 + 下钻；关于页新增「近期更新」（内置 CHANGELOG）；beta 标签允许不带序号（发布时指定，默认 1） |
+| `v0.6.5`–`v0.6.8`（测试版） | 安卓原生诊断日志、小组件读取失败提示；国内下载源（Gitee、assets 仓库）、`version.json` v2、按渠道探测下载源 |
+| `v0.6.9`–`v0.6.12`（测试版） | beta 渠道可升到更高正式版；扫一扫、局域网网络切换与 `/ping` 预检；帮助模块、更新弹窗精简；全局 busy 看门狗与原生调用超时、安卓局域网地址兜底 |
+| `v0.7.0` | 审计重构：提醒、导入、备份合并、ICS、级联删除、夏令时等数据正确性修复；安全收口；发布链路同一提交与原地更新；局域网 deviceId、安卓 ABI 拆包；各端代码按职责拆分 |
 
 
-## 发布
+## 7. 验证与发布命令
 
-- [x] 仓库 secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`（已用 `tools/release/set-github-secrets.ps1` 写入 muyangplus/dawn-tick，四个都在；keystore 走临时文件经 stdin 传入，不回显任何口令）
+```bash
+pnpm install --frozen-lockfile
+pnpm typecheck && pnpm test && pnpm ui:smoke
+cargo check --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+node tools/verify/check-widget-contract.mjs
+pwsh tools/verify/verify-all.ps1
+node tools/release/version.mjs --check
+node tools/release/changelog.mjs --check
+# 本地安卓编译（Windows）
+cd apps/mobile/android
+set JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6
+set ANDROID_HOME=E:\work\dsh\android-sdk
+gradlew.bat :app:compileDebugKotlin --no-daemon
+# 数据库修复（只读预演 / 从快照恢复 / 下次启动恢复）
+node tools/repair/repair-db.mjs --dir=out-local --dry-run
+node tools/repair/repair-db.mjs --dir=out-local
+node tools/repair/repair-db.mjs --dir=out-local --stage=dawn-tick-20261025-204530.db
+# 发版：改版本号 → 切 CHANGELOG 段 → 推 dev → PR 合入 main → 在 main 上打标签
+node tools/release/version.mjs 0.7.0
+git push origin dev            # 然后开 dev → main 的 PR 并合并
+git fetch origin main && git tag v0.7.0 origin/main && git push origin v0.7.0
+# 测试版：纯版本号标签 + 说明带 [prerelease]
+git tag -a v0.7.1 -m "[prerelease] 0.7.1 测试版" origin/main && git push origin v0.7.1
+```

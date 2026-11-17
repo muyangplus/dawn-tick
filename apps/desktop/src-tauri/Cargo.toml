@@ -1,6 +1,6 @@
 [package]
 name = "dawn-tick-desktop"
-version = "0.2.0"
+version = "0.7.0"
 edition = "2021"
 publish = false
 
@@ -18,6 +18,10 @@ tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 更新包暂存后复核 SHA-256（已在依赖树里，不新增下载）
+sha2 = "0.10"
+# 便携版自动更新只需解压 deflate 压缩的 zip：默认特性会带上 bzip2/zstd/lzma 等无用后端。
+zip = { version = "4", default-features = false, features = ["deflate"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 # 关掉默认特性里的 cookies：插件的 cookie 存储要在 %LOCALAPPDATA% 下建目录并开文件，
 # 权限稍有问题就会以「拒绝访问」让整个应用起不来；WebDAV 用 Basic 认证，不需要 cookie。
@@ -35,6 +39,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Registry",

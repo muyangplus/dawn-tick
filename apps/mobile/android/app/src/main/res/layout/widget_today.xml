@@ -1,45 +1,60 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 每行固定 @dimen/widget_row_height，行数由 WidgetRenderer 按可用高度决定。 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+    每行固定 @dimen/widget_row_height，行数由 WidgetRenderer 按可用高度决定。
+    卡面拆成两层：widget_root 只负责圆角裁剪与描边，widget_surface 才是可被快照
+    colors.surface 上色的底色层；文字颜色全部由 WidgetRenderer.applyTheme 写入。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="@dimen/widget_root_padding"
-    android:background="@drawable/widget_bg_light">
+    android:background="@drawable/widget_bg_frame"
+    android:foreground="@drawable/widget_bg_stroke"
+    android:clipToOutline="true">
 
-    <TextView
-        android:id="@+id/widget_header"
+    <View
+        android:id="@+id/widget_surface"
         android:layout_width="match_parent"
-        android:layout_height="@dimen/widget_header_height"
-        android:gravity="center_vertical"
-        android:textSize="11sp"
-        android:textColor="#8A8A8A"
-        android:text="@string/widget_today_label" />
+        android:layout_height="match_parent"
+        android:background="@drawable/widget_bg_light" />
 
-    <TextView
-        android:id="@+id/widget_row1"
-        style="@style/WidgetRow" />
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="@dimen/widget_root_padding">
 
-    <TextView
-        android:id="@+id/widget_row2"
-        style="@style/WidgetRow" />
+        <TextView
+            android:id="@+id/widget_header"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/widget_header_height"
+            android:gravity="center_vertical"
+            android:textSize="11sp"
+            android:text="@string/widget_today_label" />
 
-    <TextView
-        android:id="@+id/widget_row3"
-        style="@style/WidgetRow" />
+        <TextView
+            android:id="@+id/widget_row1"
+            style="@style/WidgetRow" />
 
-    <TextView
-        android:id="@+id/widget_row4"
-        style="@style/WidgetRow" />
+        <TextView
+            android:id="@+id/widget_row2"
+            style="@style/WidgetRow" />
 
-    <TextView
-        android:id="@+id/widget_row5"
-        style="@style/WidgetRow" />
+        <TextView
+            android:id="@+id/widget_row3"
+            style="@style/WidgetRow" />
 
-    <TextView
-        android:id="@+id/widget_empty"
-        style="@style/WidgetRow"
-        android:textColor="#8A8A8A"
-        android:text="@string/widget_today_empty" />
-</LinearLayout>
+        <TextView
+            android:id="@+id/widget_row4"
+            style="@style/WidgetRow" />
+
+        <TextView
+            android:id="@+id/widget_row5"
+            style="@style/WidgetRow" />
+
+        <TextView
+            android:id="@+id/widget_empty"
+            style="@style/WidgetRow"
+            android:text="@string/widget_today_empty" />
+    </LinearLayout>
+</FrameLayout>

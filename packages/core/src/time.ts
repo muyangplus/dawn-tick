@@ -2,6 +2,12 @@ export const DEFAULT_TIME_ZONE = 'Asia/Shanghai';
 export const META_TIME_ZONE = 'time_zone';
 export const META_AUTO_TIME_ZONE = 'auto_time_zone';
 
+/**
+ * 星期短名：下标 = dayOfWeek - 1，即 1=周一 … 7=周日。
+ * 全仓唯一的星期文案来源；UI 侧具名导入，Kotlin 侧按同一规格维护并标注同源。
+ */
+export const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
+
 export interface ZonedParts {
   year: number;
   month: number;
@@ -77,11 +83,17 @@ export function parseTime(time: string): { hour: number; minute: number } {
   return { hour: Number(m[1]), minute: Number(m[2]) };
 }
 
-/** 某时区的墙钟时间转 UTC epoch 毫秒。 */
+/**
+ * 某时区的墙钟时间转 UTC epoch 毫秒。
+ * 夏令时回拨的重复时刻取较早的一次；跳过的不存在时刻按跳变前的偏移换算，即向后顺延（02:30 → 03:30）。
+ */
 export function epochFromParts(p: ZonedParts, timeZone: string): number {
   const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
   const first = wallAsUtc - zoneOffsetMs(wallAsUtc, timeZone);
-  return wallAsUtc - zoneOffsetMs(first, timeZone);
+  const candidate = wallAsUtc - zoneOffsetMs(first, timeZone);
+  if (zoneOffsetMs(candidate, timeZone) === wallAsUtc - candidate) return candidate;
+  // 落在跳变的空档里：用一天前（跳变前）的偏移
+  return wallAsUtc - zoneOffsetMs(wallAsUtc - 86400000, timeZone);
 }
 
 /** 日期 + 墙钟时刻 + 时区 转 UTC epoch 毫秒。 */
@@ -115,6 +127,14 @@ export function formatDateTime(epochMs: number, timeZone: string): string {
   return `${formatDate(epochMs, timeZone)} ${formatTime(epochMs, timeZone)}`;
 }
 
+/** HH:MM 加分钟数，跨天回绕到 00:00（用于缺结束时间时按一节时长估计）。 */
+export function plusMinutesText(clock: string, minutes: number): string {
+  const [hour, minute] = clock.split(':').map(Number);
+  const total = (hour ?? 0) * 60 + (minute ?? 0) + minutes;
+  const wrapped = ((total % 1440) + 1440) % 1440;
+  return `${pad2(Math.floor(wrapped / 60))}:${pad2(wrapped % 60)}`;
+}
+
 /** 纯日期加减，不受时区影响。 */
 export function addDays(date: string, days: number): string {
   return dateFromUtcMs(dateToUtcMs(date) + days * 86400000);
@@ -134,6 +154,29 @@ export function weekStart(date: string): string {
   return addDays(date, -(dayOfWeek(date) - 1));
 }
 
+/** 周六或周日。 */
+export function isWeekend(date: string): boolean {
+  return dayOfWeek(date) >= 6;
+}
+
+/** 下一个工作日：周末顺延到周一，工作日原样返回。 */
+export function nextWorkday(date: string): string {
+  let cursor = date;
+  for (let step = 0; step < 7 && isWeekend(cursor); step += 1) {
+    cursor = addDays(cursor, 1);
+  }
+  return cursor;
+}
+
+/** 上一个工作日：周末回退到周五，工作日原样返回。 */
+export function previousWorkday(date: string): string {
+  let cursor = date;
+  for (let step = 0; step < 7 && isWeekend(cursor); step += 1) {
+    cursor = addDays(cursor, -1);
+  }
+  return cursor;
+}
+
 /** 含首含尾的日期序列。 */
 export function dateRange(from: string, to: string): string[] {
   const out: string[] = [];
@@ -143,7 +186,10 @@ export function dateRange(from: string, to: string): string[] {
   return out;
 }
 
-/** 学期第 1 周周一为第 1 周；返回该日期所属周次，早于第 1 周返回 0。 */
+/**
+ * 学期第 1 周周一为第 1 周；返回该日期所属周次。
+ * 开学前一周为 0，再往前为负数（不截断：比较两天是否同一周时仍然成立），调用方按需夹到 1..total_weeks。
+ */
 export function weekOfDate(date: string, semesterStartDate: string): number {
   return Math.floor(diffDays(weekStart(date), weekStart(semesterStartDate)) / 7) + 1;
 }

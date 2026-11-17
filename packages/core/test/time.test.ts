@@ -7,9 +7,14 @@ import {
   dateWallClockToEpoch,
   dayOfWeek,
   diffDays,
+  epochFromParts,
   formatDate,
   formatDateTime,
   formatTime,
+  isWeekend,
+  nextWorkday,
+  plusMinutesText,
+  previousWorkday,
   resolveTimeZone,
   weekOfDate,
   weekStart,
@@ -59,6 +64,15 @@ test('纯日期运算不受时区影响', () => {
   ]);
 });
 
+test('周末与工作日翻页', () => {
+  assert.equal(isWeekend('2026-10-17'), true);
+  assert.equal(isWeekend('2026-10-19'), false);
+  assert.equal(nextWorkday('2026-10-16'), '2026-10-16');
+  assert.equal(nextWorkday('2026-10-17'), '2026-10-19');
+  assert.equal(previousWorkday('2026-10-19'), '2026-10-19');
+  assert.equal(previousWorkday('2026-10-18'), '2026-10-16');
+});
+
 test('非法输入被拒绝', () => {
   assert.throws(() => dateWallClockToEpoch('2026/09/21', '08:00', 'Asia/Shanghai'));
   assert.throws(() => dateWallClockToEpoch('2026-09-21', '8:00', 'Asia/Shanghai'));
@@ -69,4 +83,20 @@ test('显示时区解析', () => {
   assert.equal(resolveTimeZone('Asia/Shanghai', true, 'America/New_York'), 'America/New_York');
   assert.equal(resolveTimeZone('Bad/Zone', false), DEFAULT_TIME_ZONE);
   assert.equal(resolveTimeZone(undefined, true, 'Bad/Zone'), DEFAULT_TIME_ZONE);
+});
+
+test('HH:MM 加分钟跨天回绕', () => {
+  assert.equal(plusMinutesText('08:00', 45), '08:45');
+  assert.equal(plusMinutesText('08:55', 10), '09:05');
+  assert.equal(plusMinutesText('23:30', 45), '00:15');
+  assert.equal(plusMinutesText('23:30', 60), '00:30');
+  assert.equal(plusMinutesText('01:00', -90), '23:30', '负偏移不前移成非法时刻');
+});
+
+test('夏令时跳过的不存在时刻向后顺延，重复时刻取较早一次', () => {
+  const zone = 'America/New_York';
+  const gap = epochFromParts({ year: 2026, month: 3, day: 8, hour: 2, minute: 30, second: 0 }, zone);
+  assert.equal(formatDateTime(gap, zone), '2026-03-08 03:30');
+  const repeated = epochFromParts({ year: 2026, month: 11, day: 1, hour: 1, minute: 30, second: 0 }, zone);
+  assert.equal(new Date(repeated).toISOString(), '2026-11-01T05:30:00.000Z');
 });

@@ -61,7 +61,7 @@ const CACHED_CONTENT: CachedPresetContent = {
       name: '正方教务（缓存）',
       entryPath: '/jwglxt/xtgl/login_slogin.html',
       hint: '缓存正文',
-      detect: { markers: ['jwglxt'] },
+      detect: { markers: ['jwglxt'], timetableTableIds: [], timetableTableClasses: [], gridCellIdPatterns: [] },
     },
   ],
 };
@@ -85,7 +85,7 @@ function signedSnapshot(version: string): PresetSnapshot {
     // 新结构的快照一定内嵌 index（原 presets/index.json）：假快照同样带上，
     // 这样哈希口径与真实产物一致，也能覆盖「缓存快照带着索引」的形状。
     index: {
-      _generated: true,
+      _generated: true as const,
       version,
       schemaVersion: 1,
       generatedAt: '2026-02-01T00:00:00.000Z',

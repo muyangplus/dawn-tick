@@ -128,7 +128,20 @@
     overflow: hidden;
   }
 
+  /*
+   * 悬浮窗配色：默认取应用当前主题（--dt-*）。`--mini-*` 是一层间接别名，
+   * 让「小组件背景」的浅色/深色覆盖只替换这套别名，不影响主窗口的 --dt-*。
+   */
   .mini {
+    --mini-surface: var(--dt-surface);
+    --mini-surface-muted: var(--dt-surface-muted);
+    --mini-border: var(--dt-border);
+    --mini-border-strong: var(--dt-border-strong);
+    --mini-text: var(--dt-text);
+    --mini-muted: var(--dt-muted);
+    --mini-primary: var(--dt-primary);
+    --mini-primary-strong: var(--dt-primary-strong);
+    position: relative;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -136,8 +149,9 @@
     gap: 2px;
     padding: 8px 10px;
     border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--dt-surface) 92%, transparent);
-    border: 1px solid var(--dt-border);
+    background: color-mix(in srgb, var(--mini-surface) 92%, transparent);
+    border: 1px solid var(--mini-border);
+    color: var(--mini-text);
     box-shadow: var(--shadow-lg);
     cursor: grab;
     user-select: none;
@@ -147,24 +161,44 @@
     cursor: grabbing;
   }
 
-  /* 小组件背景：浅色 / 深色 / 透明，与 Android 小组件的三种底色同一口径 */
+  .mini-hint {
+    font-size: 10px;
+    line-height: 1.3;
+    color: var(--mini-muted);
+  }
+
+  /*
+   * 小组件背景：浅色 / 深色 / 透明，与 Android 小组件的三种底色同一口径。
+   * 浅色/深色固定取对应模式的预设令牌；透明跟随当前主题，只降低底色不透明度。
+   * 两套模式令牌由 applyTheme 写在 :root（--dt-light-* / --dt-dark-*），这里不写死颜色。
+   */
   .mini-bg-light {
-    --dt-surface: #ffffff;
-    --dt-text: #1f1b24;
-    --dt-muted: #6b6475;
-    --dt-border: #e4e0ea;
+    color-scheme: light;
+    --mini-surface: var(--dt-light-surface, var(--dt-surface));
+    --mini-surface-muted: var(--dt-light-surface-muted, var(--dt-surface-muted));
+    --mini-border: var(--dt-light-border, var(--dt-border));
+    --mini-border-strong: var(--dt-light-border-strong, var(--dt-border-strong));
+    --mini-text: var(--dt-light-text, var(--dt-text));
+    --mini-muted: var(--dt-light-muted, var(--dt-muted));
+    --mini-primary: var(--dt-light-primary, var(--dt-primary));
+    --mini-primary-strong: var(--dt-light-primary-strong, var(--dt-primary-strong));
   }
 
   .mini-bg-dark {
-    --dt-surface: #1e1a26;
-    --dt-text: #f3eff6;
-    --dt-muted: #a79fb3;
-    --dt-border: #3a3442;
+    color-scheme: dark;
+    --mini-surface: var(--dt-dark-surface, var(--dt-surface));
+    --mini-surface-muted: var(--dt-dark-surface-muted, var(--dt-surface-muted));
+    --mini-border: var(--dt-dark-border, var(--dt-border));
+    --mini-border-strong: var(--dt-dark-border-strong, var(--dt-border-strong));
+    --mini-text: var(--dt-dark-text, var(--dt-text));
+    --mini-muted: var(--dt-dark-muted, var(--dt-muted));
+    --mini-primary: var(--dt-dark-primary, var(--dt-primary));
+    --mini-primary-strong: var(--dt-dark-primary-strong, var(--dt-primary-strong));
   }
 
   .mini-bg-transparent {
-    background: color-mix(in srgb, var(--dt-surface) 55%, transparent);
-    border-color: color-mix(in srgb, var(--dt-border) 45%, transparent);
+    background: color-mix(in srgb, var(--mini-surface) 55%, transparent);
+    border-color: color-mix(in srgb, var(--mini-border) 45%, transparent);
   }
 
   .mini-head {
@@ -174,18 +208,29 @@
   }
 
   .mini-label {
-    color: var(--dt-muted);
+    color: var(--mini-muted);
     font-size: var(--text-xs);
   }
 
+  .mini-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .mini-open,
   .mini-close {
     border: 0;
     background: transparent;
-    color: var(--dt-muted);
+    color: var(--mini-muted);
     padding: 0 4px;
     font-size: var(--text-sm);
     line-height: 1;
     cursor: pointer;
+  }
+
+  .mini-open {
+    font-size: var(--text-xs);
   }
 
   .mini-title {
@@ -204,7 +249,7 @@
   }
 
   .mini-count {
-    color: var(--dt-primary-strong);
+    color: var(--mini-primary-strong);
     font-size: var(--text-lg);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -212,7 +257,7 @@
 
   .mini-meta,
   .mini-empty {
-    color: var(--dt-muted);
+    color: var(--mini-muted);
     font-size: var(--text-xs);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -228,7 +273,7 @@
   }
 
   .mini-count-big {
-    color: var(--dt-primary-strong);
+    color: var(--mini-primary-strong);
     font-size: 28px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -236,7 +281,7 @@
   }
 
   .mini-minimal-name {
-    color: var(--dt-muted);
+    color: var(--mini-muted);
     font-size: var(--text-xs);
     max-width: 100%;
     overflow: hidden;
@@ -270,14 +315,14 @@
     align-items: baseline;
     gap: 6px;
     padding: 3px 6px;
-    border-left: 3px solid var(--dt-border);
+    border-left: 3px solid var(--mini-border);
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--dt-surface-muted) 70%, transparent);
+    background: color-mix(in srgb, var(--mini-surface-muted) 70%, transparent);
     font-size: var(--text-xs);
   }
 
   .mini-item-now {
-    background: color-mix(in srgb, var(--dt-primary) 18%, transparent);
+    background: color-mix(in srgb, var(--mini-primary) 18%, transparent);
     font-weight: 600;
   }
 
@@ -286,7 +331,7 @@
   }
 
   .mini-item-time {
-    color: var(--dt-muted);
+    color: var(--mini-muted);
     font-variant-numeric: tabular-nums;
   }
 
@@ -299,7 +344,7 @@
   }
 
   .mini-item-room {
-    color: var(--dt-muted);
+    color: var(--mini-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -308,7 +353,7 @@
 
   /* 今日课表里正在上的那一节：右侧剩余时间 */
   .mini-item-remain {
-    color: var(--dt-primary-strong);
+    color: var(--mini-primary-strong);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -328,7 +373,7 @@
 
   .mini-combo-bottom {
     flex: 1;
-    border-top: 1px solid var(--dt-border);
+    border-top: 1px solid var(--mini-border);
     padding-top: 4px;
   }
 }
@@ -405,3 +450,268 @@
     cursor: progress;
   }
 }
+
+/* 悬浮窗右下角的拉伸手柄：无边框窗口靠它进入系统 resize */
+.mini-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.mini-resize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--mini-border-strong, rgb(0 0 0 / 0.25));
+  border-bottom: 1px solid var(--mini-border-strong, rgb(0 0 0 / 0.25));
+}
+
+/* ══ I-15 动效增强 开始 ══════════════════════════════════════════════
+   统一时长/曲线令牌；新增动效只用 transform / opacity / filter 等合成属性。
+   唯一例外是折叠卡展开高度：用 Radix 提供的 --radix-collapsible-content-height。
+   所有时长 ≤ 240ms；[data-motion=off] 与系统 reduced-motion 由下方停用规则压到 1ms。
+   ══════════════════════════════════════════════════════════════════ */
+@layer components {
+  :root {
+    --dt-motion-fast: 120ms;
+    --dt-motion-base: 160ms;
+    --dt-motion-slow: 220ms;
+    --dt-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes dt-card-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes dt-sheet-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dt-toast-in {
+    from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dt-toast-out {
+    to { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  }
+
+  @keyframes dt-collapse-open {
+    from { height: 0; opacity: 0; }
+    to { height: var(--radix-collapsible-content-height); opacity: 1; }
+  }
+
+  @keyframes dt-select-in {
+    from { opacity: 0; transform: translateY(-2px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes dt-check-in {
+    from { opacity: 0; transform: scale(0.6); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* 抽屉：底部面板上浮 + 轻微缩放；比原有 rise 多一档 scale */
+  .dt-sheet[data-state='open'] {
+    animation: dt-sheet-in var(--dt-motion-slow) var(--dt-motion-ease);
+  }
+
+  .dt-panel {
+    transform-origin: center;
+  }
+
+  /* 按钮：颜色/边框/阴影过渡 + 按下回弹；不改变任何尺寸 */
+  .dt-btn-motion {
+    transition:
+      background-color var(--dt-motion-fast) ease-out,
+      border-color var(--dt-motion-fast) ease-out,
+      color var(--dt-motion-fast) ease-out,
+      opacity var(--dt-motion-fast) ease-out,
+      box-shadow var(--dt-motion-base) var(--dt-motion-ease),
+      transform var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  .dt-btn-motion:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+
+  /* 卡片：只抬升 1px + 加深阴影，仍用主题阴影令牌 */
+  .dt-card-motion {
+    box-shadow: var(--shadow-sm);
+    transition:
+      transform var(--dt-motion-base) var(--dt-motion-ease),
+      box-shadow var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  @media (hover: hover) {
+    .dt-card-motion:hover {
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .dt-btn-motion:hover:not(:disabled) {
+      transform: translateY(-1px);
+    }
+
+    .dt-btn-motion:active:not(:disabled) {
+      transform: translateY(0) scale(0.98);
+    }
+  }
+
+  /* 设置 / 设备页卡片列表依次淡入，最多影响前 6 项，延迟合计 ≤100ms */
+  .dt-stagger > * {
+    /* 用 backwards 而不是 both：动画结束后释放 transform，卡片的 hover 抬升才生效 */
+    animation: dt-card-in var(--dt-motion-base) var(--dt-motion-ease) backwards;
+  }
+
+  .dt-stagger > :nth-child(1) { animation-delay: 0ms; }
+  .dt-stagger > :nth-child(2) { animation-delay: 20ms; }
+  .dt-stagger > :nth-child(3) { animation-delay: 40ms; }
+  .dt-stagger > :nth-child(4) { animation-delay: 60ms; }
+  .dt-stagger > :nth-child(5) { animation-delay: 80ms; }
+  .dt-stagger > :nth-child(n + 6) { animation-delay: 100ms; }
+
+  /* 折叠卡展开：Radix 在 open 时提供高度变量；关闭仍即时卸载，避免断言等待 */
+  .dt-collapse {
+    overflow: hidden;
+  }
+
+  .dt-collapse[data-state='open'] {
+    animation: dt-collapse-open var(--dt-motion-slow) var(--dt-motion-ease);
+  }
+
+  .dt-chevron {
+    transition: transform var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  /* Tab 与侧栏 / 底栏选中态 */
+  .dt-tab-motion {
+    transition:
+      background-color var(--dt-motion-fast) ease-out,
+      color var(--dt-motion-fast) ease-out,
+      box-shadow var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  .dt-nav-item,
+  .dt-nav-bottom {
+    transition:
+      background-color var(--dt-motion-fast) ease-out,
+      color var(--dt-motion-fast) ease-out;
+  }
+
+  /* 底栏选中项顶部 2px 指示条：只做 scaleX / opacity，不参与布局 */
+  .dt-nav-bottom {
+    position: relative;
+  }
+
+  .dt-nav-bottom::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    width: 20px;
+    height: 2px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0;
+    transform: translateX(-50%) scaleX(0.4);
+    transition:
+      opacity var(--dt-motion-fast) ease-out,
+      transform var(--dt-motion-fast) var(--dt-motion-ease);
+    pointer-events: none;
+  }
+
+  .dt-nav-bottom[aria-current='true']::after {
+    opacity: 1;
+    transform: translateX(-50%) scaleX(1);
+  }
+
+  /* 开关 / 勾选 / 下拉 / toast / 空态 / 加载页 */
+  .dt-switch-motion {
+    transition: background-color var(--dt-motion-fast) ease-out, border-color var(--dt-motion-fast) ease-out;
+  }
+
+  .dt-switch-thumb {
+    transition: transform var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  .dt-check-icon {
+    animation: dt-check-in var(--dt-motion-fast) var(--dt-motion-ease);
+  }
+
+  .dt-select-content[data-state='open'] {
+    animation: dt-select-in var(--dt-motion-fast) var(--dt-motion-ease);
+    transform-origin: var(--radix-select-content-transform-origin);
+  }
+
+  .dt-menu-in {
+    animation: dt-select-in var(--dt-motion-fast) var(--dt-motion-ease);
+    transform-origin: top right;
+  }
+
+  .dt-toast[data-mounted='true'] {
+    animation: dt-toast-in var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  .dt-toast[data-removed='true'] {
+    animation: dt-toast-out var(--dt-motion-fast) ease-in forwards;
+  }
+
+  .dt-empty-in {
+    animation: dt-card-in var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  .dt-screen-in {
+    animation: dt-fade-in var(--dt-motion-base) ease-out;
+  }
+
+  /* 忙碌蒙版与其中卡片淡入（原本只有旋转图标） */
+  .dt-busy-mask {
+    animation: dt-fade-in var(--dt-motion-base) ease-out;
+  }
+
+  .dt-busy-mask > span {
+    animation: dt-card-in var(--dt-motion-base) var(--dt-motion-ease);
+  }
+
+  /* 停用规则补一条：连延迟一起清零，避免 stagger 在「关闭动效」下仍逐项等待 */
+  [data-motion='off'] *,
+  [data-motion='off'] *::before,
+  [data-motion='off'] *::after {
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-motion='system'] *,
+    [data-motion='system'] *::before,
+    [data-motion='system'] *::after {
+      animation-delay: 0ms !important;
+      transition-delay: 0ms !important;
+    }
+  }
+
+  /* 停用 / 减少动态时也不做位移式 hover，避免「瞬间跳到新位置」 */
+  [data-motion='off'] .dt-card-motion:hover,
+  [data-motion='off'] .dt-btn-motion:hover,
+  [data-motion='off'] .dt-btn-motion:active {
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-motion='system'] .dt-card-motion:hover,
+    [data-motion='system'] .dt-btn-motion:hover,
+    [data-motion='system'] .dt-btn-motion:active {
+      transform: none;
+    }
+  }
+}
+/* ══ I-15 动效增强 结束 ══════════════════════════════════════════════ */
