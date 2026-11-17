@@ -30,6 +30,13 @@ const MAX_PENDING: usize = 32;
 const HEADER_LIMIT: usize = 16 * 1024;
 /// 读请求的超时：客户端连上却不发数据时及时放手。
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// 整个请求（头 + 体）必须在这段时间内读完：防止慢速逐字节灌入长期占住线程。
+const REQUEST_DEADLINE: Duration = Duration::from_secs(15);
+/// 同时处理的连接上限：每个连接一个线程，满了直接 503。
+const MAX_CONNECTIONS: usize = 16;
+/// 同一来源配对失败达到次数后，在窗口期内拒绝它的配对请求。
+const PAIR_FAILURE_LIMIT: u32 = 10;
+const PAIR_FAILURE_WINDOW_MS: u64 = 10 * 60 * 1000;
 /// accept 轮询间隔（非阻塞监听 + 运行标志）。
 const ACCEPT_POLL: Duration = Duration::from_millis(50);
 
@@ -71,6 +78,10 @@ struct Shared {
     queue: Arc<Mutex<VecDeque<LanSyncRequest>>>,
     waiters: Arc<Mutex<HashMap<u64, Sender<Reply>>>>,
     next_id: Arc<AtomicU64>,
+    /// 正在处理的连接数
+    active: Arc<std::sync::atomic::AtomicUsize>,
+    /// 来源 IP → (配对失败次数, 首次失败时刻)
+    pair_failures: Arc<Mutex<HashMap<IpAddr, (u32, u64)>>>,
 }
 
 impl Shared {
@@ -80,7 +91,27 @@ impl Shared {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             waiters: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(0)),
+            active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            pair_failures: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn pair_blocked(&self, ip: IpAddr, now: u64) -> bool {
+        let mut failures = self.pair_failures.lock().unwrap_or_else(|error| error.into_inner());
+        match failures.get(&ip) {
+            Some((_, first)) if now.saturating_sub(*first) > PAIR_FAILURE_WINDOW_MS => {
+                failures.remove(&ip);
+                false
+            }
+            Some((count, _)) => *count >= PAIR_FAILURE_LIMIT,
+            None => false,
+        }
+    }
+
+    fn record_pair_failure(&self, ip: IpAddr, now: u64) {
+        let mut failures = self.pair_failures.lock().unwrap_or_else(|error| error.into_inner());
+        let entry = failures.entry(ip).or_insert((0, now));
+        entry.0 += 1;
     }
 
     fn lock_queue(&self) -> std::sync::MutexGuard<'_, VecDeque<LanSyncRequest>> {
@@ -183,9 +214,19 @@ impl LanSyncServer {
 fn accept_loop(listener: TcpListener, shared: Shared) {
     while shared.running.load(Ordering::SeqCst) {
         match listener.accept() {
-            Ok((stream, remote)) => {
+            Ok((mut stream, remote)) => {
+                if shared.active.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                    let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
+                    write_json(&mut stream, 503, &error_body("busy", "连接过多，请稍后重试"));
+                    continue;
+                }
+                shared.active.fetch_add(1, Ordering::SeqCst);
                 let child = shared.clone();
-                std::thread::spawn(move || handle_connection(stream, remote, child));
+                std::thread::spawn(move || {
+                    let counter = child.active.clone();
+                    handle_connection(stream, remote, child);
+                    counter.fetch_sub(1, Ordering::SeqCst);
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(ACCEPT_POLL);
@@ -198,7 +239,7 @@ fn accept_loop(listener: TcpListener, shared: Shared) {
 fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) {
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
-    if !is_lan_ip(remote.ip()) {
+    if !is_lan_ip(remote.ip()) || (!cfg!(debug_assertions) && remote.ip().is_loopback()) {
         write_json(&mut stream, 403, &error_body("forbidden", "只接受同一局域网内的请求"));
         return;
     }
@@ -209,8 +250,14 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
             return;
         }
     };
-    if request.method == "OPTIONS" {
-        write_empty(&mut stream, 204);
+    let local_port = stream.local_addr().map(|addr| addr.port()).unwrap_or(0);
+    if let Err(message) = check_request_origin(&request, local_port) {
+        write_json(&mut stream, 403, &error_body("forbidden", message));
+        return;
+    }
+    let pairing = request.path == "/pair";
+    if pairing && shared.pair_blocked(remote.ip(), now_ms()) {
+        write_json(&mut stream, 429, &error_body("too_many_attempts", "配对失败次数过多，请稍后再试"));
         return;
     }
     match endpoint(&request.method, &request.path) {
@@ -249,7 +296,12 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
     }
 
     match receiver.recv_timeout(RESPONSE_TIMEOUT) {
-        Ok(reply) => write_json(&mut stream, reply.status, &reply.body),
+        Ok(reply) => {
+            if pairing && (reply.status == 401 || reply.status == 403) {
+                shared.record_pair_failure(remote.ip(), now_ms());
+            }
+            write_json(&mut stream, reply.status, &reply.body)
+        }
         Err(_) => {
             shared.lock_waiters().remove(&id);
             shared.lock_queue().retain(|item| item.id != id);
@@ -287,7 +339,32 @@ struct ParsedRequest {
     path: String,
     query: String,
     authorization: Option<String>,
+    origin: Option<String>,
+    host: Option<String>,
     body: String,
+}
+
+/// 只服务本应用的原生客户端（桌面 / Android 都走原生 HTTP，不带 Origin）：
+/// - 带 `Origin` 的是浏览器网页发起的跨域请求，一律拒绝（同一局域网的任意网页都能打过来）；
+/// - `Host` 必须是 IPv4 字面量加本服务端口：DNS 重绑定用的是域名，过不了这一关；
+///   不要求等于广播的那块网卡，多网卡、手输地址都不受影响。
+fn check_request_origin(request: &ParsedRequest, local_port: u16) -> Result<(), &'static str> {
+    if request.origin.is_some() {
+        return Err("不接受浏览器网页发起的请求");
+    }
+    let Some(host) = request.host.as_deref() else {
+        return Err("缺少 Host");
+    };
+    let Some((ip, port)) = host.rsplit_once(':') else {
+        return Err("Host 必须带端口");
+    };
+    if ip.parse::<Ipv4Addr>().is_err() {
+        return Err("Host 必须是 IP 地址");
+    }
+    if port.parse::<u16>().ok() != Some(local_port) {
+        return Err("Host 端口不正确");
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -296,15 +373,21 @@ struct Head {
     path: String,
     query: String,
     authorization: Option<String>,
+    origin: Option<String>,
+    host: Option<String>,
     content_length: usize,
 }
 
 fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, (u16, String)> {
+    let started = std::time::Instant::now();
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 1024];
     let header_end = loop {
         if let Some(position) = find_header_end(&buffer) {
             break position;
+        }
+        if started.elapsed() > REQUEST_DEADLINE {
+            return Err((408, "请求发送太慢".to_string()));
         }
         if buffer.len() > HEADER_LIMIT {
             return Err((431, "请求头过大".to_string()));
@@ -324,6 +407,9 @@ fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, (u16, String)> 
         body.truncate(head.content_length);
     }
     while body.len() < head.content_length {
+        if started.elapsed() > REQUEST_DEADLINE {
+            return Err((408, "请求发送太慢".to_string()));
+        }
         match stream.read(&mut chunk) {
             Ok(0) => return Err((400, "请求体不完整".to_string())),
             Ok(read) => body.extend_from_slice(&chunk[..read]),
@@ -336,6 +422,8 @@ fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, (u16, String)> 
         path: head.path,
         query: head.query,
         authorization: head.authorization,
+        origin: head.origin,
+        host: head.host,
         body,
     })
 }
@@ -370,6 +458,8 @@ fn parse_head(text: &str) -> Result<Head, (u16, String)> {
         return Err((400, "请求路径不正确".to_string()));
     }
     let mut authorization = None;
+    let mut origin = None;
+    let mut host = None;
     let mut content_length = 0usize;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
@@ -379,6 +469,10 @@ fn parse_head(text: &str) -> Result<Head, (u16, String)> {
         let value = value.trim();
         if name.eq_ignore_ascii_case("authorization") {
             authorization = Some(value.to_string());
+        } else if name.eq_ignore_ascii_case("origin") {
+            origin = Some(value.to_string());
+        } else if name.eq_ignore_ascii_case("host") {
+            host = Some(value.to_string());
         } else if name.eq_ignore_ascii_case("content-length") {
             let parsed: usize = value
                 .parse()
@@ -394,6 +488,8 @@ fn parse_head(text: &str) -> Result<Head, (u16, String)> {
         path: path.to_string(),
         query: query.to_string(),
         authorization,
+        origin,
+        host,
         content_length,
     })
 }
@@ -456,12 +552,9 @@ fn write_json(stream: &mut TcpStream, status: u16, body: &str) {
     let _ = stream.flush();
 }
 
-/// 浏览器端要能当发起方，所以每个响应都带 CORS 头。
+/// 不再给 CORS 许可：浏览器网页不是本服务的客户端。
 fn cors_headers() -> &'static str {
-    "Access-Control-Allow-Origin: *\r\n\
-     Access-Control-Allow-Headers: Authorization, Content-Type\r\n\
-     Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-     Cache-Control: no-store\r\n"
+    "Cache-Control: no-store\r\n"
 }
 
 /// 只接受局域网来源：私网、链路本地与环回。
@@ -713,7 +806,7 @@ mod tests {
         panic!("请求没有进入队列");
     }
 
-    fn send(address: &str, raw: &'static [u8]) -> String {
+    fn send(address: &str, raw: &[u8]) -> String {
         let mut stream = TcpStream::connect(address).expect("应能连上本机监听");
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
@@ -730,10 +823,10 @@ mod tests {
         assert!(server.listen_info().listening, "bind 成功后必须报告 listening=true");
         let address = server.address();
         let client = std::thread::spawn(move || {
-            send(
-                &address,
-                b"POST /pair HTTP/1.1\r\nHost: lan\r\nContent-Type: application/json\r\nContent-Length: 17\r\n\r\n{\"code\":\"123456\"}",
-            )
+            let raw = format!(
+                "POST /pair HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: 17\r\n\r\n{{\"code\":\"123456\"}}"
+            );
+            send(&address, raw.as_bytes())
         });
         let request = wait_for_request(&server);
         assert_eq!(request.method, "POST");
@@ -746,7 +839,7 @@ mod tests {
         let response = client.join().expect("客户端线程应结束");
         assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
         assert!(response.contains("{\"token\":\"abc\"}"), "{response}");
-        assert!(response.contains("Access-Control-Allow-Origin: *"), "{response}");
+        assert!(!response.contains("Access-Control-Allow-Origin"), "不再给浏览器跨域许可：{response}");
         server.stop();
     }
 
@@ -754,12 +847,13 @@ mod tests {
     fn options_and_unknown_path_are_answered_without_ts() {
         let server = LanSyncServer::start_on(Ipv4Addr::LOCALHOST).expect("应能监听环回地址");
         let address = server.address();
+        // 浏览器预检带 Origin：直接拒绝
         let options = send(
             &address,
-            b"OPTIONS /export HTTP/1.1\r\nHost: lan\r\nAccess-Control-Request-Method: GET\r\n\r\n",
+            format!("OPTIONS /export HTTP/1.1\r\nHost: {address}\r\nOrigin: http://evil.example\r\nAccess-Control-Request-Method: GET\r\n\r\n").as_bytes(),
         );
-        assert!(options.starts_with("HTTP/1.1 204"), "{options}");
-        let missing = send(&address, b"GET /nope HTTP/1.1\r\nHost: lan\r\n\r\n");
+        assert!(options.starts_with("HTTP/1.1 403"), "{options}");
+        let missing = send(&address, format!("GET /nope HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes());
         assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
         assert!(missing.contains("\"not_found\""), "{missing}");
         assert!(server.poll().is_none(), "这些请求不应进入 TS 队列");
@@ -772,5 +866,35 @@ mod tests {
         assert!(server.respond(42, 200, "{}".to_string()).is_err());
         assert!(server.respond(1, 99, "{}".to_string()).is_err());
         server.stop();
+    }
+
+    #[test]
+    fn browser_and_rebinding_requests_are_rejected() {
+        let server = LanSyncServer::start_on(Ipv4Addr::LOCALHOST).expect("应能监听环回地址");
+        let address = server.address();
+        let port = address.rsplit_once(':').unwrap().1.to_string();
+        for raw in [
+            format!("GET /ping HTTP/1.1\r\nHost: {address}\r\nOrigin: http://192.168.1.9\r\n\r\n"),
+            format!("GET /ping HTTP/1.1\r\nHost: rebind.example:{port}\r\n\r\n"),
+            format!("GET /ping HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n"),
+            "GET /ping HTTP/1.1\r\n\r\n".to_string(),
+        ] {
+            let response = send(&address, raw.as_bytes());
+            assert!(response.starts_with("HTTP/1.1 403"), "{raw:?} → {response}");
+        }
+        assert!(server.poll().is_none(), "被拒请求不进 TS 队列");
+        server.stop();
+    }
+
+    #[test]
+    fn pair_failures_from_one_address_are_throttled() {
+        let shared = Shared::new();
+        let ip: IpAddr = Ipv4Addr::new(192, 168, 1, 9).into();
+        for _ in 0..PAIR_FAILURE_LIMIT {
+            assert!(!shared.pair_blocked(ip, 1_000));
+            shared.record_pair_failure(ip, 1_000);
+        }
+        assert!(shared.pair_blocked(ip, 2_000));
+        assert!(!shared.pair_blocked(ip, 1_000 + PAIR_FAILURE_WINDOW_MS + 1), "窗口过后解除");
     }
 }

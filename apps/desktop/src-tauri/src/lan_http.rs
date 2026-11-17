@@ -205,7 +205,8 @@ pub fn decode_chunked(raw: &[u8]) -> Result<Vec<u8>, String> {
                 }
             }
         }
-        if out.len() + size > MAX_RESPONSE_BYTES {
+        // 对方给的块长可能大得离谱：加法溢出在 debug 构建（dev 渠道）里会直接 panic
+        if out.len().checked_add(size).map_or(true, |total| total > MAX_RESPONSE_BYTES) {
             return Err("响应体超过 20MB 上限".to_string());
         }
         let data_end = index
