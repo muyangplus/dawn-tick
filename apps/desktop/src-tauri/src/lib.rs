@@ -179,8 +179,20 @@ fn resolve_data_dir() -> (PathBuf, Option<String>) {
     choose_data_dir(default_data_dir(), custom_storage_path())
 }
 
+/// 本次运行实际使用的数据目录：首次解析后固定。
+/// 每次重新解析会在两种情况下与已打开的数据库分家：改了存储位置但还没重启（备份、恢复请求落到新目录），
+/// 以及自定义目录中途变得不可写（U 盘拔出）时静默换回默认目录。
 fn data_dir() -> PathBuf {
-    resolve_data_dir().0
+    #[cfg(not(test))]
+    {
+        static ACTIVE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        ACTIVE.get_or_init(|| resolve_data_dir().0).clone()
+    }
+    // 单测会在同一进程里换环境变量指向不同目录：不缓存
+    #[cfg(test)]
+    {
+        resolve_data_dir().0
+    }
 }
 
 fn database_file(dir: &std::path::Path) -> PathBuf {
@@ -202,8 +214,10 @@ fn database_url() -> String {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StorageInfo {
-    /// 实际使用的数据目录
+    /// 按当前配置解析出的数据目录（改了存储位置后，重启前与 active_dir 不同）
     dir: String,
+    /// 本次运行实际在用的数据目录
+    active_dir: String,
     /// 没设置自定义位置时使用的目录
     default_dir: String,
     /// 用户填的自定义位置（原样返回，便于回填输入框）
@@ -240,6 +254,7 @@ fn storage_info_of(dir: &std::path::Path, fallback_reason: Option<String>, copie
     }
     StorageInfo {
         dir: dir.to_string_lossy().to_string(),
+        active_dir: data_dir().to_string_lossy().to_string(),
         default_dir: default_data_dir().to_string_lossy().to_string(),
         custom_path: custom_storage_path().unwrap_or_default(),
         portable: is_portable_layout(),

@@ -87,14 +87,19 @@ fn actions_for_kind(kind: &str) -> &'static [ReminderAction] {
     }
 }
 
-fn menu_id(index: usize, action: ReminderAction) -> String {
-    format!("{ITEM_PREFIX}{index}:{}", action.id())
+/// 菜单项 id 带上提醒自身的 id（而不是列表下标）：菜单打开期间前端刷新了待提醒列表，
+/// 按下标就会对错误的提醒执行动作。动作放前面，提醒 id 里可以有冒号。
+fn menu_id(reminder_id: &str, action: ReminderAction) -> String {
+    format!("{ITEM_PREFIX}do:{}:{reminder_id}", action.id())
 }
 
-fn parse_menu_id(id: &str) -> Option<(usize, ReminderAction)> {
-    let rest = id.strip_prefix(ITEM_PREFIX)?;
-    let (index, action) = rest.split_once(':')?;
-    Some((index.parse().ok()?, ReminderAction::from_id(action)?))
+fn parse_menu_id(id: &str) -> Option<(String, ReminderAction)> {
+    let rest = id.strip_prefix(ITEM_PREFIX)?.strip_prefix("do:")?;
+    let (action, reminder_id) = rest.split_once(':')?;
+    if reminder_id.is_empty() {
+        return None;
+    }
+    Some((reminder_id.to_string(), ReminderAction::from_id(action)?))
 }
 
 /// 菜单标题过长会撑坏托盘；按字符截断而不是按字节。
@@ -127,7 +132,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 tray_title(&item.title),
             );
             for action in actions_for_kind(&item.kind) {
-                group = group.text(menu_id(index, *action), action.label());
+                group = group.text(menu_id(&item.id, *action), action.label());
             }
             let built = group.build()?;
             reminders = reminders.item(&built);
@@ -191,10 +196,11 @@ pub fn clear_pending_reminder(app: AppHandle, id: String) -> Result<(), String> 
 
 /// 托盘菜单事件：命中提醒动作时 emit 给前端并返回 true，其余交给 `lib.rs` 的原有分支。
 pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
-    let Some((index, action)) = parse_menu_id(id) else {
+    let Some((reminder_id, action)) = parse_menu_id(id) else {
         return false;
     };
-    let Some(item) = pending_snapshot().get(index).cloned() else {
+    // 菜单打开期间该提醒已被处理或移除：不再对别的提醒执行动作
+    let Some(item) = pending_snapshot().into_iter().find(|item| item.id == reminder_id) else {
         return true;
     };
     let payload = ReminderActionPayload {
@@ -235,13 +241,13 @@ mod tests {
     #[test]
     fn menu_ids_round_trip() {
         for action in EVENT_ACTIONS {
-            let id = menu_id(3, *action);
-            assert_eq!(parse_menu_id(&id), Some((3, *action)));
+            let id = menu_id("global-c1:1790000000000", *action);
+            assert_eq!(parse_menu_id(&id), Some(("global-c1:1790000000000".to_string(), *action)));
         }
         assert_eq!(parse_menu_id("reminder:group:3"), None);
         assert_eq!(parse_menu_id("show_main"), None);
-        assert_eq!(parse_menu_id("reminder:x:snooze"), None);
-        assert_eq!(parse_menu_id("reminder:1:dismiss"), None);
+        assert_eq!(parse_menu_id("reminder:do:snooze:"), None);
+        assert_eq!(parse_menu_id("reminder:do:dismiss:abc"), None);
     }
 
     #[test]
