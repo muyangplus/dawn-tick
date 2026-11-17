@@ -847,8 +847,8 @@ function installCanvas2dStub(): () => void {
   };
 }
 
-export async function runSmoke(): Promise<SmokeResult[]> {
-  const results: SmokeResult[] = [];
+/** results 由调用方传入：中途抛错时已收集的断言不丢失。 */
+export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult[]> {
   const check = (name: string, ok: boolean, detail = ''): void => {
     results.push({ name, ok, detail });
   };
