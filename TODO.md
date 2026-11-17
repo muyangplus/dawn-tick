@@ -1,19 +1,18 @@
 # TODO
 
-> 当前版本 `v0.6.4`（2026-10-24 测试版 `v0.6.4-beta.1`）。已完成任务的详细位置/证据/改法不再保留（查 git log 与 CHANGELOG.md）；本文件只留待验收清单、未完成方向、决策与边界。
-> 历史事实索引（行号类快照）已随重构完成而移除；需要时按函数名 / `data-role` / 文案锚点检索。
+> 当前版本 `v0.7.0`（2026-11-17 正式版）。已完成任务的细节不再保留（查 git log 与 CHANGELOG.md）；本文件只留现状、待验收清单、未完成方向、决策与边界。
 
 ## 0. 现状快照
 
-- **版本**：`0.6.4`（`versionCode 604`；已发测试版 `v0.6.4-beta.1`）。已发布 `v0.1.0`、`v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.6.0`、`v0.6.1`、`v0.6.2`、`v0.6.3`、`v0.6.4-beta.1`；`dev` 分支推送会自动滚动发布 `dev-latest`。
-- **验证**：`pnpm test`（core 276 / web 487 / tools 36）、`pnpm ui:smoke`（430 项，固定 `Asia/Shanghai` 与 2026-10-18T18:30 时钟）、`tools/verify/verify-all.ps1`（18 项）、小组件契约检查。
-- **CI**：四个 job——`node`（typecheck / test / 界面冒烟）、`schema`、`rust`、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
+- **版本**：`0.7.0`（`versionCode 700`）。正式版 `v0.1.0`、`v0.4.0`、`v0.4.1`、`v0.5.0`、`v0.6.0`–`v0.6.3`、`v0.7.0`；测试版 `v0.2.0-beta.1`、`v0.3.0-beta.1`、`v0.6.4-beta.1`、`v0.6.5`–`v0.6.12`（纯版本号 + `[prerelease]`）。`dev` 分支推送自动滚动发布 `dev-latest`。
+- **验证**：`pnpm test`（core 314 / web 658 / core-sqlite 314 / tools 65）、`pnpm ui:smoke`（489 项，固定 `Asia/Shanghai` 与时钟）、`cargo test`（112 + 6）、`tools/verify/verify-all.ps1`、小组件契约检查；Windows 专属 Rust 代码可在 Linux 上 `cargo check --target x86_64-pc-windows-gnu` 交叉检查。
+- **CI**：`node`（typecheck / test / 冒烟 / a11y / 小组件契约 / CHANGELOG）、`schema`（迁移回放 + 工作流断言）、`rust`（含 Windows 上的许可证清单校验）、`android`（编译校验；失败时把 gradle 日志推到 `ci-debug` 分支）。
 - **本地安卓编译**（无需 CI 往返）：`JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6`、`ANDROID_HOME=E:\work\dsh\android-sdk`，在 `apps/mobile/android` 跑 `gradlew.bat :app:compileDebugKotlin --no-daemon`。
-- **结构**：`App.tsx` 449 行；`settings-view.tsx` 212 行 / `devices-view.tsx` 176 行，卡片在 `screens/settings/`；`data.ts` 732 行（`loadAppData` 70 行）；`app/` 拆启动编排、会话、课表动作、副作用、恢复；`screens/{import,timetable,settings}/` 均按职责拆分，单文件 ≤400 行。
+- **结构**：core 写入按领域拆在 `mutations/`，学期快照 `loadSemesterSnapshot` + `expandInputOf` 一次读齐；设置为描述表；网页表格识别共用 `import/html-grid.ts`。web 的 `data.ts`、`schedule-cards.tsx` 为汇总导出；大表单的状态与回填/重置逻辑在旁边的纯模块里测试。Rust 按存储、备份、日志、实例、托盘、自启、提权、窗口几何、教务窗口拆模块，`lib.rs` 只留命令注册与迁移。冒烟的种子与桩在 `smoke/kit.tsx`。
 - **运维工具**：`tools/repair/repair-db.mjs --dir=<数据目录> [--dry-run] [--stage=<快照>]` 检查/恢复损坏数据库；正常启动也会自检并从最新健康快照恢复。
-- **单点**：文案 `copy/zh.ts`；节次范围 `lib/format.ts`；课程色 `core/colors.ts`；原生桥 `lib/native.ts`（命令与 Rust 一一对应）；插件契约 `lib/plugins.ts` + `apps/mobile/docs/plugins.contract.md`；`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`；局域网协议 `apps/mobile/docs/lan-sync.contract.md`。
+- **单点**：文案 `copy/zh.ts`；节次范围 `lib/format.ts`；节次上限 `MAX_PERIODS`（40，core `timetable.ts`）；课程色 `core/colors.ts`；原生桥 `lib/native.ts`（命令与 Rust 一一对应）；插件契约 `lib/plugins.ts` + `apps/mobile/docs/plugins.contract.md`；`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`；局域网协议 `apps/mobile/docs/lan-sync.contract.md`。
 
-## 1. 已交付（截至 0.6.0，均已通过 CI）
+## 1. 已交付（均已通过 CI）
 
 | 批次 | 内容 | 版本 |
 |---|---|---|
@@ -23,13 +22,15 @@
 | A 系列（18 条） | 时间/颜色/文案单源、重叠与钟点纯函数、原生桥收口、大文件拆分、组件基元、快照索引、CI 冒烟与安卓编译、视图过渡等（A-16 按重合度关闭） | 0.4.1 |
 | 体验反馈（15 条） | 更新判定与 Markdown 弹窗、三端自动更新、渠道警告、悬浮窗自适应与拉伸、时区偏移与搜索、默认周视图、课表滚动与拖动、调课改考试、导出路径、导入重构、局域网同步一期、统一动效 | 0.5.0 |
 | R 系列（11 条） | ICS 导出、考试倒计时悬浮窗、主题联动悬浮窗与小组件、提醒动作、更新运营（忽略/回滚）、局域网二期（发现/二维码/预览/自动同步）、备份导出加密、课表图片与 PDF、学期统计、WebDAV 凭据加密、导入诊断 | 0.6.0 |
+| 分发与稳定性 | 国内下载源（Gitee / assets 仓库、`version.json` v2）、安卓 ABI 拆包与瘦身、扫一扫、帮助模块、更新弹窗精简、全局 busy 看门狗与原生超时、局域网 deviceId 与离线退避 | 0.6.5–0.6.12 / 0.7.0 |
+| 审计重构 | 提醒投递与对账、备份导入校验与合并、ICS / 网页表格解析、级联删除、夏令时、设置校验；导出与更新包路径收口、CSP、局域网防重绑定、教务窗口校验值；发布同一构建提交、dev-latest 原地更新；core / web / Rust / 冒烟按职责拆分，测试按目录重组 | 0.7.0 |
 
 ## 2. 待验收（需要真机 / 实机证据）
 
-- **Windows 桌面**：悬浮窗按内容自适应与拉伸记忆、双击唤主窗口、托盘「提醒」菜单动作、自动更新下载→启动安装、备份/课表导出的「打开所在位置」、DPAPI 凭据加密后的 WebDAV 同步。
-- **Android 真机**：通知动作（贪睡/完成/勿扰）、开机与杀进程后的提醒投递、APK 自动更新与系统安装器、导出分享与「打开所在位置」、Keystore 凭据加密、小组件主题配色与「还有 N 节」。
-- **双设备**：局域网同步配对、UDP 自动发现、预览后合并、30 分钟自动同步；防火墙放行。
-- **发布链路**：`v0.6.0` Release 产物与 `.sha256`、`version.json` 可访问；自动更新能从 0.5.0 升到 0.6.0。
+- **Windows 桌面**：悬浮窗按内容自适应与拉伸记忆、双击唤主窗口、托盘「提醒」菜单动作、自动更新下载→启动安装（0.7.0 起更新包写私有暂存目录并复核 SHA-256）、导出改为原生「另存为」后的备份/课表/日志导出与「打开所在位置」、教务导入窗口带校验值交回、DPAPI 凭据加密后的 WebDAV 同步、启用 CSP 后各页面无白屏。
+- **Android 真机**：通知动作（贪睡/完成/勿扰）、提醒一次排完前瞻窗口并与系统已排通知对账（删课/改时后不再按旧时刻弹）、开机与杀进程后的提醒投递、APK 自动更新与系统安装器、导出分享、Keystore 凭据加密、小组件主题配色与「还有 N 节」、beta/release 包确认 WebView 远程调试已关。
+- **双设备**：局域网同步配对、UDP 自动发现、deviceId 认回、预览后合并（两边当前学期不同时的选择弹窗）、30 分钟自动同步；防火墙放行；同步包不再带本机专属设置。
+- **发布链路**：`v0.7.0` Release 产物、`SHA256SUMS.txt`、`version.json` v2 与 assets 仓库同步；自动更新能从 0.6.12 测试版与 0.6.3 正式版升到 0.7.0；`dev-latest` 原地更新时客户端始终能下到完整一版。
 
 ## 3. 未完成方向
 
@@ -58,7 +59,7 @@
 5. **平台扩展**：iOS（能力抽象已就绪）、PWA 可安装（Q8 目前不做）。
 6. **数据安全二期**：备份口令加密的找回策略、快照加密（后台无口令，需设计）。
 
-## 4. 已定决策（Q1–Q33）
+## 4. 已定决策
 
 | 编号 | 结论 |
 |---|---|
@@ -67,6 +68,7 @@
 | Q13–Q19 | 旧库只检测提示；A-16 先量重合度；R-05 不落盘凭据；R-06 只做轮询；ICS 导出勾选模块；社交/成绩/内购不立项；P0 按数据风险排序 |
 | Q20–Q26 | A-16 量后关闭；P1/P2 发 0.4.0、A 系列发 0.4.1；冒烟固定时区；Full Changelog 由发布脚本拼；侧列保留；移动端 Sheet；R-02 并入 P1-02 |
 | Q27–Q33 | 下一阶段顺序；三端自动更新；局域网一期；动画只做动效；悬浮窗自适应+记忆；渠道警告频率；时区偏移+搜索 |
+| 0.7.0 审计 | 本机专属设置（WAL、开机自启、启动隐藏、WebDAV 账号）不随备份与同步走；导入时两边当前学期不同由用户在弹窗里选；本轮不做更新包签名；beta 标签方案维持现状；允许破坏性调整（迁移 006、调课动作只留 move / cancel） |
 
 ## 5. 不建议现在做
 
@@ -76,11 +78,18 @@
 4. 全部 Dialog 改底部 Sheet——只把高频短表单改成 Sheet。
 5. PWA / Service Worker 与 Web mini 入口裁剪。
 6. 主题间距密度重做、账号与社交体系。
-7. Rust `lib.rs` 拆模块；「管理员权限注册开机启动」写 HKLM 需 UAC 链路。
-8. 行级同步（`core/sync.ts` 已删除，跨设备一律走整包导入）、局域网后台常驻。
+7. 「管理员权限注册开机启动」写 HKLM——需 UAC 链路。
+8. 行级同步（跨设备一律走整包导入）、局域网后台常驻。
 9. 学校名录双数据源合并——依赖仓库外生成链。
 10. 便携版数据目录 ACL/WebView2 写权限问题——现阶段靠提权与「已有实例」提示兜底。
-10. 冒烟拆 `bootstrap` + `cases/*`、i18n 全量 `t()`、状态管理库、卡片注册表插件化。
+11. i18n 全量 `t()`、状态管理库、卡片注册表插件化。
+12. 更新包 Ed25519 签名——目前靠 HTTPS + `SHA256SUMS.txt` + 安装前复核；要做需先定密钥保管与轮换。
+
+### 可做的整理（不影响行为）
+
+- Rust 测试从 `lib.rs` 挪进各自模块。
+- 冒烟按场景拆成互相独立的用例（现在共用一次启动的状态，只抽了 `smoke/kit.tsx`）。
+- 工作流里的 action 固定到提交号；CI 失败日志改存构建产物，替代推 `ci-debug` 分支。
 
 ## 6. 发版与批次记录
 
@@ -97,8 +106,10 @@
 | `v0.6.2` | 设置页与设备页配置卡片各拆为 7 张、手风琴展开；`dev` 推送自动滚动发布 `dev-latest` |
 | `v0.6.3` | Windows 更新区分便携版/安装版；局域网同步修复安卓配对卡死、Windows 代理导致失败、多网卡自动选择与切换 |
 | `v0.6.4-beta.1` | 设置页与设备页改为分组导航 + 下钻；关于页新增「近期更新」（内置 CHANGELOG）；beta 标签允许不带序号（发布时指定，默认 1） |
+| `v0.6.5`–`v0.6.8`（测试版） | 安卓原生诊断日志、小组件读取失败提示；国内下载源（Gitee、assets 仓库）、`version.json` v2、按渠道探测下载源 |
+| `v0.6.9`–`v0.6.12`（测试版） | beta 渠道可升到更高正式版；扫一扫、局域网网络切换与 `/ping` 预检；帮助模块、更新弹窗精简；全局 busy 看门狗与原生调用超时、安卓局域网地址兜底 |
+| `v0.7.0` | 审计重构：提醒、导入、备份合并、ICS、级联删除、夏令时等数据正确性修复；安全收口；发布链路同一提交与原地更新；局域网 deviceId、安卓 ABI 拆包；各端代码按职责拆分 |
 
-执行方式：每任务独立 `task/<id>` 分支 + worktree，按批次并行；每任务跑 typecheck + 相关测试，批次末跑全量测试与冒烟；跨任务冲突由 Lead 合并解决。
 
 ## 7. 验证与发布命令
 
@@ -108,7 +119,7 @@ pnpm typecheck && pnpm test && pnpm ui:smoke
 cargo check --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 node tools/verify/check-widget-contract.mjs
-node tools/verify/verify-all.ps1
+pwsh tools/verify/verify-all.ps1
 node tools/release/version.mjs --check
 node tools/release/changelog.mjs --check
 # 本地安卓编译（Windows）
@@ -120,7 +131,10 @@ gradlew.bat :app:compileDebugKotlin --no-daemon
 node tools/repair/repair-db.mjs --dir=out-local --dry-run
 node tools/repair/repair-db.mjs --dir=out-local
 node tools/repair/repair-db.mjs --dir=out-local --stage=dawn-tick-20261025-204530.db
-# 发版：改版本号 → 切 CHANGELOG 段 → 推 dev 与标签
-node tools/release/version.mjs 0.6.1
-git tag v0.6.1 && git push origin dev v0.6.1
+# 发版：改版本号 → 切 CHANGELOG 段 → 推 dev → PR 合入 main → 在 main 上打标签
+node tools/release/version.mjs 0.7.0
+git push origin dev            # 然后开 dev → main 的 PR 并合并
+git fetch origin main && git tag v0.7.0 origin/main && git push origin v0.7.0
+# 测试版：纯版本号标签 + 说明带 [prerelease]
+git tag -a v0.7.1 -m "[prerelease] 0.7.1 测试版" origin/main && git push origin v0.7.1
 ```
