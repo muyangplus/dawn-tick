@@ -5,6 +5,7 @@ import {
   applyPackage,
   buildPackage,
   davConfigured,
+  davUploadTimeoutMs,
   downloadAndApply,
   maybeAutoSync,
   normalizeDavUrl,
@@ -349,4 +350,30 @@ test('自动同步遇到解不开的密码直接报错', async () => {
     restore();
     setSecretStoreForTests(undefined);
   }
+});
+
+test('B1 服务器不响应时探测在超时后返回可读错误，不无限等待', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const original = globalThis.fetch;
+  globalThis.fetch = ((_input: RequestInfo | URL, init: RequestInit = {}) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    })) as typeof fetch;
+  try {
+    const pending = remoteStatus(settings);
+    // 让请求先挂上 abort 监听，再推进时钟
+    await Promise.resolve();
+    await Promise.resolve();
+    t.mock.timers.tick(15_000);
+    const status = await pending;
+    assert.equal(status.ok, false);
+    assert.match(status.error ?? '', /15 秒内没有响应/);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('B1 上传超时随包体积放宽', () => {
+  assert.equal(davUploadTimeoutMs(0), 60_000);
+  assert.ok(davUploadTimeoutMs(10_000_000) > 200_000);
 });

@@ -77,12 +77,32 @@ export function remoteUrl(settings: Pick<AppSettings, 'webdavUrl'>, name: string
   return `${normalizeDavUrl(settings.webdavUrl)}/${name}`;
 }
 
-async function davFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  if (supportsNativeHttp()) {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    return tauriFetch(url, init);
+/** 探测类请求的超时；上传按包体积另算。 */
+const DAV_PROBE_TIMEOUT_MS = 15_000;
+const DAV_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+/** 上传超时：基础 60 秒，再按约 50 KB/s 的最低速度给足传输时间。 */
+export function davUploadTimeoutMs(bytes: number): number {
+  return 60_000 + Math.ceil(bytes / 50_000) * 1000;
+}
+
+/** 带超时的请求：用 AbortController + setTimeout，旧版 WebView 没有 AbortSignal.timeout 也能用。 */
+async function davFetch(url: string, init: RequestInit = {}, timeoutMs = DAV_PROBE_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const request = { ...init, signal: controller.signal };
+    if (supportsNativeHttp()) {
+      const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+      return await tauriFetch(url, request);
+    }
+    return await globalThis.fetch(url, request);
+  } catch (cause: unknown) {
+    if (controller.signal.aborted) throw new Error(`WebDAV 服务器 ${Math.round(timeoutMs / 1000)} 秒内没有响应`);
+    throw cause;
+  } finally {
+    clearTimeout(timer);
   }
-  return globalThis.fetch(url, init);
 }
 
 export interface DavStatus {
@@ -200,7 +220,7 @@ export async function uploadPackage(
         'Content-Type': 'application/zip',
       },
       body: new Uint8Array(bytes) as unknown as BodyInit,
-    });
+    }, davUploadTimeoutMs(bytes.length));
     if (!response.ok) {
       return { ok: false, name, bytes: bytes.length, error: `服务器返回 ${response.status}` };
     }
@@ -233,10 +253,11 @@ export async function downloadPackage(
     return { ok: false, name, bytes: null, error: '请先填写 WebDAV 地址' };
   }
   try {
-    const response = await davFetch(remoteUrl(settings, name), {
-      method: 'GET',
-      headers: { Authorization: await davAuthorization(settings) },
-    });
+    const response = await davFetch(
+      remoteUrl(settings, name),
+      { method: 'GET', headers: { Authorization: await davAuthorization(settings) } },
+      DAV_DOWNLOAD_TIMEOUT_MS,
+    );
     if (!response.ok) {
       return { ok: false, name, bytes: null, error: `服务器返回 ${response.status}` };
     }
