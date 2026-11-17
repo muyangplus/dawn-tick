@@ -7,6 +7,7 @@ import {
   dateWallClockToEpoch,
   dayOfWeek,
   diffDays,
+  epochFromParts,
   formatDate,
   formatDateTime,
   formatTime,
@@ -90,4 +91,12 @@ test('HH:MM 加分钟跨天回绕', () => {
   assert.equal(plusMinutesText('23:30', 45), '00:15');
   assert.equal(plusMinutesText('23:30', 60), '00:30');
   assert.equal(plusMinutesText('01:00', -90), '23:30', '负偏移不前移成非法时刻');
+});
+
+test('夏令时跳过的不存在时刻向后顺延，重复时刻取较早一次', () => {
+  const zone = 'America/New_York';
+  const gap = epochFromParts({ year: 2026, month: 3, day: 8, hour: 2, minute: 30, second: 0 }, zone);
+  assert.equal(formatDateTime(gap, zone), '2026-03-08 03:30');
+  const repeated = epochFromParts({ year: 2026, month: 11, day: 1, hour: 1, minute: 30, second: 0 }, zone);
+  assert.equal(new Date(repeated).toISOString(), '2026-11-01T05:30:00.000Z');
 });
