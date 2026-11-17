@@ -124,8 +124,9 @@ test('下一节课取当前时刻之后的最近一次', async () => {
   const items = expand(await buildInput(storage, '2026-09-14', '2026-10-30'));
   const next = nextOccurrence(items, Date.UTC(2026, 8, 21, 0, 30, 0));
   assert.ok(next !== undefined);
-  assert.equal(next.date, '2026-09-25');
-  assert.equal(next.courseName, '大学英语');
+  // 09-25（周五）是内置中秋假期：大学英语停上，下一节顺延到下周一
+  assert.equal(next.date, '2026-09-28');
+  assert.equal(next.courseName, '高等数学');
 });
 
 test('正在上的课取开始已到、结束未到的那一节', async () => {
@@ -172,4 +173,79 @@ test('同一天多来源按优先级取一条', () => {
     { on_date: '2026-10-01', type: 'holiday', as_day_of_week: null, source: 'from_school' },
   ];
   assert.equal(resolveDayKind(kinds).get('2026-10-01')?.source, 'manual');
+});
+
+test('A6 排课自定义时间优先于节次时间；调课改了节次则按新节次', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const schedule = await storage.collection<Record<string, unknown>>('course_schedules').get('s-1');
+  await storage.collection('course_schedules').put({ ...schedule, start_time: '19:00', end_time: '20:30' });
+  const [item] = expand(await buildInput(storage, '2026-09-21', '2026-09-21'));
+  assert.equal(item?.startAt, Date.UTC(2026, 8, 21, 11, 0, 0));
+  assert.equal(item?.endAt, Date.UTC(2026, 8, 21, 12, 30, 0));
+
+  await storage.collection('events').put(
+    eventRow('e-p', 'reschedule', {
+      on_date: '2026-09-28',
+      ref_schedule_id: 's-1',
+      action: 'move',
+      new_date: '2026-09-28',
+      new_period_start: 3,
+      new_period_end: 4,
+    }),
+  );
+  const [moved] = expand(await buildInput(storage, '2026-09-28', '2026-09-28'));
+  assert.equal(moved?.startAt, Date.UTC(2026, 8, 28, 2, 0, 0), '第 3 节 10:00');
+});
+
+test('A7 内置法定节假日进入展开：国庆当天的课不出现', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  // 2026-10-05 周一（国庆假期内），高数原本每周一上
+  const items = expand(await buildInput(storage, '2026-10-05', '2026-10-05'));
+  assert.deepEqual(items, []);
+});
+
+test('A7 用户「设为非假日」覆盖内置假期', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await storage.collection('events').put(eventRow('e-w', 'workday', { on_date: '2026-10-05' }));
+  const items = expand(await buildInput(storage, '2026-10-05', '2026-10-05'));
+  assert.equal(items.length, 1);
+});
+
+test('A8 调课：移入窗口的课出现、移出窗口的课不出现', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await storage.collection('events').put(
+    eventRow('e-mv', 'reschedule', {
+      on_date: '2026-09-14',
+      ref_schedule_id: 's-1',
+      action: 'move',
+      new_date: '2026-09-23',
+    }),
+  );
+  const thisWeek = expand(await buildInput(storage, '2026-09-21', '2026-09-27'));
+  assert.ok(thisWeek.some((item) => item.date === '2026-09-23' && item.courseId === 'c-1'), '从上周调进来的课');
+  const lastWeek = expand(await buildInput(storage, '2026-09-14', '2026-09-20'));
+  assert.ok(
+    lastWeek.every((item) => item.date >= '2026-09-14' && item.date <= '2026-09-20'),
+    '调出去的课不再以窗口外日期出现',
+  );
+  assert.ok(!lastWeek.some((item) => item.courseId === 'c-1' && item.date === '2026-09-14'));
+});
+
+test('A8 假期里的课调到补课日后照常出现', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  await storage.collection('events').put(
+    eventRow('e-mk', 'reschedule', {
+      on_date: '2026-10-05',
+      ref_schedule_id: 's-1',
+      action: 'move',
+      new_date: '2026-10-10',
+    }),
+  );
+  const items = expand(await buildInput(storage, '2026-10-05', '2026-10-11'));
+  assert.ok(items.some((item) => item.courseId === 'c-1' && item.date === '2026-10-10'));
 });

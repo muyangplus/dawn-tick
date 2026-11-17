@@ -1,4 +1,5 @@
 import { DEFAULT_COURSE_COLOR } from './colors.ts';
+import { builtinHolidays, builtinWorkdays } from './holidays.ts';
 import { hasWeek } from './weeks.ts';
 import type { Storage } from './storage.ts';
 import { expand, type ExpandCourse, type ExpandDayKind, type ExpandInput, type ExpandReschedule, type ExpandSchedule, type ExpandTimeSlot, type Occurrence } from './expand.ts';
@@ -199,6 +200,8 @@ export async function loadExpandInput(
     period_end: schedule.period_end,
     weeks_mask: schedule.weeks_mask,
     room: schedule.room,
+    start_time: schedule.start_time ?? null,
+    end_time: schedule.end_time ?? null,
   }));
 
   const timeSlots: ExpandTimeSlot[] = (await listTimeSlots(storage, semesterId)).map((slot) => ({
@@ -229,6 +232,13 @@ export async function loadExpandInput(
       as_day_of_week: (row['as_day_of_week'] as number | null) ?? null,
       source: (row['source'] as ExpandDayKind['source']) ?? null,
     }));
+  // 内置法定节假日与调休上班日排在用户记录之后：同日以用户的「设为假日/非假日」为准
+  for (const date of builtinHolidays()) {
+    if (date >= from && date <= to) dayKinds.push({ on_date: date, type: 'holiday', as_day_of_week: null, source: 'builtin' });
+  }
+  for (const date of builtinWorkdays()) {
+    if (date >= from && date <= to) dayKinds.push({ on_date: date, type: 'workday', as_day_of_week: null, source: 'builtin' });
+  }
 
   const reschedules: ExpandReschedule[] = events
     .filter((row) => {
@@ -236,8 +246,9 @@ export async function loadExpandInput(
       return (
         row['type'] === 'reschedule' &&
         typeof date === 'string' &&
-        date >= from &&
-        date <= to &&
+        // 原日期或调到的日期落在窗口内都要：调进窗口的课从原日期展开
+        ((date >= from && date <= to) ||
+          (typeof row['new_date'] === 'string' && row['new_date'] >= from && row['new_date'] <= to)) &&
         typeof row['ref_schedule_id'] === 'string' &&
         scheduleIds.has(row['ref_schedule_id'])
       );
