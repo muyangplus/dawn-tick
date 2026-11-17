@@ -4,9 +4,7 @@ import {
   dateWallClockToEpoch,
   deleteEvent,
   formatDate,
-  formatTime,
   MAX_PERIODS,
-  maskToWeeks,
   periodsForClockRange,
   plusMinutesText,
   updateEvent,
@@ -41,10 +39,15 @@ import {
   ADVANCE_OPTIONS,
   advanceIdFor,
   advanceMinutesOf,
+  blankTodoForm,
   eventTypeFor,
+  kindDefaults,
   loadEventAdvance,
   syncEventReminder,
+  todoFormForCreate,
+  todoFormFromEvent,
   type EventFormKind,
+  type TodoFormState,
 } from './todo-form-model.ts';
 
 /** 待办类型：日程 / 作业 / 考试 / 实验。 */
@@ -56,15 +59,6 @@ const KIND_LABEL: Record<EventFormKind, string> = {
   exam: '考试',
   lab: '实验',
 };
-
-/** 新建时的开关默认值：作业与考试默认开启倒计时，作业默认需要手动确认完成。 */
-function defaultSwitches(kind: EventFormKind): { countdown: boolean; manualDone: boolean } {
-  return {
-    countdown: kind === 'homework' || kind === 'exam',
-    manualDone: kind === 'homework',
-  };
-}
-
 
 export interface TodoFormProps {
   open: boolean;
@@ -109,30 +103,31 @@ export function TodoForm({
   onCreated,
   container = 'dialog',
 }: TodoFormProps) {
-  const [current, setCurrent] = useState<EventFormKind>(kind);
-  const [title, setTitle] = useState('');
-  const [courseId, setCourseId] = useState('');
-  const [dueDate, setDueDate] = useState(() => formatDate(Date.now(), timeZone));
-  const [dueTime, setDueTime] = useState('09:00');
-  const [advance, setAdvance] = useState('half');
-  const [location, setLocation] = useState('');
-  const [seatNo, setSeatNo] = useState('');
-  const [note, setNote] = useState('');
+  const [form, setForm] = useState(() => blankTodoForm(kind, formatDate(Date.now(), timeZone)));
+  const update = (patch: Partial<TodoFormState>): void => setForm((previous) => ({ ...previous, ...patch }));
+  const {
+    kind: current,
+    title,
+    courseId,
+    dueDate,
+    dueTime,
+    advance,
+    location,
+    seatNo,
+    note,
+    labRepeat,
+    labWeekday,
+    labPeriodStart,
+    labPeriodEnd,
+    labWeeks,
+    customTime,
+    startTime,
+    endTime,
+    showInTimetable,
+  } = form;
+  const switches = { countdown: form.countdown, manualDone: form.manualDone };
   /** 保存/删除/复制共用一份提交态：busy 期间按钮转圈、重复触发被忽略 */
   const { busy, run } = useBusyAction();
-  const [switches, setSwitches] = useState(() => defaultSwitches(kind));
-  // 实验：只这一次 / 每周重复
-  const [labRepeat, setLabRepeat] = useState(false);
-  const [labWeekday, setLabWeekday] = useState(1);
-  const [labPeriodStart, setLabPeriodStart] = useState('1');
-  const [labPeriodEnd, setLabPeriodEnd] = useState('2');
-  const [labWeeks, setLabWeeks] = useState<number[]>(() => Array.from({ length: 16 }, (_, index) => index + 1));
-  // 自定义时间：不按节次，直接给开始与结束时间
-  const [customTime, setCustomTime] = useState(false);
-  const [startTime, setStartTime] = useState('19:00');
-  const [endTime, setEndTime] = useState('21:00');
-  /** 显示在课表上：实验默认开，日程/作业/考试默认关 */
-  const [showInTimetable, setShowInTimetable] = useState(false);
 
   const isExam = current === 'exam';
   const isLab = current === 'lab';
@@ -141,49 +136,24 @@ export function TodoForm({
   /** 每次打开都回到调用方指定的类型与默认开关；编辑时按该条回填，避免沿用上一次的选择。 */
   useEffect(() => {
     if (!open) return;
-    if (editing !== null) {
-      setCurrent(editing.type === 'exam' ? 'exam' : editing.type === 'lab' ? 'lab' : editing.type === 'homework' ? 'homework' : 'todo');
-      setSwitches({ countdown: editing.countdown === 1, manualDone: editing.manual_done === 1 });
-      setTitle(editing.title);
-      setCourseId(editing.subject ?? '');
-      setDueDate(editing.on_date ?? formatDate(editing.start_at ?? editing.due_at ?? Date.now(), timeZone));
-      // 回填原来的时刻：否则只改标题保存也会把时间写成默认的 09:00
-      const anchor = editing.start_at ?? editing.due_at;
-      setDueTime(anchor === null ? '09:00' : formatTime(anchor, timeZone));
-      setAdvance('none');
-      void loadEventAdvance(storage, editing.id).then((minutes) => setAdvance(advanceIdFor(minutes)));
-      setLocation(editing.location ?? '');
-      setSeatNo(editing.seat_no ?? '');
-      setNote(editing.note ?? '');
-      setCustomTime(editing.start_time !== null && editing.end_time !== null);
-      setStartTime(editing.start_time ?? '19:00');
-      setEndTime(editing.end_time ?? '21:00');
-      setLabWeekday(editing.as_day_of_week ?? 1);
-      setLabRepeat(editing.weeks_mask !== null);
-      setLabWeeks(
-        editing.weeks_mask === null
-          ? Array.from({ length: semester?.total_weeks ?? 16 }, (_, index) => index + 1)
-          : maskToWeeks(editing.weeks_mask, semester?.total_weeks ?? 20),
-      );
-      setLabPeriodStart(String(editing.period_start ?? 1));
-      setLabPeriodEnd(String(editing.period_end ?? editing.period_start ?? 2));
-      setShowInTimetable(editing.show_in_timetable === 1);
+    if (editing === null) {
+      update(todoFormForCreate(kind));
       return;
     }
-    setCurrent(kind);
-    setSwitches(defaultSwitches(kind));
-    // 新建回到默认时刻与提前量，不沿用上一次编辑回填的值
-    setDueTime('09:00');
-    setAdvance('half');
-    setCustomTime(false);
-    setShowInTimetable(kind === 'lab');
+    setForm(todoFormFromEvent(editing, { timeZone, totalWeeks: semester?.total_weeks ?? null, now: Date.now() }));
+    let cancelled = false;
+    void loadEventAdvance(storage, editing.id).then((minutes) => {
+      if (!cancelled) update({ advance: advanceIdFor(minutes) });
+    });
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, kind, editing]);
 
   /** 切换类型时把开关恢复成该类型的默认值。 */
   function changeKind(next: EventFormKind): void {
-    setCurrent(next);
-    setSwitches(defaultSwitches(next));
+    update(kindDefaults(next));
   }
 
   /** 提交入口：先过一遍空标题守卫，再进统一的 busy/蒙版保护。 */
@@ -305,10 +275,7 @@ export function TodoForm({
       }
       logInfo('todo', `已添加${KIND_LABEL[current]}`, { id: String(created['id'] ?? ''), title: title.trim() });
       toast.success(`已添加${KIND_LABEL[current]}「${title.trim()}」`);
-      setTitle('');
-      setNote('');
-      setLocation('');
-      setSeatNo('');
+      update({ title: '', note: '', location: '', seatNo: '' });
       onCreated();
       onOpenChange(false);
     } catch (cause: unknown) {
@@ -418,12 +385,12 @@ export function TodoForm({
         <Input
           value={title}
           aria-label={isExam ? '考试名称' : isLab ? '实验名称' : isHomework ? '作业名称' : '标题'}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => update({ title: event.target.value })}
         />
       </Field>
       {!isExam && (
         <Field label="关联课程（可选）" hint={isLab ? '实验会挂在课的同一列里展示' : '关联后归入该课程'}>
-          <Select value={courseId} onValueChange={setCourseId}>
+          <Select value={courseId} onValueChange={(value) => update({ courseId: value })}>
             <SelectTrigger aria-label="关联课程">
               {courses.find((item) => item.id === courseId)?.name ?? '不关联'}
             </SelectTrigger>
@@ -444,7 +411,7 @@ export function TodoForm({
             type="date"
             value={dueDate}
             aria-label={isExam ? '考试日期' : isLab ? '首次日期' : '日期'}
-            onChange={(event) => setDueDate(event.target.value)}
+            onChange={(event) => update({ dueDate: event.target.value })}
           />
         </Field>
         {!isLab && !customTime && (
@@ -453,7 +420,7 @@ export function TodoForm({
               type="time"
               value={dueTime}
               aria-label={isExam ? '开考时间' : '时间'}
-              onChange={(event) => setDueTime(event.target.value)}
+              onChange={(event) => update({ dueTime: event.target.value })}
             />
           </Field>
         )}
@@ -465,8 +432,8 @@ export function TodoForm({
                 value={startTime}
                 aria-label="开始时间"
                 onChange={(event) => {
-                  setStartTime(event.target.value);
-                  setEndTime((current) => (current <= event.target.value ? plusMinutesText(event.target.value, 90) : current));
+                  const start = event.target.value;
+                  update({ startTime: start, endTime: endTime <= start ? plusMinutesText(start, 90) : endTime });
                 }}
               />
             </Field>
@@ -475,13 +442,13 @@ export function TodoForm({
                 type="time"
                 value={endTime}
                 aria-label="结束时间"
-                onChange={(event) => setEndTime(event.target.value)}
+                onChange={(event) => update({ endTime: event.target.value })}
               />
             </Field>
           </>
         )}
         <Field label="提前提醒">
-          <Select value={advance} onValueChange={setAdvance}>
+          <Select value={advance} onValueChange={(value) => update({ advance: value })}>
             <SelectTrigger aria-label={isExam ? '考试提前提醒' : '待办提前提醒'}>
               {ADVANCE_OPTIONS.find((item) => item.id === advance)?.label ?? '提前 1 天'}
             </SelectTrigger>
@@ -499,7 +466,7 @@ export function TodoForm({
         label="自定义时间"
         description="按真实起止时间显示"
         checked={customTime}
-        onCheckedChange={(checked) => setCustomTime(checked)}
+        onCheckedChange={(checked) => update({ customTime: checked })}
         ariaLabel="自定义时间"
       />
       {isLab && (
@@ -508,13 +475,13 @@ export function TodoForm({
             label="每周重复"
             description="关闭时只在这一天"
             checked={labRepeat}
-            onCheckedChange={(checked) => setLabRepeat(checked)}
+            onCheckedChange={(checked) => update({ labRepeat: checked })}
             ariaLabel="实验每周重复"
           />
           {labRepeat && (
             <>
               <Field label="星期">
-                <Select value={String(labWeekday)} onValueChange={(value) => setLabWeekday(Number(value))}>
+                <Select value={String(labWeekday)} onValueChange={(value) => update({ labWeekday: Number(value) })}>
                   <SelectTrigger aria-label="实验星期">
                     {WEEKDAY_LABELS[labWeekday - 1] ?? '周一'}
                   </SelectTrigger>
@@ -530,7 +497,7 @@ export function TodoForm({
               <WeekPicker
                 totalWeeks={semester?.total_weeks ?? 20}
                 value={labWeeks}
-                onValueChange={setLabWeeks}
+                onValueChange={(value) => update({ labWeeks: value })}
                 showShortcuts={false}
                 dataRole="lab-weeks"
               />
@@ -551,7 +518,7 @@ export function TodoForm({
                     className="w-24"
                     aria-label="实验起始节"
                     value={labPeriodStart}
-                    onChange={(event) => setLabPeriodStart(event.target.value)}
+                    onChange={(event) => update({ labPeriodStart: event.target.value })}
                   />
                 </Field>
                 <Field label="结束节">
@@ -562,7 +529,7 @@ export function TodoForm({
                     className="w-24"
                     aria-label="实验结束节"
                     value={labPeriodEnd}
-                    onChange={(event) => setLabPeriodEnd(event.target.value)}
+                    onChange={(event) => update({ labPeriodEnd: event.target.value })}
                   />
                 </Field>
               </>
@@ -583,12 +550,12 @@ export function TodoForm({
             <Input
               value={location}
               aria-label={isLab ? '实验地点' : '考试地点'}
-              onChange={(event) => setLocation(event.target.value)}
+              onChange={(event) => update({ location: event.target.value })}
             />
           </Field>
           {isExam && (
             <Field label="座位号（可选）">
-              <Input value={seatNo} aria-label="座位号" onChange={(event) => setSeatNo(event.target.value)} />
+              <Input value={seatNo} aria-label="座位号" onChange={(event) => update({ seatNo: event.target.value })} />
             </Field>
           )}
         </div>
@@ -597,25 +564,25 @@ export function TodoForm({
         label="开启倒计时"
         description="在倒计时卡片里显示剩余天数"
         checked={switches.countdown}
-        onCheckedChange={(checked) => setSwitches((current) => ({ ...current, countdown: checked }))}
+        onCheckedChange={(checked) => update({ countdown: checked })}
         ariaLabel="开启倒计时"
       />
       <SwitchField
         label="显示在课表上"
         description="占用课表格子"
         checked={showInTimetable}
-        onCheckedChange={(checked) => setShowInTimetable(checked)}
+        onCheckedChange={(checked) => update({ showInTimetable: checked })}
         ariaLabel="显示在课表上"
       />
       <SwitchField
         label="需要手动确认完成"
         description="打开后不会自动完成，过期仍留在待办列表"
         checked={switches.manualDone}
-        onCheckedChange={(checked) => setSwitches((current) => ({ ...current, manualDone: checked }))}
+        onCheckedChange={(checked) => update({ manualDone: checked })}
         ariaLabel="需要手动确认完成"
       />
       <Field label="备注">
-        <Textarea value={note} aria-label="备注" onChange={(event) => setNote(event.target.value)} />
+        <Textarea value={note} aria-label="备注" onChange={(event) => update({ note: event.target.value })} />
       </Field>
       <DialogFooter>
         {editing !== null && (
