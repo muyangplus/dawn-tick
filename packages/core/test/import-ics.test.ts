@@ -15,7 +15,7 @@ import {
 } from '../src/import/ics.ts';
 import { dateWallClockToEpoch, formatDate } from '../src/time.ts';
 import { weeksToMask } from '../src/weeks.ts';
-import { weekRange } from './helpers.ts';
+import { weekRange } from './kit/index.ts';
 
 const semester: IcsSemester = {
   id: 'sem-1',

@@ -15,7 +15,7 @@ import {
   parsePageDiagnostics,
   stripPageMarkers,
 } from '../src/import/page-tables.ts';
-import { EXPECTED_DIAGNOSTICS, diagnosticCountsOf } from './fixtures/import-diagnostics.ts';
+import { EXPECTED_DIAGNOSTICS, diagnosticCountsOf } from './kit/fixtures/import-diagnostics.ts';
 
 /** 桌面注入脚本与书签是同一协议的两种实现：字段清单在这里静态核对。 */
 const INJECTION_SOURCE = readFileSync(

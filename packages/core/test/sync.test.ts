@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SYNC_STORES, MemoryRemote, collectDirty, syncAll } from '../src/sync.ts';
 import type { Storage } from '../src/storage.ts';
-import { createStorage, seedStorage } from './helpers.ts';
+import { createStorage, seedStorage } from './kit/index.ts';
 
 async function markAllDirty(storage: Storage): Promise<number> {
   let count = 0;

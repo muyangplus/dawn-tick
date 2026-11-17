@@ -4,7 +4,7 @@ import { applyImport, previewDuplicates } from '../src/import/apply.ts';
 import { createSemester } from '../src/mutations.ts';
 import { weekView } from '../src/repository.ts';
 import type { ImportedSchedule } from '../src/import/apply.ts';
-import { START_DATE, USER_ID, createStorage, weekRange } from './helpers.ts';
+import { START_DATE, USER_ID, createStorage, weekRange } from './kit/index.ts';
 
 function sample(): ImportedSchedule[] {
   return [

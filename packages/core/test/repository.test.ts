@@ -19,7 +19,7 @@ import {
   scheduleRow,
   seedStorage,
   weekRange,
-} from './helpers.ts';
+} from './kit/index.ts';
 
 test('周视图按位图过滤', async () => {
   const storage = createStorage();

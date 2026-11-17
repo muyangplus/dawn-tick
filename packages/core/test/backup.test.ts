@@ -11,7 +11,7 @@ import {
 import { createSemester } from '../src/mutations.ts';
 import { EXPORT_EXCLUDED_KEYS, SETTING_META_KEYS, readSettings, writeSettings } from '../src/settings.ts';
 import { activeSemester, weekView } from '../src/repository.ts';
-import { START_DATE, USER_ID, createStorage, weekRange } from './helpers.ts';
+import { START_DATE, USER_ID, createStorage, weekRange } from './kit/index.ts';
 
 async function seedStorage() {
   const storage = createStorage();

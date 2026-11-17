@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { matchScore, searchAll } from '../src/search.ts';
 import { weeksToMask } from '../src/weeks.ts';
-import { USER_ID, courseRow, createStorage, seedStorage, semesterRow, weekRange } from './helpers.ts';
+import { USER_ID, courseRow, createStorage, seedStorage, semesterRow, weekRange } from './kit/index.ts';
 
 test('匹配评分：前缀优先', () => {
   assert.equal(matchScore('高等数学', '高'), 3);

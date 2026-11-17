@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./testing": "./test/kit/index.ts",
+    "./testing/import-diagnostics": "./test/kit/fixtures/import-diagnostics.ts",
     "./schema/001_init.sql": "./src/schema/001_init.sql",
     "./schema/002_event_kinds.sql": "./src/schema/002_event_kinds.sql",
     "./schema/003_custom_time.sql": "./src/schema/003_custom_time.sql",

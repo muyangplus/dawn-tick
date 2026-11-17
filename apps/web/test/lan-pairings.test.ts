@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createStorage } from '../../../packages/core/test/helpers.ts';
+import { createStorage } from '@dawn-tick/core/testing';
 import {
   createLanPairing,
   findLanPairingByPeer,

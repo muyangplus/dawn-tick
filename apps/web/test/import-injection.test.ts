@@ -16,7 +16,7 @@ import {
   EXPECTED_COURSE_NAMES,
   EXPECTED_DIAGNOSTICS,
   diagnosticCountsOf,
-} from '../../../packages/core/test/fixtures/import-diagnostics.ts';
+} from '@dawn-tick/core/testing/import-diagnostics';
 
 const injectionSource = readFileSync(
   fileURLToPath(new URL('../../desktop/src-tauri/src/import-injection.js', import.meta.url)),
