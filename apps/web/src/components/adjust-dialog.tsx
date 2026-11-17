@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { weekOfDate, WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
+import { WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { useAction } from '../lib/action.ts';
 import { formatPeriodRange } from '../lib/format.ts';
@@ -16,10 +16,9 @@ import {
   planExtra,
   planMove,
   planSwap,
-  type AdjustMode,
-  type AdjustScope,
   type AdjustTarget,
 } from '../screens/timetable/move-controller.ts';
+import { adjustFormOnOpen, blankAdjustForm, scheduleSelection, type AdjustForm } from '../screens/timetable/adjust-form.ts';
 import { Button } from './ui/button.tsx';
 import { DialogFooter } from './ui/dialog.tsx';
 import { EmptyState } from './ui/empty-state.tsx';
@@ -73,94 +72,51 @@ export function AdjustDialog({
   onChanged,
   container = 'dialog',
 }: AdjustDialogProps) {
-  const [mode, setMode] = useState<AdjustMode>('move');
-  const [scope, setScope] = useState<AdjustScope>('this');
+  const [form, setForm] = useState(() => blankAdjustForm(data.today));
+  const update = (patch: Partial<AdjustForm>): void => setForm((current) => ({ ...current, ...patch }));
+  const {
+    mode,
+    scope,
+    courseId,
+    scheduleId,
+    sourceDate,
+    newDate,
+    targetWeek,
+    newStart,
+    newEnd,
+    newRoom,
+    restFrom,
+    restTo,
+    extraCourse,
+    extraName,
+    extraDate,
+    extraStart,
+    extraEnd,
+    examNote,
+  } = form;
   const { busy, run } = useAction();
   const semester = data.semester;
-
-  // 改期 / 停课共用
-  const [courseId, setCourseId] = useState('');
-  const [scheduleId, setScheduleId] = useState('');
-  const [sourceDate, setSourceDate] = useState(data.today);
-
-  // 改期
-  const [newDate, setNewDate] = useState(data.today);
-  const [targetWeek, setTargetWeek] = useState('1');
-  const [newStart, setNewStart] = useState('1');
-  const [newEnd, setNewEnd] = useState('2');
-  const [newRoom, setNewRoom] = useState('');
-
-  // 调休：把原日期课表整体搬到目标上课日
-  const [restFrom, setRestFrom] = useState(data.today);
-  const [restTo, setRestTo] = useState(data.today);
-
-  // 临时加课
-  const [extraCourse, setExtraCourse] = useState('');
-  const [extraName, setExtraName] = useState('');
-  const [extraDate, setExtraDate] = useState(data.today);
-  const [extraStart, setExtraStart] = useState('1');
-  const [extraEnd, setExtraEnd] = useState('2');
-
-  // 改为考试：日期与节次复用改期那组输入，备注单独一份
-  const [examNote, setExamNote] = useState('');
 
   const course = useMemo(() => data.courses.find((item) => item.id === courseId), [data.courses, courseId]);
   const schedules = course?.schedules ?? [];
   const schedule = useMemo(() => schedules.find((item) => item.id === scheduleId), [schedules, scheduleId]);
 
-  // 每次打开都按入口给的目标重置：三个入口只传预填参数，弹窗内部不记忆上一次
+  // 每次打开都按入口给的目标重置；刷新导致的 data 变化不清掉正在填的内容
   useEffect(() => {
     if (!open) return;
-    if (target !== null) {
-      const drop = target.drop;
-      setMode(target.mode ?? 'move');
-      setCourseId(target.courseId);
-      setScheduleId(target.scheduleId);
-      setSourceDate(target.date);
-      setNewDate(drop?.date ?? target.date);
-      setNewStart(String(drop?.periodStart ?? target.periodStart));
-      setNewEnd(
-        String(drop === undefined ? target.periodEnd : drop.periodStart + (target.periodEnd - target.periodStart)),
-      );
-      setNewRoom('');
-      setExamNote('');
-      setTargetWeek(String(semester === null ? 1 : weekOfDate(drop?.date ?? target.date, semester.start_date)));
-      // 落点在原日期同一周就按「这一次」，跨周默认「指定日期」
-      const sameWeek =
-        drop === undefined ||
-        semester === null ||
-        weekOfDate(drop.date, semester.start_date) === weekOfDate(target.date, semester.start_date);
-      setScope(sameWeek ? 'this' : 'date');
-      return;
-    }
-    setMode('move');
-    setScope('this');
-    setSourceDate(data.today);
-    setNewDate(data.today);
-    setNewStart('1');
-    setNewEnd('2');
-    setNewRoom('');
-    setExamNote('');
-    setTargetWeek(String(semester === null ? 1 : weekOfDate(data.today, semester.start_date)));
-    setExtraDate(data.today);
-    if (data.courses.length > 0) setCourseId(data.courses[0]?.id ?? '');
-    // 只在打开或换目标时重置：刷新导致的 data 变化不应清掉用户正在填的内容
+    update(
+      adjustFormOnOpen(target, {
+        today: data.today,
+        semesterStart: semester?.start_date ?? null,
+        firstCourseId: data.courses[0]?.id,
+      }),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, target]);
 
   useEffect(() => {
-    if (schedules.length === 0) {
-      setScheduleId('');
-      return;
-    }
-    if (!schedules.some((item) => item.id === scheduleId)) {
-      const first = schedules[0];
-      setScheduleId(first?.id ?? '');
-      if (first !== undefined) {
-        setNewStart(String(first.periodStart));
-        setNewEnd(String(first.periodEnd));
-      }
-    }
+    const patch = scheduleSelection(schedules, scheduleId);
+    if (patch !== null) update(patch);
   }, [schedules, scheduleId]);
 
   const periodStart = Number(newStart);
@@ -408,7 +364,7 @@ export function AdjustDialog({
             size="sm"
             variant={mode === item.id ? 'primary' : 'secondary'}
             aria-pressed={mode === item.id}
-            onClick={() => setMode(item.id)}
+            onClick={() => update({ mode: item.id })}
           >
             {item.label}
           </Button>
@@ -418,7 +374,7 @@ export function AdjustDialog({
       {(mode === 'move' || mode === 'cancel' || mode === 'exam') && (
         <div className="flex flex-col gap-3">
           <Field label="课程">
-            <Select value={courseId} onValueChange={setCourseId}>
+            <Select value={courseId} onValueChange={(value) => update({ courseId: value })}>
               <SelectTrigger aria-label="课程">{course?.name ?? '选择课程'}</SelectTrigger>
               <SelectContent>
                 {data.courses.map((item) => (
@@ -433,7 +389,7 @@ export function AdjustDialog({
             <EmptyState size="sm" tone="muted" title="这门课还没有排课，请在课程管理中添加排课" />
           ) : (
             <Field label="课次">
-              <Select value={scheduleId} onValueChange={setScheduleId}>
+              <Select value={scheduleId} onValueChange={(value) => update({ scheduleId: value })}>
                 <SelectTrigger aria-label="课次">
                   {schedule === undefined
                     ? '选择课次'
@@ -460,7 +416,7 @@ export function AdjustDialog({
               type="date"
               value={sourceDate}
               aria-label="原日期"
-              onChange={(event) => setSourceDate(event.target.value)}
+              onChange={(event) => update({ sourceDate: event.target.value })}
             />
           </Field>
         </div>
@@ -476,7 +432,7 @@ export function AdjustDialog({
                   size="sm"
                   variant={scope === item.id ? 'primary' : 'secondary'}
                   aria-pressed={scope === item.id}
-                  onClick={() => setScope(item.id)}
+                  onClick={() => update({ scope: item.id })}
                 >
                   {item.label}
                 </Button>
@@ -493,7 +449,7 @@ export function AdjustDialog({
                 aria-label="目标周"
                 className="w-24"
                 value={targetWeek}
-                onChange={(event) => setTargetWeek(event.target.value)}
+                onChange={(event) => update({ targetWeek: event.target.value })}
               />
             </Field>
           )}
@@ -502,7 +458,7 @@ export function AdjustDialog({
               type="date"
               value={newDate}
               aria-label="调整后日期"
-              onChange={(event) => setNewDate(event.target.value)}
+              onChange={(event) => update({ newDate: event.target.value })}
             />
           </Field>
           <div className="flex flex-wrap gap-3">
@@ -514,7 +470,7 @@ export function AdjustDialog({
                 className="w-20"
                 aria-label="起始节"
                 value={newStart}
-                onChange={(event) => setNewStart(event.target.value)}
+                onChange={(event) => update({ newStart: event.target.value })}
               />
             </Field>
             <Field label="结束节">
@@ -525,7 +481,7 @@ export function AdjustDialog({
                 className="w-20"
                 aria-label="结束节"
                 value={newEnd}
-                onChange={(event) => setNewEnd(event.target.value)}
+                onChange={(event) => update({ newEnd: event.target.value })}
               />
             </Field>
             {scope !== 'weekly' && (
@@ -533,7 +489,7 @@ export function AdjustDialog({
                 <Input
                   value={newRoom}
                   aria-label="教室（可选）"
-                  onChange={(event) => setNewRoom(event.target.value)}
+                  onChange={(event) => update({ newRoom: event.target.value })}
                 />
               </Field>
             )}
@@ -548,7 +504,7 @@ export function AdjustDialog({
               type="date"
               value={newDate}
               aria-label="考试日期"
-              onChange={(event) => setNewDate(event.target.value)}
+              onChange={(event) => update({ newDate: event.target.value })}
             />
           </Field>
           <div className="flex flex-wrap gap-3">
@@ -560,7 +516,7 @@ export function AdjustDialog({
                 className="w-20"
                 aria-label="考试起始节"
                 value={newStart}
-                onChange={(event) => setNewStart(event.target.value)}
+                onChange={(event) => update({ newStart: event.target.value })}
               />
             </Field>
             <Field label="结束节">
@@ -571,7 +527,7 @@ export function AdjustDialog({
                 className="w-20"
                 aria-label="考试结束节"
                 value={newEnd}
-                onChange={(event) => setNewEnd(event.target.value)}
+                onChange={(event) => update({ newEnd: event.target.value })}
               />
             </Field>
           </div>
@@ -580,7 +536,7 @@ export function AdjustDialog({
               value={examNote}
               aria-label="考试备注"
               placeholder="如 开卷、带计算器"
-              onChange={(event) => setExamNote(event.target.value)}
+              onChange={(event) => update({ examNote: event.target.value })}
             />
           </Field>
           <span className="text-xs text-muted">考试写进日程并开启倒计时，原课次按停课处理</span>
@@ -594,7 +550,7 @@ export function AdjustDialog({
               type="date"
               value={restFrom}
               aria-label="原日期课表"
-              onChange={(event) => setRestFrom(event.target.value)}
+              onChange={(event) => update({ restFrom: event.target.value })}
             />
           </Field>
           <Field label="目标上课日" hint="原日课表整体搬过来" help="调休后，目标日按原日课表上课">
@@ -602,7 +558,7 @@ export function AdjustDialog({
               type="date"
               value={restTo}
               aria-label="目标上课日"
-              onChange={(event) => setRestTo(event.target.value)}
+              onChange={(event) => update({ restTo: event.target.value })}
             />
           </Field>
         </div>
@@ -611,7 +567,7 @@ export function AdjustDialog({
       {mode === 'extra' && (
         <div className="flex flex-col gap-3">
           <Field label="已有课程">
-            <Select value={extraCourse} onValueChange={setExtraCourse}>
+            <Select value={extraCourse} onValueChange={(value) => update({ extraCourse: value })}>
               <SelectTrigger aria-label="已有课程">
                 {data.courses.find((item) => item.id === extraCourse)?.name ?? '选择课程'}
               </SelectTrigger>
@@ -629,7 +585,7 @@ export function AdjustDialog({
               value={extraName}
               aria-label="或自定义课程名称"
               placeholder="如 形势与政策（补课）"
-              onChange={(event) => setExtraName(event.target.value)}
+              onChange={(event) => update({ extraName: event.target.value })}
             />
           </Field>
           <Field label="加课日期">
@@ -637,7 +593,7 @@ export function AdjustDialog({
               type="date"
               value={extraDate}
               aria-label="加课日期"
-              onChange={(event) => setExtraDate(event.target.value)}
+              onChange={(event) => update({ extraDate: event.target.value })}
             />
           </Field>
           <div className="flex flex-wrap gap-3">
@@ -649,7 +605,7 @@ export function AdjustDialog({
                 className="w-20"
                 aria-label="起始节"
                 value={extraStart}
-                onChange={(event) => setExtraStart(event.target.value)}
+                onChange={(event) => update({ extraStart: event.target.value })}
               />
             </Field>
             <Field label="结束节">
@@ -660,7 +616,7 @@ export function AdjustDialog({
                 className="w-20"
                 aria-label="结束节"
                 value={extraEnd}
-                onChange={(event) => setExtraEnd(event.target.value)}
+                onChange={(event) => update({ extraEnd: event.target.value })}
               />
             </Field>
           </div>
