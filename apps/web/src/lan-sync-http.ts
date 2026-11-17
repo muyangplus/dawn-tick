@@ -127,6 +127,8 @@ async function androidFetch(url: string, init: RequestInit): Promise<Response> {
 }
 
 export async function lanFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // 非幂等请求（配对、推送）原生失败后不再经 WebView 重发：超时之后对方可能已经处理过一次
+  const retryable = (init.method ?? 'GET').toUpperCase() === 'GET';
   if (isDesktopApp()) {
     try {
       return toResponse(
@@ -135,6 +137,7 @@ export async function lanFetch(url: string, init: RequestInit = {}): Promise<Res
         })) as LanHttpNativeReply,
       );
     } catch (cause: unknown) {
+      if (!retryable) throw cause;
       logWarn('lan-sync', '桌面局域网直连失败，回退 WebView fetch', {
         message: cause instanceof Error ? cause.message : String(cause),
       });
@@ -143,12 +146,27 @@ export async function lanFetch(url: string, init: RequestInit = {}): Promise<Res
     try {
       return await androidFetch(url, init);
     } catch (cause: unknown) {
+      if (!retryable) throw cause;
       logWarn('lan-sync', 'Android 原生 HTTP 失败，回退 fetch', {
         message: cause instanceof Error ? cause.message : String(cause),
       });
     }
   }
-  return globalThis.fetch(url, init);
+  return fetchWithTimeout(url, init);
+}
+
+/** WebView fetch 也设上限：没有超时会让界面一直转圈。 */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LAN_HTTP_TIMEOUT_MS);
+  try {
+    return await globalThis.fetch(url, { ...init, signal: controller.signal });
+  } catch (cause: unknown) {
+    if (controller.signal.aborted) throw new Error(`对方 ${Math.round(LAN_HTTP_TIMEOUT_MS / 1000)} 秒内没有响应`);
+    throw cause;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** 错误响应优先取服务端的可展示文案，否则退回「动作 + 状态码」。 */

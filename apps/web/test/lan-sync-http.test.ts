@@ -164,3 +164,23 @@ test('纯浏览器直接走 fetch', async () => {
     restoreFetch();
   }
 });
+
+test('B7 原生请求失败时非幂等的 POST 不经 WebView 重发', async () => {
+  const restorePlatform = installTauriPlatform();
+  setLanHttpInvokerForTests(async () => {
+    throw new Error('原生请求超时');
+  });
+  let resent = 0;
+  const restoreFetch = stubFetch(async () => {
+    resent += 1;
+    return new Response('{}', { status: 200 });
+  });
+  try {
+    await assert.rejects(lanFetch(URL, { method: 'POST', body: '{"code":"123456"}' }), /原生请求超时/);
+    assert.equal(resent, 0);
+  } finally {
+    restoreFetch();
+    setLanHttpInvokerForTests(null);
+    restorePlatform();
+  }
+});
