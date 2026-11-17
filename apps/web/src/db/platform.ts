@@ -74,7 +74,7 @@ async function reportLegacySqlxBaseline(driver: SqlDriver, info: StorageInfo | n
 }
 
 /** 当前打开的 SQLite 驱动；Web（IndexedDB）与未打开时为 null。快照的 VACUUM INTO 要用。 */
-async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Storage> {
+async function openSqliteStorage(platform: 'tauri' | 'capacitor', secondary = false): Promise<Storage> {
   const info = platform === 'tauri' ? await readStorageInfo() : null;
   const driver =
     platform === 'tauri'
@@ -82,6 +82,11 @@ async function openSqliteStorage(platform: 'tauri' | 'capacitor'): Promise<Stora
       : await (await import('./capacitor-driver.ts')).openCapacitorDriver();
 
   const storage = sqliteStorage(driver);
+  if (secondary) {
+    // 第二个窗口（悬浮窗）只读主窗口已经迁移好的库：不切日志模式、不迁移，避免两个 webview 同时改表
+    setActiveSqlDriver(driver);
+    return storage;
+  }
   // 日志模式要在建表之前套用：建表写数据后再切就晚了（WAL 下还有其它连接时切不动）
   const portable = platform === 'tauri' ? info?.portable === true : false;
   await applyStoredJournalMode(driver, storage, { platform, portable });
@@ -101,12 +106,16 @@ export function setStorageOpenerForTests(opener: StorageOpener | null): void {
   openerOverride = opener;
 }
 
-/** 各端使用各自最合适的底层存储：Windows/Android 用 SQLite，Web 用 IndexedDB。 */
-export async function openStorage(): Promise<Storage> {
+/**
+ * 各端使用各自最合适的底层存储：Windows/Android 用 SQLite，Web 用 IndexedDB。
+ * `secondary`：主窗口之外的窗口（悬浮窗）打开同一个库，跳过迁移、日志模式与回填。
+ */
+export async function openStorage(options: { secondary?: boolean } = {}): Promise<Storage> {
+  const secondary = options.secondary === true;
   // 运行中损坏守卫包在最外层：任何一次存储访问都能识别 malformed/corrupt 并锁死写入
-  const storage = guardStorage(await openStorageInner());
+  const storage = guardStorage(await openStorageInner(secondary));
   // 临时回退是按 Q5 只读的：不做回填这类写入，等原生库恢复后再说
-  if (isFallbackStorage(storage)) return storage;
+  if (isFallbackStorage(storage) || secondary) return storage;
   // 历史手工排课只写了 weeks_mask：开库时补一次 weeks_raw，之后再开库直接跳过
   try {
     const backfilled = await backfillWeeksRaw(storage);
@@ -119,13 +128,13 @@ export async function openStorage(): Promise<Storage> {
   return storage;
 }
 
-async function openStorageInner(): Promise<Storage> {
+async function openStorageInner(secondary: boolean): Promise<Storage> {
   if (openerOverride !== null) return openerOverride();
   const platform = detectPlatform();
   let fallbackReason: string | null = null;
   if (platform !== 'web') {
     try {
-      return validatedStorage(await openSqliteStorage(platform));
+      return validatedStorage(await openSqliteStorage(platform, secondary));
     } catch (error) {
       // 损坏不回退到 IndexedDB：回退会掩盖损坏，看起来像数据没了
       if (isCorruptDatabase(error)) throw error;
