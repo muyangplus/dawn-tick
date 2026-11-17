@@ -142,7 +142,7 @@ function collectCargoDependencies() {
     if (name === null) continue;
     wanted.set(name[1], dependencyRequirement(line) ?? '');
   }
-  const registrySrc = findRegistrySrc();
+  const registrySrcs = findRegistrySrcs();
   const rows = [];
   for (const name of [...wanted.keys()].sort()) {
     const prefix = requirementPrefix(wanted.get(name));
@@ -152,11 +152,19 @@ function collectCargoDependencies() {
       .filter((version) => prefix === '' || version === prefix || version.startsWith(`${prefix}.`))
       .sort(compareVersionsDesc);
     const candidates = matched.length > 0 ? matched : versions.sort(compareVersionsDesc);
-    const found = candidates.find((version) => existsSync(join(registrySrc, `${name}-${version}`)));
-    if (found === undefined) {
+    let found;
+    let crateDir;
+    for (const version of candidates) {
+      const dir = registrySrcs.map((root) => join(root, `${name}-${version}`)).find((path) => existsSync(path));
+      if (dir !== undefined) {
+        found = version;
+        crateDir = dir;
+        break;
+      }
+    }
+    if (found === undefined || crateDir === undefined) {
       throw new Error(`cargo 注册表里找不到 ${name}-${candidates[0]}，先执行 cargo fetch`);
     }
-    const crateDir = join(registrySrc, `${name}-${found}`);
     const manifest = readFileSync(join(crateDir, 'Cargo.toml'), 'utf8');
     const license = cargoTomlValue(manifest, 'license') ?? cargoTomlValue(manifest, 'license-file');
     if (license === null) throw new Error(`${name}-${found} 未声明 license`);
@@ -182,13 +190,14 @@ function compareVersionsDesc(left, right) {
   return 0;
 }
 
-function findRegistrySrc() {
+/** cargo 注册表源码目录：镜像或换过源时会有多个，逐个找。 */
+function findRegistrySrcs() {
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), '.cargo');
   const src = join(cargoHome, 'registry', 'src');
   if (!existsSync(src)) throw new Error(`找不到 cargo 注册表源码目录：${src}`);
   const registries = readdirSync(src).filter((entry) => !entry.startsWith('.'));
   if (registries.length === 0) throw new Error(`${src} 下没有注册表目录，先执行 cargo fetch`);
-  return join(src, registries[0]);
+  return registries.map((entry) => join(src, entry));
 }
 
 function escapeCell(text) {
