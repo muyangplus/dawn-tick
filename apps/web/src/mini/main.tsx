@@ -60,12 +60,11 @@ function Mini() {
     if (storage === null || current === null) return;
     try {
       const latest = await readSettings(storage);
-      if (
-        latest.tomorrowPreview !== current.tomorrowPreview ||
-        latest.hideWeekends !== current.hideWeekends ||
-        latest.widgetVariant !== current.widgetVariant ||
-        latest.widgetBackground !== current.widgetBackground
-      ) {
+      // 整份比较：主窗口改了任何设置（含主题、时区）都要跟上
+      if (JSON.stringify(latest) !== JSON.stringify(current)) {
+        if (latest.themePreset !== current.themePreset || latest.theme !== current.theme) {
+          applyTheme(latest.themePreset, latest.theme);
+        }
         settingsRef.current = latest;
         setSettings(latest);
       }
@@ -101,7 +100,7 @@ function Mini() {
     let cancelled = false;
     void (async () => {
       try {
-        const storage = await openStorage();
+        const storage = await openStorage({ secondary: true });
         const loaded = await readSettings(storage);
         if (cancelled) return;
         storageRef.current = storage;
