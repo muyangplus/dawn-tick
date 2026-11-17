@@ -337,9 +337,21 @@ pub fn perform_request(
     read_http_response(&mut stream)
 }
 
-/// Tauri 命令：桌面局域网 HTTP 直连（绕过系统代理）。
+/// Tauri 命令：桌面局域网 HTTP 直连（绕过系统代理）。最长阻塞到超时，放到阻塞线程池，不占主线程与 async 工作线程。
 #[tauri::command]
-pub fn lan_http_request(
+pub async fn lan_http_request(
+    method: String,
+    url: String,
+    headers: Option<HashMap<String, String>>,
+    body: Option<String>,
+    timeout_ms: Option<u64>,
+) -> Result<LanHttpResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || lan_http_request_blocking(method, url, headers, body, timeout_ms))
+        .await
+        .map_err(|error| format!("后台任务失败: {error}"))?
+}
+
+pub fn lan_http_request_blocking(
     method: String,
     url: String,
     headers: Option<HashMap<String, String>>,
@@ -473,7 +485,7 @@ mod tests {
 
     #[test]
     fn rejects_non_lan_command_target() {
-        let error = lan_http_request(
+        let error = lan_http_request_blocking(
             "GET".to_string(),
             "http://203.0.113.9/pair".to_string(),
             None,
@@ -482,7 +494,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("局域网"), "{error}");
-        assert!(lan_http_request(
+        assert!(lan_http_request_blocking(
             "GET".to_string(),
             "https://192.168.1.5/pair".to_string(),
             None,
