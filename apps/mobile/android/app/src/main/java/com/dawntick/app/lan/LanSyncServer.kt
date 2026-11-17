@@ -59,6 +59,8 @@ class LanSyncServer private constructor(
         val query: String,
         val authorization: String?,
         val contentLength: Int,
+        val origin: String?,
+        val host: String?,
     )
 
     private class RequestException(val status: Int, message: String) : Exception(message)
@@ -122,8 +124,11 @@ class LanSyncServer private constructor(
                     writeJson(socket, 400, errorBody("bad_request", "请求不完整"))
                     return
                 }
-                if (head.method == "OPTIONS") {
-                    writeEmpty(socket, 204)
+                // 只服务本应用的原生客户端：带 Origin 的是浏览器网页的跨域请求；
+                // Host 须为 IPv4 字面量 + 本服务端口，挡住 DNS 重绑定（与桌面 lan_sync.rs 同一规则）
+                val rejected = originRejection(head, socket.localPort)
+                if (rejected != null) {
+                    writeJson(socket, 403, errorBody("forbidden", rejected))
                     return
                 }
                 val expected = expectedMethod(head.path)
@@ -200,6 +205,8 @@ class LanSyncServer private constructor(
         val path = if (queryIndex < 0) target else target.substring(0, queryIndex)
         val query = if (queryIndex < 0) "" else target.substring(queryIndex + 1)
         var authorization: String? = null
+        var origin: String? = null
+        var host: String? = null
         var contentLength = 0
         for (line in lines.drop(1)) {
             val separator = line.indexOf(':')
@@ -208,6 +215,8 @@ class LanSyncServer private constructor(
             val value = line.substring(separator + 1).trim()
             when {
                 name.equals("authorization", ignoreCase = true) -> authorization = value
+                name.equals("origin", ignoreCase = true) -> origin = value
+                name.equals("host", ignoreCase = true) -> host = value
                 name.equals("content-length", ignoreCase = true) -> {
                     val parsed = value.toIntOrNull() ?: throw RequestException(400, "Content-Length 不正确")
                     if (parsed > MAX_BODY_BYTES) throw RequestException(413, "请求体超过 5MB 上限")
@@ -215,7 +224,7 @@ class LanSyncServer private constructor(
                 }
             }
         }
-        return RequestHead(method, path, query, authorization, contentLength)
+        return RequestHead(method, path, query, authorization, contentLength, origin, host)
     }
 
     private fun readBody(input: InputStream, length: Int): String {
@@ -230,20 +239,25 @@ class LanSyncServer private constructor(
         return String(body, Charsets.UTF_8)
     }
 
+    private fun originRejection(head: RequestHead, localPort: Int): String? {
+        if (head.origin != null) return "不接受浏览器网页发起的请求"
+        val host = head.host ?: return "缺少 Host"
+        val separator = host.lastIndexOf(':')
+        if (separator <= 0) return "Host 必须带端口"
+        val address = host.substring(0, separator)
+        val parts = address.split('.')
+        val isIpv4 = parts.size == 4 && parts.all { part -> part.toIntOrNull()?.let { it in 0..255 } == true }
+        if (!isIpv4) return "Host 必须是 IP 地址"
+        if (host.substring(separator + 1).toIntOrNull() != localPort) return "Host 端口不正确"
+        return null
+    }
+
     private fun expectedMethod(path: String): String? = when (path) {
         "/ping" -> "GET"
         "/pair", "/pair/refresh", "/pair/revoke" -> "POST"
         "/export" -> "GET"
         "/import" -> "POST"
         else -> null
-    }
-
-    private fun writeEmpty(socket: Socket, status: Int) {
-        val head = "HTTP/1.1 $status ${reason(status)}\r\n$CORS_HEADERS" + "Connection: close\r\n\r\n"
-        socket.getOutputStream().apply {
-            write(head.toByteArray(Charsets.UTF_8))
-            flush()
-        }
     }
 
     private fun writeJson(socket: Socket, status: Int, body: String) {
@@ -299,12 +313,8 @@ class LanSyncServer private constructor(
         const val READ_TIMEOUT_MS = 5_000
         const val HEADER_LIMIT = 16 * 1024
 
-        /** 每个响应都带 CORS 头：浏览器端要能当发起方直接 fetch 局域网地址。 */
-        private const val CORS_HEADERS =
-            "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Allow-Headers: Authorization, Content-Type\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-                "Cache-Control: no-store\r\n"
+        /** 不给浏览器跨域许可：浏览器网页不是本服务的客户端。 */
+        private const val CORS_HEADERS = "Cache-Control: no-store\r\n"
 
         /**
          * 绑定通配地址与系统分配的端口，并确认 socket 已 bind；`host` 只决定对外展示的地址。

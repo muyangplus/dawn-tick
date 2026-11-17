@@ -9,7 +9,7 @@
 **令牌刷新 / 吊销接口**。同步信封与冲突规则不变，`schemaVersion` 仍为 **1**。
 
 边界（不做）：mDNS、云端中转、后台常驻服务端、多设备并发导入、账号登录。
-浏览器（Web/PWA）只做发起方，不做服务端，也不做 UDP 发现与相机扫码。
+浏览器（Web/PWA）不参与局域网同步：服务端拒绝带 `Origin` 的浏览器请求（HTTPS 托管的网页本就受混合内容限制，无法请求局域网 `http://` 地址）。
 
 ## 1. 角色与平台矩阵
 
@@ -17,7 +17,7 @@
 |---|---|---|---|---|---|
 | Windows（Tauri） | 是 | 是 | 是（广播 + 扫描） | **否** | `apps/desktop/src-tauri/src/lan_sync.rs`、`lan_discovery.rs` + `apps/web/src/lan-sync*.ts` |
 | Android（Capacitor） | 是 | 是 | 是（广播 + 扫描） | **是**（通用「扫一扫」+ 配对面板扫码） | `apps/mobile/android/app/src/main/java/com/dawntick/app/lan/` + `apps/web/src/lib/scan.ts` |
-| Web / PWA | **否** | 是（需要对方回 CORS 头） | **否**（只能手输/粘贴） | **否** | `apps/web/src/lan-sync*.ts` |
+| Web / PWA | **否** | **否**（服务端拒绝浏览器请求） | **否**（只能手输/粘贴） | **否** | `apps/web/src/lan-sync*.ts` |
 
 - 服务端的原生层只做传输：监听、最小 HTTP 解析、只接受局域网来源、请求体上限、排队与超时；
   发现层只做 UDP 广播与扫描，不解释同步数据。
@@ -207,7 +207,7 @@ dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC&device
 | `POST` | `/pair/revoke` | `Authorization: Bearer <token>` | 吊销当前令牌（移除配对） |
 | `GET` | `/export?scope=…` | `Authorization: Bearer <token>` | 导出所选范围；预览也用它 |
 | `POST` | `/import?scope=…&mode=merge\|overwrite` | `Authorization: Bearer <token>` | 导入（合并/覆盖） |
-| `OPTIONS` | 任意 | 无 | CORS 预检，原生层直接 204 |
+| `OPTIONS` | 任意 | 无 | 浏览器预检带 `Origin`，原生层直接 403 |
 
 - 客户端配对前先 `GET /ping`（3 秒超时）做可达性预检：失败时提示「无法连接对方：请确认
   两端在同一个 Wi-Fi，关闭 VPN/代理，并确认路由器没有开启 AP 隔离」，并保留服务端返回的
@@ -224,7 +224,8 @@ dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=123456&name=PC&device
   `payload_too_large` / `busy` / `timeout` / `forbidden` / `internal`。
 - 请求体上限 **5MB**（`MAX_REQUEST_BYTES`），响应体上限 **20MB**；超限 413/500。
 - 原生层等待 TS 处理的上限 **10 秒**，超时回 504 并把请求从队列里丢掉。
-- 所有响应带 CORS 头（`Access-Control-Allow-Origin: *` 等），浏览器端才能作为客户端；
+- 响应不带 CORS 头；带 `Origin` 的请求一律 403；`Host` 必须是 IPv4 字面量 + 本服务端口（防 DNS 重绑定），否则 403；
+- 桌面端另有：同时连接上限 16（超出 503）、整请求 15 秒读完（否则 408）、同一来源配对失败 10 次后 10 分钟内拒绝配对（429）、发布构建拒绝回环来源；
   响应头 `Cache-Control: no-store`。连接一律 `Connection: close`。
 
 ### 5.1 `POST /pair`
@@ -272,7 +273,7 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 
 - Android 不受桌面系统代理影响：`lanFetch` 走 **CapacitorHttp**（`capacitor.config.ts` 里也
   全局接管了 `fetch`），失败时同样回退 `fetch` 并记日志。
-- 浏览器的局域网请求仍是普通 `fetch`（依赖服务端 CORS 头）。
+- 浏览器 `fetch` 会被服务端拒绝；原生 HTTP 不可用时只允许 GET 回退，且有超时。
 
 ## 6. 同步信封（schema 版本保持 1）
 
