@@ -712,14 +712,22 @@ export interface ManagedCourse {
 
 /** 课程管理列表：课程及其全部排课。 */
 export async function listManagedCourses(storage: Storage, semesterId: string): Promise<ManagedCourse[]> {
-  const courses = (await storage.collection<Row>('courses').getAll())
-    .filter((row) => isAlive(row) && row['semester_id'] === semesterId)
-    .sort((left, right) => String(left['name']).localeCompare(String(right['name'])));
+  const courses = (await storage.collection<Row>('courses').getAll()).filter(
+    (row) => isAlive(row) && row['semester_id'] === semesterId,
+  );
   const courseIds = new Set(courses.map((row) => String(row['id'])));
   const schedules = (await storage.collection<Row>('course_schedules').getAll()).filter(
     (row) => isAlive(row) && courseIds.has(String(row['course_id'])),
   );
+  return managedCoursesOf(courses, schedules);
+}
 
+/** 由已读出的课程与排课（均为本学期、未删除）组装课程管理列表，按名称排序。 */
+export function managedCoursesOf(courseRows: readonly object[], scheduleRows: readonly object[]): ManagedCourse[] {
+  const courses = (courseRows as readonly Row[])
+    .slice()
+    .sort((left, right) => String(left['name']).localeCompare(String(right['name'])));
+  const schedules = scheduleRows as readonly Row[];
   return courses.map((course) => ({
     id: String(course['id']),
     name: String(course['name']),

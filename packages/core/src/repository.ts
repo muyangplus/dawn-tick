@@ -175,24 +175,53 @@ export async function applyDayKind(
   return 'skip';
 }
 
-export async function loadExpandInput(
-  storage: Storage,
-  semesterId: string,
-  from: string,
-  to: string,
-): Promise<ExpandInput | undefined> {
-  const semester = (await storage.collection<SemesterRow>('semesters').get(semesterId));
-  if (semester === undefined || semester.deleted_at !== null) return undefined;
+/**
+ * 一个学期展开课表所需的全部行，各表只读一次（只含未删除的行）。
+ * 事件包括本学期的事件，以及挂在本学期排课上但没记学期的调课/停课。
+ */
+export interface SemesterSnapshot {
+  semester: SemesterRow;
+  slots: TimeSlotRow[];
+  courses: CourseRow[];
+  schedules: CourseScheduleRow[];
+  events: EventRow[];
+}
 
-  const courses: ExpandCourse[] = (await listCourses(storage, semesterId)).map((course) => ({
+export async function loadSemesterSnapshot(storage: Storage, semesterId: string): Promise<SemesterSnapshot | undefined> {
+  const semester = await storage.collection<SemesterRow>('semesters').get(semesterId);
+  if (semester === undefined || semester.deleted_at !== null) return undefined;
+  const [slotRows, courseRows, scheduleRows, eventRows] = await Promise.all([
+    storage.collection<TimeSlotRow>('time_slots').getAll(),
+    storage.collection<CourseRow>('courses').getAll(),
+    storage.collection<CourseScheduleRow>('course_schedules').getAll(),
+    storage.collection<EventRow>('events').getAll(),
+  ]);
+  const slots = slotRows
+    .filter((row) => row.semester_id === semesterId && alive(row))
+    .sort((left, right) => left.period_no - right.period_no);
+  const courses = courseRows.filter((row) => row.semester_id === semesterId && alive(row));
+  const courseIds = new Set(courses.map((course) => course.id));
+  const schedules = scheduleRows.filter((row) => courseIds.has(row.course_id) && alive(row));
+  const scheduleIds = new Set(schedules.map((schedule) => schedule.id));
+  const events = eventRows.filter(
+    (row) =>
+      alive(row) &&
+      (row.semester_id === semesterId || (typeof row.ref_schedule_id === 'string' && scheduleIds.has(row.ref_schedule_id))),
+  );
+  return { semester, slots, courses, schedules, events };
+}
+
+/** 由学期快照得到 [from, to] 窗口的展开输入：含内置节假日与跨窗口调课。 */
+export function expandInputOf(snapshot: SemesterSnapshot, from: string, to: string): ExpandInput {
+  const { semester } = snapshot;
+  const courses: ExpandCourse[] = snapshot.courses.map((course) => ({
     id: course.id,
     name: course.name,
     short_name: course.short_name,
     location: course.location,
     color: course.color,
   }));
-
-  const schedules: ExpandSchedule[] = (await listSchedules(storage, semesterId)).map((schedule) => ({
+  const schedules: ExpandSchedule[] = snapshot.schedules.map((schedule) => ({
     id: schedule.id,
     course_id: schedule.course_id,
     day_of_week: schedule.day_of_week,
@@ -203,64 +232,53 @@ export async function loadExpandInput(
     start_time: schedule.start_time ?? null,
     end_time: schedule.end_time ?? null,
   }));
-
-  const timeSlots: ExpandTimeSlot[] = (await listTimeSlots(storage, semesterId)).map((slot) => ({
+  const timeSlots: ExpandTimeSlot[] = snapshot.slots.map((slot) => ({
     period_no: slot.period_no,
     start_time: slot.start_time,
     end_time: slot.end_time,
   }));
-
-  const courseIds = new Set(courses.map((course) => course.id));
   const scheduleIds = new Set(schedules.map((schedule) => schedule.id));
-  const events = (await storage.collection<Record<string, unknown>>('events').getAll()).filter(
-    (row) => row['deleted_at'] === null && row['semester_id'] === semesterId,
-  );
+  const inWindow = (date: unknown): date is string => typeof date === 'string' && date >= from && date <= to;
 
-  const dayKinds: ExpandDayKind[] = events
-    .filter((row) => {
-      const date = row['on_date'];
-      return (
-        typeof date === 'string' &&
-        date >= from &&
-        date <= to &&
-        (row['type'] === 'holiday' || row['type'] === 'makeup' || row['type'] === 'workday')
-      );
-    })
+  const dayKinds: ExpandDayKind[] = snapshot.events
+    .filter(
+      (row) =>
+        row.semester_id === semester.id &&
+        inWindow(row.on_date) &&
+        (row.type === 'holiday' || row.type === 'makeup' || row.type === 'workday'),
+    )
     .map((row) => ({
-      on_date: row['on_date'] as string,
-      type: row['type'] as ExpandDayKind['type'],
-      as_day_of_week: (row['as_day_of_week'] as number | null) ?? null,
-      source: (row['source'] as ExpandDayKind['source']) ?? null,
+      on_date: row.on_date as string,
+      type: row.type as ExpandDayKind['type'],
+      as_day_of_week: row.as_day_of_week ?? null,
+      source: row.source ?? null,
     }));
   // 内置法定节假日与调休上班日排在用户记录之后：同日以用户的「设为假日/非假日」为准
   for (const date of builtinHolidays()) {
-    if (date >= from && date <= to) dayKinds.push({ on_date: date, type: 'holiday', as_day_of_week: null, source: 'builtin' });
+    if (inWindow(date)) dayKinds.push({ on_date: date, type: 'holiday', as_day_of_week: null, source: 'builtin' });
   }
   for (const date of builtinWorkdays()) {
-    if (date >= from && date <= to) dayKinds.push({ on_date: date, type: 'workday', as_day_of_week: null, source: 'builtin' });
+    if (inWindow(date)) dayKinds.push({ on_date: date, type: 'workday', as_day_of_week: null, source: 'builtin' });
   }
 
-  const reschedules: ExpandReschedule[] = events
-    .filter((row) => {
-      const date = row['on_date'];
-      return (
-        row['type'] === 'reschedule' &&
-        typeof date === 'string' &&
+  const reschedules: ExpandReschedule[] = snapshot.events
+    .filter(
+      (row) =>
+        row.type === 'reschedule' &&
+        typeof row.on_date === 'string' &&
         // 原日期或调到的日期落在窗口内都要：调进窗口的课从原日期展开
-        ((date >= from && date <= to) ||
-          (typeof row['new_date'] === 'string' && row['new_date'] >= from && row['new_date'] <= to)) &&
-        typeof row['ref_schedule_id'] === 'string' &&
-        scheduleIds.has(row['ref_schedule_id'])
-      );
-    })
+        (inWindow(row.on_date) || inWindow(row.new_date)) &&
+        typeof row.ref_schedule_id === 'string' &&
+        scheduleIds.has(row.ref_schedule_id),
+    )
     .map((row) => ({
-      ref_schedule_id: row['ref_schedule_id'] as string,
-      on_date: row['on_date'] as string,
-      action: row['action'] as ExpandReschedule['action'],
-      new_date: (row['new_date'] as string | null) ?? null,
-      new_period_start: (row['new_period_start'] as number | null) ?? null,
-      new_period_end: (row['new_period_end'] as number | null) ?? null,
-      new_room: (row['new_room'] as string | null) ?? null,
+      ref_schedule_id: row.ref_schedule_id as string,
+      on_date: row.on_date as string,
+      action: row.action as ExpandReschedule['action'],
+      new_date: row.new_date ?? null,
+      new_period_start: row.new_period_start ?? null,
+      new_period_end: row.new_period_end ?? null,
+      new_room: row.new_room ?? null,
     }));
 
   return {
@@ -278,6 +296,16 @@ export async function loadExpandInput(
     from,
     to,
   };
+}
+
+export async function loadExpandInput(
+  storage: Storage,
+  semesterId: string,
+  from: string,
+  to: string,
+): Promise<ExpandInput | undefined> {
+  const snapshot = await loadSemesterSnapshot(storage, semesterId);
+  return snapshot === undefined ? undefined : expandInputOf(snapshot, from, to);
 }
 
 export async function listRemindersFor(storage: Storage, targetType: string, targetId: string) {

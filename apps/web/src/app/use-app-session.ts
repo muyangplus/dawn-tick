@@ -147,11 +147,16 @@ export function useAppSession(): AppSession {
   /** 上次载入完成的时刻与当天日期：回到前台时据此判断要不要重载 */
   const loadedAt = useRef(0);
   const reload = useCallback(
-    async (target: Storage | null, current: AppSettings, start?: string | null): Promise<AppData | undefined> => {
+    async (
+      target: Storage | null,
+      current: AppSettings,
+      start?: string | null,
+      reuseSnapshot = false,
+    ): Promise<AppData | undefined> => {
       if (target === null) return undefined;
       const seq = ++reloadSeq.current;
       const explicit = start !== undefined && start !== null && start !== '';
-      const next = await loadAppData(target, current, explicit ? { windowStart: start } : {});
+      const next = await loadAppData(target, current, explicit ? { windowStart: start, reuseSnapshot } : { reuseSnapshot });
       if (seq !== reloadSeq.current) return undefined;
       loadedAt.current = Date.now();
       setData(next);
@@ -226,7 +231,8 @@ export function useAppSession(): AppSession {
     if (storage === null || data === null || data.semester === null) return;
     const wanted = clampWindowStart(windowStart ?? defaultWindowStart(data.today, settings), dayRangeOf(data.semester));
     if (wanted === data.windowStart) return;
-    void reload(storage, settings, wanted);
+    // 只是翻页：库没写过就复用上次读出的学期数据
+    void reload(storage, settings, wanted, true);
   }, [windowStart, data, storage, settings, reload]);
 
   // 跨过课程起止或午夜时刷新「今天 / 正在上 / 下一节」与小组件；回到前台（含 Capacitor resume）时补一次

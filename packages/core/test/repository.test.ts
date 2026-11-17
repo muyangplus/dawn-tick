@@ -4,11 +4,16 @@ import {
   activeSemester,
   applyDayKind,
   dayKindForDate,
+  expandInputOf,
   listSchedules,
   loadExpandInput,
+  loadSemesterSnapshot,
   weekView,
 } from '../src/repository.ts';
+import { createCourse, createReschedule, createSchedule, createSemester } from '../src/mutations.ts';
+import type { Storage } from '../src/storage.ts';
 import type { EventRow } from '../src/types.ts';
+import { validatedStorage, writeGeneration } from '../src/validation.ts';
 import {
   NOW,
   SEMESTER_ID,
@@ -149,3 +154,50 @@ test('未使用的行工厂仍可用', () => {
   const row = scheduleRow('s-x', 'c-1', weekRange(1, 4));
   assert.equal(row.weeks_mask, 15);
 });
+
+test('学期快照一次读齐，展开输入与逐表读取一致，并带上没记学期的调课', async () => {
+  const { storage, semesterId } = await seededForSnapshot();
+  const snapshot = await loadSemesterSnapshot(storage, semesterId);
+  assert.ok(snapshot !== undefined);
+  assert.ok(snapshot.events.some((row) => row.semester_id === null && row.type === 'reschedule'));
+  const from = '2026-09-01';
+  const to = '2027-01-31';
+  assert.deepEqual(expandInputOf(snapshot, from, to), await loadExpandInput(storage, semesterId, from, to));
+  const input = expandInputOf(snapshot, from, to);
+  assert.equal(input.reschedules?.length, 1, '没记学期的调课也参与展开');
+  assert.ok(input.dayKinds?.some((row) => row.source === 'builtin'), '带内置节假日');
+});
+
+test('写入代数随每次写入递增，未包装的存储返回 null', async () => {
+  const raw = createStorage();
+  assert.equal(writeGeneration(raw), null);
+  const storage = validatedStorage(raw);
+  const before = writeGeneration(storage) ?? -1;
+  await storage.writeMeta('k', 'v');
+  await storage.collection('users').put({ id: 'u-x', nickname: 'x', created_at: 1, updated_at: 1, deleted_at: null, rev: 0, dirty: 0 });
+  assert.equal(writeGeneration(storage), before + 2);
+});
+
+async function seededForSnapshot(): Promise<{ storage: Storage; semesterId: string }> {
+  const storage = createStorage();
+  const semester = await createSemester(storage, { userId: USER_ID, name: '第一学期', startDate: '2026-09-07' });
+  const semesterId = String(semester['id']);
+  const course = await createCourse(storage, { semesterId, name: '高等数学' });
+  const schedule = await createSchedule(storage, {
+    courseId: String(course['id']),
+    dayOfWeek: 1,
+    periodStart: 1,
+    periodEnd: 2,
+    weeks: [1, 2, 3, 4],
+  });
+  const reschedule = await createReschedule(storage, {
+    userId: USER_ID,
+    semesterId,
+    refScheduleId: String(schedule['id']),
+    onDate: '2026-09-14',
+    action: 'cancel',
+  });
+  const events = storage.collection<Record<string, unknown>>('events');
+  await events.put({ ...(await events.get(String(reschedule['id']))), semester_id: null });
+  return { storage, semesterId };
+}
