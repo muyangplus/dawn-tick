@@ -2,7 +2,6 @@ import {
   LEGACY_SQLX_BASELINE_KEY,
   SCHEMA_VERSION_KEY,
   SETTING_META_KEYS,
-  SYNC_CURSOR_KEY,
   WAL_META_KEY,
   WEEKS_RAW_BACKFILL_KEY,
 } from '@dawn-tick/core';
@@ -61,7 +60,8 @@ export const SNAPSHOT_INDEX_META_KEY = 'backup_index';
 export const CORE_META_KEYS = {
   schemaVersion: SCHEMA_VERSION_KEY,
   legacySqlxBaseline: LEGACY_SQLX_BASELINE_KEY,
-  syncCursor: SYNC_CURSOR_KEY,
+  // 早期按行同步的游标；该同步方式已移除，键保留登记以识别旧库里的残留行
+  syncCursor: 'sync_cursor',
   weeksRawBackfill: WEEKS_RAW_BACKFILL_KEY,
   walMode: WAL_META_KEY,
 } as const;
