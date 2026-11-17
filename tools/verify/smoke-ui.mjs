@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
@@ -146,9 +146,24 @@ async function main() {
   };
 
   const module = await import(entryUrl);
-  const results = await module.runSmoke();
+  const results = [];
+  let aborted = null;
+  try {
+    await module.runSmoke(results);
+  } catch (error) {
+    aborted = error;
+  }
 
   let failed = 0;
+  if (aborted !== null) {
+    // 抛错不再吞掉已跑完的断言：照常输出，并标出中断位置
+    const last = results.at(-1)?.name ?? '(尚无断言)';
+    results.push({
+      name: `冒烟中途抛错（上一条断言：${last}）`,
+      ok: false,
+      detail: aborted instanceof Error ? (aborted.stack ?? aborted.message) : String(aborted),
+    });
+  }
   for (const result of results) {
     console.log(`${result.ok ? '[PASS]' : '[FAIL]'} ${result.name}${result.detail === '' ? '' : `  ${result.detail}`}`);
     if (!result.ok) failed += 1;
@@ -163,6 +178,13 @@ async function main() {
   if (realErrors.length > 0) {
     failed += 1;
     console.error(`控制台错误 ${realErrors.length} 条：${realErrors.slice(0, 3).join(' | ')}`);
+  }
+
+  // 断言总数下限：拆分或改写冒烟时防止整段断言被静默丢掉
+  const { minChecks } = JSON.parse(readFileSync(new URL('../../apps/web/smoke/baseline.json', import.meta.url), 'utf8'));
+  if (aborted === null && results.length < minChecks) {
+    failed += 1;
+    console.error(`断言数 ${results.length} 少于基线 ${minChecks}（apps/web/smoke/baseline.json）`);
   }
 
   dom.window.close();
