@@ -21,6 +21,11 @@ import {
 } from '@dawn-tick/core';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { collect } from '../src/reminder-collect.ts';
+import { beforeEach } from 'node:test';
+import { freezeDate } from './kit/clock.ts';
+
+// 依赖“今天”与“下一节课”的断言统一用固定时刻，避免跨午夜、跨周与时段抖动
+beforeEach((t) => freezeDate(t));
 
 const USER_ID = 'u1';
 const TIME_ZONE = 'Asia/Shanghai';

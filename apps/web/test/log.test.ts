@@ -4,6 +4,7 @@ import { MemoryStorage } from '@dawn-tick/core';
 import {
   attachLogStorage,
   debugEnabled,
+  flushLogsNow,
   formatLogTimestamp,
   loadLogs,
   logDebug,
@@ -50,7 +51,7 @@ test('日志写入本地存储后可重新读回', async () => {
   const storage = new MemoryStorage();
   attachLogStorage(storage);
   logInfo('persist', '写入一条');
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await flushLogsNow();
   const stored = await storage.readMeta('app_log');
   assert.ok(stored !== null && stored !== undefined && stored.includes('写入一条'));
   await loadLogs();
