@@ -167,7 +167,7 @@ test('没有对端 deviceId 时按设备名兜底，首次发现补上真实 dev
 
 test('二维码展示名与 UDP 广播名不同：记下广播名后换 IP 仍能认回同一台', () => {
   const pairing = sample({ name: 'Windows 电脑', discoveryName: 'DESKTOP-ABC' });
-  const found = peer({ name: 'DESKTOP-ABC', host: '10.0.0.8', port: 41000, deviceId: undefined });
+  const found = peer({ name: 'DESKTOP-ABC', host: '10.0.0.8', port: 41000 });
   const updated = applyDiscoveryAddress(pairing, [found], NOW + 1);
   assert.equal(updated?.host, '10.0.0.8');
   assert.equal(updated?.port, 41000);
@@ -175,7 +175,7 @@ test('二维码展示名与 UDP 广播名不同：记下广播名后换 IP 仍�
   assert.equal(updated?.name, 'Windows 电脑', '展示名保持不变');
 
   // 同名展示名的另一台设备不会被误认
-  const wrong = peer({ name: 'Windows 电脑', host: '10.0.0.9', port: 42000, deviceId: undefined });
+  const wrong = peer({ name: 'Windows 电脑', host: '10.0.0.9', port: 42000 });
   assert.equal(applyDiscoveryAddress(pairing, [wrong], NOW + 1), null);
 });
 

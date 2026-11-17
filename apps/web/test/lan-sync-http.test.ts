@@ -61,7 +61,7 @@ test('toLanNativeArgs：方法大写、头归一、正文只收字符串', () =>
 
 test('桌面 lanFetch 走 Rust lan_http_request（不加载 plugin-http）', async () => {
   const restorePlatform = installTauriPlatform();
-  const calls: { command: string; args?: Record<string, unknown> }[] = [];
+  const calls: { command: string; args?: Record<string, unknown> | undefined }[] = [];
   setLanHttpInvokerForTests(async (command, args) => {
     calls.push({ command, args });
     return { status: 200, body: '{"token":"abc"}' };

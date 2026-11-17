@@ -141,7 +141,7 @@ test('选入的备份文件按后缀分流', async () => {
   assert.equal(fromJson.error, null);
 
   const zipFile = new File(
-    [zipStore([{ name: 'backup.json', data: new TextEncoder().encode(BACKUP_JSON) }])],
+    [zipStore([{ name: 'backup.json', data: new TextEncoder().encode(BACKUP_JSON) }]).slice()],
     'DawnTick-backup.zip',
     { type: 'application/zip' },
   );
@@ -202,7 +202,7 @@ test('整包导入恢复预设且不覆盖日志', async () => {
     logs: '本机日志',
     now: 1,
   });
-  const file = new File([bytes], 'DawnTick-backup.zip');
+  const file = new File([bytes.slice()], 'DawnTick-backup.zip');
   const read = await readImportFile(file);
   assert.ok(read.payload);
   assert.deepEqual(read.extras?.presets, presets);
@@ -225,7 +225,7 @@ test('整包导入恢复预设且不覆盖日志', async () => {
 test('没带预设的整包导入不改本机预设', async () => {
   const payload = await exportBackup(createStorage());
   const bytes = buildPackageBytes({ backupJson: JSON.stringify(payload), now: 1 });
-  const file = new File([bytes], 'DawnTick-backup.zip');
+  const file = new File([bytes.slice()], 'DawnTick-backup.zip');
   const read = await readImportFile(file);
   const target = createStorage();
   await target.writeMeta('presets_snapshot_v1', 'keep-me');
@@ -322,7 +322,7 @@ test('加密整包 zip 解密后仍带出预设与日志', async () => {
   const sealed = await encryptBackupBytes(plain, EXPORT_PASSWORD);
   // zip 文件内容整个是加密信封，导入侧按字节标记识别
   assert.equal(isEncryptedBackup(new TextDecoder().decode(sealed)), true);
-  const file = new File([sealed], 'DawnTick-backup.zip', { type: 'application/zip' });
+  const file = new File([sealed.slice()], 'DawnTick-backup.zip', { type: 'application/zip' });
 
   const locked = await readImportFile(file);
   assert.equal(locked.locked, true);

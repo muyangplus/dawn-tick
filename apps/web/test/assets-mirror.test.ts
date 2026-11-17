@@ -48,7 +48,6 @@ function versionJson(overrides: Record<string, unknown> = {}): Record<string, un
 function parseOk(value: unknown) {
   const result = parseAssetsVersion(value);
   assert.equal(result.ok, true, result.ok ? '' : result.error);
-  if (!result.ok) throw new Error(result.error);
   return result.manifest;
 }
 

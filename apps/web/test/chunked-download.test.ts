@@ -33,7 +33,7 @@ function parseRange(value: string): { start: number; end: number } {
 }
 
 function responseOf(bytes: Uint8Array, status: number, headers: Record<string, string> = {}): Response {
-  return new Response(bytes, { status, headers });
+  return new Response(bytes.slice(), { status, headers });
 }
 
 // —— 分片规划 ——

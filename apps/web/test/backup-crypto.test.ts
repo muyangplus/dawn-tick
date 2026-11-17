@@ -137,7 +137,7 @@ test('整包 zip 字节加密后可原样解回', async () => {
   assert.ok(new TextDecoder().decode(sealed).startsWith('DAWNTICK-ENC 1 '));
   assert.deepEqual(await decryptBackupBytes(sealed, PASSWORD), plain);
   // 也接受 ArrayBuffer 入参
-  const buffer = sealed.buffer.slice(sealed.byteOffset, sealed.byteOffset + sealed.byteLength);
+  const buffer = sealed.slice().buffer;
   assert.deepEqual(await decryptBackupBytes(buffer, PASSWORD), plain);
 });
 

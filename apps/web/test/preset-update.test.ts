@@ -24,6 +24,7 @@ import {
   sha256HexSync,
   verifySnapshot,
   writeCachedSnapshot,
+  type PresetIndex,
   type PresetSnapshot,
 } from '../src/preset-update.ts';
 
@@ -67,7 +68,8 @@ function signed(snapshot: Omit<PresetSnapshot, 'hash'>): PresetSnapshot {
  * - `sources.timetables[].path` 是历史契约符号路径（`timetable.json` 已并入 school.json、不存在）；
  * - `sources.systems[].path` 指向真实存在的 `system.json`，但记录的 sha256 是 legacy 编译产物文本的哈希。
  */
-const REAL_PRESET_SNAPSHOT_0_1_0: PresetSnapshot = {
+// 照线上原文的形状，含本模块不消费的字段，故用断言而非注解
+const REAL_PRESET_SNAPSHOT_0_1_0 = {
   version: '0.1.0',
   schemaVersion: 1,
   generatedAt: '2026-01-01T00:00:00.000Z',
@@ -208,7 +210,7 @@ const REAL_PRESET_SNAPSHOT_0_1_0: PresetSnapshot = {
     ],
   },
   hash: 'sha256:b035466f88fa0b8f3ccbffe3f20cd0bff9fe0977291d3cfb08728db758bc5bbd',
-};
+} as PresetSnapshot;
 
 const DEMO_SNAPSHOT: PresetSnapshot = signed({
   version: '1.1.0',
@@ -306,9 +308,9 @@ test('verifySnapshot：真实生成器产出的 0.1.0 快照通过，内容被�
   // 键序不同不应影响结果：规范化会排序
   const shuffled = {
     hash: REAL_PRESET_SNAPSHOT_0_1_0.hash,
-    index: REAL_PRESET_SNAPSHOT_0_1_0.index,
+    index: REAL_PRESET_SNAPSHOT_0_1_0.index!,
     sources: REAL_PRESET_SNAPSHOT_0_1_0.sources,
-    generatedAt: REAL_PRESET_SNAPSHOT_0_1_0.generatedAt,
+    generatedAt: REAL_PRESET_SNAPSHOT_0_1_0.generatedAt!,
     schemaVersion: REAL_PRESET_SNAPSHOT_0_1_0.schemaVersion,
     version: REAL_PRESET_SNAPSHOT_0_1_0.version,
   };
