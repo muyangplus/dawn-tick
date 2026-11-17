@@ -1,3 +1,4 @@
+import { MAX_PERIODS } from '../timetable.ts';
 import { parseWeeksText } from './weeks-text.ts';
 
 export interface ParsedSlot {
@@ -113,7 +114,7 @@ export function parsePeriodLabel(text: string): PeriodLabel | null {
   if (numbers.length === 0) return null;
   const start = numbers[0] as number;
   const end = numbers.length > 1 ? (numbers[1] as number) : start;
-  if (start < 1 || start > 40 || end < 1 || end > 40) return null;
+  if (start < 1 || start > MAX_PERIODS || end < 1 || end > MAX_PERIODS) return null;
   return {
     periodStart: Math.min(start, end),
     periodEnd: Math.max(start, end),

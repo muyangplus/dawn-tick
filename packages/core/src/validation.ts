@@ -1,4 +1,5 @@
 import type { Collection, Storage, StoreName } from './storage.ts';
+import { MAX_PERIODS } from './timetable.ts';
 
 const EVENT_TYPES = ['exam', 'todo', 'temp', 'homework', 'lab', 'reschedule', 'holiday', 'makeup', 'workday'] as const;
 const EVENT_NATURES = ['course', 'lab'] as const;
@@ -112,7 +113,7 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
 
     case 'time_slots': {
       if (!isText(row['semester_id'])) push(out, store, key, 'semester_id', '必须是非空字符串');
-      if (!inRange(row['period_no'], 1, 40)) push(out, store, key, 'period_no', '必须在 1..40');
+      if (!inRange(row['period_no'], 1, MAX_PERIODS)) push(out, store, key, 'period_no', `必须在 1..${MAX_PERIODS}`);
       if (!isText(row['start_time']) || !TIME_RE.test(row['start_time'])) {
         push(out, store, key, 'start_time', '必须是 HH:MM');
       }
@@ -143,8 +144,8 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
     case 'course_schedules': {
       if (!isText(row['course_id'])) push(out, store, key, 'course_id', '必须是非空字符串');
       if (!inRange(row['day_of_week'], 1, 7)) push(out, store, key, 'day_of_week', '必须在 1..7');
-      if (!inRange(row['period_start'], 1, 40)) push(out, store, key, 'period_start', '必须在 1..40');
-      if (!inRange(row['period_end'], 1, 40)) push(out, store, key, 'period_end', '必须在 1..40');
+      if (!inRange(row['period_start'], 1, MAX_PERIODS)) push(out, store, key, 'period_start', `必须在 1..${MAX_PERIODS}`);
+      if (!inRange(row['period_end'], 1, MAX_PERIODS)) push(out, store, key, 'period_end', `必须在 1..${MAX_PERIODS}`);
       if (isInt(row['period_start']) && isInt(row['period_end']) && row['period_end'] < row['period_start']) {
         push(out, store, key, 'period_end', '必须大于等于 period_start');
       }
@@ -207,7 +208,7 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
       for (const field of ['period_start', 'period_end']) {
         if (row[field] === null || row[field] === undefined) continue;
         if (type !== 'lab') push(out, store, key, field, '仅实验可设置');
-        else if (!inRange(row[field], 1, 40)) push(out, store, key, field, '必须在 1..40');
+        else if (!inRange(row[field], 1, MAX_PERIODS)) push(out, store, key, field, `必须在 1..${MAX_PERIODS}`);
       }
       if (
         isInt(row['period_start']) &&
@@ -238,11 +239,11 @@ export function validateRow(store: StoreName, row: Row): Violation[] {
         if (row['action'] === 'move' && !isText(row['new_date'])) {
           push(out, store, key, 'new_date', '改期必须给出新日期');
         }
-        if (row['new_period_start'] !== null && row['new_period_start'] !== undefined && !inRange(row['new_period_start'], 1, 40)) {
-          push(out, store, key, 'new_period_start', '必须在 1..40');
+        if (row['new_period_start'] !== null && row['new_period_start'] !== undefined && !inRange(row['new_period_start'], 1, MAX_PERIODS)) {
+          push(out, store, key, 'new_period_start', `必须在 1..${MAX_PERIODS}`);
         }
-        if (row['new_period_end'] !== null && row['new_period_end'] !== undefined && !inRange(row['new_period_end'], 1, 40)) {
-          push(out, store, key, 'new_period_end', '必须在 1..40');
+        if (row['new_period_end'] !== null && row['new_period_end'] !== undefined && !inRange(row['new_period_end'], 1, MAX_PERIODS)) {
+          push(out, store, key, 'new_period_end', `必须在 1..${MAX_PERIODS}`);
         }
         if (
           isInt(row['new_period_start']) &&

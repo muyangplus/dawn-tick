@@ -1,4 +1,5 @@
 import type { ImportedSchedule } from './apply.ts';
+import { MAX_PERIODS } from '../timetable.ts';
 import { looksLikeRoom } from './csv.ts';
 import { attribute, findWeekdayHeader, parseHtmlTables, stripTags, weekdayTableCells } from './html-grid.ts';
 import { parseWeeksText } from './weeks-text.ts';
@@ -23,7 +24,7 @@ export function parseTimetableCells(html: string): JwglxtCell[] {
   for (const match of html.matchAll(grid)) {
     const day = Number(match[3]);
     const period = Number(match[4]);
-    if (day < 1 || day > 7 || period < 1 || period > 40) continue;
+    if (day < 1 || day > 7 || period < 1 || period > MAX_PERIODS) continue;
     cells.push({
       dayOfWeek: day,
       periodNo: period,

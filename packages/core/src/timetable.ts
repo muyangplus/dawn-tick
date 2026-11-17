@@ -22,6 +22,8 @@ export interface TimetableInput {
 }
 
 /** 每节时长的可接受范围（分钟）：与 `generatePeriods` / `reflowPeriods` 同一口径 */
+/** 一天最多的节次数：节次表、排课、调课、导入共用这一个上限。 */
+export const MAX_PERIODS = 40;
 export const PERIOD_DURATION_MIN = 10;
 export const PERIOD_DURATION_MAX = 240;
 /** 课间间隔的可接受范围（分钟）：同上 */
@@ -262,7 +264,7 @@ export function generatePeriods(input: TimetableInput): GeneratedPeriod[] {
     }
   }
   if (periods.length === 0) throw new Error('至少需要一个时段且节数大于零');
-  if (periods.length > 30) throw new Error('节次不能超过 30 节');
+  if (periods.length > MAX_PERIODS) throw new Error(`节次不能超过 ${MAX_PERIODS} 节`);
   return periods;
 }
 
