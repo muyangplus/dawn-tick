@@ -128,10 +128,13 @@ export function useAppEffects(input: {
 
   // 启动时按设置检查一次更新，只提示不下载；「自动检查版本更新」关闭时跳过
   useEffect(() => {
+    // 等存储与设置都就绪：否则用的是默认设置（测试版开关、下载源）且读不到「忽略此版本」
+    if (screenStorage === null) return;
     if (!settings.autoCheckUpdate) return;
     if (autoChecked.current && checkTick === 0) return;
     autoChecked.current = true;
     let cancelled = false;
+    let finished = false;
     void (async () => {
       // 与手动检查共用下载源解析：自动模式探测一次（会话缓存），手动指定直接用它
       // 探测与取源都走原生 HTTP（桌面 Tauri / Android CapacitorHttp）：Gitee raw 无 CORS
@@ -162,13 +165,17 @@ export function useAppEffects(input: {
       }
       // 检查到严格更高的新版本：交给统一的更新弹窗（版本、渠道、当前版本与发布说明）
       requestUpdatePrompt(status);
-    })();
+    })().finally(() => {
+      finished = true;
+    });
     return () => {
       cancelled = true;
+      // 没跑完就被卸载（开发模式双挂载、存储切换）：允许下次挂载重新检查
+      if (!finished) autoChecked.current = false;
     };
     // 设置就绪后只检查一次；切到测试版会递增 checkTick 再查一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.autoCheckUpdate, checkTick]);
+  }, [settings.autoCheckUpdate, checkTick, screenStorage]);
 
   // 窗口改尺寸后记录一次视口与滚动区高度：滑不动时日志里能看出是哪一层算错
   useEffect(() => {
