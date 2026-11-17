@@ -277,50 +277,119 @@ function alive(row: Row): boolean {
   return row['deleted_at'] === null || row['deleted_at'] === undefined;
 }
 
+interface UniqueRule {
+  /** 违反时报的规则名（对应索引名） */
+  rule: string;
+  message: string;
+  /** 参与唯一约束的行给出键，不参与返回 null */
+  key: (row: Row) => string | null;
+}
+
 /** 唯一性规则，对应 001_init.sql 中的部分唯一索引。 */
-export async function validateUniqueness(
+const UNIQUE_RULES: Partial<Record<StoreName, UniqueRule>> = {
+  semesters: {
+    rule: 'ux_semesters_active',
+    message: '每个用户只能有一个当前学期',
+    key: (row) => (row['is_active'] === 1 ? String(row['user_id']) : null),
+  },
+  time_slots: {
+    rule: 'ux_time_slots',
+    message: '同一学期节次不能重复',
+    key: (row) => `${String(row['semester_id'])}|${String(row['period_no'])}`,
+  },
+  events: {
+    rule: 'ux_events_day_kind',
+    message: '同一学期同一天只能有一条假期或调休判定',
+    key: (row) =>
+      DAY_KINDS.includes(row['type'] as never) ? `${String(row['semester_id'])}|${String(row['on_date'])}` : null,
+  },
+};
+
+/**
+ * 一批行写入后的唯一性：库里现有行（被本批同 id 覆盖的除外）与本批之间、本批内部都不能撞键。
+ * 只读一次全表，批量导入不再是 O(n²)。
+ */
+export async function validateUniquenessBatch(
   storage: Storage,
   store: StoreName,
-  row: Row,
+  rows: readonly Row[],
 ): Promise<Violation[]> {
+  const rule = UNIQUE_RULES[store];
   const out: Violation[] = [];
-  const key = typeof row['id'] === 'string' ? row['id'] : null;
-  if (!alive(row)) return out;
+  if (rule === undefined) return out;
+  const candidates = rows.filter((row) => alive(row) && rule.key(row) !== null);
+  if (candidates.length === 0) return out;
 
-  if (store === 'semesters' && row['is_active'] === 1) {
-    const rows = await storage.collection<Row>('semesters').getAll();
-    const clash = rows.some(
-      (other) => alive(other) && other['id'] !== row['id'] && other['user_id'] === row['user_id'] && other['is_active'] === 1,
-    );
-    if (clash) push(out, store, key, 'ux_semesters_active', '每个用户只能有一个当前学期');
+  const incoming = new Set(rows.map((row) => String(row['id'])));
+  const taken = new Map<string, string>();
+  for (const other of await storage.collection<Row>(store).getAll()) {
+    if (!alive(other) || incoming.has(String(other['id']))) continue;
+    const key = rule.key(other);
+    if (key !== null) taken.set(key, String(other['id']));
   }
-
-  if (store === 'time_slots') {
-    const rows = await storage.collection<Row>('time_slots').getAll();
-    const clash = rows.some(
-      (other) =>
-        alive(other) &&
-        other['id'] !== row['id'] &&
-        other['semester_id'] === row['semester_id'] &&
-        other['period_no'] === row['period_no'],
-    );
-    if (clash) push(out, store, key, 'ux_time_slots', '同一学期节次不能重复');
+  for (const row of candidates) {
+    const key = rule.key(row) as string;
+    const id = typeof row['id'] === 'string' ? row['id'] : null;
+    const holder = taken.get(key);
+    if (holder !== undefined && holder !== id) push(out, store, id, rule.rule, rule.message);
+    else taken.set(key, String(row['id']));
   }
-
-  if (store === 'events' && DAY_KINDS.includes(row['type'] as never)) {
-    const rows = await storage.collection<Row>('events').getAll();
-    const clash = rows.some(
-      (other) =>
-        alive(other) &&
-        other['id'] !== row['id'] &&
-        other['semester_id'] === row['semester_id'] &&
-        other['on_date'] === row['on_date'] &&
-        DAY_KINDS.includes(other['type'] as never),
-    );
-    if (clash) push(out, store, key, 'ux_events_day_kind', '同一学期同一天只能有一条假期或调休判定');
-  }
-
   return out;
+}
+
+/**
+ * 增量唯一性索引：一次读表后逐行检查、接受，供逐行决定取舍的批量导入使用。
+ * 与 `validateUniquenessBatch` 同一套规则。
+ */
+export class UniqueIndex {
+  private readonly keyById = new Map<string, string>();
+  private readonly holderByKey = new Map<string, string>();
+
+  private readonly store: StoreName;
+  private readonly rule: UniqueRule | undefined;
+
+  private constructor(store: StoreName, rule: UniqueRule | undefined) {
+    this.store = store;
+    this.rule = rule;
+  }
+
+  static async load(storage: Storage, store: StoreName): Promise<UniqueIndex> {
+    const rule = UNIQUE_RULES[store];
+    const index = new UniqueIndex(store, rule);
+    if (rule !== undefined) {
+      for (const row of await storage.collection<Row>(store).getAll()) index.accept(row);
+    }
+    return index;
+  }
+
+  check(row: Row): Violation[] {
+    if (this.rule === undefined || !alive(row)) return [];
+    const key = this.rule.key(row);
+    if (key === null) return [];
+    const holder = this.holderByKey.get(key);
+    const id = typeof row['id'] === 'string' ? row['id'] : null;
+    if (holder === undefined || holder === id) return [];
+    const out: Violation[] = [];
+    push(out, this.store, id, this.rule.rule, this.rule.message);
+    return out;
+  }
+
+  /** 记下这一行（覆盖同 id 的旧键）。 */
+  accept(row: Row): void {
+    if (this.rule === undefined) return;
+    const id = String(row['id']);
+    const previous = this.keyById.get(id);
+    if (previous !== undefined && this.holderByKey.get(previous) === id) this.holderByKey.delete(previous);
+    this.keyById.delete(id);
+    const key = alive(row) ? this.rule.key(row) : null;
+    if (key === null) return;
+    this.keyById.set(id, key);
+    this.holderByKey.set(key, id);
+  }
+}
+
+export async function validateUniqueness(storage: Storage, store: StoreName, row: Row): Promise<Violation[]> {
+  return validateUniquenessBatch(storage, store, [row]);
 }
 
 export async function collectViolations(storage: Storage, store: StoreName, row: Row): Promise<Violation[]> {
@@ -332,10 +401,27 @@ export async function assertValid(storage: Storage, store: StoreName, row: Row):
   if (violations.length > 0) throw new ValidationError(violations);
 }
 
-/** 在写入前做共享校验，使各端行为一致。 */
+/** 一批行一起校验：逐行字段规则 + 一次读表的唯一性。 */
+export async function assertValidBatch(storage: Storage, store: StoreName, rows: readonly Row[]): Promise<void> {
+  const violations = [
+    ...rows.flatMap((row) => validateRow(store, row)),
+    ...(await validateUniquenessBatch(storage, store, rows)),
+  ];
+  if (violations.length > 0) throw new ValidationError(violations);
+}
+
+const VALIDATED = Symbol('validated-storage');
+
+/** 已经由 `validatedStorage` 包过：写入时会自己校验，调用方不必再校验一遍。 */
+export function isValidatedStorage(storage: Storage): boolean {
+  return (storage as { [VALIDATED]?: boolean })[VALIDATED] === true;
+}
+
 export function validatedStorage(inner: Storage): Storage {
+  if (isValidatedStorage(inner)) return inner;
   const cache = new Map<StoreName, Collection<unknown>>();
-  return {
+  const wrappedStorage: Storage & { [VALIDATED]: true } = {
+    [VALIDATED]: true,
     kind: inner.kind,
     collection<T>(name: StoreName): Collection<T> {
       const existing = cache.get(name);
@@ -350,7 +436,7 @@ export function validatedStorage(inner: Storage): Storage {
           await base.put(value);
         },
         putMany: async (values) => {
-          for (const value of values) await assertValid(inner, name, value as Row);
+          await assertValidBatch(inner, name, values as Row[]);
           await base.putMany(values);
         },
         delete: (key) => base.delete(key),
@@ -363,4 +449,5 @@ export function validatedStorage(inner: Storage): Storage {
     writeMeta: (key, value) => inner.writeMeta(key, value),
     close: () => inner.close(),
   };
+  return wrappedStorage;
 }

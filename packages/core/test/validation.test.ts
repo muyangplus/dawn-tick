@@ -207,3 +207,27 @@ test('软删除的行不参与唯一性判定', async () => {
   await storage.collection('time_slots').put({ ...timeSlotRow(1, '08:00', '08:45'), id: 'ts-old', deleted_at: NOW });
   await assert.doesNotReject(() => storage.collection('time_slots').put(timeSlotRow(1, '08:00', '08:45')));
 });
+
+test('putMany 一次读表即可查出本批内部与库里的唯一性冲突', async () => {
+  const storage = validatedStorage(createStorage());
+  await storage.collection('users').put(userRow());
+  await storage.collection('semesters').put(semesterRow());
+  const slots = storage.collection('time_slots');
+  await slots.put(timeSlotRow(1, '08:00', '08:45'));
+
+  const clashWithStored = { ...timeSlotRow(1, '09:00', '09:45'), id: 'ts-other' };
+  await assert.rejects(slots.putMany([clashWithStored]), (error: unknown) => error instanceof ValidationError);
+
+  const a = timeSlotRow(2, '08:55', '09:40');
+  const b = { ...timeSlotRow(2, '10:00', '10:45'), id: 'ts-dup' };
+  await assert.rejects(slots.putMany([a, b]), /ux_time_slots/, '本批内部撞键');
+
+  // 同一 id 覆盖自己不算冲突
+  await slots.putMany([{ ...timeSlotRow(1, '08:05', '08:50') }]);
+  assert.equal((await slots.getAll()).length, 1);
+});
+
+test('validatedStorage 不重复包装', () => {
+  const once = validatedStorage(createStorage());
+  assert.equal(validatedStorage(once), once);
+});

@@ -1,5 +1,5 @@
 import { STORE_NAMES, type Storage, type StoreName } from './storage.ts';
-import { collectViolations } from './validation.ts';
+import { UniqueIndex, validateRow } from './validation.ts';
 import { EXPORT_EXCLUDED_KEYS, SETTING_META_KEYS } from './settings.ts';
 
 export const BACKUP_FORMAT = 'dawn-tick-backup';
@@ -287,6 +287,28 @@ export async function importBackup(
   // 合并/跳过保留来源的 updated_at：后写胜才成立；覆盖/清空是显式恢复，按本次导入时刻计
   const keepTimestamps = mode === 'merge' || mode === 'skip';
 
+  // 每张表只读一次：现有行、父表 id、唯一键都放进内存索引，逐行取舍后整表 putMany 一次写入
+  const idCache = new Map<StoreName, Set<string>>();
+  const idsOf = async (store: StoreName): Promise<Set<string>> => {
+    let ids = idCache.get(store);
+    if (ids === undefined) {
+      ids = new Set((await storage.collection<Record<string, unknown>>(store).getAll()).map((row) => String(row['id'])));
+      idCache.set(store, ids);
+    }
+    return ids;
+  };
+  const missingParent = async (store: StoreName, row: Record<string, unknown>): Promise<StoreName | null> => {
+    for (const key of FOREIGN_KEYS[store] ?? []) {
+      const value = row[key.column];
+      if (value === null || value === undefined) {
+        if (key.nullable) continue;
+        return key.parent;
+      }
+      if (typeof value !== 'string' || !(await idsOf(key.parent)).has(value)) return key.parent;
+    }
+    return null;
+  };
+
   for (const store of STORE_NAMES) {
     const listed = payload.stores[store];
     if (!Array.isArray(listed)) continue;
@@ -294,6 +316,10 @@ export async function importBackup(
     const rows = store === 'events' ? parentFirst(listed) : listed;
 
     const collection = storage.collection<Record<string, unknown>>(store);
+    const existingById = new Map((await collection.getAll()).map((row) => [String(row['id']), row] as const));
+    const unique = await UniqueIndex.load(storage, store);
+    const ownIds = await idsOf(store);
+    const accepted: Array<Record<string, unknown>> = [];
     for (const raw of rows) {
       if (typeof raw !== 'object' || raw === null) {
         skipped += 1;
@@ -307,7 +333,7 @@ export async function importBackup(
         continue;
       }
       if (store === 'semesters' && demote.has(id)) row = { ...row, is_active: 0 };
-      const existing = await collection.get(id);
+      const existing = existingById.get(id);
       if (existing !== undefined) {
         if (mode === 'skip') {
           skipped += 1;
@@ -318,21 +344,26 @@ export async function importBackup(
           continue;
         }
       }
-      const violations = await collectViolations(storage, store, row);
+      const violations = [...validateRow(store, row), ...unique.check(row)];
       if (violations.length > 0) {
         skipped += 1;
         warnings.push(`${store}: ${violations.map((item) => item.rule).join(',')}`);
         continue;
       }
-      const missing = await missingParent(storage, store, row);
+      const missing = await missingParent(store, row);
       if (missing !== null) {
         skipped += 1;
         warnings.push(`${store}: 缺少关联的${STORE_LABEL[missing] ?? missing}`);
         continue;
       }
-      await collection.put(keepTimestamps ? { ...row, dirty: 1 } : { ...row, dirty: 1, updated_at: now });
-      imported += 1;
+      const written = keepTimestamps ? { ...row, dirty: 1 } : { ...row, dirty: 1, updated_at: now };
+      unique.accept(written);
+      ownIds.add(id);
+      existingById.set(id, written);
+      accepted.push(written);
     }
+    if (accepted.length > 0) await collection.putMany(accepted);
+    imported += accepted.length;
   }
 
   if (includeSettings) {
@@ -372,23 +403,6 @@ export async function activeSemesterConflict(
 }
 
 /** 外键父行是否存在（含软删的行：SQLite 外键只看行在不在）；缺失时返回父表名。 */
-async function missingParent(
-  storage: Storage,
-  store: StoreName,
-  row: Record<string, unknown>,
-): Promise<StoreName | null> {
-  for (const key of FOREIGN_KEYS[store] ?? []) {
-    const value = row[key.column];
-    if (value === null || value === undefined) {
-      if (key.nullable) continue;
-      return key.parent;
-    }
-    if (typeof value !== 'string') return key.parent;
-    if ((await storage.collection(key.parent).get(value)) === undefined) return key.parent;
-  }
-  return null;
-}
-
 /** merge 用：备份里的 updated_at 比本地新才算新的一份。 */
 function isNewer(incoming: Record<string, unknown>, existing: Record<string, unknown>): boolean {
   const incomingAt = Number(incoming['updated_at'] ?? 0);
