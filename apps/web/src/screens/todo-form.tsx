@@ -4,10 +4,10 @@ import {
   dateWallClockToEpoch,
   deleteEvent,
   formatDate,
+  formatTime,
   maskToWeeks,
   periodsForClockRange,
   plusMinutesText,
-  setReminder,
   updateEvent,
   weeksToMask,
   WEEKDAY_LABELS,
@@ -36,9 +36,18 @@ import {
   SwitchField,
 } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
+import {
+  ADVANCE_OPTIONS,
+  advanceIdFor,
+  advanceMinutesOf,
+  eventTypeFor,
+  loadEventAdvance,
+  syncEventReminder,
+  type EventFormKind,
+} from './todo-form-model.ts';
 
 /** 待办类型：日程 / 作业 / 考试 / 实验。 */
-export type EventFormKind = 'todo' | 'homework' | 'exam' | 'lab';
+export type { EventFormKind } from './todo-form-model.ts';
 
 const KIND_LABEL: Record<EventFormKind, string> = {
   todo: '日程',
@@ -55,14 +64,6 @@ function defaultSwitches(kind: EventFormKind): { countdown: boolean; manualDone:
   };
 }
 
-const ADVANCE_OPTIONS: ReadonlyArray<{ id: string; label: string; minutes: number }> = [
-  { id: 'none', label: '不提醒', minutes: -1 },
-  { id: 'same', label: '当天提醒', minutes: 0 },
-  { id: 'half', label: '提前 30 分钟', minutes: 30 },
-  { id: 'day', label: '提前 1 天', minutes: 24 * 60 },
-  { id: 'three', label: '提前 3 天', minutes: 3 * 24 * 60 },
-  { id: 'week', label: '提前 1 周', minutes: 7 * 24 * 60 },
-];
 
 export interface TodoFormProps {
   open: boolean;
@@ -145,6 +146,11 @@ export function TodoForm({
       setTitle(editing.title);
       setCourseId(editing.subject ?? '');
       setDueDate(editing.on_date ?? formatDate(editing.start_at ?? editing.due_at ?? Date.now(), timeZone));
+      // 回填原来的时刻：否则只改标题保存也会把时间写成默认的 09:00
+      const anchor = editing.start_at ?? editing.due_at;
+      setDueTime(anchor === null ? '09:00' : formatTime(anchor, timeZone));
+      setAdvance('none');
+      void loadEventAdvance(storage, editing.id).then((minutes) => setAdvance(advanceIdFor(minutes)));
       setLocation(editing.location ?? '');
       setSeatNo(editing.seat_no ?? '');
       setNote(editing.note ?? '');
@@ -165,6 +171,9 @@ export function TodoForm({
     }
     setCurrent(kind);
     setSwitches(defaultSwitches(kind));
+    // 新建回到默认时刻与提前量，不沿用上一次编辑回填的值
+    setDueTime('09:00');
+    setAdvance('half');
     setCustomTime(false);
     setShowInTimetable(kind === 'lab');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,6 +224,7 @@ export function TodoForm({
       if (editing !== null) {
         // 只写列名（snake_case），避免 camelCase 与列名同时出现把行写脏
         await updateEvent(storage, editing.id, {
+          type: eventTypeFor(current, linked),
           title: title.trim(),
           semester_id: semesterId,
           on_date: dueDate,
@@ -236,6 +246,7 @@ export function TodoForm({
           nature: isLab ? 'lab' : editing.nature,
           show_in_timetable: timetable ? 1 : 0,
         });
+        await syncEventReminder(storage, userId, editing.id, advanceMinutesOf(advance));
         logInfo('todo', `已保存${KIND_LABEL[current]}`, { id: editing.id, title: title.trim() });
         toast.success(`已保存${KIND_LABEL[current]}「${title.trim()}」`);
         onCreated();
@@ -269,7 +280,7 @@ export function TodoForm({
       } else {
         created = await createEvent(storage, {
           userId,
-          type: isExam ? 'exam' : isHomework ? 'homework' : linked ? 'todo' : 'temp',
+          type: eventTypeFor(current, linked),
           title: title.trim(),
           semesterId,
           onDate: dueDate,
@@ -287,15 +298,9 @@ export function TodoForm({
           showInTimetable: timetable,
         });
       }
-      const minutes = ADVANCE_OPTIONS.find((item) => item.id === advance)?.minutes ?? -1;
+      const minutes = advanceMinutesOf(advance);
       if (created['id'] !== undefined && minutes >= 0) {
-        await setReminder(storage, {
-          userId,
-          targetType: 'event',
-          targetId: String(created['id']),
-          advanceMinutes: minutes,
-          skipHolidays: true,
-        });
+        await syncEventReminder(storage, userId, String(created['id']), minutes);
       }
       logInfo('todo', `已添加${KIND_LABEL[current]}`, { id: String(created['id'] ?? ''), title: title.trim() });
       toast.success(`已添加${KIND_LABEL[current]}「${title.trim()}」`);
