@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { addDays, weekStart } from '@dawn-tick/core';
 import { readSettings, updateSemester, writeSettings, DEFAULT_SETTINGS, type AppSettings, type Storage } from '@dawn-tick/core';
 import { createSnapshot, pruneSnapshots } from '../backup.ts';
 import { downloadAndApply, type ApplyMode } from '../webdav.ts';
@@ -24,6 +25,15 @@ import { useReminders } from '../useReminders.ts';
 /** 改变课表窗口排法的设置：改完后窗口回到默认起点。 */
 const VIEW_SETTING_KEYS: readonly (keyof AppSettings)[] = ['viewDays', 'weekStartsToday', 'hideWeekends'];
 const USER_ID = 'u1';
+
+/** 小组件的一周概览要覆盖今天所在的整周；默认窗口（如从今天起）不完整时另取一份整周数据。 */
+async function currentWeekData(storage: Storage, settings: AppSettings, loaded: AppData): Promise<AppData> {
+  const monday = weekStart(loaded.today);
+  const sunday = addDays(monday, 6);
+  const covered = loaded.windowDates.includes(monday) && loaded.windowDates.includes(sunday);
+  if (covered) return loaded;
+  return loadAppData(storage, { ...settings, viewDays: 7 }, { windowStart: monday });
+}
 
 export type TimetableMode = 'week' | 'today';
 
@@ -150,8 +160,11 @@ export function useAppSession(): AppSession {
         todos: next.todos.length,
         exams: next.exams.length,
       });
-      await writeWidgetSnapshot(target, next, current);
-      await notifyWidgetWindows();
+      // 翻页只换查看窗口，数据没变：不重写小组件快照、不惊动悬浮窗
+      if (!explicit) {
+        await writeWidgetSnapshot(target, await currentWeekData(target, current, next), current);
+        await notifyWidgetWindows();
+      }
       return next;
     },
     [],

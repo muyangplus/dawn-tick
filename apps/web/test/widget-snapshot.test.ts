@@ -241,3 +241,20 @@ test('Kotlin 渲染器优先快照色，缺失 colors 时回退常量', () => {
     assert.match(store, new RegExp(`optString\\("${key}"\\)`), `WidgetStore 未读取 ${key}`);
   }
 });
+
+test('A13 一周概览只含本周实际要上的课：别周虚线课、已调走的原位置与窗口外日期都不进', () => {
+  const data = appData({
+    today: '2026-09-23',
+    grid: new Map([
+      ['2026-09-21:1', [cell]],
+      ['2026-09-22:1', [{ ...cell, scheduleId: 's-ghost', dayOfWeek: 2, date: '2026-09-22', inWeek: false }]],
+      ['2026-09-24:1', [{ ...cell, scheduleId: 's-moved', dayOfWeek: 4, date: '2026-09-24', movedOut: true }]],
+      ['2026-09-29:1', [{ ...cell, scheduleId: 's-next', dayOfWeek: 2, date: '2026-09-29' }]],
+    ]),
+  });
+  const snapshot = buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1);
+  assert.deepEqual(
+    snapshot.grid.map((item) => item.dayOfWeek),
+    [1],
+  );
+});
