@@ -58,7 +58,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.apkInstaller]: ['installApk'],
   [PLUGIN_NAMES.fileShare]: ['shareFile', 'revealFile'],
   [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'networks', 'poll', 'respond', 'scanDiscovery'],
-  [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'requestPermissionInfo', 'pollActions'],
+  [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'pending', 'requestPermissionInfo', 'pollActions'],
   [PLUGIN_NAMES.secretStore]: ['encrypt', 'decrypt', 'isAvailable'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
@@ -240,6 +240,8 @@ export interface ReminderActionsPlugin {
   }): Promise<void>;
   /** 取消一条提醒：闹钟与已展示的通知一起清掉。 */
   cancel(options: { id: number }): Promise<void>;
+  /** 持久化里的全部提醒（含已展示的），供前端对账；调用方按 `at` 过滤未到点的。 */
+  pending(): Promise<{ reminders?: { id?: number; at?: number }[] }>;
   /** 通知权限与精确闹钟状态：只报告，不弹系统弹窗。 */
   requestPermissionInfo(): Promise<{ notifications?: string; exactAlarm?: string }>;
   /** 取走进程不在线时堆积的动作；队列空时 `actions` 为空数组。 */

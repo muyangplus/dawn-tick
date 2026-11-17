@@ -117,6 +117,22 @@ export class ReminderBridge {
     await notifyNow(item.title, item.detail);
   }
 
+  /** 原生已排定的提醒 `通知 id → at`；插件不可用时返回 null。 */
+  async pending(): Promise<Map<number, number> | null> {
+    if (this.plugin === null) return null;
+    try {
+      const result = await this.plugin.pending();
+      const out = new Map<number, number>();
+      for (const row of result.reminders ?? []) {
+        if (typeof row.id === 'number' && typeof row.at === 'number') out.set(row.id, row.at);
+      }
+      return out;
+    } catch (cause: unknown) {
+      logWarn('reminder', '读取原生排定失败，本轮不对账', { message: errorMessage(cause) });
+      return null;
+    }
+  }
+
   /** 取消一条提醒（完成/勿扰）；非 Android 平台没有原生排定，直接跳过。 */
   async cancel(id: number): Promise<void> {
     if (this.plugin === null) return;
