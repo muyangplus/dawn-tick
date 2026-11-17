@@ -1054,11 +1054,46 @@ const IMPORT_WINDOW: &str = "import";
 /// 注入到教务页面的脚本：右下角按钮，点击后把页面（含同源 iframe）带回应用页面。
 const IMPORT_INJECTION: &str = include_str!("import-injection.js");
 
+/// 本次教务窗口的随机值：注入脚本带着它跳到交回页，交回时核对。
+/// 教务窗口里加载的任何页面都能跳到交回页，没有它就能伪造导入内容。
+static IMPORT_NONCE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn fresh_import_nonce() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    // RandomState 的种子取自系统随机源；两段 64 位拼成 128 位
+    let mut out = String::new();
+    for salt in 0..2u64 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(salt);
+        hasher.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0),
+        );
+        out.push_str(&format!("{:016x}", hasher.finish()));
+    }
+    out
+}
+
+fn import_injection_with(nonce: &str) -> String {
+    IMPORT_INJECTION.replace("__DT_IMPORT_NONCE__", nonce)
+}
+
+fn import_nonce_matches(expected: Option<&str>, given: &str) -> bool {
+    matches!(expected, Some(value) if !value.is_empty() && value == given)
+}
+
 /// 教务页面把内容带到应用自身页面后，由该页面交回主窗口。
 /// 全程不经过任何本机端口，避免与其他监听程序相互影响。
 #[tauri::command]
-async fn submit_page_import(app: tauri::AppHandle, payload: String) -> Result<(), String> {
+async fn submit_page_import(app: tauri::AppHandle, payload: String, nonce: String) -> Result<(), String> {
     use tauri::Emitter;
+    let expected = IMPORT_NONCE.lock().map(|guard| guard.clone()).unwrap_or(None);
+    if !import_nonce_matches(expected.as_deref(), &nonce) {
+        append_log("教务页面交回的内容校验值不符，已忽略");
+        return Err("内容不是从本次打开的教务窗口交回的，请重新打开教务窗口".into());
+    }
     if !payload.contains("<<<DAWNTICK>>>") {
         append_log("教务页面交回的内容缺少标记，已忽略");
         return Err("内容缺少标记".into());
@@ -1078,11 +1113,16 @@ async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), St
     if let Some(existing) = app.get_webview_window(IMPORT_WINDOW) {
         let _ = existing.close();
     }
+    let nonce = fresh_import_nonce();
+    if let Ok(mut guard) = IMPORT_NONCE.lock() {
+        *guard = Some(nonce.clone());
+    }
+    let injection = import_injection_with(&nonce);
     let new_window_target = app.clone();
     tauri::WebviewWindowBuilder::new(&app, IMPORT_WINDOW, tauri::WebviewUrl::External(parsed))
         .title("登录教务并打开课表页")
         .inner_size(1100.0, 780.0)
-        .initialization_script(IMPORT_INJECTION)
+        .initialization_script(&injection)
         // 记录每次页面导航，便于判断「点了没反应」是没触发跳转还是被拦下。
         .on_navigation(|target| {
             append_log(&format!("教务窗口导航: {target}"));
@@ -3068,6 +3108,21 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_nonce_is_injected_and_checked() {
+        let first = fresh_import_nonce();
+        let second = fresh_import_nonce();
+        assert_eq!(first.len(), 32);
+        assert_ne!(first, second);
+        let script = import_injection_with(&first);
+        assert!(script.contains(&first));
+        assert!(!script.contains("__DT_IMPORT_NONCE__"));
+        assert!(import_nonce_matches(Some(&first), &first));
+        assert!(!import_nonce_matches(Some(&first), &second));
+        assert!(!import_nonce_matches(Some(&first), ""));
+        assert!(!import_nonce_matches(None, ""));
+    }
 
     #[test]
     fn version_compare_detects_newer() {

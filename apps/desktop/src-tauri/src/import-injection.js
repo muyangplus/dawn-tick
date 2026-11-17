@@ -5,6 +5,8 @@
   window.__dtImportReady = true;
 
   var MAX_PAYLOAD = 1500000;
+  // 由 Rust 打开窗口时替换成本次窗口的随机值；交回时带上，别的页面伪造的跳转对不上
+  var NONCE = '__DT_IMPORT_NONCE__';
 
   // 页面导入协议：字段名与计数口径与 `packages/core/src/import/page-tables.ts` 的
   // `PAGE_DIAGNOSTICS_FIELDS` / `PageDiagnostics`、以及书签 `PAGE_BOOKMARKLET` 逐字一致。
@@ -87,7 +89,7 @@
       binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
     }
     var data = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    return 'http://tauri.localhost/import-submit.html#d=' + data;
+    return 'http://tauri.localhost/import-submit.html#n=' + encodeURIComponent(NONCE) + '&d=' + data;
   };
 
   var go = function (url) {
