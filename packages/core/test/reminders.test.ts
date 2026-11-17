@@ -99,6 +99,21 @@ test('超出前瞻窗口或已过时刻被忽略', async () => {
   assert.equal(shortHorizon.length, 0);
 });
 
+test('A1 since 下界：补上两次扫描之间刚到点的提醒', async () => {
+  const storage = createStorage();
+  await seedStorage(storage);
+  const base = await buildInput(storage, [reminder({ id: 'r-1', target_id: 'c-1', advance_minutes: 10 })]);
+  const trigger = MONDAY_0800 - 10 * 60 * 1000;
+  const of = (input: Parameters<typeof computeReminders>[0]) =>
+    computeReminders(input).filter((item) => item.triggerAt === trigger).length;
+
+  // 刚过到点 20 秒：不带 since 就丢了，带上一轮扫描时刻作为下界即可补上
+  assert.equal(of({ ...base, now: trigger + 20_000 }), 0);
+  assert.equal(of({ ...base, now: trigger + 20_000, since: trigger - 10_000 }), 1);
+  // 下界不含：上一轮恰在到点时刻扫描过，本轮不再重复
+  assert.equal(of({ ...base, now: trigger + 20_000, since: trigger }), 0);
+});
+
 test('调课取消的课次不提醒，改期后按新时间提醒', async () => {
   const cancelStorage = createStorage();
   await seedStorage(cancelStorage);

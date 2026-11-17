@@ -104,8 +104,10 @@ export async function collect(
   semesterId: string,
   timeZone: string,
   defaults: ClassReminderDefaults,
+  window: { now?: number; since?: number } = {},
 ): Promise<DeliveryItem[]> {
-  const today = formatDate(Date.now(), timeZone);
+  const now = window.now ?? Date.now();
+  const today = formatDate(now, timeZone);
   const data = await loadReminderData(storage, semesterId, today, addDays(today, LOOKAHEAD_DAYS));
   if (data === undefined) return [];
   const courseIds = new Set(data.occurrences.map((item) => item.courseId));
@@ -117,7 +119,8 @@ export async function collect(
     events: data.events,
     dayKinds: data.dayKinds,
     timeZone: data.timeZone,
-    now: Date.now(),
+    now,
+    ...(window.since === undefined ? {} : { since: window.since }),
     horizonMs: LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000,
   })
     .filter((item) => {

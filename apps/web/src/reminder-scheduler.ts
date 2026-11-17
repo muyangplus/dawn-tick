@@ -19,7 +19,7 @@ import {
 } from './lib/reminder-actions.ts';
 import { logDebug, logWarn } from './log.ts';
 import { notifyNow, type NotifyPermission } from './notify.ts';
-import { toast } from './components/ui/toaster.tsx';
+import { toast } from './lib/toast.ts';
 import {
   ReminderBridge,
   type ReminderActionPayload,
@@ -36,6 +36,31 @@ import {
 
 const SCAN_INTERVAL_MS = 30_000;
 const SCHEDULE_AHEAD_MS = 60 * 60 * 1000;
+/** 补投上限：睡眠/休眠唤醒后只补最近这段时间内到点的提醒，避免一次弹出一早上的旧提醒。 */
+const CATCH_UP_MS = 5 * 60 * 1000;
+
+/** 时钟与定时器：默认用全局实现，测试可注入。 */
+export interface SchedulerClock {
+  now(): number;
+  setTimeout(callback: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+  setInterval(callback: () => void, ms: number): unknown;
+  clearInterval(handle: unknown): void;
+}
+
+const SYSTEM_CLOCK: SchedulerClock = {
+  now: () => Date.now(),
+  setTimeout: (callback, ms) => setTimeout(callback, ms),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  setInterval: (callback, ms) => setInterval(callback, ms),
+  clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
+};
+
+/** 调度器用到的平台桥接口：默认 `ReminderBridge`，测试可注入桩。 */
+export type ReminderBridgeLike = Pick<
+  ReminderBridge,
+  'connect' | 'stop' | 'refreshPermission' | 'schedule' | 'deliver' | 'cancel' | 'pollActions' | 'syncTray' | 'clearTray'
+>;
 /** Windows 托盘最多列出几条待提醒；多了菜单过长。 */
 const TRAY_LIMIT = 5;
 
@@ -48,6 +73,8 @@ export interface ReminderSchedulerOptions {
   onUpcoming: (items: ReminderOccurrence[]) => void;
   /** 原生通知权限状态回读 */
   onPermission: (permission: NotifyPermission) => void;
+  clock?: SchedulerClock;
+  bridge?: ReminderBridgeLike;
 }
 
 /**
@@ -58,8 +85,13 @@ export interface ReminderSchedulerOptions {
  * `reminder-bridge.ts`，动作语义全部来自 `lib/reminder-actions.ts`。
  */
 export class ReminderScheduler {
-  private readonly bridge = new ReminderBridge();
+  private readonly bridge: ReminderBridgeLike;
+  private readonly clock: SchedulerClock;
   private readonly handled = new Set<string>();
+  /** 下个扫描间隔内到点的提醒：按到点时刻单独定时，不等下一轮扫描 */
+  private readonly pending = new Map<string, unknown>();
+  /** 上一轮成功扫描的时刻；两轮之间到点的提醒由下一轮补投 */
+  private lastScanAt: number | null = null;
   private readonly deliveries = new Map<string, DeliveryItem>();
   private readonly trayPinned = new Map<string, DeliveryItem>();
   private lastScan: DeliveryItem[] = [];
@@ -67,12 +99,14 @@ export class ReminderScheduler {
   private mutes: MuteRecord[] = [];
   private doneRecords: DoneRecord[] = [];
   private traySignature = '';
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: unknown = null;
   private stopped = false;
   private readonly options: ReminderSchedulerOptions;
 
   constructor(options: ReminderSchedulerOptions) {
     this.options = options;
+    this.clock = options.clock ?? SYSTEM_CLOCK;
+    this.bridge = options.bridge ?? new ReminderBridge();
   }
 
   async start(): Promise<void> {
@@ -87,15 +121,22 @@ export class ReminderScheduler {
     if (this.stopped) return;
     await this.tickSafely();
     if (this.stopped) return;
-    this.timer = setInterval(() => {
+    this.timer = this.clock.setInterval(() => {
       void this.tickSafely();
     }, SCAN_INTERVAL_MS);
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.timer !== null) clearInterval(this.timer);
+    if (this.timer !== null) this.clock.clearInterval(this.timer);
+    for (const handle of this.pending.values()) this.clock.clearTimeout(handle);
+    this.pending.clear();
     this.bridge.stop();
+  }
+
+  /** 供测试驱动：立即执行一轮扫描。 */
+  async scanNow(): Promise<void> {
+    await this.tickSafely();
   }
 
   /** 通知权限回读：只报告，不弹系统弹窗；没有原生插件时返回 null。 */
@@ -234,7 +275,7 @@ export class ReminderScheduler {
           : this.deliveries.get(String(payload.id));
       const kind = entry?.kind ?? normalizeReminderKind(payload.kind) ?? 'class';
       const targetId = entry?.targetId ?? payload.targetId ?? '';
-      const now = Date.now();
+      const now = this.clock.now();
       const target: ReminderActionTarget = {
         id: entry?.key ?? String(payload.id),
         kind,
@@ -259,16 +300,37 @@ export class ReminderScheduler {
     }
   }
 
+  private async deliverOnce(item: DeliveryItem): Promise<void> {
+    if (this.stopped || this.handled.has(item.key)) return;
+    if (isReminderSuppressed(item, this.suppression(this.clock.now()))) return;
+    this.handled.add(item.key);
+    this.trayPinned.set(item.key, item);
+    try {
+      await this.bridge.deliver(item);
+    } catch (cause: unknown) {
+      logWarn('reminder', '提醒投递失败', { title: item.title, message: errorMessage(cause) });
+      return;
+    }
+    logDebug('reminder', '提醒已触发', { title: item.title, kind: item.kind, triggerAt: item.triggerAt });
+    await this.syncTray();
+  }
+
   private async tick(): Promise<void> {
+    const now = this.clock.now();
+    // Android 由原生闹钟按同一 id 投递，补投会让同一条再响一次；其它平台补上两轮扫描之间到点的提醒
+    const since = isAndroidApp()
+      ? undefined
+      : Math.max(this.lastScanAt ?? now - SCAN_INTERVAL_MS, now - CATCH_UP_MS);
     const items = await collect(
       this.options.storage,
       this.options.semesterId,
       this.options.timeZone,
       this.options.defaults,
+      since === undefined ? { now } : { now, since },
     );
     if (this.stopped) return;
-    this.options.onUpcoming(items.map((item) => item.occurrence));
-    const now = Date.now();
+    this.lastScanAt = now;
+    this.options.onUpcoming(items.filter((item) => item.triggerAt >= now).map((item) => item.occurrence));
     const state = this.suppression(now);
     this.lastScan = items.filter((item) => !isReminderSuppressed(item, state));
     this.pruneRefs(now);
@@ -283,22 +345,31 @@ export class ReminderScheduler {
       }
     }
 
+    // 本轮结果里已不存在（删除、改时间、被抑制）的定时投递要撤掉
+    const current = new Set(this.lastScan.map((item) => item.key));
+    for (const [key, handle] of this.pending) {
+      if (current.has(key)) continue;
+      this.clock.clearTimeout(handle);
+      this.pending.delete(key);
+    }
+
     for (const item of this.lastScan) {
       this.deliveries.set(item.key, item);
       if (this.handled.has(item.key)) continue;
       if (item.triggerAt <= now) {
-        this.handled.add(item.key);
-        this.trayPinned.set(item.key, item);
-        await this.bridge.deliver(item);
-        logDebug('reminder', '提醒已触发', {
-          title: item.title,
-          kind: item.kind,
-          triggerAt: item.triggerAt,
-        });
+        await this.deliverOnce(item);
         continue;
       }
-      if (isAndroidApp() && item.triggerAt - now < SCHEDULE_AHEAD_MS) {
-        if (await this.bridge.schedule(item)) this.handled.add(item.key);
+      if (isAndroidApp()) {
+        if (item.triggerAt - now < SCHEDULE_AHEAD_MS && (await this.bridge.schedule(item))) this.handled.add(item.key);
+        continue;
+      }
+      if (item.triggerAt - now <= SCAN_INTERVAL_MS && !this.pending.has(item.key)) {
+        const handle = this.clock.setTimeout(() => {
+          this.pending.delete(item.key);
+          void this.deliverOnce(item);
+        }, item.triggerAt - now);
+        this.pending.set(item.key, handle);
       }
     }
 
