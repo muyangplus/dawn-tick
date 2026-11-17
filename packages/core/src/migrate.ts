@@ -84,8 +84,14 @@ export async function migrate(db: SqlDriver, migrations: readonly Migration[]): 
     .filter((migration) => migration.id > applied);
 
   for (const migration of pending) {
-    await db.exec(migration.sql);
-    await writeMeta(db, SCHEMA_VERSION_KEY, migration.id);
+    // 版本号与迁移本体放进同一次 exec：Android 驱动整段包在一个事务里，不会出现「表改了、版本没记」；
+    // 其余端即使中途中断，下次启动也会由 probeSchemaVersion 按表结构修正
+    const id = migration.id.replaceAll("'", "''");
+    await db.exec(
+      `${migration.sql}\n;\nCREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL);\n` +
+        `INSERT INTO ${META_TABLE} (key, value) VALUES ('${SCHEMA_VERSION_KEY}', '${id}') ` +
+        `ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+    );
   }
   return readSchemaVersion(db);
 }
