@@ -83,11 +83,17 @@ export function parseTime(time: string): { hour: number; minute: number } {
   return { hour: Number(m[1]), minute: Number(m[2]) };
 }
 
-/** 某时区的墙钟时间转 UTC epoch 毫秒。 */
+/**
+ * 某时区的墙钟时间转 UTC epoch 毫秒。
+ * 夏令时回拨的重复时刻取较早的一次；跳过的不存在时刻按跳变前的偏移换算，即向后顺延（02:30 → 03:30）。
+ */
 export function epochFromParts(p: ZonedParts, timeZone: string): number {
   const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
   const first = wallAsUtc - zoneOffsetMs(wallAsUtc, timeZone);
-  return wallAsUtc - zoneOffsetMs(first, timeZone);
+  const candidate = wallAsUtc - zoneOffsetMs(first, timeZone);
+  if (zoneOffsetMs(candidate, timeZone) === wallAsUtc - candidate) return candidate;
+  // 落在跳变的空档里：用一天前（跳变前）的偏移
+  return wallAsUtc - zoneOffsetMs(wallAsUtc - 86400000, timeZone);
 }
 
 /** 日期 + 墙钟时刻 + 时区 转 UTC epoch 毫秒。 */
@@ -180,7 +186,10 @@ export function dateRange(from: string, to: string): string[] {
   return out;
 }
 
-/** 学期第 1 周周一为第 1 周；返回该日期所属周次，早于第 1 周返回 0。 */
+/**
+ * 学期第 1 周周一为第 1 周；返回该日期所属周次。
+ * 开学前一周为 0，再往前为负数（不截断：比较两天是否同一周时仍然成立），调用方按需夹到 1..total_weeks。
+ */
 export function weekOfDate(date: string, semesterStartDate: string): number {
   return Math.floor(diffDays(weekStart(date), weekStart(semesterStartDate)) / 7) + 1;
 }
