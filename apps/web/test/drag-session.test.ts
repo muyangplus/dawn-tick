@@ -14,7 +14,8 @@ import {
   lessonDropPeriod,
   lessonLongPress,
   lessonPressMove,
-  lessonTouchAction,
+  LESSON_TOUCH_ACTION,
+  lessonBlocksScroll,
   periodAt,
   resizeEmptyRange,
   stepEmptyRange,
@@ -53,11 +54,9 @@ function appData(cells: LessonCell[], courses: { id: string; name: string }[]): 
   return { grid, courses } as unknown as AppData;
 }
 
-test('lessonDraggable / lessonTouchAction：只有参与拖动的卡片才吃手势，其余留纵向滚动', () => {
+test('lessonDraggable：本周普通课程才参与拖动', () => {
   const base = cell({ date: '2026-03-02', periodStart: 1, periodEnd: 2 });
   assert.equal(lessonDraggable(base), true);
-  assert.equal(lessonTouchAction(base), 'none');
-  // 停课、已调课、调课落点、实验、非本周都不参与拖动，页面要能照常滚
   for (const overrides of [
     { cancelled: true },
     { movedOut: true },
@@ -65,12 +64,21 @@ test('lessonDraggable / lessonTouchAction：只有参与拖动的卡片才吃手
     { lab: true },
     { inWeek: false },
   ] as const) {
-    const lesson = { ...base, ...overrides };
-    assert.equal(lessonDraggable(lesson), false);
-    assert.equal(lessonTouchAction(lesson), 'pan-y');
+    assert.equal(lessonDraggable({ ...base, ...overrides }), false);
   }
   // 停课优先于其它状态：依然不可拖
   assert.equal(lessonDraggable({ ...base, cancelled: true, inWeek: false }), false);
+});
+
+test('卡片一律留纵向滚动，长按拖起来后才拦滚动（回归：Android 按在课程上滚不动）', () => {
+  assert.equal(LESSON_TOUCH_ACTION, 'pan-y');
+  assert.equal(lessonBlocksScroll(null), false);
+  const press = beginLessonPress({ pointerId: 1, pointerType: 'touch', x: 0, y: 0 });
+  // 按下未满长按：手指滑动是滚页面
+  assert.equal(lessonBlocksScroll(press), false);
+  assert.equal(lessonPressMove(press, 0, 30).outcome, 'cancel');
+  // 长按生效后拖动，页面不跟着滚
+  assert.equal(lessonBlocksScroll({ ...press, active: true }), true);
 });
 
 test('beginLessonPress / lessonLongPress：按下不算拖动，长按只生效一次', () => {

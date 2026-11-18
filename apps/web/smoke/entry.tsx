@@ -602,14 +602,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
-  // I-09：可拖动卡片独占触摸手势；不参与拖动的卡片留纵向滚动，页面才滚得动
+  // I-09：课程卡一律留纵向滚动（回归：Android 手指按在正常课程上滚不动页面）
   const lessonTouchActionOf = (selector: string): string => {
     const cell = view.container
       .querySelector<HTMLElement>(selector)
       ?.closest<HTMLElement>('[data-role="lesson-cell"]');
     return cell?.style.touchAction ?? '(无)';
   };
-  check('I-09 可拖动卡片才独占触摸手势', lessonTouchActionOf('[data-tone="solid"]') === 'none', '');
+  check(
+    'I-09 本周课程卡留纵向滚动',
+    lessonTouchActionOf('[data-tone="solid"]') === 'pan-y',
+    lessonTouchActionOf('[data-tone="solid"]'),
+  );
   check(
     'I-09 非本周卡片留纵向滚动',
     lessonTouchActionOf('[data-dashed="true"]') === 'pan-y',

@@ -25,7 +25,8 @@ import {
   lessonDropPeriod,
   lessonLongPress,
   lessonPressMove,
-  lessonTouchAction,
+  LESSON_TOUCH_ACTION,
+  lessonBlocksScroll,
   periodAt,
   resizeEmptyRange,
   stepEmptyRange,
@@ -232,6 +233,18 @@ export function WeekView({
     // 处理函数只依赖 data/periodCount 与 ref，二者变化时重建监听
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, periodCount]);
+
+  // 卡片留 pan-y 让页面能滚；长按拖起来后在这里拦下 touchmove，拖动时页面不跟着滚。
+  // React 的触摸监听是被动的，preventDefault 无效，只能原生挂非被动监听。
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (section === null) return;
+    const onTouchMove = (event: TouchEvent): void => {
+      if (lessonBlocksScroll(session.current) && event.cancelable) event.preventDefault();
+    };
+    section.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => section.removeEventListener('touchmove', onTouchMove);
+  }, []);
 
   function setEmptyTarget(next: EmptyTarget | null): void {
     const previous = emptyRef.current;
@@ -925,8 +938,8 @@ export function WeekView({
                       style={{
                         top: `${top}px`,
                         height: `${height}px`,
-                        // 可拖的卡片独占手势；停课/已调课/非本周只留纵向滚动，页面照常滚
-                        touchAction: lessonTouchAction(lesson),
+                        // 留纵向滚动；拖起来后由 section 上的 touchmove 监听拦下滚动
+                        touchAction: LESSON_TOUCH_ACTION,
                       }}
                       onPointerDown={(event) => onLessonPointerDown(event, lesson)}
                       onPointerMove={onLessonPointerMove}
