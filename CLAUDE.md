@@ -49,6 +49,12 @@ All platform branching goes through `apps/web/src/platform-detect.ts` (`web` | `
 
 **Channels.** `dev` branch → dev channel (rolling `dev-latest`); `main` → beta (`vX.Y.Z-beta.N`) and release (`vX.Y.Z`). The build injects the channel through `DT_CHANNEL` (`__DT_CHANNEL__` in Vite). Features hidden per channel are listed in `FEATURES` in `apps/web/src/channel.ts`; update the smoke test when you change it. The version comes only from the root `package.json`, and `node tools/release/version.mjs` propagates it to the apps.
 
+## 开发原则
+
+- 所有需求动手前须经人工确认方案；完成后照常提交并推送到 `dev`，再由人工审阅，有问题再改。
+- 需求有不清楚的地方，列出可选方案提问，不猜测意图。
+- 测试脚本与功能模块不由同一个 agent 完成，可另开子 agent 分担其中之一，分工按任务灵活选择。
+
 ## Conventions
 
 - Commits use `type(scope): 中文短句`, where type is feat / fix / chore / docs / refactor / test. Each commit does one thing. Don't write declarative or explanatory phrasing, in commit messages or in UI copy.
