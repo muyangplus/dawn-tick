@@ -1108,7 +1108,8 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     !statsText.includes('出勤') &&
       (statsRoot?.querySelectorAll('[data-role="semester-stats-weeks-chart"] [role="listitem"]').length ?? 0) === 20 &&
       (statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent ?? '').includes('期末模拟考') &&
-      (statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent ?? '').includes('往期课'),
+      (statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent ?? '').includes('往期课') &&
+      (statsRoot?.querySelector('[data-role="semester-stats-export"]')?.textContent ?? '').includes('导出报表'),
     [
       statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent?.trim(),
       statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent?.trim(),

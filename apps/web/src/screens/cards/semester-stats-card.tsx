@@ -1,5 +1,5 @@
-import { BarChart3, GraduationCap } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { BarChart3, Download, GraduationCap } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { useAddActions } from '../../components/add-menu.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardTitle } from '../../components/ui/card.tsx';
@@ -7,8 +7,10 @@ import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { COUNT } from '../../copy/zh.ts';
 import type { AppData } from '../../data.ts';
 import { formatMonthDayRange } from '../../lib/dates.ts';
+import { semesterReportCsv, semesterReportFileName } from '../../lib/semester-report.ts';
 import { buildSemesterStats, semesterWeekText, type SemesterStats } from '../../lib/semester-stats.ts';
 import { useNowTick } from '../../lib/use-now.ts';
+import { saveText, toastSaved } from '../settings/file-export.ts';
 import { defineCard } from './registry.ts';
 
 /** 日程页「学期概览」卡片：课时、各周分布、课程进度与考试都由本机数据算出，不依赖服务端。 */
@@ -64,7 +66,41 @@ export function SemesterStatsCard({ data, onAddTodo }: SemesterStatsCardProps) {
       {stats.lessons.total > 0 && <WeekBlock weeks={stats.weeks} current={stats.semester} />}
       {stats.courses.length > 0 && <CourseBlock rows={stats.courses} />}
       <ExamBlock stats={stats} />
+      <ReportExport stats={stats} semesterName={data.semester?.name ?? '学期'} today={data.today} />
     </Card>
+  );
+}
+
+/** 导出学期报表（CSV）：内容与卡片同一口径。 */
+function ReportExport({ stats, semesterName, today }: { stats: SemesterStats; semesterName: string; today: string }) {
+  const [busy, setBusy] = useState(false);
+  async function exportReport(): Promise<void> {
+    setBusy(true);
+    try {
+      const result = await saveText(
+        semesterReportFileName(today),
+        semesterReportCsv(stats, semesterName),
+        'csv',
+        'CSV 文件',
+        'text/csv',
+      );
+      if (result.saved) toastSaved('已导出学期报表', result.path);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      className="self-start"
+      data-role="semester-stats-export"
+      loading={busy}
+      onClick={() => void exportReport()}
+    >
+      <Download className="size-4 shrink-0" aria-hidden />
+      导出报表
+    </Button>
   );
 }
 
