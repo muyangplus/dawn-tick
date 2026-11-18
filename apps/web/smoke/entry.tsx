@@ -3032,6 +3032,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       view.container.querySelector('[aria-label="提前 20 分钟"]') !== null,
     '',
   );
+  // 勿扰时段：打开后出现默认时段（每天 23:00–次日 07:00），检查完关回去，不影响后续提醒用例
+  const quietSwitch = view.container.querySelector<HTMLElement>('[role="switch"][aria-label="勿扰时段"]');
+  quietSwitch?.click();
+  const quietShown = await waitFor(() => view.container.querySelector('[data-role="quiet-hours-rule"]') !== null);
+  const quietRuleLabel = view.container.querySelector('[data-role="quiet-hours-rule"]')?.getAttribute('aria-label') ?? '';
+  view.container.querySelector<HTMLElement>('[role="switch"][aria-label="勿扰时段"]')?.click();
+  const quietHidden = await waitFor(() => view.container.querySelector('[data-role="quiet-hours-rule"]') === null);
+  check(
+    '勿扰时段可开关，默认每天 23:00 到次日 07:00',
+    quietSwitch !== null && quietShown && quietRuleLabel === '每天 23:00–次日 07:00' && quietHidden,
+    quietRuleLabel,
+  );
   // 悬浮窗与小组件卡：倒计时开关、悬浮窗样式与安卓小组件清单
   await openSettingsGroup(view.container, '悬浮窗与小组件');
   check(

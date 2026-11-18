@@ -15,6 +15,7 @@ export * from './mutations.ts';
 export * from './settings.ts';
 export * from './validation.ts';
 export * from './reminders.ts';
+export * from './quiet-hours.ts';
 export * from './holidays.ts';
 export * from './search.ts';
 export * from './backup.ts';

@@ -1,4 +1,5 @@
 import type { ExpandDayKind, Occurrence } from './expand.ts';
+import { applyQuietHours, type QuietHours } from './quiet-hours.ts';
 import { DEFAULT_TIME_ZONE, formatDate } from './time.ts';
 import type { EventRow, ReminderRow, ReminderTargetType } from './types.ts';
 
@@ -31,6 +32,8 @@ export interface ReminderInput {
   since?: number;
   horizonMs?: number;
   timeZone?: string;
+  /** 勿扰时段：落在时段里的提醒顺延或跳过，`triggerAt` 是判定后的时刻 */
+  quietHours?: QuietHours;
 }
 
 const DEFAULT_HORIZON_MS = 7 * 24 * 60 * 60 * 1000;
@@ -95,7 +98,16 @@ export function computeReminders(input: ReminderInput): ReminderOccurrence[] {
   const horizon = input.now + (input.horizonMs ?? DEFAULT_HORIZON_MS);
   const inWindow = (triggerAt: number): boolean =>
     (input.since === undefined ? triggerAt >= input.now : triggerAt > input.since) && triggerAt <= horizon;
+  const timeZone = input.timeZone ?? DEFAULT_TIME_ZONE;
   const out: ReminderOccurrence[] = [];
+  /** 先过勿扰再看窗口：顺延后才到点的提醒也要排上 */
+  const place = (item: ReminderOccurrence): void => {
+    const triggerAt =
+      input.quietHours === undefined
+        ? item.triggerAt
+        : applyQuietHours(item.triggerAt, item.startsAt, input.quietHours, timeZone);
+    if (triggerAt !== null && inWindow(triggerAt)) out.push({ ...item, triggerAt });
+  };
 
   for (const occurrence of input.occurrences) {
     if (occurrence.cancelled) continue;
@@ -112,11 +124,10 @@ export function computeReminders(input: ReminderInput): ReminderOccurrence[] {
       [occurrence.room, `第 ${occurrence.periodStart} 节`].filter((part) => part !== null && part.length > 0).join(' · '),
       occurrence.startAt,
     );
-    if (inWindow(item.triggerAt)) out.push(item);
+    place(item);
   }
 
   const holidays = holidayDates(input.dayKinds ?? []);
-  const timeZone = input.timeZone ?? DEFAULT_TIME_ZONE;
   for (const event of input.events) {
     if (event.deleted_at !== null) continue;
     if (!REMINDABLE_EVENT_TYPES.has(event.type)) continue;
@@ -135,7 +146,7 @@ export function computeReminders(input: ReminderInput): ReminderOccurrence[] {
       event.location ?? EVENT_DETAIL[event.type] ?? '日程',
       anchor,
     );
-    if (inWindow(item.triggerAt)) out.push(item);
+    place(item);
   }
 
   return out.sort((left, right) =>

@@ -1,3 +1,4 @@
+import { checkQuietHours, DEFAULT_QUIET_HOURS, encodeQuietHours, parseQuietHours, type QuietHours } from './quiet-hours.ts';
 import { DEFAULT_TIME_ZONE } from './time.ts';
 import type { Storage } from './storage.ts';
 
@@ -74,6 +75,8 @@ export interface AppSettings {
   classReminderEnabled: boolean;
   /** 课前提醒默认提前分钟数 */
   classReminderMinutes: number;
+  /** 勿扰时段：按星期的时段，内含的提醒顺延或跳过 */
+  quietHours: QuietHours;
   /** 某天没有日程时提示明日预告 */
   tomorrowPreview: boolean;
   /** 显示开学倒计时 */
@@ -138,6 +141,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showOtherWeeks: true,
   classReminderEnabled: true,
   classReminderMinutes: 20,
+  quietHours: DEFAULT_QUIET_HOURS,
   tomorrowPreview: true,
   semesterCountdown: true,
   holidayCountdown: true,
@@ -246,6 +250,7 @@ const FIELDS: { readonly [K in keyof AppSettings]: SettingField<AppSettings[K]> 
   showOtherWeeks: flag('show_other_weeks'),
   classReminderEnabled: flag('class_reminder_enabled'),
   classReminderMinutes: intRange('class_reminder_minutes', 1, 180, '提醒提前分钟数需要在 1 到 180 之间'),
+  quietHours: { key: 'quiet_hours', parse: parseQuietHours, encode: encodeQuietHours, check: checkQuietHours },
   tomorrowPreview: flag('tomorrow_preview'),
   semesterCountdown: flag('semester_countdown'),
   holidayCountdown: flag('holiday_countdown'),

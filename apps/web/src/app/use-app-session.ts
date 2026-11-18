@@ -140,6 +140,7 @@ export function useAppSession(): AppSession {
   const reminders = useReminders(uiStorage, data?.semester?.id ?? null, data?.timeZone ?? settings.timeZone, {
     enabled: settings.classReminderEnabled,
     minutes: settings.classReminderMinutes,
+    quietHours: settings.quietHours,
   });
 
   /** 每次载入的序号：连点翻页、改设置与窗口 effect 交错时，只采用最后一次发起的结果 */
