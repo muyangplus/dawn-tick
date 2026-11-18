@@ -210,6 +210,23 @@ interface SourceAttempt {
   error: string | null;
 }
 
+/**
+ * 发布附件里的 version.json → 清单。v2 只有 `files`（名字 + 摘要），下载地址按标签拼成同一发布的附件；
+ * 没有标签时用清单所在目录。老格式（自带 `assets`）原样接受。
+ */
+export function manifestFromReleaseVersionJson(value: unknown, versionUrl: string): UpdateManifest | null {
+  const v2 = parseAssetsVersion(value);
+  if (v2.ok) {
+    const tag = v2.manifest.tag;
+    const dir =
+      tag !== undefined && tag !== ''
+        ? `https://github.com/${OWNER}/${REPO}/releases/download/${encodeURIComponent(tag)}`
+        : versionUrl.slice(0, versionUrl.lastIndexOf('/'));
+    return manifestFromAssetsVersion(v2.manifest, 'github', (name) => `${dir}/${encodeURIComponent(name)}`);
+  }
+  return isUpdateManifest(value) ? value : null;
+}
+
 /** 旧 GitHub Releases 兼容兜底：发布接口 → 同源 version.json。 */
 async function queryLegacyGitHub(
   feed: UpdateChannel,
@@ -258,19 +275,12 @@ async function queryLegacyGitHub(
     );
     if (!response.ok) return { status: null, error: networkError };
     const parsed: unknown = await response.json();
-    if (!isUpdateManifest(parsed)) return { status: null, error: networkError };
-    if (parsed.channel !== feed) {
-      return { status: null, error: `清单渠道 ${parsed.channel} 与查询渠道 ${feed} 不一致，已忽略` };
+    const manifest = manifestFromReleaseVersionJson(parsed, fallbackUrl);
+    if (manifest === null) return { status: null, error: networkError };
+    if (manifest.channel !== feed) {
+      return { status: null, error: `清单渠道 ${manifest.channel} 与查询渠道 ${feed} 不一致，已忽略` };
     }
-    return {
-      status: {
-        ...base,
-        available: compareVersions(parsed.version, currentVersion) > 0,
-        latest: parsed.version,
-        manifest: parsed,
-      },
-      error: null,
-    };
+    return { status: manifestStatus(base, manifest, currentVersion), error: null };
   } catch {
     return { status: null, error: networkError };
   }

@@ -176,9 +176,12 @@ export function parseAssetsVersion(value: unknown): VersionParseResult {
 
 // —— version.json v2 → UpdateManifest ——
 
-function assetOf(manifest: AssetsVersion, source: DownloadSource, file: VersionFile): UpdateAsset {
+/** 文件名 → 下载地址：默认是 assets 仓库同源 raw，GitHub Release 兜底时换成发布附件地址。 */
+export type FileUrlOf = (name: string) => string;
+
+function assetFor(file: VersionFile, fileUrl: FileUrlOf): UpdateAsset {
   return {
-    url: assetsFileUrl(source, manifest.channel, file.name),
+    url: fileUrl(file.name),
     name: file.name,
     size: file.size,
     sha256: file.sha256,
@@ -202,17 +205,23 @@ function pickAndroidFile(files: VersionFiles): VersionFile | undefined {
  * - `windowsPortable` 单独保留便携 zip：便携版自动更新要它，不能被安装包挤掉；
  * - `android` 按设备首选 ABI 选包：arm64 用 `android`，armeabi-v7a 用 `android32`；
  *   `android32` 只用于挑选，不进入最终清单（旧逻辑只看 `assets.android`）；
- * - 所有 URL 都是同源 raw 的绝对地址，`checksumsUrl` 指向同一分支的 `SHA256SUMS.txt`。
+ * - 所有 URL 默认是同源 raw 的绝对地址，`checksumsUrl` 指向同一分支的 `SHA256SUMS.txt`；
+ *   `fileUrl` 可换成 GitHub Release 附件地址（同一份 version.json 也挂在发布上）。
  */
-export function manifestFromAssetsVersion(manifest: AssetsVersion, source: DownloadSource): UpdateManifest {
+export function manifestFromAssetsVersion(
+  manifest: AssetsVersion,
+  source: DownloadSource,
+  fileUrl: FileUrlOf = (name) => assetsFileUrl(source, manifest.channel, name),
+): UpdateManifest {
+  const assetOf = (file: VersionFile): UpdateAsset => assetFor(file, fileUrl);
   const assets: NonNullable<UpdateManifest['assets']> = {};
   const portable = manifest.files.windowsPortable;
   const windows = manifest.files.windowsSetup ?? portable;
-  if (windows !== undefined) assets.windows = assetOf(manifest, source, windows);
-  if (portable !== undefined) assets.windowsPortable = assetOf(manifest, source, portable);
+  if (windows !== undefined) assets.windows = assetOf(windows);
+  if (portable !== undefined) assets.windowsPortable = assetOf(portable);
   const android = pickAndroidFile(manifest.files);
-  if (android !== undefined) assets.android = assetOf(manifest, source, android);
-  if (manifest.files.web !== undefined) assets.web = assetOf(manifest, source, manifest.files.web);
+  if (android !== undefined) assets.android = assetOf(android);
+  if (manifest.files.web !== undefined) assets.web = assetOf(manifest.files.web);
   return {
     channel: manifest.channel,
     version: manifest.version,
@@ -220,6 +229,6 @@ export function manifestFromAssetsVersion(manifest: AssetsVersion, source: Downl
     ...(manifest.commit === undefined ? {} : { commit: manifest.commit }),
     ...(manifest.notes === undefined ? {} : { notes: manifest.notes }),
     ...(Object.keys(assets).length === 0 ? {} : { assets }),
-    checksumsUrl: assetsFileUrl(source, manifest.channel, manifest.checksums),
+    checksumsUrl: fileUrl(manifest.checksums),
   };
 }

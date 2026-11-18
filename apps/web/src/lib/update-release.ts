@@ -143,9 +143,10 @@ function assetsFromRelease(
   const assets: NonNullable<UpdateManifest['assets']> = {};
   const windowsPortable = pick('-windows-x64-portable.zip');
   const windows = pick('-windows-x64-setup.exe') ?? windowsPortable;
-  // Android 拆包后旧兜底也要按设备 ABI 选；仍接受拆包前的 `-android.apk` 老资产
-  const androidArm64 = pick('-android-arm64-v8a.apk');
-  const androidV7 = pick('-android-armeabi-v7a.apk');
+  // Android 拆包后旧兜底也要按设备 ABI 选；发布名是 `-android-arm64/arm32.apk`，
+  // 仍接受 ABI 全称与拆包前的 `-android.apk` 老资产
+  const androidArm64 = pick('-android-arm64.apk') ?? pick('-android-arm64-v8a.apk');
+  const androidV7 = pick('-android-arm32.apk') ?? pick('-android-armeabi-v7a.apk');
   const androidLegacy = pick('-android.apk');
   const android =
     preferredAndroidAbi() === 'armeabi-v7a'
