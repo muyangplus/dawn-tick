@@ -27,6 +27,7 @@ import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { UnlockBackupDialog } from './backup-encryption.tsx';
+import { importShareText, looksLikeShare } from '../../lib/share-file.ts';
 
 export interface ImportDialogProps {
   open: boolean;
@@ -95,11 +96,32 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
     onOpenChange(false);
   }
 
+  /** 课表分享文件：不进模块选择，直接导入为一个新学期。 */
+  async function importShare(text: string): Promise<void> {
+    await importAction.run({
+      scope: 'backup',
+      label: '正在导入分享课表…',
+      fail: { what: '导入分享课表失败', next: '请确认文件是晓刻导出的课表分享文件' },
+      task: async () => {
+        const outcome = await importShareText(storage, text);
+        const skipped = outcome.skipped > 0 ? `，${outcome.skipped} 条无法导入已跳过` : '';
+        toast.success(`已导入分享课表「${outcome.semesterName}」为新学期${skipped}；可在学期设置里切换`);
+        setImportText('');
+        onOpenChange(false);
+        onChanged();
+      },
+    });
+  }
+
   /** 导入对话框里粘贴的文本：JSON、Base64 与加密信封都接受。 */
   async function parsePastedBackup(): Promise<void> {
     const text = importText.trim();
     if (text === '') {
       toast.error('请先粘贴备份文本');
+      return;
+    }
+    if (looksLikeShare(text)) {
+      await importShare(text);
       return;
     }
     const result = await importPastedText(text);
@@ -111,6 +133,13 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
   }
 
   async function chooseBackupFile(file: File): Promise<void> {
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      const text = await file.text();
+      if (looksLikeShare(text)) {
+        await importShare(text);
+        return;
+      }
+    }
     const result = await readImportFile(file);
     if (result.locked) {
       startUnlock({ kind: 'file', file });
@@ -191,7 +220,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
             选择备份文件
           </Button>
           <span className="text-xs text-muted">
-            支持晓刻导出的 JSON、Base64 文本与整包 zip；加密备份会提示输入口令
+            支持晓刻导出的 JSON、Base64 文本、整包 zip 与课表分享文件；加密备份会提示输入口令
           </span>
         </div>
         <textarea

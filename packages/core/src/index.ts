@@ -19,6 +19,7 @@ export * from './quiet-hours.ts';
 export * from './holidays.ts';
 export * from './search.ts';
 export * from './backup.ts';
+export * from './share.ts';
 export * from './backfill.ts';
 export * from './zip.ts';
 export * from './import/index.ts';

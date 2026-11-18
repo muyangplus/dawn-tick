@@ -2020,15 +2020,16 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const enteredStorage = await openDeviceGroup('本地存储');
   const storageActions = view.container.querySelector<HTMLElement>('[data-role="storage-transfer-actions"]');
   check(
-    '导出备份 / 导入备份 / ICS / 课表图片 PNG / 课表 PDF 下沉到「本地存储」分组',
+    '导出备份 / 导入备份 / ICS / 课表图片 PNG / 课表 PDF / 分享课表下沉到「本地存储」分组',
     enteredStorage &&
       storageActions !== null &&
-      ['导出备份', '导入备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF'].every((label) =>
+      ['导出备份', '导入备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF', '分享课表（只读文件）'].every((label) =>
         (storageActions.textContent ?? '').includes(label),
       ) &&
       storageActions.querySelector('[data-role="export-timetable-png"]') !== null &&
       storageActions.querySelector('[data-role="export-timetable-pdf"]') !== null &&
-      storageActions.querySelector('[data-role="export-ics"]') !== null,
+      storageActions.querySelector('[data-role="export-ics"]') !== null &&
+      storageActions.querySelector('[data-role="export-share"]') !== null,
     (storageActions?.textContent ?? '(无)').trim(),
   );
   const enteredBackupGroup = await openDeviceGroup('备份与恢复');
