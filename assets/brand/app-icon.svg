@@ -1,4 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3D8BFF"/><stop offset="1" stop-color="#1F5FE0"/></linearGradient></defs>
-  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/><path d="M776.9,371.2 A300.0,300.0 0 1 1 652.8,247.1" fill="none" stroke="#FFFFFF" stroke-width="64.0" stroke-linecap="round"/><circle cx="724.1" cy="299.9" r="46.0" fill="#FFFFFF"/><path d="M386.0,474.0 L494.0,582.0 L684.0,392.0" fill="none" stroke="#FFFFFF" stroke-width="64.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#18D6A8"/>
+      <stop offset="1" stop-color="#2E9BFF"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <circle cx="512" cy="530" r="270.0" fill="#FFFFFF"/>
+  <line x1="512.0" y1="322.0" x2="512.0" y2="288.0" stroke="#A6E9DC" stroke-width="26.0" stroke-linecap="round"/>
+  <line x1="720.0" y1="530.0" x2="754.0" y2="530.0" stroke="#A6E9DC" stroke-width="26.0" stroke-linecap="round"/>
+  <line x1="512.0" y1="738.0" x2="512.0" y2="772.0" stroke="#A6E9DC" stroke-width="26.0" stroke-linecap="round"/>
+  <line x1="304.0" y1="530.0" x2="270.0" y2="530.0" stroke="#A6E9DC" stroke-width="26.0" stroke-linecap="round"/>
+  <path d="M390.0,458.0 L502.0,570.0 L692.0,380.0" fill="none" stroke="#FF7A3D" stroke-width="62.0" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="766.6" cy="275.4" r="64.0" fill="#FFCB2E"/>
 </svg>
