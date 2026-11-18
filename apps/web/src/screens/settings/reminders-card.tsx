@@ -15,6 +15,7 @@ import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import type { NotifyPermissionApi } from './use-notify-permission.ts';
+import { QuietHoursField } from './quiet-hours-field.tsx';
 
 export interface RemindersCardProps {
   settings: AppSettings;
@@ -169,6 +170,7 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
           />
         </div>
       </Field>
+      <QuietHoursField value={settings.quietHours} onChange={(quietHours) => onPatch({ quietHours })} />
       <span className="text-xs text-muted">
         接下来 7 天待提醒 {COUNT('reminder', reminders.upcoming.length)}
         {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}

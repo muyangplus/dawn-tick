@@ -3,6 +3,7 @@ import {
   computeReminders,
   formatDate,
   loadReminderData,
+  type QuietHours,
   type ReminderOccurrence,
   type ReminderRow,
   type Storage,
@@ -13,6 +14,8 @@ import { reminderKindOf, type ReminderKind } from './lib/reminder-actions.ts';
 export interface ClassReminderDefaults {
   enabled: boolean;
   minutes: number;
+  /** 勿扰时段：课程与日程提醒都按它顺延或跳过 */
+  quietHours?: QuietHours;
 }
 
 /** 一次可投递的提醒：通知 id 稳定，动作触发后靠 key 找回条目。 */
@@ -120,6 +123,7 @@ export async function collect(
     dayKinds: data.dayKinds,
     timeZone: data.timeZone,
     now,
+    ...(defaults.quietHours === undefined ? {} : { quietHours: defaults.quietHours }),
     ...(window.since === undefined ? {} : { since: window.since }),
     horizonMs: LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000,
   })

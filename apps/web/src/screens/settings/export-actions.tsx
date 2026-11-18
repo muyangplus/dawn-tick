@@ -16,7 +16,8 @@ import { logWarn } from '../../log.ts';
 import { saveBinaryFile } from '../../system-actions.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { toastSaved } from './file-export.ts';
+import { saveText, toastSaved } from './file-export.ts';
+import { exportActiveShare, shareFileName } from '../../lib/share-file.ts';
 
 /**
  * 设备页顶部的课表图片 / PDF 导出（分享与呈现）。
@@ -123,5 +124,36 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
         导出课表 PDF
       </Button>
     </>
+  );
+}
+
+/** 只读课表分享文件：当前学期的节次、课程与排课，对方从「导入备份」导入为新学期。 */
+export function ShareExportAction({ storage }: { storage: Storage }) {
+  const [busy, setBusy] = useState(false);
+
+  async function run(): Promise<void> {
+    setBusy(true);
+    try {
+      const now = Date.now();
+      const exported = await exportActiveShare(storage, now);
+      if (exported === null) {
+        toast.info('还没有学期，先在设置里创建学期再分享课表');
+        return;
+      }
+      const result = await saveText(shareFileName(now), exported.text, 'json', '课表分享文件', 'application/json');
+      if (result.saved) toastSaved(`已导出课表分享文件（${exported.semesterName}）`, result.path);
+    } catch (cause: unknown) {
+      const message = errorMessage(cause);
+      logWarn('export', '导出课表分享文件失败', { message });
+      toast.error(fail('导出课表分享文件', message, '请重试；仍失败可先导出备份再反馈'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button size="sm" variant="secondary" data-role="export-share" loading={busy} onClick={() => void run()}>
+      分享课表（只读文件）
+    </Button>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReminderOccurrence, Storage } from '@dawn-tick/core';
+import { encodeQuietHours, type ReminderOccurrence, type Storage } from '@dawn-tick/core';
 import {
   currentNotifyPermission,
   ensureNotifyPermission,
@@ -36,7 +36,9 @@ export function useReminders(
   const [upcoming, setUpcoming] = useState<ReminderOccurrence[]>([]);
   const [permission, setPermission] = useState<NotifyPermission>(currentNotifyPermission);
   const schedulerRef = useRef<ReminderScheduler | null>(null);
-  const defaultKey = `${defaults.enabled ? 1 : 0}-${defaults.minutes}`;
+  const defaultKey = `${defaults.enabled ? 1 : 0}-${defaults.minutes}-${
+    defaults.quietHours === undefined ? '' : encodeQuietHours(defaults.quietHours)
+  }`;
 
   useEffect(() => {
     if (storage === null || semesterId === null) return;
@@ -54,7 +56,7 @@ export function useReminders(
       scheduler.stop();
       if (schedulerRef.current === scheduler) schedulerRef.current = null;
     };
-    // defaultKey 覆盖 enabled 与 minutes，改设置后重新调度
+    // defaultKey 覆盖 enabled、minutes 与勿扰时段，改设置后重新调度
   }, [storage, semesterId, timeZone, defaultKey]);
 
   return {

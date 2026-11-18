@@ -1091,7 +1091,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
   check('切到日程页', switchedToSchedule && scheduleText.includes('倒计时'), scheduleText.slice(0, 60));
-  // 学期概览卡片：周次、课时、出勤估算、考试与课程排行都由本机数据算出
+  // 学期概览卡片：周次、课时、每周分布、课程进度与考试都由本机数据算出；不显示任何出勤信息
   const statsRoot = view.container.querySelector<HTMLElement>('[data-role="semester-stats"]');
   const statsText = statsRoot?.textContent ?? '';
   check(
@@ -1099,18 +1099,19 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     statsRoot !== null &&
       statsText.includes('学期概览') &&
       /第 \d+ 周 \/ 共 20 周/.test(statsText) &&
-      /已上过 \d+ 节/.test(statsText) &&
+      /已上 \d+ 节/.test(statsText) &&
       /待上 \d+ 节/.test(statsText),
     statsText.slice(0, 80),
   );
   check(
-    '学期概览卡片显示出勤估算、考试与课程课时排行',
-    statsText.includes('出勤估算') &&
-      /\d+%/.test((statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent ?? '')) &&
+    '学期概览卡片显示每周课时、课程进度与考试，不显示出勤',
+    !statsText.includes('出勤') &&
+      (statsRoot?.querySelectorAll('[data-role="semester-stats-weeks-chart"] [role="listitem"]').length ?? 0) === 20 &&
       (statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent ?? '').includes('期末模拟考') &&
-      (statsRoot?.querySelector('[data-role="semester-stats-ranking"]')?.textContent ?? '').includes('往期课'),
+      (statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent ?? '').includes('往期课') &&
+      (statsRoot?.querySelector('[data-role="semester-stats-export"]')?.textContent ?? '').includes('导出报表'),
     [
-      statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent?.trim(),
+      statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent?.trim(),
       statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent?.trim(),
     ].join(' | '),
   );
@@ -2019,15 +2020,16 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const enteredStorage = await openDeviceGroup('本地存储');
   const storageActions = view.container.querySelector<HTMLElement>('[data-role="storage-transfer-actions"]');
   check(
-    '导出备份 / 导入备份 / ICS / 课表图片 PNG / 课表 PDF 下沉到「本地存储」分组',
+    '导出备份 / 导入备份 / ICS / 课表图片 PNG / 课表 PDF / 分享课表下沉到「本地存储」分组',
     enteredStorage &&
       storageActions !== null &&
-      ['导出备份', '导入备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF'].every((label) =>
+      ['导出备份', '导入备份', '导出课表（ICS）', '导出课表图片（PNG）', '导出课表 PDF', '分享课表（只读文件）'].every((label) =>
         (storageActions.textContent ?? '').includes(label),
       ) &&
       storageActions.querySelector('[data-role="export-timetable-png"]') !== null &&
       storageActions.querySelector('[data-role="export-timetable-pdf"]') !== null &&
-      storageActions.querySelector('[data-role="export-ics"]') !== null,
+      storageActions.querySelector('[data-role="export-ics"]') !== null &&
+      storageActions.querySelector('[data-role="export-share"]') !== null,
     (storageActions?.textContent ?? '(无)').trim(),
   );
   const enteredBackupGroup = await openDeviceGroup('备份与恢复');
@@ -3030,6 +3032,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     view.container.querySelector('[aria-label="课前提醒"]') !== null &&
       view.container.querySelector('[aria-label="提前 20 分钟"]') !== null,
     '',
+  );
+  // 勿扰时段：打开后出现默认时段（每天 23:00–次日 07:00），检查完关回去，不影响后续提醒用例
+  const quietSwitch = view.container.querySelector<HTMLElement>('[role="switch"][aria-label="勿扰时段"]');
+  quietSwitch?.click();
+  const quietShown = await waitFor(() => view.container.querySelector('[data-role="quiet-hours-rule"]') !== null);
+  const quietRuleLabel = view.container.querySelector('[data-role="quiet-hours-rule"]')?.getAttribute('aria-label') ?? '';
+  view.container.querySelector<HTMLElement>('[role="switch"][aria-label="勿扰时段"]')?.click();
+  const quietHidden = await waitFor(() => view.container.querySelector('[data-role="quiet-hours-rule"]') === null);
+  check(
+    '勿扰时段可开关，默认每天 23:00 到次日 07:00',
+    quietSwitch !== null && quietShown && quietRuleLabel === '每天 23:00–次日 07:00' && quietHidden,
+    quietRuleLabel,
   );
   // 悬浮窗与小组件卡：倒计时开关、悬浮窗样式与安卓小组件清单
   await openSettingsGroup(view.container, '悬浮窗与小组件');

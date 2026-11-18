@@ -18,7 +18,7 @@ import { Field, Input } from '../../components/ui/input.tsx';
 import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { TimetableExportActions } from './export-actions.tsx';
+import { ShareExportAction, TimetableExportActions } from './export-actions.tsx';
 import { said } from './format.ts';
 
 export interface StorageCardProps {
@@ -186,7 +186,7 @@ export function StorageCard({
       {/* 导出/导入/ICS 从页面顶部下沉到这里：本组是数据与文件的统一入口 */}
       <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="storage-transfer-actions">
         <span className="text-sm font-medium text-ink">导出与导入</span>
-        <span className="text-xs text-muted">跨设备迁移用导出导入；课表可另存为 ICS、图片或 PDF</span>
+        <span className="text-xs text-muted">跨设备迁移用导出导入；课表可另存为 ICS、图片、PDF 或只读分享文件</span>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" onClick={onOpenExport}>
             导出备份
@@ -198,6 +198,7 @@ export function StorageCard({
             导出课表（ICS）
           </Button>
           <TimetableExportActions storage={storage} settings={settings} />
+          <ShareExportAction storage={storage} />
         </div>
       </div>
       {!isWebApp() && (

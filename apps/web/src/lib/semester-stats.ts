@@ -25,55 +25,60 @@ export interface SemesterInfoStats {
   phase: SemesterPhase;
 }
 
-/** 课时统计：按当前日期切成「已上过 / 待上」，停课单列。 */
+/** 课时统计：按当前日期切成「已上 / 待上」。停课的课次一律算已上，不论日期。 */
 export interface LessonStats {
   past: number;
   upcoming: number;
-  /** 已过课程里被停课的节数：只进出勤估算的分母，不算上课 */
-  cancelled: number;
-  /** 过去 + 待上 + 停课：判断空态用 */
+  /** 已上 + 待上：判断空态用 */
   total: number;
 }
 
-/** 各课程课时排行的一行。 */
-export interface CourseLessonRank {
+/** 一门课的课时进度：已上（含停课）/ 本学期总课时。 */
+export interface CourseProgress {
   courseId: string;
   name: string;
-  count: number;
-}
-
-/** 出勤估算：已过课程中未停课的比例，不做打卡。 */
-export interface AttendanceStats {
-  /** 0–100 的整数百分比；没有已过课程时为 null */
-  percent: number | null;
-  /** 已过且未停课的节数 */
-  attended: number;
-  /** 已过且停课的节数 */
-  cancelled: number;
-  /** 估算分母：attended + cancelled */
+  color: string;
+  done: number;
   total: number;
 }
 
-/** 考试分布：本学期考试条目数、已考 / 待考与最近一场。 */
+/** 一周的课时：已上 / 待上。 */
+export interface WeekLessons {
+  week: number;
+  past: number;
+  upcoming: number;
+}
+
+/** 考试时间线的一项。 */
+export interface ExamTimelineItem {
+  id: string;
+  title: string;
+  /** 没有日期的考试为 null，排在最后 */
+  date: string | null;
+  taken: boolean;
+}
+
+/** 考试分布：本学期考试条目数、已考 / 待考、最近一场与按日期排的时间线。 */
 export interface ExamStats {
   total: number;
   taken: number;
   upcoming: number;
   next: { title: string; date: string; daysUntil: number } | null;
+  timeline: ExamTimelineItem[];
 }
 
-/** 学期概览卡片要的全部数字。纯计算，不读 storage、不写库。 */
+/** 学期统计要的全部数字。纯计算，不读 storage、不写库。 */
 export interface SemesterStats {
   semester: SemesterInfoStats | null;
   lessons: LessonStats;
-  ranking: CourseLessonRank[];
-  attendance: AttendanceStats;
+  /** 各课程课时进度，按总课时降序 */
+  courses: CourseProgress[];
+  /** 第 1 周到最后一周，每周一项 */
+  weeks: WeekLessons[];
   exams: ExamStats;
   /** 无课时也无考试：卡片显示空态 */
   empty: boolean;
 }
-
-const TOP_RANK = 5;
 
 /** 学期起止：与日模式共用「第一周周一 … 最后一周周日」的口径。 */
 export function semesterInfoOf(semester: SemesterRow, today: string): SemesterInfoStats {
@@ -89,82 +94,92 @@ export function semesterInfoOf(semester: SemesterRow, today: string): SemesterIn
   };
 }
 
+/** 统计用的一节课：日期、课程，以及是否算已上。 */
+interface CountedLesson {
+  date: string;
+  courseId: string;
+  courseName: string;
+  color: string;
+  done: boolean;
+}
+
 /**
  * 构建学期统计。
  *
  * 口径：
  * - 课时来自 `data.lessonsByDate`（core 的 expand 结果，已扣除节假日与停课、已处理调课落点），
- *   按 `data.today` 切成「已上过（今天之前）/ 待上（今天及以后）」；
- * - 停课节数来自 `data.reschedules` 的取消记录，且只统计「当天本来有课」的那几条；
- * - 出勤估算 = 已过未停课节数 /（已过未停课节数 + 已过停课节数），不是打卡数据；
+ *   日期早于今天算已上，今天及以后算待上；
+ * - 停课来自 `data.reschedules` 的取消记录，只认「当天本来有课」的那几条，一律算已上（不论日期）；
  * - 考试用 `data.exams` 与 `data.todos` 里的考试条目，按考试日期与开考时间判定已考 / 待考。
  */
 export function buildSemesterStats(data: Readonly<AppData>, now: number): SemesterStats {
   const semester = data.semester === null ? null : semesterInfoOf(data.semester, data.today);
-  const lessons = tallyLessons(data);
-  const attendance = tallyAttendance(data, lessons.past);
+  const counted = countedLessons(data);
+  let past = 0;
+  for (const item of counted) if (item.done) past += 1;
+  const lessons = { past, upcoming: counted.length - past, total: counted.length };
   const exams = tallyExams(data, now);
-  const cancelled = attendance.cancelled;
   return {
     semester,
-    lessons: { ...lessons, cancelled, total: lessons.past + lessons.upcoming + cancelled },
-    ranking: rankCourses(data),
-    attendance,
+    lessons,
+    courses: courseProgress(counted),
+    weeks: data.semester === null ? [] : weeklyLessons(counted, data.semester),
     exams,
-    empty: semester === null || (lessons.past + lessons.upcoming + cancelled === 0 && exams.total === 0),
+    empty: semester === null || (lessons.total === 0 && exams.total === 0),
   };
 }
 
-/** 按日期切分课时：今天及以后都算「待上」；停课在这里不算上课。 */
-function tallyLessons(data: Readonly<AppData>): { past: number; upcoming: number } {
-  let past = 0;
-  let upcoming = 0;
+/** 本学期全部课次（含停课），每节标出是否算已上。 */
+function countedLessons(data: Readonly<AppData>): CountedLesson[] {
+  const out: CountedLesson[] = [];
   for (const list of data.lessonsByDate.values()) {
     for (const item of list) {
       if (item.cancelled) continue;
-      if (item.date < data.today) past += 1;
-      else upcoming += 1;
+      out.push({
+        date: item.date,
+        courseId: item.courseId,
+        courseName: item.courseName,
+        color: item.color,
+        done: item.date < data.today,
+      });
     }
   }
-  return { past, upcoming };
-}
-
-/**
- * 出勤估算：已过课程里被停课的节数来自取消记录，
- * 且必须对得上当天的排课（星期与周次都成立），避免把误录的取消算进分母。
- */
-function tallyAttendance(data: Readonly<AppData>, attended: number): AttendanceStats {
   const scheduleOf = scheduleIndex(data.courses);
-  let cancelled = 0;
+  const seen = new Set<string>();
   for (const row of data.reschedules) {
     if (row.type !== 'reschedule' || row.action !== 'cancel') continue;
     const date = row.on_date;
-    if (typeof date !== 'string' || date >= data.today) continue;
-    if (!wouldHaveLesson(data, scheduleOf.get(row.ref_schedule_id ?? ''), date)) continue;
-    cancelled += 1;
+    const schedule = scheduleOf.get(row.ref_schedule_id ?? '');
+    if (typeof date !== 'string' || schedule === undefined) continue;
+    if (!wouldHaveLesson(data, schedule, date)) continue;
+    const key = `${row.ref_schedule_id}|${date}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ date, courseId: schedule.course.id, courseName: schedule.course.name, color: schedule.course.color, done: true });
   }
-  const total = attended + cancelled;
-  return { percent: total === 0 ? null : Math.round((attended / total) * 100), attended, cancelled, total };
+  return out;
 }
 
-/** scheduleId → 排课（含星期与周次），用于校验停课记录确实是当天的课。 */
-function scheduleIndex(courses: readonly ManagedCourse[]): Map<string, { dayOfWeek: number; weeks: readonly number[] }> {
-  const index = new Map<string, { dayOfWeek: number; weeks: readonly number[] }>();
+interface IndexedSchedule {
+  dayOfWeek: number;
+  weeks: readonly number[];
+  course: ManagedCourse;
+}
+
+/** scheduleId → 排课（含星期、周次与所属课程），用于校验停课记录确实是当天的课。 */
+function scheduleIndex(courses: readonly ManagedCourse[]): Map<string, IndexedSchedule> {
+  const index = new Map<string, IndexedSchedule>();
   for (const course of courses) {
     for (const schedule of course.schedules) {
-      index.set(schedule.id, { dayOfWeek: schedule.dayOfWeek, weeks: schedule.weeks });
+      index.set(schedule.id, { dayOfWeek: schedule.dayOfWeek, weeks: schedule.weeks, course });
     }
   }
   return index;
 }
 
 /** 该日期是否本来就排了这节课：星期对得上、周次里有这一周、当天不放假。 */
-function wouldHaveLesson(
-  data: Readonly<AppData>,
-  schedule: { dayOfWeek: number; weeks: readonly number[] } | undefined,
-  date: string,
-): boolean {
-  if (schedule === undefined || data.semester === null) return false;
+function wouldHaveLesson(data: Readonly<AppData>, schedule: IndexedSchedule, date: string): boolean {
+  if (data.semester === null) return false;
   if (dayOfWeek(date) !== schedule.dayOfWeek) return false;
   const week = weekOfDate(date, data.semester.start_date);
   if (week < 1 || week > data.semester.total_weeks) return false;
@@ -172,20 +187,36 @@ function wouldHaveLesson(
   return !data.holidayLabels.has(date);
 }
 
-/** 课程课时排行：过去 + 待上的实际课次，按节数降序取前 5。 */
-function rankCourses(data: Readonly<AppData>): CourseLessonRank[] {
-  const byCourse = new Map<string, CourseLessonRank>();
-  for (const list of data.lessonsByDate.values()) {
-    for (const item of list) {
-      if (item.cancelled) continue;
-      const row = byCourse.get(item.courseId) ?? { courseId: item.courseId, name: item.courseName, count: 0 };
-      row.count += 1;
-      byCourse.set(item.courseId, row);
-    }
+/** 各课程课时进度：按总课时降序，同数按名称。 */
+function courseProgress(counted: readonly CountedLesson[]): CourseProgress[] {
+  const byCourse = new Map<string, CourseProgress>();
+  for (const item of counted) {
+    const row = byCourse.get(item.courseId) ?? {
+      courseId: item.courseId,
+      name: item.courseName,
+      color: item.color,
+      done: 0,
+      total: 0,
+    };
+    row.total += 1;
+    if (item.done) row.done += 1;
+    byCourse.set(item.courseId, row);
   }
-  return [...byCourse.values()]
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh'))
-    .slice(0, TOP_RANK);
+  return [...byCourse.values()].sort(
+    (left, right) => right.total - left.total || left.name.localeCompare(right.name, 'zh'),
+  );
+}
+
+/** 每周课时：落在学期周次外的课次（调课到学期外）不计入周分布。 */
+function weeklyLessons(counted: readonly CountedLesson[], semester: SemesterRow): WeekLessons[] {
+  const weeks = Array.from({ length: semester.total_weeks }, (_, index) => ({ week: index + 1, past: 0, upcoming: 0 }));
+  for (const item of counted) {
+    const bucket = weeks[weekOfDate(item.date, semester.start_date) - 1];
+    if (bucket === undefined) continue;
+    if (item.done) bucket.past += 1;
+    else bucket.upcoming += 1;
+  }
+  return weeks;
 }
 
 /** 本学期全部考试条目：带开考时间的在 exams 里，没有开考时间的在 todos 里（按 id 去重）。 */
@@ -212,10 +243,13 @@ function tallyExams(data: Readonly<AppData>, now: number): ExamStats {
   const rows = examRowsOf(data);
   let taken = 0;
   let next: ExamStats['next'] = null;
+  const timeline: ExamTimelineItem[] = [];
   for (const row of rows) {
     const date = examDateOf(row, data.timeZone);
     const started = row.start_at !== null && row.start_at !== undefined && row.start_at <= now;
-    if (started || (date !== null && date < data.today)) {
+    const done = started || (date !== null && date < data.today);
+    timeline.push({ id: row.id, title: row.title, date, taken: done });
+    if (done) {
       taken += 1;
       continue;
     }
@@ -223,7 +257,13 @@ function tallyExams(data: Readonly<AppData>, now: number): ExamStats {
     const candidate = { title: row.title, date, daysUntil: Math.max(0, diffDays(date, data.today)) };
     if (next === null || candidate.date < next.date) next = candidate;
   }
-  return { total: rows.length, taken, upcoming: rows.length - taken, next };
+  timeline.sort((left, right) => {
+    if (left.date === right.date) return left.title.localeCompare(right.title, 'zh');
+    if (left.date === null) return 1;
+    if (right.date === null) return -1;
+    return left.date < right.date ? -1 : 1;
+  });
+  return { total: rows.length, taken, upcoming: rows.length - taken, next, timeline };
 }
 
 /** 供卡片显示周次：今天在学期外时给出阶段文案，学期中给「第 N 周 / 共 M 周」。 */
