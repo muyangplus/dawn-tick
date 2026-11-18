@@ -1091,7 +1091,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(10);
   const scheduleText = view.container.textContent ?? '';
   check('切到日程页', switchedToSchedule && scheduleText.includes('倒计时'), scheduleText.slice(0, 60));
-  // 学期概览卡片：周次、课时、出勤估算、考试与课程排行都由本机数据算出
+  // 学期概览卡片：周次、课时、每周分布、课程进度与考试都由本机数据算出；不显示任何出勤信息
   const statsRoot = view.container.querySelector<HTMLElement>('[data-role="semester-stats"]');
   const statsText = statsRoot?.textContent ?? '';
   check(
@@ -1099,18 +1099,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     statsRoot !== null &&
       statsText.includes('学期概览') &&
       /第 \d+ 周 \/ 共 20 周/.test(statsText) &&
-      /已上过 \d+ 节/.test(statsText) &&
+      /已上 \d+ 节/.test(statsText) &&
       /待上 \d+ 节/.test(statsText),
     statsText.slice(0, 80),
   );
   check(
-    '学期概览卡片显示出勤估算、考试与课程课时排行',
-    statsText.includes('出勤估算') &&
-      /\d+%/.test((statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent ?? '')) &&
+    '学期概览卡片显示每周课时、课程进度与考试，不显示出勤',
+    !statsText.includes('出勤') &&
+      (statsRoot?.querySelectorAll('[data-role="semester-stats-weeks-chart"] [role="listitem"]').length ?? 0) === 20 &&
       (statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent ?? '').includes('期末模拟考') &&
-      (statsRoot?.querySelector('[data-role="semester-stats-ranking"]')?.textContent ?? '').includes('往期课'),
+      (statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent ?? '').includes('往期课'),
     [
-      statsRoot?.querySelector('[data-role="semester-stats-attendance"]')?.textContent?.trim(),
+      statsRoot?.querySelector('[data-role="semester-stats-courses"]')?.textContent?.trim(),
       statsRoot?.querySelector('[data-role="semester-stats-exams"]')?.textContent?.trim(),
     ].join(' | '),
   );

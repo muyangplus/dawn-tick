@@ -89,12 +89,12 @@ function makeData(input: DataInput = {}): AppData {
   };
 }
 
-test('空学期：无课时无考试，出勤无法估算', () => {
+test('空学期：无课时无考试', () => {
   const stats = buildSemesterStats(makeData(), NOW);
   assert.equal(stats.empty, true);
   assert.equal(stats.lessons.total, 0);
-  assert.deepEqual(stats.ranking, []);
-  assert.equal(stats.attendance.percent, null);
+  assert.deepEqual(stats.courses, []);
+  assert.equal(stats.weeks.length, 20);
   assert.equal(stats.exams.total, 0);
   assert.equal(stats.semester?.currentWeek, 3);
   assert.equal(stats.semester?.totalWeeks, 20);
@@ -122,9 +122,17 @@ test('跨周：按今天切成已上过 / 待上，周次与阶段跟着走', ()
   assert.equal(stats.lessons.past, 2);
   assert.equal(stats.lessons.upcoming, 2);
   assert.equal(stats.lessons.total, 4);
-  assert.equal(stats.attendance.attended, 2);
-  assert.equal(stats.attendance.percent, 100);
-  assert.deepEqual(stats.ranking.map((row) => [row.courseId, row.count]), [['math', 4]]);
+  assert.deepEqual(stats.courses.map((row) => [row.courseId, row.done, row.total]), [['math', 2, 4]]);
+  assert.deepEqual(
+    stats.weeks.slice(0, 5).map((row) => [row.week, row.past, row.upcoming]),
+    [
+      [1, 1, 0],
+      [2, 1, 0],
+      [3, 0, 1],
+      [4, 0, 1],
+      [5, 0, 0],
+    ],
+  );
 
   // 开学前 / 学期后：阶段文案替代「第 N 周」
   const before = buildSemesterStats(makeData({ today: '2026-08-31' }), NOW);
@@ -135,7 +143,7 @@ test('跨周：按今天切成已上过 / 待上，周次与阶段跟着走', ()
   assert.equal(semesterWeekText(after.semester), '学期已结束 · 共 20 周');
 });
 
-test('停课 / 调课：停课不进课时但进出勤分母，调课不重复计数', () => {
+test('停课 / 调课：停课一律算已上（含日期未到的），调课不重复计数', () => {
   const data = makeData({
     courses: [course({ id: 'math', name: '高等数学', dayOfWeek: 1, scheduleId: 'sch-math' })],
     // 9/14 那节停课（课次已被 expand 扣掉），9/22 是 9/28 调课后的落点
@@ -172,6 +180,24 @@ test('停课 / 调课：停课不进课时但进出勤分母，调课不重复�
         action: 'cancel',
         ref_schedule_id: 'sch-math',
       }),
+      // 日期未到的停课：同样算已上
+      event({
+        id: 'res-5',
+        type: 'reschedule',
+        title: '停课',
+        on_date: '2026-10-05',
+        action: 'cancel',
+        ref_schedule_id: 'sch-math',
+      }),
+      // 同一节重复登记只算一次
+      event({
+        id: 'res-6',
+        type: 'reschedule',
+        title: '停课',
+        on_date: '2026-10-05',
+        action: 'cancel',
+        ref_schedule_id: 'sch-math',
+      }),
       // 假期当天的取消记录：当天本来就没课，忽略
       event({
         id: 'res-4',
@@ -185,17 +211,19 @@ test('停课 / 调课：停课不进课时但进出勤分母，调课不重复�
     holidays: [['2026-09-20', '校庆']],
   });
   const stats = buildSemesterStats(data, NOW);
-  assert.equal(stats.lessons.past, 1);
+  // 已上：9/7 + 停课 9/14 + 停课 10/5；待上：9/21、9/22
+  assert.equal(stats.lessons.past, 3);
   assert.equal(stats.lessons.upcoming, 2);
-  assert.equal(stats.lessons.cancelled, 1);
-  assert.equal(stats.lessons.total, 4);
-  assert.equal(stats.attendance.total, 2);
-  assert.equal(stats.attendance.percent, 50);
+  assert.equal(stats.lessons.total, 5);
   // 调课只在落点计一次，不按原日期再计一遍
-  assert.deepEqual(stats.ranking.map((row) => [row.name, row.count]), [['高等数学', 3]]);
+  assert.deepEqual(stats.courses.map((row) => [row.name, row.done, row.total]), [['高等数学', 3, 5]]);
+  // 停课落在原来那一周、算已上
+  assert.deepEqual([stats.weeks[1]?.past, stats.weeks[4]?.past], [1, 1]);
+  // 统计结果里没有任何出勤字段
+  assert.equal(/attend|出勤/i.test(JSON.stringify(stats)), false);
 });
 
-test('课时排行：按节数降序取前 5', () => {
+test('课程进度：按总课时降序，同数按名称', () => {
   const names = ['A 课', 'B 课', 'C 课', 'D 课', 'E 课', 'F 课'];
   const lessons: Occurrence[] = [];
   names.forEach((name, index) => {
@@ -205,18 +233,19 @@ test('课时排行：按节数降序取前 5', () => {
     }
   });
   const stats = buildSemesterStats(makeData({ lessons }), NOW);
-  assert.equal(stats.ranking.length, 5);
   assert.deepEqual(
-    stats.ranking.map((row) => [row.name, row.count]),
+    stats.courses.map((row) => [row.name, row.total]),
     [
       ['A 课', 6],
       ['B 课', 5],
       ['C 课', 4],
       ['D 课', 3],
       ['E 课', 2],
+      ['F 课', 1],
     ],
   );
-  assert.equal(stats.ranking.some((row) => row.name === 'F 课'), false);
+  // 今天 9/21：前两周已上
+  assert.deepEqual(stats.courses[0] && [stats.courses[0].done, stats.courses[0].total], [2, 6]);
 });
 
 test('考试：已考 / 待考按日期与开考时间判定，最近一场给倒计时', () => {
@@ -256,6 +285,17 @@ test('考试：已考 / 待考按日期与开考时间判定，最近一场给�
   assert.equal(stats.exams.taken, 2);
   assert.equal(stats.exams.upcoming, 3);
   assert.deepEqual(stats.exams.next, { title: '今天下午考', date: '2026-09-21', daysUntil: 0 });
+  // 时间线按日期排，同日按标题
+  assert.deepEqual(
+    stats.exams.timeline.map((item) => [item.title, item.taken]),
+    [
+      ['上月月考', true],
+      ['今天上午考', true],
+      ['今天下午考', false],
+      ['下月月考', false],
+      ['期末考', false],
+    ],
+  );
 });
 
 test('时区边界：无 on_date 的考试按显示时区取日期，不落回 UTC 前一天', () => {

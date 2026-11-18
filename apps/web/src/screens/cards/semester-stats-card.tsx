@@ -11,7 +11,7 @@ import { buildSemesterStats, semesterWeekText, type SemesterStats } from '../../
 import { useNowTick } from '../../lib/use-now.ts';
 import { defineCard } from './registry.ts';
 
-/** 日程页「学期概览」卡片：课时、出勤估算与考试分布都由本机数据算出，不依赖服务端。 */
+/** 日程页「学期概览」卡片：课时、各周分布、课程进度与考试都由本机数据算出，不依赖服务端。 */
 export const semesterStatsCard = defineCard({
   id: 'stats',
   scope: 'schedule',
@@ -45,7 +45,7 @@ export function SemesterStatsCard({ data, onAddTodo }: SemesterStatsCardProps) {
             icon={GraduationCap}
             size="sm"
             title="还没有课时与考试"
-            description="添加课程后，这里会汇总课时、出勤与考试"
+            description="添加课程后，这里会汇总课时与考试"
             action={
               <Button size="sm" variant="secondary" aria-label="去添加课程" onClick={addCourse}>
                 去添加课程
@@ -61,8 +61,8 @@ export function SemesterStatsCard({ data, onAddTodo }: SemesterStatsCardProps) {
     <Card className="flex flex-col gap-3" data-role="semester-stats">
       <StatsHeader semester={stats.semester} />
       <LessonBlock stats={stats} />
-      {stats.ranking.length > 0 && <RankBlock rows={stats.ranking} />}
-      <AttendanceBlock stats={stats} />
+      {stats.lessons.total > 0 && <WeekBlock weeks={stats.weeks} current={stats.semester} />}
+      {stats.courses.length > 0 && <CourseBlock rows={stats.courses} />}
       <ExamBlock stats={stats} />
     </Card>
   );
@@ -95,60 +95,98 @@ function StatsSection({ title, role, children }: { title: string; role: string; 
   );
 }
 
-/** 课时：已上过 / 待上，停课单列说明。 */
+/** 课时：已上 / 待上。停课算已上。 */
 function LessonBlock({ stats }: { stats: SemesterStats }) {
   const { lessons } = stats;
   return (
     <StatsSection title="课时" role="semester-stats-lessons">
       <p className="text-sm text-ink">
-        已上过 <span className="tabular font-semibold">{COUNT('lesson', lessons.past)}</span>
+        已上 <span className="tabular font-semibold">{COUNT('lesson', lessons.past)}</span>
         <span className="text-muted"> · </span>
         待上 <span className="tabular font-semibold">{COUNT('lesson', lessons.upcoming)}</span>
       </p>
-      {lessons.cancelled > 0 && (
-        <p className="text-xs text-muted">
-          另有 <span className="tabular">{COUNT('lesson', lessons.cancelled)}</span> 已停课，不计入课时
-        </p>
-      )}
+      <p className="text-xs text-muted">停课的课次计入已上</p>
     </StatsSection>
   );
 }
 
-/** 各课程课时排行：前 5 名，按实际课次降序。 */
-function RankBlock({ rows }: { rows: SemesterStats['ranking'] }) {
+/** 每周课时：堆叠柱（已上 / 待上），悬停或读屏给出该周数字。 */
+function WeekBlock({ weeks, current }: { weeks: SemesterStats['weeks']; current: SemesterStats['semester'] }) {
+  const max = Math.max(1, ...weeks.map((week) => week.past + week.upcoming));
   return (
-    <StatsSection title="课时排行" role="semester-stats-ranking">
-      <ul className="flex flex-col gap-0.5">
-        {rows.map((row) => (
-          <li key={row.courseId} className="flex items-center justify-between gap-2 text-xs">
-            <span className="truncate text-ink">{row.name}</span>
-            <span className="tabular shrink-0 text-muted">{COUNT('lesson', row.count)}</span>
+    <StatsSection title="每周课时" role="semester-stats-weeks-chart">
+      <div className="flex h-16 items-end gap-0.5" role="list" aria-label="每周课时">
+        {weeks.map((week) => {
+          const count = week.past + week.upcoming;
+          const label = `第 ${week.week} 周：已上 ${week.past} 节，待上 ${week.upcoming} 节`;
+          return (
+            <div
+              key={week.week}
+              role="listitem"
+              aria-label={label}
+              title={label}
+              data-current={current?.phase === 'during' && current.currentWeek === week.week ? 'true' : undefined}
+              className="flex h-full min-w-0 flex-1 flex-col justify-end gap-px data-[current=true]:outline data-[current=true]:outline-1 data-[current=true]:outline-offset-1 data-[current=true]:outline-line-strong"
+            >
+              {week.upcoming > 0 && (
+                <span className="block rounded-t-[2px] bg-line-strong" style={{ height: `${(week.upcoming / max) * 100}%` }} />
+              )}
+              {week.past > 0 && (
+                <span
+                  className={`block bg-primary ${week.upcoming > 0 ? '' : 'rounded-t-[2px]'}`}
+                  style={{ height: `${(week.past / max) * 100}%` }}
+                />
+              )}
+              {count === 0 && <span className="block h-px bg-line" />}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between gap-2 text-xs text-muted">
+        <span className="tabular">第 1 周</span>
+        <span className="flex items-center gap-3">
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-[2px] bg-primary" aria-hidden />
+            已上
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-[2px] bg-line-strong" aria-hidden />
+            待上
+          </span>
+        </span>
+        <span className="tabular">第 {weeks.length} 周</span>
+      </div>
+    </StatsSection>
+  );
+}
+
+const TOP_COURSES = 5;
+
+/** 课程进度：课时最多的前 5 门，已上 / 总课时。 */
+function CourseBlock({ rows }: { rows: SemesterStats['courses'] }) {
+  return (
+    <StatsSection title="课程进度" role="semester-stats-courses">
+      <ul className="flex flex-col gap-1.5">
+        {rows.slice(0, TOP_COURSES).map((row) => (
+          <li key={row.courseId} className="flex flex-col gap-0.5 text-xs">
+            <span className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: row.color }} aria-hidden />
+                <span className="truncate text-ink">{row.name}</span>
+              </span>
+              <span className="tabular shrink-0 text-muted">
+                {row.done} / {COUNT('lesson', row.total)}
+              </span>
+            </span>
+            <span className="block h-1 overflow-hidden rounded-full bg-line" aria-hidden>
+              <span
+                className="block h-full rounded-full bg-primary"
+                style={{ width: `${row.total === 0 ? 0 : (row.done / row.total) * 100}%` }}
+              />
+            </span>
           </li>
         ))}
       </ul>
-    </StatsSection>
-  );
-}
-
-/** 出勤估算：只做比例估算，不新增打卡。 */
-function AttendanceBlock({ stats }: { stats: SemesterStats }) {
-  const { attendance } = stats;
-  return (
-    <StatsSection title="出勤估算" role="semester-stats-attendance">
-      {attendance.percent === null ? (
-        <p className="text-xs text-muted">还没有已过的课程，暂无法估算</p>
-      ) : (
-        <>
-          <p className="text-sm text-ink">
-            约{' '}
-            <span className="tabular text-base font-semibold text-primary-strong">{attendance.percent}%</span>{' '}
-            的已过课程未停课
-          </p>
-          <p className="text-xs text-muted">
-            按已过 <span className="tabular">{COUNT('lesson', attendance.total)}</span> 中未停课的比例估算，非打卡数据
-          </p>
-        </>
-      )}
     </StatsSection>
   );
 }
@@ -169,6 +207,7 @@ function ExamBlock({ stats }: { stats: SemesterStats }) {
             <span className="text-muted"> · </span>
             待考 <span className="tabular font-semibold">{exams.upcoming}</span>
           </p>
+          <ExamTimeline items={exams.timeline} />
           {exams.next !== null && (
             <p className="text-xs text-muted" data-role="semester-stats-exam-next">
               最近一场「{exams.next.title}」
@@ -179,5 +218,21 @@ function ExamBlock({ stats }: { stats: SemesterStats }) {
         </>
       )}
     </StatsSection>
+  );
+}
+
+/** 考试时间线：按日期排，已考的变淡。 */
+function ExamTimeline({ items }: { items: SemesterStats['exams']['timeline'] }) {
+  return (
+    <ol className="flex flex-col gap-0.5" data-role="semester-stats-exam-timeline">
+      {items.map((item) => (
+        <li key={item.id} className="flex items-center justify-between gap-2 text-xs" data-taken={item.taken}>
+          <span className={item.taken ? 'truncate text-muted line-through' : 'truncate text-ink'}>{item.title}</span>
+          <span className="tabular shrink-0 text-muted">
+            {item.date === null ? '日期待定' : formatMonthDayRange(item.date)}
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }
