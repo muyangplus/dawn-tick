@@ -2363,6 +2363,16 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
   );
+  check(
+    '更新卡带新版本内容开关，默认开启',
+    view.container.querySelector('[aria-label="更新后显示新版本内容"]')?.getAttribute('aria-checked') === 'true',
+    view.container.querySelector('[aria-label="更新后显示新版本内容"]')?.getAttribute('aria-checked') ?? '(无开关)',
+  );
+  check(
+    '首次运行不弹新版本内容',
+    document.querySelector('[data-role="release-notes"]') === null,
+    '首次运行弹出了新版本内容',
+  );
 
   // —— 双下载源：默认自动探测 Gitee / GitHub，手动切换后检查更新走选中的源（全程桩 fetch） ——
   resetDownloadSourceCache();

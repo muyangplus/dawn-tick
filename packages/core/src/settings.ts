@@ -89,6 +89,8 @@ export interface AppSettings {
   receiveBeta: boolean | null;
   /** 启动后自动检查一次版本更新 */
   autoCheckUpdate: boolean;
+  /** 更新到新版本后弹出新版本内容 */
+  releaseNotesOnUpdate: boolean;
   /** 更新下载源：自动探测 / 国内 Gitee / 国际 GitHub；旧库缺键按 auto */
   downloadSource: DownloadSourceChoice;
   /** 待办排序：按开始时间 / 按类型 */
@@ -148,6 +150,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   widgetVariant: 'bar',
   receiveBeta: null,
   autoCheckUpdate: true,
+  releaseNotesOnUpdate: true,
   downloadSource: 'auto',
   todoSort: 'start',
   devFeatures: false,
@@ -262,6 +265,7 @@ const FIELDS: { readonly [K in keyof AppSettings]: SettingField<AppSettings[K]> 
     encode: (value) => (value === null ? null : value ? '1' : '0'),
   },
   autoCheckUpdate: flag('auto_check_update'),
+  releaseNotesOnUpdate: flag('release_notes_on_update'),
   downloadSource: oneOf('download_source', DOWNLOAD_SOURCE_CHOICES, '下载源'),
   todoSort: oneOf('todo_sort', TODO_SORTS, '待办排序'),
   devFeatures: flag('dev_features'),

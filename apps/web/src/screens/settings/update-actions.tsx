@@ -126,6 +126,13 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
           onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
           ariaLabel="自动检查版本更新"
         />
+        <SwitchField
+          label="更新后显示新版本内容"
+          description="升级到新版本后首次打开时弹出本次更新内容"
+          checked={settings.releaseNotesOnUpdate}
+          onCheckedChange={(checked) => void onPatch({ releaseNotesOnUpdate: checked })}
+          ariaLabel="更新后显示新版本内容"
+        />
         {/* 下载源：自动探测 Gitee / GitHub 的 version.json，选完成快的；也可手动指定 */}
         <div className="flex flex-col gap-2" data-role="download-source-group">
           <Field

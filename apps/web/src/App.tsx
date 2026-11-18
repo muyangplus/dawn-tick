@@ -31,6 +31,7 @@ import { WeekView } from './screens/week-view.tsx';
 import { storageStatusLabel } from './storage-config.ts';
 import { formatWindowRange } from './app/lesson-cell.ts';
 import { NoticeDialog, RemoteNewerDialog, UpdateDialog } from './components/app-dialogs.tsx';
+import { ReleaseNotesDialog } from './components/update/release-notes-dialog.tsx';
 import { ErrorScreen, LoadingScreen, StorageFallbackBanner } from './components/app-screens.tsx';
 import { useAppSession } from './app/use-app-session.ts';
 import { useAppEffects } from './app/use-app-effects.ts';
@@ -484,6 +485,14 @@ export function App() {
       {/* 三个只读弹窗：渠道提示、发现新版本、远端有较新的备份 */}
       <NoticeDialog notice={effects.notice} onDismiss={effects.dismissNotice} />
       <UpdateDialog info={effects.updateInfo} onClose={effects.closeUpdate} />
+      <ReleaseNotesDialog
+        notes={effects.releaseNotes}
+        onClose={effects.closeReleaseNotes}
+        onDisable={() => {
+          effects.closeReleaseNotes();
+          void session.patch({ releaseNotesOnUpdate: false });
+        }}
+      />
       <RemoteNewerDialog
         info={session.remoteNewer}
         onClose={() => session.setRemoteNewer(null)}

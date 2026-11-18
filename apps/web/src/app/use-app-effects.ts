@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AppSettings, Storage } from '@dawn-tick/core';
 import { invokeNative } from '../lib/native.ts';
 import { readMetaJson, writeMetaJson } from '../lib/meta.ts';
-import { SEEN_NOTICES_META_KEY } from '../lib/meta-keys.ts';
+import { LAST_RUN_VERSION_META_KEY, SEEN_NOTICES_META_KEY } from '../lib/meta-keys.ts';
+import { bundledReleaseNotes, releaseNotesAction } from '../lib/release-notes.ts';
 import { applyLogSettings, describeError, logDebug, logInfo, logWarn } from '../log.ts';
 import { applyDevFeatures } from '../dev-features.ts';
 import { ensureStartupPermissions } from '../permissions.ts';
@@ -49,6 +50,10 @@ export interface AppEffects {
   closeUpdate: () => void;
   /** 再查一次更新（切到测试版后） */
   recheckUpdate: () => void;
+  /** 升级后待展示的新版本内容 */
+  releaseNotes: { version: string; source: string } | null;
+  /** 关掉新版本内容：记下当前版本 */
+  closeReleaseNotes: () => void;
 }
 
 /**
@@ -73,6 +78,9 @@ export function useAppEffects(input: {
   const startupPermissionsDone = useRef(false);
   /** 启动时按设置检查一次更新，只提示不下载 */
   const autoChecked = useRef(false);
+  /** 升级后的新版本内容：每次启动只判定一次 */
+  const [releaseNotes, setReleaseNotes] = useState<{ version: string; source: string } | null>(null);
+  const releaseNotesChecked = useRef(false);
 
   // 日志级别与开关同步到原生：写文件的门槛按设置走（dev 默认 trace）
   useEffect(() => {
@@ -125,6 +133,32 @@ export function useAppEffects(input: {
       if (!seen.includes(noticeId)) setNotice(noticeId);
     })();
   }, [storage]);
+
+  // 升级后弹一次新版本内容：与上次运行的版本比较；首次安装、开关关闭时只记版本
+  useEffect(() => {
+    // 等界面存储就绪：设置已读出，回退只读时写入会被吞掉，不影响弹窗
+    if (screenStorage === null || releaseNotesChecked.current) return;
+    releaseNotesChecked.current = true;
+    const target = screenStorage;
+    void (async () => {
+      try {
+        const lastVersion = (await target.readMeta(LAST_RUN_VERSION_META_KEY)) ?? null;
+        const notes = bundledReleaseNotes();
+        const action = releaseNotesAction({
+          lastVersion,
+          currentVersion: appVersion(),
+          enabled: settings.releaseNotesOnUpdate,
+          notes,
+        });
+        if (action === 'show') setReleaseNotes({ version: appVersion(), source: notes });
+        else if (action === 'record') await target.writeMeta(LAST_RUN_VERSION_META_KEY, appVersion());
+      } catch (cause: unknown) {
+        logWarn('update', '读取上次运行版本失败', { message: describeError(cause) });
+      }
+    })();
+    // 存储就绪后只判定一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenStorage]);
 
   // 启动时按设置检查一次更新，只提示不下载；「自动检查版本更新」关闭时跳过
   useEffect(() => {
@@ -273,5 +307,14 @@ export function useAppEffects(input: {
     setCheckTick((tick) => tick + 1);
   }, []);
 
-  return { notice, dismissNotice, updateInfo, closeUpdate, recheckUpdate };
+  const closeReleaseNotes = useCallback(() => {
+    setReleaseNotes(null);
+    const target = screenStorage;
+    if (target === null) return;
+    void target.writeMeta(LAST_RUN_VERSION_META_KEY, appVersion()).catch((cause: unknown) => {
+      logWarn('update', '记录当前版本失败', { message: describeError(cause) });
+    });
+  }, [screenStorage]);
+
+  return { notice, dismissNotice, updateInfo, closeUpdate, recheckUpdate, releaseNotes, closeReleaseNotes };
 }
