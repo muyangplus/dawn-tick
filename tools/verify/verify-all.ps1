@@ -92,6 +92,11 @@ Run-Check '小组件布局（RemoteViews 白名单）' {
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
     ($out.Trim() -split "`n" | Select-Object -Last 1)
 }
+Run-Check '日志范围（三端清单与原生调用）' {
+    $out = node tools/verify/check-log-scopes.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    ($out.Trim() -split "`n" | Select-Object -Last 1)
+}
 Run-Check '第三方许可证清单一致' {
     $out = node tools/legal/collect-licenses.mjs --check 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }

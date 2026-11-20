@@ -41,10 +41,11 @@ jobs:
           # 冒烟固定在产品主时区：runner 默认 UTC 会让「首次启动按系统时区对齐」把设置改成 UTC，时间文案全飘
           TZ: Asia/Shanghai
         run: pnpm ui:smoke
-      - name: 静态检查（可访问性、桌面挂件契约、更新日志结构）
+      - name: 静态检查（可访问性、桌面挂件契约、日志范围、更新日志结构）
         run: |
           node tools/design/check-a11y.mjs
           node tools/verify/check-widget-contract.mjs
+          node tools/verify/check-log-scopes.mjs
           node tools/release/changelog.mjs --check
 
   timezones:
