@@ -32,6 +32,19 @@ import { dismissUpdateTask, setUpdateHostFactoryForTests, startBackgroundUpdate,
 import { setAndroidAbiForTests, preferredAndroidAbi } from '../src/lib/android-abi.ts';
 import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
 import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
+import { updateDialogCopy } from '../src/copy/update-dialog.ts';
+import { countdownCopy } from '../src/copy/home-countdown.ts';
+import { timelineCopy } from '../src/copy/home-timeline.ts';
+import { onboardingCopy } from '../src/copy/onboarding.ts';
+import { transferCopy } from '../src/copy/backup-transfer.ts';
+import { helpCopy } from '../src/copy/help.ts';
+import { HELP_CATEGORIES, HELP_ENTRY_COUNT, findHelpEntry } from '../src/help/help-content.ts';
+import { appRecoveryCopy } from '../src/copy/app-recovery.ts';
+import { lanSyncCopy } from '../src/copy/sync-lan.ts';
+import { updateTaskCopy } from '../src/copy/update-task.ts';
+import { adjustCopy } from '../src/copy/timetable-adjust.ts';
+import { courseFormCopy } from '../src/copy/timetable-course-form.ts';
+import { updateSettingsCopy } from '../src/copy/update-settings.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
@@ -40,7 +53,7 @@ import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { toastSaved } from '../src/screens/settings/file-export.ts';
-import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
+import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
 import { isCorruptLocked, reportCorrupt, resetCorruptGuardForTests } from '../src/db/corrupt-guard.ts';
@@ -277,12 +290,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
   check(
     'dev 构建首次提示开发版并引导安装正式版',
-    (document.body.textContent ?? '').includes('开发版提示') &&
-      (document.body.textContent ?? '').includes('日常使用建议安装正式版') &&
-      (document.body.textContent ?? '').includes('下载正式版'),
+    (document.body.textContent ?? '').includes(updateDialogCopy.noticeDevTitle) &&
+      (document.body.textContent ?? '').includes(updateDialogCopy.noticeDevDescription) &&
+      (document.body.textContent ?? '').includes(updateDialogCopy.noticeDownloadRelease),
     (document.body.textContent ?? '').slice(0, 60),
   );
-  if (clickByText(document.body, '知道了')) await flush(10);
+  if (clickByText(document.body, updateDialogCopy.noticeDevContinue)) await flush(10);
   check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
   // I-05：新装默认「今天为第一天」与「始终不显示周末」都开。冒烟固定时钟是周日，
   // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
@@ -559,7 +572,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
   check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
 
-  // C1：长按拖动 + 吸附后选生效范围（四选一，主按钮「应用调整」）
+  // C1：长按拖动 + 吸附后选生效范围（四选一，主按钮「改期」）
   const heldWithoutMove = await dragLesson(view.container, '高数');
   await flush(6);
   check(
@@ -675,7 +688,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       globalSwitch != null &&
       globalSwitch.getAttribute('aria-checked') === 'true' &&
       reminderSection.querySelector('input[type="checkbox"][aria-label="使用全局配置"]') === null &&
-      (reminderSection.textContent ?? '').includes('跟随全局设置'),
+      !(reminderSection.textContent ?? '').includes('本课程单独设置'),
     `switch=${globalSwitch?.getAttribute('aria-checked') ?? '(无)'}`,
   );
   if (globalSwitch != null) {
@@ -767,7 +780,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const emptyNameSave = [...document.body.querySelectorAll('button')].find(
     (item) => (item.textContent ?? '').trim() === '保存',
   );
-  const emptyNameErrorShown = (document.body.textContent ?? '').includes('课程名不能为空');
+  const emptyNameErrorShown = (document.body.textContent ?? '').includes(courseFormCopy.nameRequired);
   check(
     '课程名为空时保存禁用并提示',
     emptyNameSave !== undefined && emptyNameSave.disabled && emptyNameErrorShown,
@@ -840,8 +853,8 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       '跨越已占用格只提示不阻止',
       slotRange(view.container) === '第 1–3 节' &&
         clashText.includes('高等数学') &&
-        clashToast.includes('与「高等数学」第 1–2 节重叠，仍可继续新建'),
-      `${slotRange(view.container)} | ${clashText} | ${clashToast.includes('仍可继续新建')}`,
+        clashToast.includes('与「高等数学」第 1–2 节重叠，仍可新建'),
+      `${slotRange(view.container)} | ${clashText} | ${clashToast.includes('仍可新建')}`,
     );
     drag.up(-2 * 56);
     await flush(12);
@@ -876,7 +889,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '重叠课程保存成功并提示',
     (view.container.textContent ?? '').includes('重叠测试课') &&
-      (document.body.textContent ?? '').includes('与「高等数学」第 1–2 节重叠，已同时保留'),
+      (document.body.textContent ?? '').includes(courseFormCopy.overlap('高等数学', '第 1–2 节')),
     (document.body.textContent ?? '').slice(-70),
   );
   // I-10 回归：刚新建出来的课程卡也要能直接拖（不需要先按住等长按）
@@ -1072,10 +1085,16 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     document.querySelector('[data-role="adjust-dialog"]') !== null && overlapMoveText.includes('第 3–4 节'),
     overlapMoveText.slice(-60),
   );
-  if (clickByText(document.body, '应用调整')) await flush(16);
+  const overlapMoveSubmit = [
+    ...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll<HTMLButtonElement>('button') ?? []),
+  ].at(-1);
+  if ((overlapMoveSubmit?.textContent ?? '').trim() === adjustCopy.submit.move) {
+    overlapMoveSubmit?.click();
+    await flush(16);
+  }
   check(
     '重叠调课保存成功并提示',
-    (document.body.textContent ?? '').includes('调整后与「重叠测试课」第 1–3 节重叠，已同时保留'),
+    (document.body.textContent ?? '').includes(adjustCopy.overlapToast('重叠测试课', '第 1–3 节')),
     (document.body.textContent ?? '').slice(-70),
   );
   // 「这一次」的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
@@ -1135,7 +1154,9 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '学期概览：空学期显示空态与去添加课程入口',
     emptyStats.container.querySelector('[data-role="semester-stats-empty"]') !== null &&
-      (emptyStats.container.textContent ?? '').includes('去添加课程'),
+      [...emptyStats.container.querySelectorAll('button')].some(
+        (item) => (item.textContent ?? '').trim() === '添加课程',
+      ),
     (emptyStats.container.textContent ?? '').slice(0, 60),
   );
   emptyStats.root.unmount();
@@ -1591,10 +1612,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   if (openAdjustTrimmed) await flush(12);
   const adjustText = document.body.textContent ?? '';
   const adjustDialogOpened = document.querySelector('[data-role="adjust-dialog"]') !== null;
-  const adjustHasButton = (label: string): boolean =>
-    [...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll('button') ?? [])].some(
-      (item) => (item.textContent ?? '').trim() === label,
-    );
+  // 模式按钮与主按钮同名（改期 / 停课 / 调休 / 改为考试）：主按钮取弹窗里最后一个按钮
+  const adjustSubmitLabel = (): string =>
+    (
+      [...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll('button') ?? [])].at(-1)
+        ?.textContent ?? ''
+    ).trim();
   check(
     '调课弹窗含五个主操作',
     openAdjustTrimmed &&
@@ -1608,23 +1631,24 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     ['这一次', '每周', '指定周', '指定日期'].every((label) => adjustText.includes(label)),
     '',
   );
-  check('改期主按钮为应用调整', adjustHasButton('应用调整'), '');
+  check('改期主按钮为「改期」', adjustSubmitLabel() === adjustCopy.submit.move, adjustSubmitLabel());
   if (clickByText(document.body, '调休')) await flush(8);
   check(
-    '调休为指定两天',
+    '调休为指定两天且主按钮为「调休」',
     document.querySelector('[aria-label="原日期课表"]') !== null &&
-      document.querySelector('[aria-label="目标上课日"]') !== null,
-    '',
+      document.querySelector('[aria-label="目标上课日"]') !== null &&
+      adjustSubmitLabel() === adjustCopy.submit.swap,
+    adjustSubmitLabel(),
   );
   if (clickByText(document.body, '停课')) await flush(8);
   check(
-    '停课主按钮改为确认停课',
-    adjustHasButton('确认停课') && !adjustHasButton('应用调整'),
-    (document.body.textContent ?? '').slice(-40),
+    '停课主按钮为「停课」',
+    adjustSubmitLabel() === adjustCopy.submit.cancel,
+    adjustSubmitLabel(),
   );
   if (clickByText(document.body, '临时加课')) await flush(8);
   check('临时加课可自定义名称', document.querySelector('[aria-label="或自定义课程名称"]') !== null, '');
-  check('临时加课主按钮为应用调整', adjustHasButton('应用调整'), '');
+  check('临时加课主按钮为「加课」', adjustSubmitLabel() === adjustCopy.submit.extra, adjustSubmitLabel());
   // I-11：把这次课改成考试 —— 日期取调整后日期、节次换钟点、可写备注，主按钮随之变化
   if (clickByText(document.body, '改为考试')) await flush(8);
   check(
@@ -1634,12 +1658,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       document.querySelector('[aria-label="考试结束节"]') !== null &&
       document.querySelector('[aria-label="考试备注"]') !== null &&
       (document.body.textContent ?? '').includes('原课次从课表移除'),
-    `主按钮=${adjustHasButton('改为考试') ? '改为考试' : '未变'}`,
+    `主按钮=${adjustSubmitLabel()}`,
   );
   check(
     'I-11 改为考试主按钮随之变化',
-    adjustHasButton('改为考试') && !adjustHasButton('应用调整') && !adjustHasButton('确认停课'),
-    '',
+    adjustSubmitLabel() === adjustCopy.submit.exam,
+    adjustSubmitLabel(),
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
@@ -2849,7 +2873,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '日视图空态文案给出下一步',
     dayEmpty !== null &&
       (dayEmpty.textContent ?? '').includes('今天没有课') &&
-      (dayEmpty.textContent ?? '').includes('切换周视图可看本周安排'),
+      (dayEmpty.textContent ?? '').includes('查看周视图'),
     dayEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
   );
   check(
@@ -3079,7 +3103,6 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '手机端小组件清单与引导只在 Android 出现',
     MOBILE_WIDGETS.length === 4 &&
       MOBILE_WIDGETS.every((item) => item.size.length > 0 && item.description.length > 0) &&
-      WIDGET_PIN_STEPS.length === 3 &&
       hasMobileWidgets() === false &&
       view.container.querySelector('[data-role="mobile-widget-guide"]') === null &&
       view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
@@ -3259,7 +3282,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(12);
   check(
     '忽略后手动检查仍能打开更新弹窗，并提示可取消忽略',
-    (document.querySelector('[data-role="update-ignored"]')?.textContent ?? '').includes('已忽略此版本，可在这里取消忽略') &&
+    (document.querySelector('[data-role="update-ignored"]')?.textContent ?? '').includes(updateDialogCopy.ignoredNote) &&
       document.querySelector('[data-role="update-unignore"]') !== null,
     document.querySelector('[data-role="update-ignored"]')?.textContent?.trim() ?? '(无)',
   );
@@ -3590,7 +3613,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '再次打开更新弹窗：同一任务已就绪，主按钮变为「安装更新」',
     (document.querySelector('[data-role="update-primary"]')?.textContent ?? '').includes('安装更新') &&
-      (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes('可以安装'),
+      (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes(updateTaskCopy.installerReady),
     document.querySelector('[data-role="update-primary"]')?.textContent?.trim() ?? '(无)',
   );
   closeUpdatePrompt();
@@ -3672,7 +3695,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     updateTaskSnapshot().status === 'ready' &&
       portableWrites[0] === 'DawnTick-update.zip' &&
       (portableTask?.textContent ?? '').includes('便携包') &&
-      (portableTask?.textContent ?? '').includes('可以更新了') &&
+      (portableTask?.textContent ?? '').includes(updateTaskCopy.portableReady) &&
       (portableInstallButton?.textContent ?? '').includes('更新并退出'),
     `${portableWrites[0] ?? '(无)'} / ${portableInstallButton?.textContent?.trim() ?? '(无)'}`,
   );
@@ -3684,7 +3707,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       portableScripts[0] === 'C:\\Temp\\DawnTick-update.zip' &&
       portableExits === 1 &&
       updateTaskSnapshot().installed === true &&
-      (updateTaskSnapshot().message ?? '').includes('自动替换'),
+      updateTaskSnapshot().message === updateTaskCopy.portableApplying,
     `${portableScripts[0] ?? '(无)'} / 退出 ${portableExits}`,
   );
   dismissUpdateTask();
@@ -3733,7 +3756,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       recentItems.every((item) => /v\d+\.\d+\.\d+/.test(item.textContent ?? '')),
     `版本 ${recentItems.map((item) => item.textContent?.slice(0, 12)).join(' / ')}`,
   );
-  if (clickByText(document.body, '知道了')) await flush(6);
+  if (recentDialog !== null && clickByText(recentDialog, updateSettingsCopy.recentClose)) await flush(6);
   check('近期更新弹窗可以关闭', document.querySelector('[data-role="recent-updates-dialog"]') === null, '');
 
   await openDeviceGroup('本地存储');
@@ -3863,8 +3886,11 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '设备页有「发现设备」与「同步前预览」入口',
     (view.container.querySelector('[data-role="lan-sync-discovery"]')?.textContent ?? '').includes('发现设备') &&
       view.container.querySelector('button[aria-label="发现设备"]')?.hasAttribute('disabled') === false &&
-      (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '').includes('同步前预览'),
-    (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '(无预览说明)').slice(0, 40),
+      // 同步前预览的说明收进帮助条目 lan-paired，界面只留「查看帮助」入口
+      view.container.querySelector('[data-role="help-link"][data-help-target="lan-paired"]') !== null,
+    view.container.querySelector('[data-role="help-link"][data-help-target="lan-paired"]') === null
+      ? '(无预览帮助入口)'
+      : '',
   );
   if (clickByLabel(view.container, '发现设备')) await flush(12);
   const discoveredPeer = view.container.querySelector<HTMLElement>('[data-role="lan-sync-peers"] button');
@@ -3948,6 +3974,11 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
   );
   await flush(10);
+  check(
+    'HelpLink：脱离 App 单独挂载时不渲染「查看帮助」入口',
+    lanView.container.querySelector('[data-role="help-link"]') === null,
+    '',
+  );
   const scanButton = lanView.container.querySelector<HTMLElement>('button[aria-label="扫码配对"]');
   check(
     '安卓扫码桩：配对区出现「扫码配对」按钮',
@@ -4212,8 +4243,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     await flush(4);
     check(
       'Android 空态：已连接 Wi-Fi 但没有 IPv4 时提示重新连接 Wi-Fi',
-      (wifiEmpty?.textContent ?? '').includes('已连接 Wi-Fi，但没有拿到 IPv4 地址') &&
-        (wifiEmpty?.textContent ?? '').includes('仅 IPv6'),
+      (wifiEmpty?.textContent ?? '').includes(lanSyncCopy.networkWifiNoIpv4),
       wifiEmpty?.textContent?.trim() ?? '(无空态)',
     );
     check(
@@ -4267,7 +4297,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     const mobileEmpty = mobileEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
     check(
       'Android 空态：只有移动数据时提示先连同一 Wi-Fi',
-      (mobileEmpty?.textContent ?? '').includes('当前没有 Wi-Fi/有线连接'),
+      (mobileEmpty?.textContent ?? '').includes(lanSyncCopy.networkMobileOnly),
       mobileEmpty?.textContent?.trim() ?? '(无空态)',
     );
     mobileEmptyView.root.unmount();
@@ -4578,16 +4608,20 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const exportPasswordInput = document.querySelector<HTMLInputElement>('input[aria-label="加密口令"]');
   const exportPasswordConfirm = document.querySelector<HTMLInputElement>('input[aria-label="确认加密口令"]');
   const encryptionWarning = document.querySelector<HTMLElement>('[data-role="export-password-warning"]');
-  const encryptionScope = document.querySelector<HTMLElement>('[data-role="export-encryption-scope"]');
+  // 加密范围的长说明收进帮助条目 backup-transfer，这里只留入口
+  const encryptionHelp = document.querySelector<HTMLElement>(
+    '[data-role="help-link"][data-help-target="backup-transfer"]',
+  );
   check(
     '导出可选口令加密并警示忘记口令无法恢复',
     encryptionBox?.checked === true &&
       exportPasswordInput?.type === 'password' &&
       exportPasswordConfirm?.type === 'password' &&
       (encryptionWarning?.textContent ?? '').includes('忘记口令将无法恢复') &&
-      (encryptionScope?.textContent ?? '').includes('自动快照') &&
-      (encryptionScope?.textContent ?? '').includes('不加密'),
-    `勾选=${encryptionBox?.checked === true} 警示=${encryptionWarning?.textContent?.trim() ?? '(无)'}`,
+      encryptionHelp !== null,
+    `勾选=${encryptionBox?.checked === true} 警示=${encryptionWarning?.textContent?.trim() ?? '(无)'} 帮助入口=${
+      encryptionHelp !== null
+    }`,
   );
   if (exportPasswordInput !== null) setInputValue(exportPasswordInput, 'smoke-pass-8');
   if (exportPasswordConfirm !== null) setInputValue(exportPasswordConfirm, 'smoke-pass-8');
@@ -5172,9 +5206,9 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
 
   const genericPicked = await pickSchoolInDialog('清华', '清华大学');
   check(
-    '该校暂无专属作息时套用通用作息并提示',
+    '该校没有专属作息时套用通用作息并提示',
     genericPicked?.getAttribute('data-adapted') === 'false' &&
-      schoolTimetableMessage().includes('该校暂无专属作息，已套用通用作息') &&
+      schoolTimetableMessage().includes('该校没有专属作息，已套用通用作息') &&
       schoolTimetableStatus().includes('当前 12 个节次'),
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
@@ -5227,9 +5261,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(8);
   const deleteDialogText = document.body.textContent ?? '';
   check('删除确认说明后果', deleteDialogText.includes('不可撤销'), deleteDialogText.slice(-40));
-  if (clickByText(document.body, '确认删除')) {
-    await flush(24);
-  }
+  // 确认按钮写明动作（「删除学期」），与触发按钮同名：只点确认框里的主按钮
+  const semesterDeleteConfirm =
+    [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
+      (item) => (item.textContent ?? '').trim() === '删除学期',
+    ) ?? null;
+  check(
+    '删除学期确认按钮写明动作',
+    (semesterDeleteConfirm?.textContent ?? '').trim() === '删除学期',
+    semesterDeleteConfirm?.textContent?.trim() ?? '(无)',
+  );
+  semesterDeleteConfirm?.click();
+  await flush(24);
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
   // 引导页可跳过：用默认值直接建学期进应用
@@ -5265,7 +5308,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '倒计时卡徽标区与条目区固定分区，空条目区给「加考试」',
     countdownBadges !== null &&
       countdownEntries !== null &&
-      (countdownEntries.textContent ?? '').includes('暂无倒计时条目') &&
+      (countdownEntries.textContent ?? '').includes(countdownCopy.emptyTitle) &&
       countdownEntries.querySelectorAll('button').length === 1 &&
       (countdownEntries.querySelector('button')?.textContent ?? '').trim() === '加考试',
     `徽标区=${countdownBadges === null ? '无' : '有'} 条目区=${countdownEntries?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
@@ -5285,7 +5328,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '日程时间线空态给「添加待办」主行动',
     timelineEmpty !== null &&
-      (timelineEmpty.textContent ?? '').includes('切换日期可看其他日期') &&
+      (timelineEmpty.textContent ?? '').includes(timelineCopy.emptyTitle) &&
       timelineEmpty.querySelectorAll('button').length === 1 &&
       (timelineEmpty.querySelector('button')?.textContent ?? '').trim() === '添加待办',
     timelineEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
@@ -5357,7 +5400,13 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await openSettingsGroup(remounted.container, '学期设置');
   clickByLabel(remounted.container, '删除学期');
   await flush(10);
-  if (clickByText(document.body, '确认删除')) await flush(24);
+  const defaultSemesterDeleteConfirm = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
+    (item) => (item.textContent ?? '').trim() === '删除学期',
+  );
+  if (defaultSemesterDeleteConfirm !== undefined) {
+    defaultSemesterDeleteConfirm.click();
+    await flush(24);
+  }
   check(
     '删掉默认学期后回到引导页',
     (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
@@ -5377,7 +5426,8 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       onboardFileInput.accept.includes('.zip') &&
       onboardFileInput.accept.includes('.json') &&
       onboardImportText !== null &&
-      onboardFormats.includes('支持晓刻导出的 JSON、Base64 文本与整包 zip'),
+      onboardFormats === onboardingCopy.importFormats &&
+      ['JSON', 'Base64', 'zip'].every((format) => transferCopy.importFormatsHint.includes(format)),
     `accept=${onboardFileInput?.accept ?? '(无)'} 提示=${onboardFormats || '(无)'}`,
   );
   // 粘贴 Base64 走同一套解析：解析成功后先出现覆盖后果，再让用户确认
@@ -5393,7 +5443,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   if (clickByLabel(remounted.container, '从文本导入')) await flush(12);
   check(
     '引导页粘贴 Base64 后提示覆盖后果',
-    (remounted.container.textContent ?? '').includes('将覆盖设备上的现有数据，不可撤销') &&
+    (remounted.container.textContent ?? '').includes(onboardingCopy.overwriteWarning) &&
       remounted.container.querySelector('button[aria-label="确认导入"]') !== null,
     (remounted.container.textContent ?? '').slice(-120),
   );
@@ -5917,7 +5967,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         visibleRows.length === 2 &&
         visibleRows.every((row) => row.getAttribute('data-role') === 'import-conflict-row') &&
         !previewText().includes('无冲突新增课程') &&
-        previewText().includes('筛选态：批选只作用于可见行'),
+        previewText().includes('批量选择只作用于可见行'),
       `可见 ${visibleRows.length} 行 / ${conflictRows().length} 条冲突`,
     );
 
@@ -6090,7 +6140,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     check(
       'P1-07 回退时首屏出现常驻警告条（含重试/打开日志）',
       banner !== null &&
-        (banner.textContent ?? '').includes('原生数据库不可用，已临时使用浏览器存储（本机数据未删除）') &&
+        (banner.textContent ?? '').includes(appRecoveryCopy.fallback.banner) &&
         bannerButtons.includes('重试') &&
         bannerButtons.includes('打开日志'),
       banner?.textContent?.trim().slice(0, 80) ?? '(无警告条)',
@@ -6592,7 +6642,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   }
   const helpApp = mount(<App />);
   await flush(24);
-  if (clickByText(helpApp.container, '知道了')) await flush(8);
+  if (
+    clickByText(document.body, updateDialogCopy.noticeDevContinue) ||
+    clickByText(document.body, updateDialogCopy.noticeBetaContinue)
+  ) {
+    await flush(8);
+  }
   const helpToolbarButton = helpApp.container.querySelector<HTMLElement>('button[aria-label="帮助"]');
   helpToolbarButton?.click();
   await flush(12);
@@ -6607,8 +6662,9 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     helpToolbarButton !== null &&
       helpView !== null &&
       helpSearch !== null &&
-      helpCategoryCards.length === 8 &&
-      helpEntries.length >= 10 &&
+      helpCategoryCards.length === HELP_CATEGORIES.length &&
+      HELP_CATEGORIES.length === 9 &&
+      helpEntries.length === HELP_ENTRY_COUNT &&
       (helpView?.textContent ?? '').includes('帮助与使用指引'),
     `分类=${helpCategoryCards.length} 条目=${helpEntries.length} 工具栏=${
       helpToolbarButton !== null ? '有' : '无'
@@ -6670,6 +6726,42 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '移动端也可从设置列表进入帮助页',
     settingsHelpButton !== null && helpApp.container.querySelector('[data-role="help-view"]') !== null,
     settingsHelpButton?.textContent?.trim() ?? '(无入口)',
+  );
+
+  // 界面上的「查看帮助」入口（HelpLink）：跳到帮助页并只展开对应条目
+  if (clickByText(helpApp.container, '设备与同步')) await flush(12);
+  await openDeviceGroup('局域网同步', helpApp.container);
+  const lanHelpLink = await waitFor(
+    () => helpApp.container.querySelector('[data-role="help-link"][data-help-target="lan-web"]') !== null,
+    30,
+  );
+  const lanHelpButton = helpApp.container.querySelector<HTMLElement>(
+    '[data-role="help-link"][data-help-target="lan-web"]',
+  );
+  check(
+    'HelpLink：设备页局域网分组给出「查看帮助」入口，无障碍名称带条目标题',
+    lanHelpLink &&
+      lanHelpButton !== null &&
+      (lanHelpButton.textContent ?? '').trim() === helpCopy.viewHelp &&
+      lanHelpButton.getAttribute('aria-label') === helpCopy.viewHelpAria(findHelpEntry('lan-web')?.title ?? '(无条目)'),
+    lanHelpButton?.getAttribute('aria-label') ?? '(无入口)',
+  );
+  lanHelpButton?.click();
+  await flush(12);
+  const focusedHelpEntry = helpApp.container.querySelector<HTMLDetailsElement>(
+    '[data-role="help-entry"][data-help-id="lan-web"]',
+  );
+  const openHelpEntries = [
+    ...helpApp.container.querySelectorAll<HTMLDetailsElement>('[data-role="help-entry"]'),
+  ].filter((entry) => entry.open);
+  check(
+    'HelpLink：点击后打开帮助页并只展开对应条目',
+    helpApp.container.querySelector('[data-role="help-view"]') !== null &&
+      focusedHelpEntry !== null &&
+      focusedHelpEntry.open &&
+      openHelpEntries.length === 1 &&
+      (focusedHelpEntry.querySelectorAll('[data-role="help-steps"] li').length ?? 0) >= 2,
+    `展开=${openHelpEntries.map((entry) => entry.getAttribute('data-help-id')).join(',') || '(无)'}`,
   );
   helpApp.root.unmount();
 

@@ -67,7 +67,7 @@ test('scanCodeOnce 使用通用扫码桩；取消返回 null，非 Android 给�
   } finally {
     setScanStubForTests(null);
   }
-  await assert.rejects(scanCodeOnce(), /只在安卓版可用/);
+  await assert.rejects(scanCodeOnce(), /仅限安卓版/);
 
   setScanStubForTests({ scan: async () => null, available: true });
   try {

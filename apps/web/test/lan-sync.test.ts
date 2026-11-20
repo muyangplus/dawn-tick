@@ -502,7 +502,7 @@ test('配对前预检 GET /ping：成功放行、失败保留服务端原文并�
     assert.equal(failed.ok, false);
     assert.equal(failed.status, 500);
     assert.match(failed.error ?? '', /服务端错误/);
-    assert.match(failed.hint ?? '', /同一个 Wi-Fi/);
+    assert.match(failed.hint ?? '', /同一 Wi-Fi/);
 
     // 旧版本没有 /ping：404 仍算可达，继续走 /pair，不把版本差异误报成连不上
     globalThis.fetch = (async () => new Response('', { status: 404 })) as typeof fetch;

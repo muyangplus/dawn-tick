@@ -29,11 +29,11 @@ test('生产超时是 8 秒，失败文案带统一前缀', () => {
   assert.equal(LAN_SERVER_START_ERROR_PREFIX, '开启配对失败：');
   assert.equal(
     LAN_SERVER_START_TIMEOUT_MESSAGE,
-    '原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+    '本机监听 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
   );
   assert.equal(
     startLanServerError(LAN_SERVER_START_TIMEOUT_MESSAGE),
-    '开启配对失败：原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+    '开启配对失败：本机监听 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
   );
   assert.equal(startLanServerError('开启配对失败：原因'), '开启配对失败：原因');
   assert.match(LAN_SERVER_START_HINT, /Wi-Fi/);

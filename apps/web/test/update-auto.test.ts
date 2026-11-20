@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { updateTaskCopy } from '../src/copy/update-task.ts';
 import { createHash } from 'node:crypto';
 import type { UpdateManifest } from '../src/update.ts';
 import type { UpdateDownloadHost } from '../src/lib/update-download.ts';
@@ -86,7 +87,7 @@ test('一键更新：安装版下载校验后自动交给安装器，无需再�
     assert.equal(final.installed, true, '下载完成后自动安装');
     assert.deepEqual(calls.writes, ['DawnTick-update.exe']);
     assert.deepEqual(calls.installs, ['C:\\Temp\\DawnTick-update.exe']);
-    assert.equal(final.message, '安装程序已启动，请按提示完成安装');
+    assert.equal(final.message, updateTaskCopy.installerLaunched);
   } finally {
     reset();
   }

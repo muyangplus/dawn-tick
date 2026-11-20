@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { updateTaskCopy } from '../src/copy/update-task.ts';
 import { createHash } from 'node:crypto';
 import type { UpdateManifest } from '../src/update.ts';
 import {
@@ -251,7 +252,7 @@ test('下载成功：流式进度 → 校验 → 写盘 → 启动安装器', as
   });
 
   assert.equal(final.phase, 'done');
-  assert.equal(final.message, '安装程序已启动，请按提示完成安装');
+  assert.equal(final.message, updateTaskCopy.installerLaunched);
   assert.equal(final.path, 'C:\\data\\DawnTick-update.exe');
   assert.equal(states[0]?.phase, 'downloading');
   assert.ok(states.some((state) => state.phase === 'verifying'), '经过校验阶段');
@@ -292,7 +293,7 @@ test('便携版下载：写 zip、按 zip 名校验，准备替换脚本而不�
   });
 
   assert.equal(final.phase, 'done');
-  assert.equal(final.message, '更新已准备，应用将退出并自动替换，随后重新启动');
+  assert.equal(final.message, updateTaskCopy.portableApplying);
   assert.deepEqual(calls.writes.map((item) => item.name), ['DawnTick-update.zip']);
   assert.deepEqual(portables, ['C:\\data\\DawnTick-update.zip']);
   assert.deepEqual(calls.installs, [], '便携版不调用系统安装器');
@@ -498,7 +499,7 @@ test('状态机只接受合法转移', () => {
   assert.equal(verifying.phase, 'verifying');
   const installing = reduceUpdateState(verifying, { type: 'install' });
   assert.equal(installing.phase, 'installing');
-  const done = reduceUpdateState(installing, { type: 'done', message: '安装程序已启动，请按提示完成安装' });
+  const done = reduceUpdateState(installing, { type: 'done', message: updateTaskCopy.installerLaunched });
   assert.equal(done.phase, 'done');
   assert.equal(isUpdateBusy(done.phase), false);
 

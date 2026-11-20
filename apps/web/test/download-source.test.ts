@@ -345,7 +345,7 @@ test('状态行文案：自动列出两个源的耗时，降级源给出回退�
       ],
       cached: false,
     }),
-    '自动：Gitee（90ms，镜像未同步） · GitHub（不可用）；该源镜像未同步，下载时自动回退另一个源',
+    '自动：Gitee（90ms，镜像未同步） · GitHub（不可用）。该源镜像未同步，下载时自动回退另一个源',
   );
   assert.equal(
     describeSourceLine(manualResolution('github', [])),

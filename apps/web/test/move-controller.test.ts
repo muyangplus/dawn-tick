@@ -17,6 +17,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { weekDateOf } from '../src/data.ts';
+import { adjustCopy } from '../src/copy/timetable-adjust.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import {
   applyCancel,
@@ -106,15 +107,15 @@ test('periodsValid：1 起、整数、结束不小于开始', () => {
 test('semesterDateError：学期外与格式不全都给出可读说明', async () => {
   const storage = await open('move-date-error');
   const { semester } = await seed(storage);
-  assert.equal(semesterDateError(null, START, '原日期'), '还没有学期');
-  assert.equal(semesterDateError(semester, '2026-3-2', '原日期'), '请先选择原日期');
+  assert.equal(semesterDateError(null, START, '原日期'), adjustCopy.noSemester);
+  assert.equal(semesterDateError(semester, '2026-3-2', '原日期'), adjustCopy.pickDate('原日期'));
   const before = weekDateOf(semester, 1, 1);
   const after = weekDateOf(semester, TOTAL_WEEKS, 7);
   assert.equal(
     semesterDateError(semester, '2026-02-01', '原日期'),
-    `原日期要在学期内（${before} 至 ${after}）`,
+    adjustCopy.dateOutOfSemester('原日期', before, after),
   );
-  assert.equal(semesterDateError(semester, '2027-01-01', '调整后日期'), `调整后日期要在学期内（${before} 至 ${after}）`);
+  assert.equal(semesterDateError(semester, '2027-01-01', '调整后日期'), adjustCopy.dateOutOfSemester('调整后日期', before, after));
   assert.equal(semesterDateError(semester, before, '原日期'), null);
   assert.equal(semesterDateError(semester, after, '原日期'), null);
 });
@@ -160,7 +161,7 @@ test('planMove：每周改课时表本身，不记调课', async () => {
     periodStart: 1,
     periodEnd: 2,
   });
-  assert.deepEqual(same, { ok: false, message: '目标位置和现在一样，没有需要调整的' });
+  assert.deepEqual(same, { ok: false, message: adjustCopy.sameAsBefore });
 
   const planned = planMove({
     semester,
@@ -196,7 +197,7 @@ test('planMove：这一次 / 指定周 / 指定日期 的溢出与跨周校验',
   // 这一次：跨周被拒
   assert.deepEqual(planMove({ ...base, scope: 'this', newDate: weekDateOf(semester, 3, 1), targetWeek: '3' }), {
     ok: false,
-    message: '「这一次」只改本周；跨周改用「指定日期」',
+    message: adjustCopy.thisScopeCrossWeek,
   });
   // 这一次：同周换节次通过
   const thisWeek = planMove({ ...base, scope: 'this', newDate: weekDateOf(semester, 2, 1), targetWeek: '2', periodEnd: 4 });
@@ -211,7 +212,7 @@ test('planMove：这一次 / 指定周 / 指定日期 的溢出与跨周校验',
   // 指定周：周次越界
   assert.deepEqual(planMove({ ...base, scope: 'week', newDate: weekDateOf(semester, 2, 1), targetWeek: '21' }), {
     ok: false,
-    message: `目标周要在 1–${TOTAL_WEEKS} 周之间`,
+    message: adjustCopy.targetWeekRange(TOTAL_WEEKS),
   });
   // 指定周：按目标日期的星期几落在目标周
   const byWeek = planMove({ ...base, scope: 'week', newDate: weekDateOf(semester, 2, 5), targetWeek: '6' });
@@ -230,16 +231,16 @@ test('planMove：这一次 / 指定周 / 指定日期 的溢出与跨周校验',
   // 学期外与非法节次
   assert.deepEqual(planMove({ ...base, scope: 'date', newDate: '2027-01-06', targetWeek: '2' }), {
     ok: false,
-    message: `调整后日期要在学期内（${weekDateOf(semester, 1, 1)} 至 ${weekDateOf(semester, TOTAL_WEEKS, 7)}）`,
+    message: adjustCopy.dateOutOfSemester('调整后日期', weekDateOf(semester, 1, 1), weekDateOf(semester, TOTAL_WEEKS, 7)),
   });
   assert.deepEqual(planMove({ ...base, scope: 'date', newDate: weekDateOf(semester, 2, 1), targetWeek: '2', periodEnd: 0 }), {
     ok: false,
-    message: '节次需要是 1 起、且结束不小于开始',
+    message: adjustCopy.invalidPeriods,
   });
   // 没选课次
   assert.deepEqual(planMove({ ...base, schedule: undefined, scope: 'this', newDate: base.sourceDate, targetWeek: '2' }), {
     ok: false,
-    message: '请先选课程与要调整的课次',
+    message: adjustCopy.pickMoveSource,
   });
 });
 
@@ -315,7 +316,7 @@ test('planCancel / applyCancel：只停原日期那一次', async () => {
   const sourceDate = weekDateOf(semester, 4, 1);
   assert.deepEqual(planCancel({ semester: null, schedule, sourceDate }), {
     ok: false,
-    message: '请先选课程与要停的课次',
+    message: adjustCopy.pickCancelSource,
   });
   const planned = planCancel({ semester, schedule, sourceDate });
   assert.equal(planned.ok, true);
@@ -381,19 +382,19 @@ test('examClockOf / planExam：节次换钟点并校验日期、节次与作息'
   // 校验口径与改期一致：缺课次 / 节次非法 / 学期外 / 没有这节作息
   assert.deepEqual(planExam({ ...base, schedule: undefined }), {
     ok: false,
-    message: '请先选课程与要改成考试的课次',
+    message: adjustCopy.pickExamSource,
   });
   assert.deepEqual(planExam({ ...base, periodEnd: 0 }), {
     ok: false,
-    message: '节次需要是 1 起、且结束不小于开始',
+    message: adjustCopy.invalidPeriods,
   });
   assert.deepEqual(planExam({ ...base, date: '2027-01-01' }), {
     ok: false,
-    message: `考试日期要在学期内（${weekDateOf(semester, 1, 1)} 至 ${weekDateOf(semester, TOTAL_WEEKS, 7)}）`,
+    message: adjustCopy.dateOutOfSemester('考试日期', weekDateOf(semester, 1, 1), weekDateOf(semester, TOTAL_WEEKS, 7)),
   });
   assert.deepEqual(planExam({ ...base, periodStart: 39, periodEnd: 40 }), {
     ok: false,
-    message: '第 39–40 节没有对应的作息时间',
+    message: adjustCopy.noSlotForPeriods(39, 40),
   });
 });
 
@@ -453,7 +454,7 @@ test('planSwap / applySwap：记一条调休', async () => {
   const { semester } = await seed(storage);
   assert.deepEqual(planSwap({ semester, restFrom: '2026-02-01', restTo: weekDateOf(semester, 1, 2) }), {
     ok: false,
-    message: `原日期课表要在学期内（${weekDateOf(semester, 1, 1)} 至 ${weekDateOf(semester, TOTAL_WEEKS, 7)}）`,
+    message: adjustCopy.dateOutOfSemester('原日期课表', weekDateOf(semester, 1, 1), weekDateOf(semester, TOTAL_WEEKS, 7)),
   });
   const planned = planSwap({ semester, restFrom: weekDateOf(semester, 1, 2), restTo: weekDateOf(semester, 1, 4) });
   assert.equal(planned.ok, true);
@@ -473,11 +474,11 @@ test('planExtra / applyExtra：用已有课程或新建课程只加这一次', a
   const date = weekDateOf(semester, 5, 6);
   assert.deepEqual(
     planExtra({ semester, courseId: '', courseName: '   ', date, periodStart: 1, periodEnd: 2 }),
-    { ok: false, message: '请选择课程或填写课程名称' },
+    { ok: false, message: adjustCopy.pickExtraCourse },
   );
   assert.deepEqual(
     planExtra({ semester, courseId: math.id, courseName: '', date, periodStart: 0, periodEnd: 2 }),
-    { ok: false, message: '节次需要是 1 起、且结束不小于开始' },
+    { ok: false, message: adjustCopy.invalidPeriods },
   );
 
   const existing = planExtra({ semester, courseId: math.id, courseName: '', date, periodStart: 7, periodEnd: 8 });

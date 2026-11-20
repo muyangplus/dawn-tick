@@ -127,7 +127,7 @@ test('导出遇到损坏时换成恢复引导文案，日志保留原始错误',
   assert.equal(outcome.ok, false);
   assert.equal(outcome.corrupt, true, '应标记为损坏，界面才能换提示');
   assert.equal(outcome.error, EXPORT_CORRUPT_MESSAGE);
-  assert.equal(outcome.error, '数据库文件损坏，导出已停止：可从最近快照恢复后重试');
+  assert.equal(outcome.error, '数据库文件损坏，请从最近快照恢复后重试');
   assert.equal(isCorruptLocked(), true, '导出入口同样会触发恢复对话框');
   resetCorruptGuardForTests();
 });
