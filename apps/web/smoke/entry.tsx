@@ -31,7 +31,7 @@ import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
 import { dismissUpdateTask, setUpdateHostFactoryForTests, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
 import { setAndroidAbiForTests, preferredAndroidAbi } from '../src/lib/android-abi.ts';
 import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
-import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
+import { appVersion, CHANNEL, CHANNEL_LABEL, featureVisible } from '../src/channel.ts';
 import { updateDialogCopy } from '../src/copy/update-dialog.ts';
 import { countdownCopy } from '../src/copy/home-countdown.ts';
 import { timelineCopy } from '../src/copy/home-timeline.ts';
@@ -302,12 +302,22 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
   clickByText(view.container, '设置');
   await flush(12);
-  const settingsGroupTitles = ['学期设置', '提醒设置', '外观与动效', '课表显示', '作息与选校', '悬浮窗与小组件', '时间与日程'];
+  // AI 分组只在开发版出现（FEATURES.ai）
+  const settingsGroupTitles = [
+    '学期设置',
+    '提醒设置',
+    '外观与动效',
+    '课表显示',
+    '作息与选校',
+    '悬浮窗与小组件',
+    '时间与日程',
+    ...(featureVisible('ai') ? ['AI'] : []),
+  ];
   await waitFor(() => settingsNavItems(view.container).length === settingsGroupTitles.length, 20);
   const listedGroupTitles = (): string[] =>
     settingsGroupTitles.filter((title) => settingsNavItem(view.container, title) !== null);
   check(
-    '设置页改为分组导航：七组清单一次列全',
+    `设置页改为分组导航：${settingsGroupTitles.length} 组清单一次列全`,
     settingsNavItems(view.container).length === settingsGroupTitles.length &&
       listedGroupTitles().length === settingsGroupTitles.length,
     `分组=${listedGroupTitles().join(' / ') || '(无)'}`,
@@ -319,6 +329,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     ['课表显示', '7 天 · 隐藏周末'],
     ['悬浮窗与小组件', '条形 · 浅色'],
     ['时间与日程', 'Asia/Shanghai · 按开始时间'],
+    ...(featureVisible('ai') ? ([['AI', '未配置']] as const) : []),
   ] as const;
   const missingSummaries = summaryChecks.filter(
     ([title, summary]) => !(settingsNavItem(view.container, title)?.textContent ?? '').includes(summary),
@@ -5765,6 +5776,14 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     const importPaste = importApp.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="粘贴课表页面内容"]',
     );
+    const importAiButton = importApp.container.querySelector<HTMLButtonElement>('[data-role="import-ai"]');
+    check(
+      featureVisible('ai') ? '开发版粘贴步骤出现「用 AI 识别」，未粘贴时禁用' : '非开发版粘贴步骤不出现「用 AI 识别」',
+      featureVisible('ai')
+        ? importAiButton !== null && (importAiButton.textContent ?? '').includes('用 AI 识别') && importAiButton.disabled
+        : importAiButton === null,
+      importAiButton === null ? '(无按钮)' : `disabled=${importAiButton.disabled}`,
+    );
 
     // P2-02：识别失败就地给出手动映射入口，点了会展开并把焦点放到表头行
     if (importPaste instanceof window.HTMLTextAreaElement) {
@@ -6366,6 +6385,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       desktopExamKind?.getAttribute('aria-pressed') === 'true' &&
         document.querySelector('[aria-label="开考时间"]') !== null,
       `类型选中=${desktopExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+    );
+    const todoAiButton = document.querySelector('[data-role="todo-form"] [data-role="todo-ai"]');
+    check(
+      featureVisible('ai') ? '开发版新建表单出现「用 AI 生成」' : '非开发版新建表单不出现「用 AI 生成」',
+      featureVisible('ai') ? (todoAiButton?.textContent ?? '').includes('用 AI 生成') : todoAiButton === null,
+      todoAiButton?.textContent?.trim() ?? '(无按钮)',
     );
     if (clickByText(document.body, '取消')) await flush(10);
     if (clickByText(desktopApp.container, '日程')) await flush(16);

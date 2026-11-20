@@ -8,7 +8,7 @@ export type PasteSource = 'page' | 'file';
 /** 四步固定顺序：选方式 → 取课表 → 预览 → 完成 */
 export type ImportStep = 1 | 2 | 3 | 4;
 /** 失败来源决定错误块挂在哪个操作旁：识别挨着粘贴框，映射挨着映射按钮，文件挨着选文件。 */
-export type ImportFailureSource = 'page' | 'mapping' | 'file' | 'clipboard';
+export type ImportFailureSource = 'page' | 'mapping' | 'file' | 'clipboard' | 'ai';
 
 export interface ImportFailure {
   source: ImportFailureSource;

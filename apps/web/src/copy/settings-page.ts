@@ -14,6 +14,7 @@ export const settingsPageCopy = {
     slots: '作息与选校',
     widget: '悬浮窗与小组件',
     time: '时间与日程',
+    ai: 'AI',
   },
   notifyBanner: '通知未授权，课前提醒不会弹出',
   importButton: '导入课表',

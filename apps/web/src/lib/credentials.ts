@@ -7,7 +7,7 @@ import { PLUGIN_NAMES, loadPlugin, type SecretStorePlugin } from './plugins.ts';
 import { appBackupCopy } from '../copy/app-backup.ts';
 
 /**
- * 本机机密的加密存储（当前只有 WebDAV 密码）。
+ * 本机机密的加密存储：WebDAV 密码与 AI 密钥。
  *
  * 存储形态：设置键里放自描述信封 `enc:v1:<Base64 密文>`，密文由平台密钥加解密：
  * - Windows（Tauri）走 DPAPI `CryptProtectData`，密文只能在同一台机器、同一个 Windows
@@ -17,11 +17,17 @@ import { appBackupCopy } from '../copy/app-backup.ts';
  * 兼容旧数据：读到没有信封前缀的值就按旧版明文处理，加密能力可用时立刻加密并写回；
  * 平台确实没有加密能力（纯浏览器）时保留明文，并由界面显式提示「本平台不支持加密」。
  *
- * 边界：只认识一个键（`webdav_password`），没有密钥生命周期管理；WebDAV 密码不参与备份导出。
+ * 边界：只认识 `webdav_password` 与 `ai_api_key` 两个键，没有密钥生命周期管理；两者都不参与备份导出。
  */
 
 /** 设置键，与 core `settings.ts` 的 `webdav_password` 逐字一致；改名等于丢密码。 */
 export const WEBDAV_PASSWORD_META_KEY = 'webdav_password';
+
+/** 设置键，与 core `settings.ts` 的 `ai_api_key` 逐字一致。 */
+export const AI_API_KEY_META_KEY = 'ai_api_key';
+
+/** 加密保存的设置键。 */
+export type SecretMetaKey = typeof WEBDAV_PASSWORD_META_KEY | typeof AI_API_KEY_META_KEY;
 
 /** 密文信封前缀：`enc:v1:<Base64 密文>`。 */
 export const SECRET_ENVELOPE_PREFIX = 'enc:v1:';
@@ -190,10 +196,15 @@ export async function revealSecret(raw: string | null | undefined): Promise<stri
  * 读取或解密失败都返回 `state: 'error'` 与可读说明，不抛出（界面要能继续渲染）。
  */
 export async function readWebdavPassword(storage: PasswordStorage): Promise<WebdavPasswordInfo> {
+  return readStoredSecret(storage, WEBDAV_PASSWORD_META_KEY);
+}
+
+/** 读取任一加密保存的设置键；行为同 `readWebdavPassword`。 */
+export async function readStoredSecret(storage: PasswordStorage, key: SecretMetaKey): Promise<WebdavPasswordInfo> {
   const available = await isEncryptionAvailable();
   let raw = '';
   try {
-    raw = (await storage.readMeta(WEBDAV_PASSWORD_META_KEY)) ?? '';
+    raw = (await storage.readMeta(key)) ?? '';
   } catch (cause: unknown) {
     return {
       password: '',
@@ -214,7 +225,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
     try {
       const store = await requireStore();
       const ciphertext = await store.encrypt(envelope.value);
-      await storage.writeMeta(WEBDAV_PASSWORD_META_KEY, sealSecret(ciphertext));
+      await storage.writeMeta(key, sealSecret(ciphertext));
       return { password: envelope.value, state: 'migrated', message: null, encryptionAvailable: true };
     } catch (cause: unknown) {
       const reason = errorMessage(cause);
@@ -269,10 +280,19 @@ export async function saveWebdavPassword(
   storage: PasswordStorage,
   password: string,
 ): Promise<SaveWebdavPasswordResult> {
+  return saveStoredSecret(storage, WEBDAV_PASSWORD_META_KEY, password);
+}
+
+/** 保存任一加密保存的设置键；行为同 `saveWebdavPassword`。 */
+export async function saveStoredSecret(
+  storage: PasswordStorage,
+  key: SecretMetaKey,
+  password: string,
+): Promise<SaveWebdavPasswordResult> {
   const available = await isEncryptionAvailable();
   const write = async (value: string): Promise<string | null> => {
     try {
-      await storage.writeMeta(WEBDAV_PASSWORD_META_KEY, value);
+      await storage.writeMeta(key, value);
       return null;
     } catch (cause: unknown) {
       logError('credentials', '密码写入失败', { error: errorMessage(cause) });
@@ -299,7 +319,7 @@ export async function saveWebdavPassword(
     ciphertext = await store.encrypt(password);
   } catch (cause: unknown) {
     const reason = errorMessage(cause);
-    logError('credentials', 'WebDAV 密码加密失败', { error: reason });
+    logError('credentials', '密码加密失败', { error: reason });
     return { state: 'failed', message: null, error: appBackupCopy.credentials.encryptFailed(reason), encryptionAvailable: true };
   }
   let envelope: string;

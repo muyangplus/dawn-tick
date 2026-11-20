@@ -9,6 +9,7 @@ import type {
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
 import { settingsSummaryCopy } from '../copy/settings-page.ts';
+import { aiCopy } from '../copy/settings-ai.ts';
 
 /** 设置页的分组 id：顺序与分组清单一致，摘要按同一份 id 返回。 */
 export const SETTINGS_GROUP_IDS = [
@@ -19,6 +20,7 @@ export const SETTINGS_GROUP_IDS = [
   'slots',
   'widget',
   'time',
+  'ai',
 ] as const;
 
 export type SettingsGroupId = (typeof SETTINGS_GROUP_IDS)[number];
@@ -66,5 +68,6 @@ export function summarizeSettings(input: SettingsSummaryInput): SettingsGroupSum
       WIDGET_BACKGROUND_LABEL[settings.widgetBackground],
     ),
     time: copy.pair(settings.timeZone, TODO_SORT_LABEL[settings.todoSort]),
+    ai: settings.aiBaseUrl.trim() !== '' && settings.aiModel.trim() !== '' ? aiCopy.summaryOn(settings.aiModel.trim()) : aiCopy.summaryOff,
   };
 }

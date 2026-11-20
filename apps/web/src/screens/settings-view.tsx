@@ -7,6 +7,7 @@ import {
   Clock,
   MonitorSmartphone,
   Palette,
+  Sparkles,
 } from 'lucide-react';
 import type { AppSettings, SemesterRow, Storage, TimeSlotRow } from '@dawn-tick/core';
 import { notifyNextStep } from '../notify-state.ts';
@@ -18,6 +19,8 @@ import { GroupedSettings, type SettingsGroup } from '../components/grouped-setti
 import { HelpNavItem } from '../components/help-nav-item.tsx';
 import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
 import { ImportFlow } from './import-flow.tsx';
+import { featureVisible } from '../channel.ts';
+import { AiCard } from './settings/ai-card.tsx';
 import { AppearanceCard } from './settings/appearance-card.tsx';
 import { RemindersCard } from './settings/reminders-card.tsx';
 import { SemestersCard } from './settings/semesters-card.tsx';
@@ -172,6 +175,21 @@ export function SettingsView({
         </Card>
       ),
     },
+    ...(featureVisible('ai')
+      ? [
+          {
+            id: 'ai',
+            title: settingsPageCopy.groups.ai,
+            summary: summaries.ai,
+            icon: Sparkles,
+            content: (
+              <Card className="p-4">
+                <AiCard storage={storage} settings={settings} onPatch={onPatch} />
+              </Card>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (

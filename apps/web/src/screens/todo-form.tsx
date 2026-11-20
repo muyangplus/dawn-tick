@@ -39,6 +39,10 @@ import { TodoTimeFields } from './todo-form/time-fields.tsx';
 import { TodoLabFields } from './todo-form/lab-fields.tsx';
 import { TodoDetailFields } from './todo-form/detail-fields.tsx';
 import { TodoFooter } from './todo-form/footer.tsx';
+import { AiEventDialog } from './todo-form/ai-event-dialog.tsx';
+import { featureVisible } from '../channel.ts';
+import { aiCopy } from '../copy/settings-ai.ts';
+import { Button } from '../components/ui/button.tsx';
 
 /** 待办类型：日程 / 作业 / 考试 / 实验。 */
 export type { EventFormKind } from './todo-form-model.ts';
@@ -88,6 +92,7 @@ export function TodoForm({
 }: TodoFormProps) {
   const [form, setForm] = useState(() => blankTodoForm(kind, formatDate(Date.now(), timeZone)));
   const update = (patch: Partial<TodoFormState>): void => setForm((previous) => ({ ...previous, ...patch }));
+  const [aiOpen, setAiOpen] = useState(false);
   const {
     kind: current,
     title,
@@ -348,6 +353,31 @@ export function TodoForm({
       description={editing === null ? todoFormCopy.createDescription : todoFormCopy.editDescription}
       contentAttrs={{ 'data-role': 'todo-form' }}
     >
+      {editing === null && featureVisible('ai') && (
+        <>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="self-start"
+            data-role="todo-ai"
+            onClick={() => setAiOpen(true)}
+          >
+            {aiCopy.generateButton}
+          </Button>
+          <AiEventDialog
+            open={aiOpen}
+            onOpenChange={setAiOpen}
+            storage={storage}
+            userId={userId}
+            semesterId={semesterId}
+            timeZone={timeZone}
+            onCreated={() => {
+              onCreated();
+              onOpenChange(false);
+            }}
+          />
+        </>
+      )}
       <TodoBasicFields form={form} update={update} courses={courses} onChangeKind={changeKind} />
       <TodoTimeFields form={form} update={update} />
       {isLab && (

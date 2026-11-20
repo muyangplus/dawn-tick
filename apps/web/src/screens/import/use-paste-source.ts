@@ -34,6 +34,11 @@ import { useAction } from '../../lib/action.ts';
 import { saveText, toastSaved } from '../settings/file-export.ts';
 import { fileKind, unsupportedFileReason, type ImportFailure } from './import-flow-model.ts';
 import { importPasteCopy } from '../../copy/import-paste.ts';
+import { aiCopy } from '../../copy/settings-ai.ts';
+import { featureVisible } from '../../channel.ts';
+import { loadAiClient } from '../../lib/ai.ts';
+import { errorMessage } from '../../lib/errors.ts';
+import { recognizeWithAi } from './ai-recognize.ts';
 
 export interface PasteSourceOptions {
   storage: Storage;
@@ -51,6 +56,10 @@ export interface PasteSourceApi {
   mappingFailure: ImportFailure | null;
   fileFailure: ImportFailure | null;
   clipboardFailure: ImportFailure | null;
+  /** 「用 AI 识别」失败的原因 */
+  aiFailure: ImportFailure | null;
+  /** 是否显示「用 AI 识别」：只在开放 AI 的渠道 */
+  aiVisible: boolean;
   inspection: PageInspection | null;
   /** 最近一次识别尝试的诊断摘要；改过粘贴内容后清空，等下次识别重新生成 */
   diagnostics: ImportDiagnosticsSummary | null;
@@ -61,6 +70,7 @@ export interface PasteSourceApi {
   mapPeriodColumn: number;
   fileInput: RefObject<HTMLInputElement | null>;
   runPage: () => void;
+  runAi: () => Promise<void>;
   copyBookmarklet: () => Promise<void>;
   copyDiagnostics: () => Promise<void>;
   exportDiagnostics: () => Promise<void>;
@@ -101,6 +111,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
   const [mappingFailure, setMappingFailure] = useState<ImportFailure | null>(null);
   const [fileFailure, setFileFailure] = useState<ImportFailure | null>(null);
   const [clipboardFailure, setClipboardFailure] = useState<ImportFailure | null>(null);
+  const [aiFailure, setAiFailure] = useState<ImportFailure | null>(null);
   const [inspection, setInspection] = useState<PageInspection | null>(null);
   const [diagnostics, setDiagnostics] = useState<ImportDiagnosticsSummary | null>(null);
   const [mappingOpen, setMappingOpen] = useState(false);
@@ -122,6 +133,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     setMappingFailure(null);
     setFileFailure(null);
     setClipboardFailure(null);
+    setAiFailure(null);
   }
 
   function diagnosticsMeta(): ImportDiagnosticsMeta {
@@ -224,6 +236,35 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       schedules: result.schedules.length,
     });
     onAccepted(result.schedules, result.warnings);
+  }
+
+  /** 用 AI 识别：结果进同一个预览，确认后才写入；发出去的只有粘贴内容与学期周数、节次。 */
+  async function runAi(): Promise<void> {
+    resetFailures();
+    await run({
+      scope: 'import',
+      label: aiCopy.importRunning,
+      fail: false,
+      task: async () => {
+        try {
+          const client = await loadAiClient(storage);
+          const result = await recognizeWithAi(client, storage, semesterId, text);
+          if (result.schedules.length === 0) {
+            setAiFailure({
+              source: 'ai',
+              reason: result.warnings.join(importPasteCopy.warningSeparator) || aiCopy.importNoResult,
+            });
+            logWarn('import', 'AI 未识别出课程', { warnings: result.warnings.length });
+            return;
+          }
+          logInfo('import', 'AI 已识别课表', { schedules: result.schedules.length, warnings: result.warnings.length });
+          onAccepted(result.schedules, result.warnings);
+        } catch (cause: unknown) {
+          logWarn('import', 'AI 识别失败', { error: errorMessage(cause) });
+          setAiFailure({ source: 'ai', reason: errorMessage(cause) });
+        }
+      },
+    });
   }
 
   async function copyBookmarklet(): Promise<void> {
@@ -350,6 +391,8 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     mappingFailure,
     fileFailure,
     clipboardFailure,
+    aiFailure,
+    aiVisible: featureVisible('ai'),
     inspection,
     diagnostics,
     mappingOpen,
@@ -359,6 +402,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     mapPeriodColumn,
     fileInput,
     runPage,
+    runAi,
     copyBookmarklet,
     copyDiagnostics,
     exportDiagnostics,

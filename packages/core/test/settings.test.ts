@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
   DOWNLOAD_SOURCE_CHOICES,
+  EXPORT_EXCLUDED_KEYS,
+  LAN_EXCLUDED_KEYS,
+  SETTING_META_KEYS,
   VIEW_DAY_OPTIONS,
   WAL_MODES,
   WIDGET_VARIANT_LABEL,
@@ -177,4 +180,38 @@ test('接收测试版没设置过时为 null，写 null 不落库', async () => 
   await writeSettings(storage, { receiveBeta: null });
   assert.equal(await storage.readMeta('receive_beta'), undefined);
   assert.equal((await writeSettings(storage, { receiveBeta: false })).receiveBeta, false);
+});
+
+test('AI 设置默认留空，地址与模型去首尾空白，密钥原样保存', async () => {
+  assert.equal(DEFAULT_SETTINGS.aiBaseUrl, '');
+  assert.equal(DEFAULT_SETTINGS.aiModel, '');
+  assert.equal(DEFAULT_SETTINGS.aiApiKey, '');
+  const storage = createStorage();
+  const defaults = await readSettings(storage);
+  assert.equal(defaults.aiBaseUrl, '');
+  assert.equal(defaults.aiModel, '');
+  assert.equal(defaults.aiApiKey, '');
+
+  const saved = await writeSettings(storage, {
+    aiBaseUrl: ' https://api.example.com/v1 ',
+    aiModel: ' gpt-4o-mini ',
+    aiApiKey: ' sk-1 ',
+  });
+  assert.equal(saved.aiBaseUrl, 'https://api.example.com/v1');
+  assert.equal(saved.aiModel, 'gpt-4o-mini');
+  assert.equal(saved.aiApiKey, ' sk-1 ');
+  assert.equal(await storage.readMeta('ai_base_url'), 'https://api.example.com/v1');
+  assert.equal(await storage.readMeta('ai_model'), 'gpt-4o-mini');
+  assert.equal(await storage.readMeta('ai_api_key'), ' sk-1 ');
+});
+
+test('AI 密钥不进导出，地址与模型不随局域网同步', () => {
+  assert.ok(SETTING_META_KEYS.includes('ai_base_url'));
+  assert.ok(SETTING_META_KEYS.includes('ai_model'));
+  assert.ok(SETTING_META_KEYS.includes('ai_api_key'));
+  assert.ok(EXPORT_EXCLUDED_KEYS.includes('ai_api_key'));
+  assert.equal(EXPORT_EXCLUDED_KEYS.includes('ai_base_url'), false, '地址随备份走');
+  assert.equal(EXPORT_EXCLUDED_KEYS.includes('ai_model'), false, '模型随备份走');
+  assert.ok(LAN_EXCLUDED_KEYS.includes('ai_base_url'));
+  assert.ok(LAN_EXCLUDED_KEYS.includes('ai_model'));
 });

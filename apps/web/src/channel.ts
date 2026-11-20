@@ -18,6 +18,8 @@ export const CHANNEL_LABEL: Record<Channel, string> = appShellCopy.channel;
 export const FEATURES = {
   /** 日志导出与诊断信息 */
   diagnostics: ['dev', 'beta'],
+  /** AI 识别课表、生成日程与设置 → AI */
+  ai: ['dev'],
 } as const satisfies Record<string, readonly Channel[]>;
 
 export type FeatureId = keyof typeof FEATURES;

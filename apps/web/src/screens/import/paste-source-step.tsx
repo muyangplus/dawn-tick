@@ -10,6 +10,7 @@ import { ManualMappingSheet } from './manual-mapping-sheet.tsx';
 import { FILE_ACCEPT, type PasteSource } from './import-flow-model.ts';
 import type { PasteSourceApi } from './use-paste-source.ts';
 import { importPasteCopy } from '../../copy/import-paste.ts';
+import { aiCopy } from '../../copy/settings-ai.ts';
 import { HelpLink } from '../../components/help-link.tsx';
 
 export interface PasteSourceStepProps {
@@ -113,7 +114,25 @@ function PagePane({ paste }: { paste: PasteSourceApi }) {
         >
           {importPasteCopy.openMapping}
         </Button>
+        {paste.aiVisible && (
+          <Button
+            variant="secondary"
+            className="w-full tablet:w-auto"
+            data-role="import-ai"
+            loading={paste.busy}
+            disabled={paste.text.trim().length === 0}
+            onClick={() => void paste.runAi()}
+          >
+            {aiCopy.importButton}
+          </Button>
+        )}
       </div>
+
+      {paste.aiFailure !== null && (
+        <div role="alert" data-role="import-ai-error">
+          <InlineError>{fail(aiCopy.importWhat, paste.aiFailure.reason, aiCopy.importNext).text}</InlineError>
+        </div>
+      )}
 
       {paste.pageFailure?.source === 'page' && (
         <div
