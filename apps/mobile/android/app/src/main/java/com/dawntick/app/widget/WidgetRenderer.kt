@@ -313,7 +313,7 @@ object WidgetRenderer {
         )
         val capacity = rowCapacity(context, appWidgetId, maxRows = 2, countDp = COUNT_DP)
         val now = System.currentTimeMillis()
-        val exams = snapshot?.exams.orEmpty().filter { it.startAt > now }.sortedBy { it.startAt }
+        val exams = snapshot?.exams.orEmpty().filter { it.hideAt <= 0L || it.hideAt > now }.sortedBy { it.startAt }
         val nearest = exams.firstOrNull()
         views.setTextViewText(
             R.id.widget_exam_days,

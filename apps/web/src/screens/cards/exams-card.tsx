@@ -7,6 +7,7 @@ import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { cn } from '../../lib/cn.ts';
 import { formatDayCountdown } from '../../lib/format.ts';
 import { useNowTick } from '../../lib/use-now.ts';
+import { isCountdownVisible } from '../../lib/countdown-visibility.ts';
 import { defineCard, type ScheduleCardContext } from './registry.ts';
 import { countdownCopy } from '../../copy/home-countdown.ts';
 
@@ -25,7 +26,8 @@ export const examsCard = defineCard({
 function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope: 'schedule' }> }) {
   const now = useNowTick(15_000);
   const { data, onAddExam, onOpenEvent, semesterCountdown, holidayCountdown } = ctx;
-  const rows = data.countdowns;
+  // 结束后、勾选完成次日起不再显示；随节拍刷新，不等数据重载
+  const rows = data.countdowns.filter((row) => isCountdownVisible(row, now, data.timeZone));
   const daysUntil = (date: string): number =>
     Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${data.today}T00:00:00Z`)) / 86_400_000);
   const semesterStart = data.semester?.start_date ?? null;

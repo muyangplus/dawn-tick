@@ -32,6 +32,8 @@ data class WidgetExam(
     val title: String,
     val date: String,
     val startAt: Long,
+    /** 消失时刻（考完或勾选完成次日）；旧快照没有这一列时按开考时间 */
+    val hideAt: Long,
 )
 
 /**
@@ -268,6 +270,7 @@ object WidgetStore {
                         title = item.optString("title"),
                         date = item.optString("date"),
                         startAt = item.optLong("startAt"),
+                        hideAt = item.optLong("hideAt", item.optLong("startAt")),
                     ),
                 )
             }

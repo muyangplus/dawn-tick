@@ -6,6 +6,7 @@ import { writeMetaJson } from './lib/meta.ts';
 import { WIDGET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { isDesktopApp } from './lib/capabilities.ts';
 import { PLUGIN_NAMES, loadPlugin, type WidgetRefreshPlugin } from './lib/plugins.ts';
+import { countdownHideAt } from './lib/countdown-visibility.ts';
 
 export const WIDGET_SNAPSHOT_KEY = WIDGET_SNAPSHOT_META_KEY;
 
@@ -48,6 +49,8 @@ export interface WidgetExam {
   title: string;
   date: string;
   startAt: number;
+  /** 从小组件里消失的时刻（考完或勾选完成次日），规则同首页倒计时；0 表示一直显示 */
+  hideAt: number;
 }
 
 export interface WidgetSnapshot {
@@ -163,6 +166,7 @@ export function buildWidgetSnapshot(
       title: exam.title,
       date: exam.on_date ?? '',
       startAt: exam.start_at ?? 0,
+      hideAt: countdownHideAt(exam, data.timeZone) ?? 0,
     })),
   };
 }
