@@ -96,7 +96,7 @@ pub(crate) fn install_panic_logger() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let text = info.to_string();
-        append_log(&format!("panic: {info}"));
+        log_error("app", format!("程序崩溃 panic={text}"));
         let mut message = text.clone();
         // 已实测：把便携版放在受限制的目录里运行时，WebView2 的 App Container
         // 无法使用其中的数据目录，表现为 setup 阶段「拒绝访问」。
@@ -108,7 +108,6 @@ pub(crate) fn install_panic_logger() {
             );
         }
         message.push_str(&format!("\n\n数据目录与日志：{}", data_root_hint()));
-        append_log(&message);
         show_error_box("晓刻 DawnTick 启动失败", &message);
         default_hook(info);
     }));
@@ -148,12 +147,12 @@ pub(crate) fn show_error_box(_title: &str, _message: &str) {}
 pub(crate) fn log_database_status() {
     let (dir, fallback) = resolve_data_dir();
     if let Some(reason) = fallback {
-        append_log(&reason);
+        log_warn("storage", format!("自定义存储位置不可用，已退回默认目录 reason={reason}"));
     }
     let file = database_file(&dir);
-    append_log(&format!("数据目录: {}", dir.display()));
-    append_log(&format!("数据库路径: {}", file.display()));
-    append_log(&format!(
+    log_info("storage", format!("数据目录 dir={}", dir.display()));
+    log_debug("storage", format!("数据库路径 path={}", file.display()));
+    log_debug("storage", format!(
         "数据库文件: {}",
         match std::fs::metadata(&file) {
             Ok(meta) => format!("存在，{} 字节", meta.len()),
@@ -165,23 +164,23 @@ pub(crate) fn log_database_status() {
     match create_dir_all(&dir).and_then(|()| std::fs::write(&probe, b"probe")) {
         Ok(()) => {
             let _ = std::fs::remove_file(&probe);
-            append_log("数据库目录可写");
+            log_debug("storage", "数据目录可写");
         }
-        Err(error) => append_log(&format!("数据库目录不可写: {error}")),
+        Err(error) => log_warn("storage", format!("数据目录不可写 error={error}")),
     }
 
     match std::fs::OpenOptions::new().write(true).open(&file) {
-        Ok(_) => append_log("数据库文件可写"),
-        Err(error) => append_log(&format!("数据库文件不可写: {error}")),
+        Ok(_) => log_debug("storage", "数据库文件可写"),
+        Err(error) => log_warn("storage", format!("数据库文件不可写 error={error}")),
     }
 
     for suffix in ["-wal", "-shm", "-journal"] {
         let side = dir.join(format!("{DATABASE_FILE_NAME}{suffix}"));
         if let Ok(meta) = std::fs::metadata(&side) {
-            append_log(&format!(
-                "附带文件 {DATABASE_FILE_NAME}{suffix}: {} 字节",
-                meta.len()
-            ));
+            log_debug(
+                "storage",
+                format!("数据库附带文件 name={DATABASE_FILE_NAME}{suffix} bytes={}", meta.len()),
+            );
         }
     }
 }
@@ -203,25 +202,25 @@ pub(crate) fn ensure_webview_folder_writable() {
         if !target.exists() {
             let _ = create_dir_all(&base);
             match std::fs::rename(&legacy, &target) {
-                Ok(()) => append_log(&format!("WebView2 数据目录已迁到 {}", base.display())),
+                Ok(()) => log_info("app", format!("WebView2 数据目录已迁移 dir={}", base.display())),
                 Err(error) => {
-                    append_log(&format!("WebView2 数据目录迁移失败（{error}），继续用旧位置"));
+                    log_warn("app", format!("WebView2 数据目录迁移失败，沿用旧位置 error={error}"));
                     std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", data_dir());
                     return;
                 }
             }
         } else if std::fs::remove_dir_all(&legacy).is_ok() {
             // 新位置已经有 WebView2 数据了：数据目录里这份是迁移后的残留，清掉
-            append_log("已清理数据目录里残留的 EBWebView");
+            log_debug("app", "已删除数据目录里残留的 EBWebView");
         }
     }
     let locked = base;
     std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &locked);
     match probe_folder(&locked) {
-        Ok(()) => append_log(&format!("WebView2 数据目录已锁定: {}", locked.display())),
+        Ok(()) => log_debug("app", format!("WebView2 数据目录已锁定 dir={}", locked.display())),
         Err(error) => {
             note_access_denied(&format!("锁定目录 {}", locked.display()), &error);
-            append_log(&format!("WebView2 数据目录不可写: {error}"));
+            log_warn("app", format!("WebView2 数据目录不可写 dir={} error={error}", locked.display()));
         }
     }
     return;

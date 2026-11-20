@@ -208,7 +208,7 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) -> bool {
         action: action.id().to_string(),
     };
     if let Err(error) = app.emit(REMINDER_EVENT, payload) {
-        crate::append_log(&format!("[reminder] 托盘动作发送失败: {error}"));
+        crate::log_error("reminder", format!("托盘提醒动作发送失败 error={error}"));
     }
     true
 }

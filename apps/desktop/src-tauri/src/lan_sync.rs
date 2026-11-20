@@ -662,12 +662,15 @@ pub fn lan_sync_start(
         device_id.as_deref(),
         directed_broadcast,
     ) {
-        crate::append_log(&format!("局域网发现广播启动失败：{error}"));
+        crate::log_warn("sync", format!("局域网发现广播启动失败 error={error}"));
     }
-    crate::append_log(&format!(
-        "局域网同步已开启：{}:{}（广播目标 {:?}）",
-        info.host, info.port, directed_broadcast
-    ));
+    crate::log_info(
+        "sync",
+        format!(
+            "局域网同步已开启 addr={}:{} broadcast={:?}",
+            info.host, info.port, directed_broadcast
+        ),
+    );
     *guard = Some(server);
     Ok(info)
 }
@@ -679,7 +682,7 @@ pub fn lan_sync_stop() {
     let server = lock_server().take();
     if let Some(server) = server {
         server.stop();
-        crate::append_log("局域网同步已停止");
+        crate::log_info("sync", "局域网同步已停止");
     }
 }
 

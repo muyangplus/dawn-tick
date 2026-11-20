@@ -207,19 +207,22 @@ fn prepare_portable_update_blocking(name: String, sha256: String) -> Result<Stri
     std::fs::write(&script, update_script(&exe, &staged_exe, &staging))
         .map_err(|error| format!("写入更新脚本失败: {error}"))?;
     launch_script(&script)?;
-    crate::append_log(&format!(
-        "便携版更新已准备: 脚本 {}，暂存 {}，新程序 {}",
-        script.to_string_lossy(),
-        staging.to_string_lossy(),
-        staged_exe.to_string_lossy()
-    ));
+    crate::log_info(
+        "update",
+        format!(
+            "便携版更新已就绪 script={} staging={} exe={}",
+            script.to_string_lossy(),
+            staging.to_string_lossy(),
+            staged_exe.to_string_lossy()
+        ),
+    );
     Ok(script.to_string_lossy().to_string())
 }
 
 /// 退出应用让替换脚本接手：脚本已经在等 exe 释放，这里只负责尽快退出。
 #[tauri::command]
 pub fn exit_for_update(app: tauri::AppHandle) -> Result<(), String> {
-    crate::append_log("退出应用以完成便携版更新");
+    crate::log_info("update", "退出应用以完成便携版更新");
     app.exit(0);
     Ok(())
 }

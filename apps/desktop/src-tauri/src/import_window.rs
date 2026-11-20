@@ -45,14 +45,14 @@ pub async fn submit_page_import(app: tauri::AppHandle, payload: String, nonce: S
     use tauri::Emitter;
     let expected = IMPORT_NONCE.lock().map(|guard| guard.clone()).unwrap_or(None);
     if !import_nonce_matches(expected.as_deref(), &nonce) {
-        append_log("教务页面交回的内容校验值不符，已忽略");
+        log_warn("import", "教务页面回传的校验值不符，已拒绝");
         return Err("内容不是从本次打开的教务窗口交回的，请重新打开教务窗口".into());
     }
     if !payload.contains("<<<DAWNTICK>>>") {
-        append_log("教务页面交回的内容缺少标记，已忽略");
+        log_warn("import", "教务页面回传内容缺少标记，已拒绝");
         return Err("内容缺少标记".into());
     }
-    append_log(&format!("教务页面交回 {} 字节", payload.len()));
+    log_info("import", format!("教务页面已回传内容 bytes={}", payload.len()));
     app.emit("import-payload", payload)
         .map_err(|error| format!("转发回传内容失败: {error}"))
 }
@@ -63,7 +63,7 @@ pub async fn submit_page_import(app: tauri::AppHandle, payload: String, nonce: S
 pub async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri::Manager;
     let parsed: tauri::Url = url.parse().map_err(|error| format!("网址不正确: {error}"))?;
-    append_log("开始创建教务窗口");
+    log_debug("import", format!("开始创建教务窗口 url={}", redact_url(parsed.as_str())));
     if let Some(existing) = app.get_webview_window(IMPORT_WINDOW) {
         let _ = existing.close();
     }
@@ -79,19 +79,19 @@ pub async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<()
         .initialization_script(&injection)
         // 记录每次页面导航，便于判断「点了没反应」是没触发跳转还是被拦下。
         .on_navigation(|target| {
-            append_log(&format!("教务窗口导航: {target}"));
+            log_debug("import", format!("教务窗口导航 url={}", redact_url(target.as_str())));
             true
         })
         // 教务菜单多用 window.open 打开子页面，默认会被拒绝且没有任何提示。
         // 改为在本窗口内跳转：登录会话与「导入到晓刻」按钮都保留。
         .on_new_window(move |target, _features| {
-            append_log(&format!("教务页面请求新窗口，改为本窗口打开: {target}"));
+            log_debug("import", format!("教务页面请求新窗口，改在本窗口打开 url={}", redact_url(target.as_str())));
             let handle = new_window_target.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(30));
                 if let Some(window) = handle.get_webview_window(IMPORT_WINDOW) {
                     if let Err(error) = window.navigate(target) {
-                        append_log(&format!("教务窗口内跳转失败: {error}"));
+                        log_error("import", format!("教务窗口内跳转失败 error={error}"));
                     }
                 }
             });
@@ -99,7 +99,7 @@ pub async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<()
         })
         .build()
         .map_err(|error| format!("打开教务窗口失败: {error}"))?;
-    append_log("教务窗口已创建");
+    log_info("import", "教务窗口已打开");
     Ok(())
 }
 

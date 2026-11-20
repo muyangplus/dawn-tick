@@ -107,7 +107,7 @@ pub async fn stage_update(name: String, base64: String) -> Result<StagedUpdate, 
         let staging = dir.join(format!("{safe}.part"));
         std::fs::write(&staging, &bytes).map_err(|error| format!("写入更新包失败: {error}"))?;
         std::fs::rename(&staging, &target).map_err(|error| format!("写入更新包失败: {error}"))?;
-        crate::append_log(&format!("已暂存更新包: {safe}（{} 字节）", bytes.len()));
+        crate::log_info("update", format!("更新包已暂存 name={safe} bytes={}", bytes.len()));
         Ok(StagedUpdate {
             name: safe,
             sha256: sha256_hex(&bytes),
@@ -149,7 +149,7 @@ pub async fn save_file(
         let path = chosen.into_path().map_err(|error| format!("保存位置不可用: {error}"))?;
         std::fs::write(&path, &bytes).map_err(|error| format!("写入失败: {error}"))?;
         let shown = path.to_string_lossy().to_string();
-        crate::append_log(&format!("已写入文件: {shown}（{} 字节）", bytes.len()));
+        crate::log_info("backup", format!("文件已导出 path={shown} bytes={}", bytes.len()));
         Ok(Some(shown))
     })
     .await

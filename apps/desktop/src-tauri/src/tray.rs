@@ -73,14 +73,14 @@ pub(crate) fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     match builder.build(app) {
         Ok(_) => {
-            append_log(&format!("托盘已创建（{icon_source}）"));
+            log_debug("app", format!("托盘已创建 icon={icon_source}"));
             if let Ok(mut state) = TRAY_STATE.lock() {
                 *state = Some((true, icon_source));
             }
             Ok(())
         }
         Err(error) => {
-            append_log(&format!("托盘创建失败: {error}"));
+            log_debug("app", format!("托盘创建失败 icon={icon_source} error={error}"));
             if let Ok(mut state) = TRAY_STATE.lock() {
                 *state = Some((false, format!("{icon_source} / {error}")));
             }

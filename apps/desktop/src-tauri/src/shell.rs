@@ -45,7 +45,7 @@ pub fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(windows)]
     {
         shell_open(&url, "打开默认浏览器")?;
-        append_log(&format!("已在默认浏览器打开链接: {url}"));
+        log_info("link", format!("已在默认浏览器打开链接 url={}", redact_url(&url)));
         Ok(())
     }
     #[cfg(not(windows))]
@@ -93,7 +93,7 @@ pub fn open_log_dir() -> Result<String, String> {
     #[cfg(windows)]
     {
         shell_open(&dir.to_string_lossy(), "打开日志目录")?;
-        append_log(&format!("已打开日志目录: {}", dir.display()));
+        log_debug("log", format!("已打开日志目录 dir={}", dir.display()));
     }
     Ok(dir.to_string_lossy().to_string())
 }

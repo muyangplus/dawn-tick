@@ -98,7 +98,7 @@ pub fn reveal_path(path: String) -> Result<String, String> {
     }
     #[allow(unreachable_code)]
     let shown = target.path().to_string_lossy().to_string();
-    crate::append_log(&format!("已在资源管理器中定位: {shown}"));
+    crate::log_debug("app", format!("已在资源管理器中定位 path={shown}"));
     Ok(shown)
 }
 

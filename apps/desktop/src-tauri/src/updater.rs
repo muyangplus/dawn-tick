@@ -34,6 +34,6 @@ pub fn run_installer(name: String, sha256: String) -> Result<String, String> {
     let target = crate::fs_commands::resolve_staged(&crate::fs_commands::updates_dir(), &name, &sha256, &INSTALLER_EXTENSIONS)?;
     let shown = target.to_string_lossy().to_string();
     launch(&target)?;
-    crate::append_log(&format!("已启动安装程序: {shown}"));
+    crate::log_info("update", format!("安装程序已启动 path={shown}"));
     Ok(shown)
 }

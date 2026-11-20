@@ -80,7 +80,7 @@ static TRAY_STATE: std::sync::Mutex<Option<(bool, String)>> = std::sync::Mutex::
 pub fn run() {
     ensure_console();
     install_panic_logger();
-    append_log(&format!("应用启动 v{APP_VERSION}"));
+    log_info("app", format!("应用启动 version={APP_VERSION}"));
 
     // 先判单实例：拿不到数据目录锁就绝不打开数据库（唤回旧窗口或提示关闭）
     #[cfg(windows)]
@@ -90,10 +90,10 @@ pub fn run() {
             lock
         }
         InstanceRole::NeedsElevation(reason) => {
-            append_log(&format!("{reason}：先申请管理员权限，未取得实例锁前不打开数据库"));
+            log_warn("permission", format!("需要管理员权限，暂不打开数据库 reason={reason}"));
             match request_elevation_restart() {
                 Ok(()) => {
-                    append_log("已启动管理员实例，等待它接管实例锁…");
+                    log_info("permission", "管理员实例已启动，等待其接管实例锁");
                     // 旧实例不写库，只等提权实例拿到锁之前保持进程存活，随后退出让出锁
                     std::thread::spawn(|| {
                         std::thread::sleep(std::time::Duration::from_millis(800));
@@ -106,7 +106,7 @@ pub fn run() {
                         "{reason}。\n申请管理员权限失败（{error}）。\n\n\
                          为避免两个实例同时写坏数据库，本次启动已停止，未打开数据库。"
                     );
-                    append_log(&message);
+                    log_error("permission", format!("申请管理员权限失败，启动停止 reason={reason} error={error}"));
                     show_error_box("晓刻 DawnTick 无法启动", &message);
                     return;
                 }
@@ -115,18 +115,18 @@ pub fn run() {
         InstanceRole::FocusExisting => {
             let focused = focus_main_window();
             if !focused {
-                append_log("已有实例在运行且无法唤回窗口，提示用户先关闭它");
+                log_warn("app", "已有实例在运行，唤回窗口失败");
                 show_error_box(
                     "晓刻 DawnTick 已在运行",
                     "已有实例在运行，请先关闭它。\n\n\
                      若看不到窗口，可在任务管理器里结束 DawnTick.exe 后重试。",
                 );
             }
-            append_log("本次启动退出（未打开数据库）");
+            log_info("app", "本次启动退出，交给已有实例");
             return;
         }
         InstanceRole::Blocked(reason) => {
-            append_log(&format!("本次启动停止（未打开数据库）：{reason}"));
+            log_error("app", format!("启动停止，未打开数据库 reason={reason}"));
             show_error_box("晓刻 DawnTick 无法启动", &reason);
             return;
         }
@@ -136,11 +136,11 @@ pub fn run() {
     let _instance_lock = match instance_lock::acquire(&data_dir()) {
         instance_lock::Gate::Owner(lock) => lock,
         instance_lock::Gate::Busy { lock, reason } => {
-            append_log(&format!("已有实例占用 {}（{reason}），本次启动退出", lock.display()));
+            log_info("app", format!("已有实例占用数据目录，本次启动退出 lock={} reason={reason}", lock.display()));
             return;
         }
         instance_lock::Gate::Unavailable { lock, reason } => {
-            append_log(&format!("无法建立实例锁 {}（{reason}），本次启动退出", lock.display()));
+            log_error("app", format!("实例锁建立失败，启动停止 lock={} reason={reason}", lock.display()));
             return;
         }
     };
@@ -151,17 +151,16 @@ pub fn run() {
     // 打开数据库之前的自检：先清掉空快照，再处理损坏的数据库
     let empty = cleanup_empty_backups_in(&backups_dir());
     if empty > 0 {
-        append_log(&format!("已清理 {empty} 份空快照"));
+        log_warn("backup", format!("已清理空快照 count={empty}"));
     }
     if let Some(notice) = repair_database(&data_dir()) {
-        append_log(&notice);
         set_recovery_notice(notice);
     }
 
     // 旧的 window.json 不再使用（窗口几何改存数据库），顺手清掉
     let legacy_geometry = data_dir().join("window.json");
     if legacy_geometry.is_file() && std::fs::remove_file(&legacy_geometry).is_ok() {
-        append_log("已清理不再使用的 window.json");
+        log_debug("app", "已删除旧版 window.json");
     }
 
     #[cfg(windows)]
@@ -173,15 +172,15 @@ pub fn run() {
     // 提权实例拿到锁之后，还要等旧实例把数据库文件句柄放掉；等不到就给可读错误，不硬开库
     #[cfg(windows)]
     if launch_has_elevate_marker() && !database_writable() {
-        append_log("提权实例已取得实例锁，等待数据库文件可写…");
+        log_info("storage", "等待数据库文件可写");
         if !instance_lock::wait_until(std::time::Duration::from_secs(10), database_writable) {
             let message = "已取得实例锁，但数据库文件仍不可写（可能被其它程序占用）。\n\n\
                            请关闭占用数据库的程序后重试；本次启动未打开数据库。";
-            append_log(message);
+            log_error("storage", "数据库文件等待超时仍不可写，启动停止");
             show_error_box("晓刻 DawnTick 无法打开数据库", message);
             return;
         }
-        append_log("数据库文件已可写，继续启动");
+        log_info("storage", "数据库文件已可写");
     }
 
     // 数据库不可写（拒绝访问）时自动申请管理员权限并重启
@@ -323,17 +322,17 @@ pub fn run() {
                     restore_main_window_geometry(&window);
                     if start_hidden() {
                         let _ = window.hide();
-                        append_log("按设置隐藏主窗口，仅驻留托盘");
+                        log_info("app", "主窗口按设置隐藏，仅驻留托盘");
                     } else if let Err(error) = window.show() {
-                        append_log(&format!("显示主窗口失败: {error}"));
+                        log_error("app", format!("主窗口显示失败 error={error}"));
                     }
                 }
-                None => append_log("未找到主窗口"),
+                None => log_error("app", "主窗口不存在"),
             }
 
             // 托盘失败不阻止应用启动，仅记录
             if let Err(error) = setup_tray(app.handle()) {
-                append_log(&format!("托盘初始化失败: {error}"));
+                log_warn("app", format!("托盘初始化失败，继续启动 error={error}"));
             }
             Ok(())
         })
@@ -364,7 +363,7 @@ pub fn run() {
 
     if let Err(error) = builder.run(tauri::generate_context!()) {
         let message = format!("运行 Tauri 应用失败: {error}");
-        append_log(&message);
+        log_error("app", format!("Tauri 运行失败 error={error}"));
         eprintln!("{message}");
         show_error_box("晓刻 DawnTick 启动失败", &message);
     }

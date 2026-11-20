@@ -176,10 +176,10 @@ pub fn set_autostart(enabled: bool) -> Result<AutostartStatus, String> {
         if enabled {
             let command = autostart_reg::command_line()?;
             autostart_reg::write(HKEY_CURRENT_USER, &command)?;
-            append_log("已写入用户级开机自启");
+            log_info("settings", "已开启用户级开机自启");
         } else {
             let user = autostart_reg::remove(HKEY_CURRENT_USER);
-            append_log(&format!("已移除用户级开机自启（用户级={user}）"));
+            log_info("settings", format!("已关闭用户级开机自启 removed={user}"));
         }
         Ok(autostart_status_inner())
     }
