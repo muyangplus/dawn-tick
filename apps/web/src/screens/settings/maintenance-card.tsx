@@ -18,7 +18,7 @@ import { canUseWidget } from '../../lib/capabilities.ts';
 import { readElevationStatus, requestElevation } from '../../autostart.ts';
 import { registerPendingRestart } from '../../pending-restart.ts';
 import { useAction } from '../../lib/action.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { ExternalLink } from '../../components/ui/external-link.tsx';
 import { Field } from '../../components/ui/input.tsx';

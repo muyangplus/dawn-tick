@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogFooter } from './dialog.tsx';
 /** 破坏性动作确认：同一时刻只保留一个待确认请求，返回是否确认执行。 */
 export interface ConfirmRequest {
   title: string;
-  /** 后果说明，句式来自 copy/zh.ts 的 DELETE / OVERWRITE */
+  /** 后果说明，句式来自 copy/common.ts 的 DELETE / OVERWRITE */
   description: string;
   confirmLabel?: string;
   cancelLabel?: string;

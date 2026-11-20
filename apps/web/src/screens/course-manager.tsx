@@ -15,7 +15,7 @@ import { Button } from '../components/ui/button.tsx';
 import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { DangerDialog, Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
-import { COUNT, DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE } from '../copy/common.ts';
 import { countForCourse, type CourseCounts } from '../delete-counts.ts';
 import { useAction } from '../lib/action.ts';
 import { CourseForm } from './course-form.tsx';

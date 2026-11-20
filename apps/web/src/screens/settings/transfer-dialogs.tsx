@@ -9,7 +9,7 @@ import { exportConfig, type ExportFormat } from '../../data-management.ts';
 import { dayStampUtc } from '../../lib/dates.ts';
 import { copyText } from '../../system-actions.ts';
 import { useAction } from '../../lib/action.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';

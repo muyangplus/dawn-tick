@@ -13,7 +13,7 @@ import { logInfo } from '../../log.ts';
 import { useAction } from '../../lib/action.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { DangerDialog, FormDialog } from '../../components/ui/dialog.tsx';
-import { COUNT, DELETE } from '../../copy/zh.ts';
+import { COUNT, DELETE } from '../../copy/common.ts';
 import { countForSemester, type SemesterCounts } from '../../delete-counts.ts';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { toast } from '../../components/ui/toaster.tsx';

@@ -12,7 +12,7 @@ import {
 import { walEnabledByDefault } from '../../db/journal.ts';
 import { registerPendingRestart } from '../../pending-restart.ts';
 import { useAction } from '../../lib/action.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { SwitchField } from '../../components/ui/controls.tsx';

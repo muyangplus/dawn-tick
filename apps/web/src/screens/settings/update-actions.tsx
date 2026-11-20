@@ -7,7 +7,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import { canRollbackToStable } from '../../lib/update-preferences.ts';
 import { updatePlatform } from '../../lib/update-install.ts';

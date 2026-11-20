@@ -1,4 +1,4 @@
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import type { UpdatePlan } from '../../lib/update-download.ts';
 import type { UpdateTask, UpdateTaskStatus } from '../../lib/update-task.ts';
 

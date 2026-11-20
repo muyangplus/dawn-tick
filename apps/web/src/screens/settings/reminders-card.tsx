@@ -8,7 +8,7 @@ import {
 } from '../../system-actions.ts';
 import { exactAlarmState, requestExactAlarm, type ExactAlarmState } from '../../permissions.ts';
 import type { ReminderView } from '../../useReminders.ts';
-import { COUNT } from '../../copy/zh.ts';
+import { COUNT } from '../../copy/common.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { SwitchField } from '../../components/ui/controls.tsx';

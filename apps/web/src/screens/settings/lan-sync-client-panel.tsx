@@ -3,7 +3,7 @@ import type { Storage } from '@dawn-tick/core';
 import { Button } from '../../components/ui/button.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { useAction } from '../../lib/action.ts';
 import {
   LAN_CLIENT_IDLE, LAN_SCOPES, LAN_SCOPE_LABEL, checkPeerReachable, defaultDeviceName,

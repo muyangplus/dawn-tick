@@ -3,7 +3,7 @@ import { deleteCourse, deleteSchedule, WEEKDAY_LABELS, type Storage } from '@daw
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
-import { COUNT, DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE } from '../copy/common.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 import { ReminderForm } from './reminder-form.tsx';
 import { toast } from './ui/toaster.tsx';

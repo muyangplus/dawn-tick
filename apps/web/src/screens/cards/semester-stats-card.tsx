@@ -4,7 +4,7 @@ import { useAddActions } from '../../components/add-menu.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardTitle } from '../../components/ui/card.tsx';
 import { EmptyState } from '../../components/ui/empty-state.tsx';
-import { COUNT } from '../../copy/zh.ts';
+import { COUNT } from '../../copy/common.ts';
 import type { AppData } from '../../data.ts';
 import { formatMonthDayRange } from '../../lib/dates.ts';
 import { semesterReportCsv, semesterReportFileName } from '../../lib/semester-report.ts';

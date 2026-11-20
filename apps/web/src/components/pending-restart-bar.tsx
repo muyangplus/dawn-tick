@@ -5,7 +5,7 @@ import { StatusLine } from './ui/status-line.tsx';
 import { toast } from './ui/toaster.tsx';
 import { relaunchApplication } from '../storage-config.ts';
 import { clearPendingRestart, usePendingRestartSources } from '../pending-restart.ts';
-import { fail } from '../copy/zh.ts';
+import { fail } from '../copy/common.ts';
 
 export interface PendingRestartBarProps {
   /** 主壳里离内容更近，留白略小；设置页顶部用默认值 */

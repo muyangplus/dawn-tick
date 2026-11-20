@@ -5,7 +5,7 @@ import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { ScheduleFocusContext } from '../../components/schedule-focus.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { confirmAction } from '../../components/ui/confirm-dialog.tsx';
-import { DELETE } from '../../copy/zh.ts';
+import { DELETE } from '../../copy/common.ts';
 import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { cn } from '../../lib/cn.ts';
 import { useNowTick } from '../../lib/use-now.ts';

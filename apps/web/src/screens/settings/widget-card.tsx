@@ -28,7 +28,7 @@ import {
 } from '../../components/ui/controls.tsx';
 import { StatusLine } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
 const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = {

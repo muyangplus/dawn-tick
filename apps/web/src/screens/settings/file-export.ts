@@ -7,7 +7,7 @@ import { dayStampUtc } from '../../lib/dates.ts';
 import { revealExportedFile, savedFileActions, shareExportedFile } from '../../lib/export-files.ts';
 import { clearLogs, logsText } from '../../log.ts';
 import { openLogDirectory, revealPath, saveTextFile } from '../../system-actions.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 
 /** 保存结果：桌面端带实际路径，浏览器下载没有本地路径。 */

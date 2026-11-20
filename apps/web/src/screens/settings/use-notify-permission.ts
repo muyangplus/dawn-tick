@@ -3,7 +3,7 @@ import type { Storage } from '@dawn-tick/core';
 import { openNotifySettings } from '../../system-actions.ts';
 import { readNotifyStatus, type NotifyStatus } from '../../permissions.ts';
 import { isNotifyAbnormal, notifyStateOf, type NotifyStateView } from '../../notify-state.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 
 export interface NotifyPermissionApi {

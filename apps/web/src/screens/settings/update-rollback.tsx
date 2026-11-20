@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CHANNEL, CHANNEL_LABEL } from '../../channel.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import {

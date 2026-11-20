@@ -8,7 +8,7 @@ import type {
   WidgetVariant,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
-import { COUNT } from '../copy/zh.ts';
+import { COUNT } from '../copy/common.ts';
 
 /** 设置页的分组 id：顺序与分组清单一致，摘要按同一份 id 返回。 */
 export const SETTINGS_GROUP_IDS = [

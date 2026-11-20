@@ -11,7 +11,7 @@ import {
   timetableFileName,
   type TimetableImageModel,
 } from '../../lib/timetable-image.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { logError } from '../../log.ts';
 import { saveBinaryFile } from '../../system-actions.ts';
 import { Button } from '../../components/ui/button.tsx';

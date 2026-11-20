@@ -17,7 +17,7 @@ import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
-import { DELETE } from '../copy/zh.ts';
+import { DELETE } from '../copy/common.ts';
 import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppSettings } from '@dawn-tick/core';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { logInfo, logWarn } from '../../log.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { useAction } from '../../lib/action.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {

@@ -1,4 +1,4 @@
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
   dismissUpdateTask,

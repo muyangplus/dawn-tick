@@ -22,7 +22,7 @@ import {
   saveWebdavPassword,
   type WebdavPasswordInfo,
 } from '../../lib/credentials.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 import { formatBytes, said } from './format.ts';
 

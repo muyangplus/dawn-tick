@@ -10,7 +10,7 @@
 - **本地安卓编译**（无需 CI 往返）：`JAVA_HOME=C:\Users\<user>\.gradle\jdks\eclipse_adoptium-21-amd64-windows\jdk-21.0.7+6`、`ANDROID_HOME=E:\work\dsh\android-sdk`，在 `apps/mobile/android` 跑 `gradlew.bat :app:compileDebugKotlin --no-daemon`。
 - **结构**：core 写入按领域拆在 `mutations/`，学期快照 `loadSemesterSnapshot` + `expandInputOf` 一次读齐；设置为描述表；网页表格识别共用 `import/html-grid.ts`。web 的 `data.ts`、`schedule-cards.tsx` 为汇总导出；大表单的状态与回填/重置逻辑在旁边的纯模块里测试。Rust 按存储、备份、日志、实例、托盘、自启、提权、窗口几何、教务窗口拆模块，`lib.rs` 只留命令注册与迁移。冒烟的种子与桩在 `smoke/kit.tsx`。
 - **运维工具**：`tools/repair/repair-db.mjs --dir=<数据目录> [--dry-run] [--stage=<快照>]` 检查/恢复损坏数据库；正常启动也会自检并从最新健康快照恢复。
-- **单点**：文案 `copy/zh.ts`；节次范围 `lib/format.ts`；节次上限 `MAX_PERIODS`（40，core `timetable.ts`）；课程色 `core/colors.ts`；原生桥 `lib/native.ts`（命令与 Rust 一一对应）；插件契约 `lib/plugins.ts` + `apps/mobile/docs/plugins.contract.md`；`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`；局域网协议 `apps/mobile/docs/lan-sync.contract.md`。
+- **单点**：文案 `copy/`（按页面分模块，通用句式 `copy/common.ts`）；节次范围 `lib/format.ts`；节次上限 `MAX_PERIODS`（40，core `timetable.ts`）；课程色 `core/colors.ts`；原生桥 `lib/native.ts`（命令与 Rust 一一对应）；插件契约 `lib/plugins.ts` + `apps/mobile/docs/plugins.contract.md`；`app_meta` 助手 `lib/meta.ts` + 键清单 `lib/meta-keys.ts`；局域网协议 `apps/mobile/docs/lan-sync.contract.md`。
 
 ## 1. 已交付（均已通过 CI）
 

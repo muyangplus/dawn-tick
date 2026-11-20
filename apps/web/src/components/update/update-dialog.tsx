@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { releaseChannelOf } from '../../update.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';

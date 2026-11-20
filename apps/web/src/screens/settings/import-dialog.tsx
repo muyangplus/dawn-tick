@@ -21,7 +21,7 @@ import {
   type ImportFileResult,
   type PackageExtras,
 } from '../../data-management.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { useAction } from '../../lib/action.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';

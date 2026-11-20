@@ -20,7 +20,7 @@ import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { registerPendingRestart } from '../../pending-restart.ts';
 import { useAction } from '../../lib/action.ts';
-import { DELETE, fail } from '../../copy/zh.ts';
+import { DELETE, fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 import { formatBytes, said } from './format.ts';
 import type { SnapshotsApi } from './use-snapshots.ts';
@@ -84,7 +84,7 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
     });
   }
 
-  /** 恢复/删除快照都要先确认；句式统一走 copy/zh.ts。 */
+  /** 恢复/删除快照都要先确认；句式统一走 copy/common.ts。 */
   async function confirmRestoreSnapshot(entry: SnapshotEntry): Promise<void> {
     const ok = await confirmAction({
       title: '恢复快照',
