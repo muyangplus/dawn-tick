@@ -87,6 +87,11 @@ Run-Check '小组件快照契约（TS↔Kotlin）' {
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
     ($out.Trim() -split "`n" | Select-Object -Last 1)
 }
+Run-Check '小组件布局（RemoteViews 白名单）' {
+    $out = node tools/verify/check-widget-layouts.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    ($out.Trim() -split "`n" | Select-Object -Last 1)
+}
 Run-Check '第三方许可证清单一致' {
     $out = node tools/legal/collect-licenses.mjs --check 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
