@@ -6,12 +6,14 @@ import { formatPeriodRange } from '../lib/format.ts';
 import { logInfo } from '../log.ts';
 import {
   applyCancel,
+  applyCancelBatch,
   applyExam,
   applyExtra,
   applyMove,
   applySwap,
   overlapAt,
   planCancel,
+  planCancelBatch,
   planExam,
   planExtra,
   planMove,
@@ -24,6 +26,8 @@ import { toast } from './ui/toaster.tsx';
 import { AdjustModePicker } from './adjust-dialog/mode-picker.tsx';
 import { AdjustSourceFields } from './adjust-dialog/source-fields.tsx';
 import { AdjustMoveFields } from './adjust-dialog/move-fields.tsx';
+import { AdjustCancelFields } from './adjust-dialog/cancel-fields.tsx';
+import { confirmAction } from './ui/confirm-dialog.tsx';
 import { AdjustExamFields, AdjustExtraFields, AdjustSwapFields } from './adjust-dialog/target-fields.tsx';
 import { AdjustFooter } from './adjust-dialog/footer.tsx';
 import { adjustCopy } from '../copy/timetable-adjust.ts';
@@ -66,6 +70,9 @@ export function AdjustDialog({
     courseId,
     scheduleId,
     sourceDate,
+    cancelRange,
+    cancelTarget,
+    cancelTo,
     newDate,
     targetWeek,
     newStart,
@@ -206,7 +213,60 @@ export function AdjustDialog({
     onOpenChange(false);
   }
 
+  async function submitCancelBatch(): Promise<void> {
+    const cancelledKeys = new Set(
+      data.reschedules
+        .filter((row) => row.action === 'cancel' && row.ref_schedule_id !== null && row.on_date !== null)
+        .map((row) => `${row.ref_schedule_id}|${row.on_date}`),
+    );
+    const planned = planCancelBatch({
+      semester,
+      course,
+      schedule,
+      range: cancelRange,
+      target: cancelTarget,
+      from: sourceDate,
+      to: cancelTo,
+      cancelledKeys,
+    });
+    if (!planned.ok) {
+      toast.error(planned.message);
+      return;
+    }
+    const entries = planned.entries;
+    const ok = await confirmAction({
+      title: adjustCopy.cancelConfirmTitle,
+      description: adjustCopy.cancelConfirmDescription(
+        entries.length,
+        entries[0]?.date ?? sourceDate,
+        entries[entries.length - 1]?.date ?? sourceDate,
+      ),
+      confirmLabel: adjustCopy.cancelConfirmButton(entries.length),
+    });
+    if (!ok) return;
+    const result = await run({
+      scope: 'timetable',
+      label: adjustCopy.cancelBusy,
+      ok: adjustCopy.cancelBatchDone(entries.length),
+      fail: adjustCopy.cancelFail,
+      task: () =>
+        applyCancelBatch(storage, entries, {
+          userId: USER_ID,
+          semesterId: semesterId(),
+          courseName: course?.name ?? '',
+        }),
+    });
+    if (!result.ok) return;
+    logInfo('timetable', '已批量停课', { courseId, range: cancelRange, target: cancelTarget, count: entries.length });
+    onChanged();
+    onOpenChange(false);
+  }
+
   async function submitCancel(): Promise<void> {
+    if (cancelRange !== 'this' || cancelTarget !== 'schedule') {
+      await submitCancelBatch();
+      return;
+    }
     const planned = planCancel({ semester, schedule, sourceDate });
     if (!planned.ok) {
       toast.error(planned.message);
@@ -326,7 +386,11 @@ export function AdjustDialog({
     mode === 'move'
       ? adjustCopy.descriptionMove(courseLabel, moveFromLabel, moveToLabel)
       : mode === 'cancel'
-        ? adjustCopy.descriptionCancel(courseLabel, sourceDate)
+        ? cancelRange === 'from'
+          ? adjustCopy.descriptionCancelFrom(courseLabel, sourceDate)
+          : cancelRange === 'range'
+            ? adjustCopy.descriptionCancelRange(courseLabel, sourceDate, cancelTo)
+            : adjustCopy.descriptionCancel(courseLabel, sourceDate)
         : mode === 'swap'
           ? adjustCopy.descriptionSwap
           : mode === 'exam'
@@ -360,6 +424,7 @@ export function AdjustDialog({
       )}
 
       {mode === 'move' && <AdjustMoveFields form={form} update={update} data={data} />}
+      {mode === 'cancel' && <AdjustCancelFields form={form} update={update} />}
 
       {mode === 'exam' && <AdjustExamFields form={form} update={update} />}
 

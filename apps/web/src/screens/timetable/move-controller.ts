@@ -24,6 +24,12 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** 调课弹窗的五个主操作。 */
 export type AdjustMode = 'move' | 'cancel' | 'swap' | 'extra' | 'exam';
 
+/** 停课范围：只这一次 / 一段日期 / 从某天起到学期结束。 */
+export type CancelRange = 'this' | 'range' | 'from';
+
+/** 停课对象：只这个上课时段 / 整门课的全部时段。 */
+export type CancelTarget = 'schedule' | 'course';
+
 /** 改期的四种生效范围。 */
 export type AdjustScope = 'this' | 'weekly' | 'week' | 'date';
 
@@ -247,6 +253,78 @@ export function planCancel(input: {
       week: null,
     },
   };
+}
+
+/** 批量停课的一条：哪个排课、哪一天。 */
+export interface CancelEntry {
+  scheduleId: string;
+  date: string;
+}
+
+export type CancelBatchResult = { ok: true; entries: CancelEntry[] } | { ok: false; message: string };
+
+/**
+ * 批量停课 / 结课：按范围与对象列出要写停课记录的课次。
+ * 课次按排课周次与星期推算，限定在学期内；已停课的跳过，不重复写。
+ */
+export function planCancelBatch(input: {
+  semester: SemesterRow | null;
+  course: ManagedCourse | undefined;
+  schedule: ManagedSchedule | undefined;
+  range: CancelRange;
+  target: CancelTarget;
+  from: string;
+  to: string;
+  /** 已有的停课记录：`排课|日期` */
+  cancelledKeys: ReadonlySet<string>;
+}): CancelBatchResult {
+  const { semester, course, schedule } = input;
+  if (semester === null || course === undefined || (input.target === 'schedule' && schedule === undefined)) {
+    return { ok: false, message: adjustCopy.pickCancelSource };
+  }
+  const fromError = semesterDateError(semester, input.from, adjustCopy.sourceDateLabel);
+  if (fromError !== null) return { ok: false, message: fromError };
+  const semesterLast = dayRangeOf(semester).last;
+  let last = input.from;
+  if (input.range === 'from') last = semesterLast;
+  if (input.range === 'range') {
+    const toError = semesterDateError(semester, input.to, adjustCopy.cancelToLabel);
+    if (toError !== null) return { ok: false, message: toError };
+    if (input.to < input.from) return { ok: false, message: adjustCopy.cancelToBeforeFrom };
+    last = input.to;
+  }
+  const schedules = input.target === 'course' ? course.schedules : schedule === undefined ? [] : [schedule];
+  const entries: CancelEntry[] = [];
+  for (const row of schedules) {
+    for (const week of row.weeks) {
+      const date = weekDateOf(semester, week, row.dayOfWeek);
+      if (date < input.from || date > last) continue;
+      if (input.cancelledKeys.has(`${row.id}|${date}`)) continue;
+      entries.push({ scheduleId: row.id, date });
+    }
+  }
+  entries.sort((left, right) => (left.date === right.date ? 0 : left.date < right.date ? -1 : 1));
+  if (entries.length === 0) return { ok: false, message: adjustCopy.cancelNothing };
+  return { ok: true, entries };
+}
+
+/** 落库：逐条写停课记录。 */
+export async function applyCancelBatch(
+  storage: Storage,
+  entries: readonly CancelEntry[],
+  input: { userId: string; semesterId: string; courseName: string },
+): Promise<number> {
+  for (const entry of entries) {
+    await createReschedule(storage, {
+      userId: input.userId,
+      semesterId: input.semesterId,
+      refScheduleId: entry.scheduleId,
+      onDate: entry.date,
+      action: 'cancel',
+      title: adjustCopy.cancelRecordTitle(input.courseName),
+    });
+  }
+  return entries.length;
 }
 
 /** 落库：在原日期记一条停课。 */

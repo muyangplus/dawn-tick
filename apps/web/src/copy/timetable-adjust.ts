@@ -24,6 +24,8 @@ export const adjustCopy = {
 
   descriptionMove: (course: string, from: string, to: string) => `把「${course}」${from}改到 ${to}`,
   descriptionCancel: (course: string, date: string) => `停掉「${course}」${date} 这一次课，其他周不变`,
+  descriptionCancelRange: (course: string, from: string, to: string) => `停掉「${course}」${from} 至 ${to} 的课`,
+  descriptionCancelFrom: (course: string, from: string) => `「${course}」从 ${from} 起结课，之后的课都停掉`,
   descriptionSwap: '把原日期的课表整体搬到目标上课日',
   descriptionExam: (course: string, date: string, examDate: string) =>
     `把「${course}」${date} 这一次课改成 ${examDate} 的考试，原课次从课表移除`,
@@ -41,6 +43,27 @@ export const adjustCopy = {
   cancelBusy: '正在停课…',
   cancelDone: '已记录停课',
   cancelFail: { what: '停课失败', next: RETRY_NEXT },
+  cancelBatchDone: (count: number) => `已记录 ${count} 次停课`,
+  /** 批量停课 / 结课：范围、对象与写入前确认 */
+  cancelRangesAria: '停课范围',
+  cancelRanges: {
+    this: { label: '只这一次', hint: '只停原日期这一次课' },
+    range: { label: '一段日期', hint: '停掉开始日到结束日之间的课，之后照常' },
+    from: { label: '从这天起结课', hint: '从开始日到学期结束都不再上' },
+  },
+  cancelTargetsAria: '停课对象',
+  cancelTargets: {
+    schedule: '只这个上课时段',
+    course: '整门课',
+  },
+  cancelFromLabel: '开始日',
+  cancelToLabel: '结束日',
+  cancelToBeforeFrom: '结束日不能早于开始日',
+  cancelNothing: '这段日期里没有要停的课，或者都已停课',
+  cancelConfirmTitle: '批量停课',
+  cancelConfirmDescription: (count: number, first: string, last: string) =>
+    `将写入 ${count} 条停课记录（${first} 至 ${last}），可在课表上单击课次逐条删除。`,
+  cancelConfirmButton: (count: number) => `停课 ${count} 次`,
   examBusy: '正在改为考试…',
   examDone: (date: string, range: string) => `已改为考试：${date} ${range}`,
   examFail: { what: '改为考试失败', next: RETRY_NEXT },
