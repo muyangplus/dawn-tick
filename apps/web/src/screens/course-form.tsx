@@ -22,7 +22,7 @@ import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { logError, logInfo } from '../log.ts';
+import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { cn } from '../lib/cn.ts';
@@ -245,7 +245,8 @@ export function CourseForm({
           endTime: draft.customTime ? draft.endTime : null,
         }));
 
-        logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
+        logDebug('timetable', '开始保存课程', {
+          creating: course === null,
           name: payload.name,
           schedules: schedules.map((item) => ({
             day: item.dayOfWeek,
@@ -259,13 +260,13 @@ export function CourseForm({
           const created = await createCourse(storage, { semesterId, ...payload });
           savedId = String(created['id']);
           await setSchedules(storage, savedId, schedules, { totalWeeks });
-          logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
+          logInfo('timetable', '课程已新建', { id: savedId, name: payload.name, schedules: schedules.length });
           toast.success('已添加课程');
         } else {
           savedId = course.id;
           await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
           await setSchedules(storage, course.id, schedules, { totalWeeks });
-          logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
+          logInfo('timetable', '课程已修改', { id: course.id, schedules: schedules.length });
           toast.success('已保存课程');
         }
         // 重叠只提醒不阻止：课程此时已经保存成功
@@ -278,7 +279,7 @@ export function CourseForm({
       } catch (cause: unknown) {
         // 保存失败同时写日志与界面提示，避免只留一句「无反应」
         const message = errorMessage(cause);
-        logError('course', '保存课程失败', { message, id: course?.id ?? null });
+        logError('timetable', '课程保存失败', { message, id: course?.id ?? null });
         setError(message);
         toast.error(`保存课程失败：${message}`);
       }

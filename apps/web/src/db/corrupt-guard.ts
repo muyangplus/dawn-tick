@@ -13,7 +13,7 @@
  */
 import type { Collection, Storage, StoreName } from '@dawn-tick/core';
 import { errorMessage } from '../lib/errors.ts';
-import { logError } from '../log.ts';
+import { logError, type LogScope } from '../log.ts';
 import { isFallbackStorage, markStorageFallback } from './fallback.ts';
 import { isCorruptDatabase } from './health.ts';
 
@@ -45,11 +45,11 @@ export function isCorruptLocked(): boolean {
  * 上报一次错误：不是损坏返回 false；是损坏则锁定写入（同一会话只通知一次）并返回 true。
  * 调用方拿返回值决定是否换文案，不需要自己判重。
  */
-export function reportCorrupt(cause: unknown, scope = 'storage'): boolean {
+export function reportCorrupt(cause: unknown, scope: LogScope = 'storage'): boolean {
   if (!isCorruptDatabase(cause)) return false;
   if (tripped !== null) return true;
   tripped = { message: errorMessage(cause), at: Date.now() };
-  logError(scope, '数据库文件损坏，已停止写入', { message: tripped.message });
+  logError(scope, '数据库文件损坏，写入已停止', { message: tripped.message });
   for (const listener of [...listeners]) {
     try {
       listener(tripped);

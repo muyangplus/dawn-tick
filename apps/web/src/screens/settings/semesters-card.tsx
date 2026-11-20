@@ -42,7 +42,7 @@ export function SemestersCard({
 
   async function activate(id: string): Promise<void> {
     await run({
-      scope: 'semester',
+      scope: 'timetable',
       label: '正在切换当前学期…',
       ok: '已切换当前学期',
       fail: { what: '切换学期失败', next: '请重试；仍失败请重开应用后再试。' },

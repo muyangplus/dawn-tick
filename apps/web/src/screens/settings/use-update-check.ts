@@ -95,7 +95,8 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
     await action.run({
       scope: 'update',
       label: '正在检查更新…',
-      log: '检查更新失败',
+      log: '更新检查失败',
+      logLevel: 'warn',
       fail: { what: '检查更新', next: '请稍后再试' },
       task: async () => {
         // 手动检查前先确保有源：自动模式命中缓存时不会额外发请求
@@ -113,7 +114,7 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
           const message = fail('检查更新', status.error, '请稍后再试');
           setResult(said(message));
           toast.error(message);
-          logWarn('update', '检查更新失败', { error: status.error, feed: status.feed, source: status.source });
+          logWarn('update', '更新检查失败', { error: status.error, feed: status.feed, source: status.source });
           return;
         }
         const manifest = status.manifest;
@@ -135,7 +136,7 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
         toast.success(message);
         // 手动检查与启动自检共用同一个更新弹窗：只在本版本严格更高时打开（忽略的版本也打开）
         if (status.available) requestUpdatePrompt(status);
-        logInfo('update', '检查更新', {
+        logInfo('update', '更新检查完成', {
           feed: status.feed,
           source: status.source,
           ...(status.fallbackFrom === undefined ? {} : { fallbackFrom: status.fallbackFrom }),

@@ -194,7 +194,7 @@ export async function scanLanPeers(timeoutMs = LAN_DISCOVERY_TIMEOUT_MS): Promis
     try {
       return dedupeDiscoveryPeers(await scanOverride());
     } catch (cause: unknown) {
-      logWarn('lan-sync', '扫描局域网设备失败', {
+      logWarn('sync', '局域网设备扫描失败', {
         message: cause instanceof Error ? cause.message : String(cause),
       });
       return [];
@@ -223,7 +223,7 @@ export async function scanLanPeers(timeoutMs = LAN_DISCOVERY_TIMEOUT_MS): Promis
         .map((peer) => ({ ...peer, seenAt: now })),
     );
   } catch (cause: unknown) {
-    logWarn('lan-sync', '扫描局域网设备失败', {
+    logWarn('sync', '局域网设备扫描失败', {
       message: cause instanceof Error ? cause.message : String(cause),
     });
     return [];

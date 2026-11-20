@@ -12,7 +12,8 @@ import { readWebdavPassword, revealSecret } from './lib/credentials.ts';
 import { errorMessage } from './lib/errors.ts';
 import { readMetaNumber } from './lib/meta.ts';
 import { WEBDAV_LAST_SYNC_META_KEY, WEBDAV_LAST_UPLOAD_META_KEY } from './lib/meta-keys.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logDebug, logError, logInfo } from './log.ts';
+import { textForLog } from './lib/log-redact.ts';
 import {
   applyBackupPackage,
   buildPackageBytes,
@@ -227,11 +228,11 @@ export async function uploadPackage(
     // 之后自己的上传会被误判为「远端更新」并从此不再上传
     const serverModified = await uploadedModifiedAt(settings, name, response);
     await storage.writeMeta(LAST_UPLOAD_KEY, String(serverModified ?? Date.now()));
-    logInfo('webdav', '已上传同步包', { name, bytes: bytes.length, serverModified });
+    logInfo('sync', '同步包已上传', { name, bytes: bytes.length, serverModified });
     return { ok: true, name, bytes: bytes.length, error: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('webdav', '上传失败', { name, error });
+    logError('sync', '同步包上传失败', { name, error: textForLog(error) });
     return { ok: false, name, bytes: 0, error };
   }
 }
@@ -261,11 +262,11 @@ export async function downloadPackage(
       return { ok: false, name, bytes: null, error: `服务器返回 ${response.status}` };
     }
     const buffer = await response.arrayBuffer();
-    logInfo('webdav', '已下载同步包', { name, bytes: buffer.byteLength });
+    logDebug('sync', '同步包已下载', { name, bytes: buffer.byteLength });
     return { ok: true, name, bytes: new Uint8Array(buffer), error: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('webdav', '下载失败', { name, error });
+    logError('sync', '同步包下载失败', { name, error: textForLog(error) });
     return { ok: false, name, bytes: null, error };
   }
 }
@@ -298,7 +299,7 @@ export async function applyPackage(
       extras,
     });
     const presets = result.presets;
-    logInfo('webdav', '已应用同步包', {
+    logInfo('sync', '同步包已应用', {
       mode,
       imported: result.imported,
       removed: result.removed,
@@ -313,7 +314,7 @@ export async function applyPackage(
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('webdav', '应用同步包失败', { mode, error });
+    logError('sync', '同步包应用失败', { mode, error: textForLog(error) });
     return { ok: false, error, full: null, settings: null, presets: false };
   }
 }
@@ -381,7 +382,7 @@ export async function maybeAutoSync(
   if (status.error !== null) {
     return { action: 'error', name: FIXED_NAME, detail: status.error };
   }
-  const lastUpload = await readMetaNumber(storage, LAST_UPLOAD_KEY, 0, { scope: 'webdav' });
+  const lastUpload = await readMetaNumber(storage, LAST_UPLOAD_KEY, 0, { scope: 'sync' });
   if (status.exists && status.lastModified !== null && status.lastModified > lastUpload + 1000) {
     await storage.writeMeta(LAST_SYNC_KEY, today);
     return { action: 'remote-newer', name: FIXED_NAME, detail: '远端备份比本机上传的新' };

@@ -145,7 +145,7 @@ export function WebdavBlock({
     await commitPassword();
     setDavStatus(said('正在测试连接…'));
     await davAction.run({
-      scope: 'webdav',
+      scope: 'sync',
       label: '正在测试连接…',
       fail: false,
       task: async () => {
@@ -173,7 +173,7 @@ export function WebdavBlock({
     await commitPassword();
     setDavStatus(null);
     await davAction.run({
-      scope: 'webdav',
+      scope: 'sync',
       label: '正在上传到 WebDAV…',
       fail: false,
       task: async () => {
@@ -198,7 +198,7 @@ export function WebdavBlock({
     setDavConfirmOpen(false);
     setDavStatus(null);
     await davAction.run({
-      scope: 'webdav',
+      scope: 'sync',
       label: '正在下载并应用…',
       fail: false,
       task: async () => {

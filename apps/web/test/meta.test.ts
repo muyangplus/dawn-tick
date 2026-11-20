@@ -15,9 +15,17 @@ function writer(write: (key: string, value: string) => Promise<void>): Pick<Stor
   return { writeMeta: write };
 }
 
-function warnings(scope: string): Array<{ message: string; detail?: Record<string, unknown> }> {
+/** 本文件的日志都落在同一个登记范围下，靠「执行期间新增的条目」区分各用例。 */
+const SCOPE = 'storage' as const;
+
+type Warning = { message: string; detail?: Record<string, unknown> };
+
+/** 执行 run 期间新增的 warn 条目（按条目引用比对，缓冲被截断也不受影响）。 */
+async function warnedDuring(run: () => Promise<unknown>): Promise<Warning[]> {
+  const before = new Set(logEntries());
+  await run();
   return logEntries()
-    .filter((entry) => entry.level === 'warn' && entry.scope === scope)
+    .filter((entry) => !before.has(entry) && entry.level === 'warn' && entry.scope === SCOPE)
     .map((entry) => ({ ...(entry.detail === undefined ? {} : { detail: entry.detail }), message: entry.message }));
 }
 
@@ -25,69 +33,79 @@ const parseNumber = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
 
 test('readMetaJson：键缺失或空白回落且不记日志', async () => {
-  const before = warnings('meta-missing').length;
-  for (const raw of [undefined, '', '   ']) {
-    const value = await readMetaJson(reader(async () => raw), 'k', {
-      parse: parseNumber,
-      fallback: 7,
-      scope: 'meta-missing',
-    });
-    assert.equal(value, 7);
-  }
-  assert.equal(warnings('meta-missing').length, before);
+  const warned = await warnedDuring(async () => {
+    for (const raw of [undefined, '', '   ']) {
+      const value = await readMetaJson(reader(async () => raw), 'k', {
+        parse: parseNumber,
+        fallback: 7,
+        scope: SCOPE,
+      });
+      assert.equal(value, 7);
+    }
+  });
+  assert.deepEqual(warned, []);
 });
 
 test('readMetaJson：JSON 损坏回落并记 warn', async () => {
-  const value = await readMetaJson(reader(async () => '{ 不是 JSON'), 'app_log', {
-    parse: parseNumber,
-    fallback: 7,
-    scope: 'meta-corrupt',
+  let value: number | undefined;
+  const warned = await warnedDuring(async () => {
+    value = await readMetaJson(reader(async () => '{ 不是 JSON'), 'app_log', {
+      parse: parseNumber,
+      fallback: 7,
+      scope: SCOPE,
+    });
   });
   assert.equal(value, 7);
-  const warned = warnings('meta-corrupt');
   assert.equal(warned.length, 1);
   assert.match(warned[0]?.message ?? '', /不是合法 JSON/);
   assert.equal(warned[0]?.detail?.['key'], 'app_log');
 });
 
 test('readMetaJson：校验不通过回落并记 warn', async () => {
-  const value = await readMetaJson(reader(async () => '{"id":""}'), 'recent_school', {
-    parse: (parsed) => {
-      if (typeof parsed !== 'object' || parsed === null) return null;
-      const id = (parsed as Record<string, unknown>)['id'];
-      return typeof id === 'string' && id !== '' ? id : null;
-    },
-    fallback: 'fallback',
-    scope: 'meta-invalid',
+  let value: string | undefined;
+  const warned = await warnedDuring(async () => {
+    value = await readMetaJson(reader(async () => '{"id":""}'), 'recent_school', {
+      parse: (parsed) => {
+        if (typeof parsed !== 'object' || parsed === null) return null;
+        const id = (parsed as Record<string, unknown>)['id'];
+        return typeof id === 'string' && id !== '' ? id : null;
+      },
+      fallback: 'fallback',
+      scope: SCOPE,
+    });
   });
   assert.equal(value, 'fallback');
-  const warned = warnings('meta-invalid');
   assert.equal(warned.length, 1);
   assert.match(warned[0]?.message ?? '', /结构不正确/);
 });
 
 test('readMetaJson：校验回调抛错也按失败兜底', async () => {
-  const value = await readMetaJson(reader(async () => '[1,2]'), 'k', {
-    parse: () => {
-      throw new Error('校验器崩了');
-    },
-    fallback: 'safe',
-    scope: 'meta-throw',
+  let value: string | undefined;
+  const warned = await warnedDuring(async () => {
+    value = await readMetaJson(reader(async () => '[1,2]'), 'k', {
+      parse: () => {
+        throw new Error('校验器崩了');
+      },
+      fallback: 'safe',
+      scope: SCOPE,
+    });
   });
   assert.equal(value, 'safe');
-  assert.equal(warnings('meta-throw').length, 1);
+  assert.equal(warned.length, 1);
 });
 
 test('readMetaJson：存储读取失败回落并记 warn', async () => {
-  const value = await readMetaJson(
-    reader(async () => {
-      throw new Error('数据库锁住');
-    }),
-    'k',
-    { parse: parseNumber, fallback: 0, scope: 'meta-read-fail' },
-  );
+  let value: number | undefined;
+  const warned = await warnedDuring(async () => {
+    value = await readMetaJson(
+      reader(async () => {
+        throw new Error('数据库锁住');
+      }),
+      'k',
+      { parse: parseNumber, fallback: 0, scope: SCOPE },
+    );
+  });
   assert.equal(value, 0);
-  const warned = warnings('meta-read-fail');
   assert.equal(warned.length, 1);
   assert.match(warned[0]?.message ?? '', /读取 app_meta 失败/);
 });
@@ -105,34 +123,35 @@ test('readMetaJson：scope 传 null 时静默', async () => {
 
 test('writeMetaJson：返回落盘文本并保留序列化结果', async () => {
   const written: Array<{ key: string; value: string }> = [];
-  const text = await writeMetaJson(
-    writer(async (key, value) => {
-      written.push({ key, value });
-    }),
-    'ui_layout_v1',
-    { main: { order: 1 } },
-    { scope: 'meta-write-ok' },
-  );
+  let text = '';
+  const warned = await warnedDuring(async () => {
+    text = await writeMetaJson(
+      writer(async (key, value) => {
+        written.push({ key, value });
+      }),
+      'ui_layout_v1',
+      { main: { order: 1 } },
+      { scope: SCOPE },
+    );
+  });
   assert.equal(text, '{"main":{"order":1}}');
   assert.deepEqual(written, [{ key: 'ui_layout_v1', value: text }]);
-  assert.equal(warnings('meta-write-ok').length, 0);
+  assert.deepEqual(warned, []);
 });
 
 test('writeMetaJson：序列化失败记日志并抛出', async () => {
-  const before = warnings('meta-write-serialize').length;
-  await assert.rejects(
-    writeMetaJson(writer(async () => {}), 'k', { n: 1n }, { scope: 'meta-write-serialize' }),
-    TypeError,
+  const warned = await warnedDuring(() =>
+    assert.rejects(writeMetaJson(writer(async () => {}), 'k', { n: 1n }, { scope: SCOPE }), TypeError),
   );
-  assert.equal(warnings('meta-write-serialize').length, before + 1);
+  assert.equal(warned.length, 1);
 });
 
 test('writeMetaJson：写入失败记日志并抛出；scope 为 null 时静默', async () => {
   const failing = writer(async () => {
     throw new Error('临时只读');
   });
-  await assert.rejects(writeMetaJson(failing, 'k', { a: 1 }, { scope: 'meta-write-fail' }), /临时只读/);
-  assert.equal(warnings('meta-write-fail').length, 1);
+  const warned = await warnedDuring(() => assert.rejects(writeMetaJson(failing, 'k', { a: 1 }, { scope: SCOPE }), /临时只读/));
+  assert.equal(warned.length, 1);
 
   const before = logEntries().length;
   await assert.rejects(writeMetaJson(failing, 'k', { a: 1 }, { scope: null }), /临时只读/);
@@ -142,8 +161,10 @@ test('writeMetaJson：写入失败记日志并抛出；scope 为 null 时静默'
 test('readMetaNumber：缺失或非数字回落，合法数字照读', async () => {
   assert.equal(await readMetaNumber(reader(async () => undefined), 'k', 0), 0);
   assert.equal(await readMetaNumber(reader(async () => '1793000000000'), 'k', 0), 1_793_000_000_000);
-  assert.equal(await readMetaNumber(reader(async () => 'abc'), 'k', 5, { scope: 'meta-number' }), 5);
-  assert.equal(warnings('meta-number').length, 1);
+  const warned = await warnedDuring(async () => {
+    assert.equal(await readMetaNumber(reader(async () => 'abc'), 'k', 5, { scope: SCOPE }), 5);
+  });
+  assert.equal(warned.length, 1);
   const before = logEntries().length;
   assert.equal(await readMetaNumber(reader(async () => 'abc'), 'k', 5, { scope: null }), 5);
   assert.equal(logEntries().length, before);

@@ -83,13 +83,13 @@ export function useLanAutoSync({
       saveAutoConfig(next);
       onConfig(next);
       if (!result.ok) {
-        logWarn('lan-sync', '自动同步失败（已重试一次）', { error: result.error });
+        logWarn('sync', '自动同步失败，已重试一次', { error: result.error });
         onNote('自动同步失败，已静默重试一次');
         return;
       }
       const imported = result.value?.imported ?? 0;
       const skipped = result.value?.skipped ?? 0;
-      logInfo('lan-sync', '自动同步完成', { imported, skipped });
+      logInfo('sync', '自动同步完成', { imported, skipped });
       onNote(`自动同步完成：写入 ${imported} 条，跳过 ${skipped} 条`);
       if (onSynced !== undefined) await onSynced(session);
       if (current.scopes.includes('settings')) await onSettingsReplaced();

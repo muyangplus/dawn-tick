@@ -46,7 +46,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
     setMessage(null);
     setCanElevate(false);
     const result = await run({
-      scope: 'autostart',
+      scope: 'settings',
       label: '正在设置开机自启…',
       task: async () => {
         const written = await writeAutoStart(value);
@@ -65,7 +65,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
   /** 失败后申请管理员权限，由提权实例写机器级启动项。 */
   async function elevate(): Promise<void> {
     const result = await run({
-      scope: 'autostart',
+      scope: 'settings',
       label: '正在申请管理员权限…',
       task: async () => {
         setMessage('正在申请管理员权限，请在系统提示中允许…');

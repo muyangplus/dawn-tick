@@ -84,7 +84,7 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
       setDownload(final);
       if (final.phase === 'done') {
         toast.success(`已开始安装正式版 ${target.version}，请按提示完成安装`);
-        logInfo('update', '回滚到正式版', { from: current, target: target.version, platform });
+        logInfo('update', '已开始回滚到正式版', { from: current, target: target.version, platform });
         onClose();
         return;
       }

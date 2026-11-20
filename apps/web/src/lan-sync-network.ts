@@ -370,7 +370,7 @@ export async function readLanNetworks(): Promise<LanNetworkListResult> {
       return { ...parseLanNetworkResult(await listOverride()), error: null };
     } catch (cause: unknown) {
       const message = errorMessage(cause, '读取本机网络失败');
-      logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
+      logWarn('sync', '本机网络读取失败', { message, raw: String(cause) });
       return { networks: [], status: null, error: message };
     }
   }
@@ -390,7 +390,7 @@ export async function readLanNetworks(): Promise<LanNetworkListResult> {
     }
   } catch (cause: unknown) {
     const message = errorMessage(cause, '读取本机网络失败');
-    logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
+    logWarn('sync', '本机网络读取失败', { message, raw: String(cause) });
     return { networks: [], status: null, error: message };
   }
   return { networks: [], status: null, error: null };

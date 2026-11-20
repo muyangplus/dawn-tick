@@ -14,7 +14,7 @@ import {
 } from '../db/corrupt-guard.ts';
 import { clampDayDate, clampWindowStart, dayRangeOf, defaultDayDate, stepDay, stepWindow } from '../lib/day-nav.ts';
 import { fail } from '../lib/fail.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logError, logInfo, logWarn } from '../log.ts';
 import { notifyWidgetWindows, writeWidgetSnapshot } from '../widget-snapshot.ts';
 import { registerPendingRestart } from '../pending-restart.ts';
 import { applyTheme } from '../theme.ts';
@@ -22,6 +22,7 @@ import { toast } from '../components/ui/toaster.tsx';
 import type { RemoteBackupInfo } from '../components/app-dialogs.tsx';
 import { runBootstrap, startDailyMaintenance, type BootFailure } from './bootstrap.ts';
 import { useReminders } from '../useReminders.ts';
+import { textForLog } from '../lib/log-redact.ts';
 
 /** 改变课表窗口排法的设置：改完后窗口回到默认起点。 */
 const VIEW_SETTING_KEYS: readonly (keyof AppSettings)[] = ['viewDays', 'weekStartsToday', 'hideWeekends'];
@@ -125,12 +126,12 @@ export function useAppSession(): AppSession {
   const guardWrite = useCallback(
     (action: string): boolean => {
       if (corrupt) {
-        logWarn('storage', '数据库损坏后拦截写操作', { action });
+        logWarn('storage', '数据库已损坏，写操作被拦截', { action });
         toast.error(DATABASE_CORRUPT_WRITE_BLOCKED);
         return false;
       }
       if (!fallback) return true;
-      logWarn('storage', '临时回退期间拦截写操作', { action });
+      logWarn('storage', '只读回退中，写操作被拦截', { action });
       toast.error(STORAGE_READ_ONLY_MESSAGE);
       return false;
     },
@@ -164,7 +165,7 @@ export function useAppSession(): AppSession {
       // 只记显式起点：null 表示跟随设置里的默认起点，设置一变窗口才会跟着动。
       // 记夹过学期的实际起点（next.windowStart），避免状态与已加载窗口不一致时「翻不动」。
       if (explicit) setWindowStart(next.windowStart);
-      logInfo('data', '加载课表', {
+      logDebug('timetable', '课表已加载', {
         week: next.week,
         viewWeek: next.viewWeek,
         windowStart: next.windowStart,
@@ -305,7 +306,7 @@ export function useAppSession(): AppSession {
       const result = await downloadAndApply(storage, settings, applyMode, remoteNewer?.name);
       if (!result.ok) {
         toast.error(fail('下载失败', result.error ?? '未知原因', '请检查同步设置后重试。').text);
-        logWarn('webdav', '下载同步包失败', { error: result.error });
+        logError('sync', '同步包下载失败', { error: textForLog(result.error ?? '') });
         return;
       }
       setRemoteNewer(null);
@@ -324,7 +325,7 @@ export function useAppSession(): AppSession {
 
   /** 错误页「重试」：重新走一遍启动流程，不用接受用户手动重启。 */
   const retryBoot = useCallback(() => {
-    logInfo('storage', '用户点击载入失败页的重试');
+    logInfo('storage', '重试启动');
     setError(null);
     setBootTick((value) => value + 1);
   }, []);

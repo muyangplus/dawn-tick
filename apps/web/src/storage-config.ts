@@ -1,6 +1,7 @@
 import { canConfigureStorage, isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
-import { logInfo, logWarn } from './log.ts';
+import { pathForLog } from './lib/log-redact.ts';
+import { logError, logInfo, logWarn } from './log.ts';
 
 export { canConfigureStorage };
 
@@ -45,7 +46,7 @@ export async function readStorageInfo(): Promise<StorageInfo | null> {
   try {
     return (await invokeNative<StorageInfo>('storage_info')) ?? null;
   } catch (cause: unknown) {
-    logWarn('storage', '读取存储位置失败', { message: nativeErrorMessage(cause) });
+    logWarn('storage', '存储位置读取失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -61,11 +62,11 @@ export async function saveStoragePath(path: string): Promise<StoragePathResult> 
   try {
     const info = await invokeNative<StorageInfo>('set_storage_path', { path });
     if (info === undefined) return { info: null, error: '当前平台不支持修改存储位置' };
-    logInfo('storage', '存储位置已保存', { dir: info.dir, custom: info.customPath, copied: info.copied.length });
+    logInfo('storage', '存储位置已保存', { dir: pathForLog(info.dir), custom: info.customPath, copied: info.copied.length });
     return { info, error: null };
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logWarn('storage', '保存存储位置失败', { path, message });
+    logError('storage', '存储位置保存失败', { path: pathForLog(path), message });
     return { info: null, error: message };
   }
 }
@@ -75,7 +76,7 @@ export async function openDataDirectory(): Promise<string | null> {
   try {
     return (await invokeNative<string>('open_data_dir')) ?? null;
   } catch (cause: unknown) {
-    logWarn('storage', '打开数据目录失败', { message: nativeErrorMessage(cause) });
+    logWarn('storage', '数据目录打开失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -87,7 +88,7 @@ export async function relaunchApplication(): Promise<boolean> {
     logInfo('storage', '已请求重启应用');
     return true;
   } catch (cause: unknown) {
-    logWarn('storage', '重启应用失败', { message: nativeErrorMessage(cause) });
+    logWarn('storage', '应用重启失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -110,7 +111,7 @@ export async function readTrayStatus(): Promise<TrayStatusResult> {
     return { status: status ?? null, error: status === undefined ? '当前平台没有托盘' : null };
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logWarn('desktop', '读取托盘状态失败', { message });
+    logWarn('app', '托盘状态读取失败', { message });
     return { status: null, error: message };
   }
 }

@@ -53,7 +53,7 @@ async function androidNativeLog(): Promise<{ text: string; path: string | null; 
     return await withTimeout(task, 8_000, '读取原生日志超时（可能存储/原生桥异常）');
   } catch (cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    logWarn('log', '读取原生日志失败', { message });
+    logWarn('log', '原生日志读取失败', { message });
     return { text: '', path: null, error: message };
   }
 }

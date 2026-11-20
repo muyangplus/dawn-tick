@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import { applyImport, previewDuplicates, type ImportedSchedule, type Storage } from '@dawn-tick/core';
 import { toast } from '../../components/ui/toaster.tsx';
-import { logInfo } from '../../log.ts';
+import { logDebug, logInfo } from '../../log.ts';
 import { useAction } from '../../lib/action.ts';
 import { closeImportWindow } from '../../import-window.ts';
 import {
@@ -120,7 +120,7 @@ export function useImportFlow({ storage, semesterId, onDone }: ImportFlowOptions
         const chosen = schedules.filter((_, index) => selected.has(index));
         const applied = await applyImport(storage, semesterId, chosen);
         setWarnings(applied.warnings);
-        logInfo('import', '应用导入', {
+        logInfo('import', '导入已应用', {
           channel: flow.channel,
           source: flow.channel === 'paste' ? flow.pasteSource : flow.channel,
           selected: chosen.length,
@@ -134,7 +134,7 @@ export function useImportFlow({ storage, semesterId, onDone }: ImportFlowOptions
         dispatch({ type: 'done' });
         // 导入完成就关掉内嵌教务窗口，避免用户还要自己关
         await closeImportWindow();
-        logInfo('import', '导入完成并关闭内嵌窗口', { courses: applied.createdCourses });
+        logDebug('import', '内嵌教务窗口已关闭', { courses: applied.createdCourses });
         onDone();
       },
     });

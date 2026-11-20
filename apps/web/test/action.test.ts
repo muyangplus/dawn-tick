@@ -48,7 +48,7 @@ test('useAction：成功透出返回值，失败归一错误并对取消/重复�
   // 成功：返回值与 ok 状态
   let success: Result | null = null;
   await act(async () => {
-    success = (await apiRef.current?.run({ scope: 'test', label: '正在计算…', task: async () => 42 })) ?? null;
+    success = (await apiRef.current?.run({ scope: 'app', label: '正在计算…', task: async () => 42 })) ?? null;
   });
   assert.deepEqual(success, { ok: true, value: 42, error: null });
   assert.equal(apiRef.current?.busy, false);
@@ -58,7 +58,7 @@ test('useAction：成功透出返回值，失败归一错误并对取消/重复�
   await act(async () => {
     failure =
       (await apiRef.current?.run({
-        scope: 'test',
+        scope: 'app',
         label: '正在保存…',
         task: async () => {
           throw new Error('boom');
@@ -73,7 +73,7 @@ test('useAction：成功透出返回值，失败归一错误并对取消/重复�
   await act(async () => {
     cancelled =
       (await apiRef.current?.run({
-        scope: 'test',
+        scope: 'app',
         label: '正在删除…',
         confirm: () => false,
         task: async () => {
@@ -93,7 +93,7 @@ test('useAction：成功透出返回值，失败归一错误并对取消/重复�
   let first: Promise<Result> | null = null;
   await act(async () => {
     first = apiRef.current?.run({
-      scope: 'test',
+      scope: 'app',
       label: '正在导入…',
       task: async () => {
         runs += 1;
@@ -108,7 +108,7 @@ test('useAction：成功透出返回值，失败归一错误并对取消/重复�
   await act(async () => {
     duplicate =
       (await apiRef.current?.run({
-        scope: 'test',
+        scope: 'app',
         label: '正在导入…',
         task: async () => {
           runs += 1;
@@ -130,4 +130,100 @@ test('useAction：成功透出返回值，失败归一错误并对取消/重复�
   await act(async () => {
     root.unmount();
   });
+});
+
+/** 挂一个只调用 useAction 的探针组件，返回 run 与卸载函数。 */
+async function mountUseAction(): Promise<{
+  run: ReturnType<typeof import('../src/lib/action.ts').useAction>['run'];
+  unmount: () => Promise<void>;
+}> {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+  const globals: Record<string, unknown> = {
+    window: dom.window,
+    document: dom.window.document,
+    navigator: dom.window.navigator,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  for (const [key, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  const { act, createElement } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { useAction } = await import('../src/lib/action.ts');
+  const apiRef: { current: ReturnType<typeof useAction> | null } = { current: null };
+  function Probe(): null {
+    apiRef.current = useAction();
+    return null;
+  }
+  const host = dom.window.document.createElement('div');
+  dom.window.document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(createElement(Probe));
+  });
+  return {
+    run: async (spec) => {
+      let result: Awaited<ReturnType<ReturnType<typeof useAction>['run']>> | undefined;
+      await act(async () => {
+        result = await apiRef.current?.run(spec);
+      });
+      assert.ok(result !== undefined);
+      return result as never;
+    },
+    unmount: () =>
+      act(async () => {
+        root.unmount();
+      }),
+  };
+}
+
+test('useAction：失败日志默认记 error，logLevel: warn 降为 warn，log: false 不记', async () => {
+  const { logEntries } = await import('../src/log.ts');
+  const { run, unmount } = await mountUseAction();
+  const failing = async (): Promise<never> => {
+    throw new Error('磁盘已满');
+  };
+  const added = async (spec: Parameters<typeof run>[0]) => {
+    const before = new Set(logEntries());
+    await run(spec);
+    return logEntries().filter((entry) => !before.has(entry) && entry.scope === spec.scope);
+  };
+
+  const byDefault = await added({ scope: 'backup', label: '正在导出…', fail: { what: '导出失败' }, task: failing });
+  assert.deepEqual(
+    byDefault.map((entry) => [entry.level, entry.message, entry.detail?.['message']]),
+    [['error', '导出失败', '磁盘已满']],
+  );
+
+  const asWarn = await added({
+    scope: 'sync',
+    label: '正在检查…',
+    fail: false,
+    log: '连接检查失败',
+    logLevel: 'warn',
+    task: failing,
+  });
+  assert.deepEqual(
+    asWarn.map((entry) => [entry.level, entry.message]),
+    [['warn', '连接检查失败']],
+  );
+
+  const explicitError = await added({ scope: 'todo', label: '正在保存…', logLevel: 'error', task: failing });
+  assert.deepEqual(
+    explicitError.map((entry) => [entry.level, entry.message]),
+    [['error', '操作失败']],
+  );
+
+  const silent = await added({ scope: 'timetable', label: '正在保存…', log: false, task: failing });
+  assert.deepEqual(silent, []);
+
+  // 成功不记失败日志
+  const ok = await added({ scope: 'settings', label: '正在保存…', task: async () => 1 });
+  assert.deepEqual(
+    ok.filter((entry) => entry.level === 'error' || entry.level === 'warn'),
+    [],
+  );
+
+  await unmount();
 });

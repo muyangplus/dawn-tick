@@ -31,29 +31,36 @@ test('日志时间戳带本地时间与偏移', () => {
 
 test('开发渠道记录全部等级且每行都带时间', () => {
   assert.equal(debugEnabled(), true);
-  logDebug('probe', '调试', { step: 1 });
-  logInfo('probe', '信息');
-  logError('probe', '错误');
-  const entries = logEntries();
-  const levels = entries.filter((entry) => entry.scope === 'probe').map((entry) => entry.level);
-  assert.deepEqual(levels, ['debug', 'info', 'error']);
+  const before = new Set(logEntries());
+  logDebug('app', '探针调试', { step: 1 });
+  logInfo('app', '探针信息');
+  logError('app', '探针错误');
+  const added = logEntries().filter((entry) => !before.has(entry));
+  assert.deepEqual(
+    added.map((entry) => [entry.level, entry.scope]),
+    [
+      ['debug', 'app'],
+      ['info', 'app'],
+      ['error', 'app'],
+    ],
+  );
   const lines = logsText()
     .split('\n')
-    .filter((line) => line.includes('probe:'));
+    .filter((line) => line.includes('app: 探针'));
   assert.equal(lines.length, 3);
   for (const line of lines) {
     assert.match(line.split(' [')[0] ?? '', STAMP_RE);
-    assert.match(line, /\[(debug|info|error)\] probe:/);
+    assert.match(line, /\[(debug|info|error)\] app: 探针/);
   }
 });
 
 test('日志写入本地存储后可重新读回', async () => {
   const storage = new MemoryStorage();
   attachLogStorage(storage);
-  logInfo('persist', '写入一条');
+  logInfo('log', '写入一条');
   await flushLogsNow();
   const stored = await storage.readMeta('app_log');
   assert.ok(stored !== null && stored !== undefined && stored.includes('写入一条'));
   await loadLogs();
-  assert.ok(logEntries().some((entry) => entry.scope === 'persist'));
+  assert.ok(logEntries().some((entry) => entry.scope === 'log' && entry.message === '写入一条'));
 });

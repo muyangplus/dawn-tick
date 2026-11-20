@@ -5,7 +5,7 @@
  */
 import type { Collection, Storage, StoreName } from '@dawn-tick/core';
 import { listSnapshots, restoreSnapshot, type SnapshotEntry } from '../backup.ts';
-import { describeError, logInfo, logWarn } from '../log.ts';
+import { describeError, logError, logInfo } from '../log.ts';
 
 /** 文件快照路径不需要 Storage；给备份函数一个占位对象，避免为恢复再造一条存储入口。 */
 const UNAVAILABLE_STORAGE = {
@@ -37,7 +37,7 @@ export async function restoreLatestBackupSnapshot(): Promise<LatestBackupResult>
     entries = await listSnapshots(UNAVAILABLE_STORAGE);
   } catch (cause: unknown) {
     const message = describeError(cause);
-    logWarn('backup', '读取备份列表失败', { message });
+    logError('backup', '备份列表读取失败', { message });
     return { ok: false, name: null, error: '当前平台无法读取备份目录' };
   }
   const latest = entries[0];
@@ -48,6 +48,6 @@ export async function restoreLatestBackupSnapshot(): Promise<LatestBackupResult>
   if (!outcome.ok) {
     return { ok: false, name: latest.id, error: outcome.error ?? '恢复快照失败' };
   }
-  logInfo('backup', '已排队恢复备份快照', { name: latest.id, kind: latest.kind });
+  logInfo('backup', '最近快照已排队恢复', { name: latest.id, kind: latest.kind });
   return { ok: true, name: latest.id, error: null };
 }

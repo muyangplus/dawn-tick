@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { logDebug, logWarn } from '../log.ts';
+import { logDebug, logError } from '../log.ts';
 import { errorMessage } from './errors.ts';
 
 type Listener = (busy: BusyState | null) => void;
@@ -43,7 +43,7 @@ export async function runBusy<T>(
   try {
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
-        logWarn('busy', '操作超时，已释放蒙版', { label, timeoutMs });
+        logError('app', '操作超时，蒙版已释放', { label, timeoutMs });
         reject(new Error(`操作超时（${label}），已取消；请重试，若仍无响应请重启应用`));
       }, Math.max(1, timeoutMs));
     });
@@ -91,7 +91,7 @@ export function useBusyAction(): {
       options?: BusyRunOptions & { timeoutMs?: number },
     ): Promise<T | undefined> => {
       if (busySnapshot() !== null) {
-        logDebug('busy', '已有操作进行中，忽略重复触发', { label });
+        logDebug('app', '已有操作进行中，重复触发已忽略', { label });
         return undefined;
       }
       setBusy(true);
@@ -99,7 +99,7 @@ export function useBusyAction(): {
         return await runBusy(label, task, options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs });
       } catch (cause: unknown) {
         if (options?.log !== false) {
-          logWarn('busy', '操作失败', { label, message: errorMessage(cause) });
+          logError('app', '操作失败', { label, message: errorMessage(cause) });
         }
         throw cause;
       } finally {

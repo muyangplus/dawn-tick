@@ -162,9 +162,9 @@ export function TodoForm({
       const periodEnd = isLab
         ? Math.max(periodStart ?? 1, derived?.periodEnd ?? toPeriod(labPeriodEnd, periodStart ?? 1))
         : null;
-      logDebug('todo', editing === null ? '保存待办：开始' : '保存待办修改：开始', {
+      logDebug('todo', '开始保存待办', {
+        editing: editing?.id ?? null,
         type: current,
-        title: title.trim(),
         date: dueDate,
         time: customTime ? `${startTime}-${endTime}` : dueTime,
         customTime,
@@ -201,7 +201,7 @@ export function TodoForm({
           show_in_timetable: timetable ? 1 : 0,
         });
         await syncEventReminder(storage, userId, editing.id, advanceMinutesOf(advance));
-        logInfo('todo', `已保存${KIND_LABEL[current]}`, { id: editing.id, title: title.trim() });
+        logInfo('todo', '已保存待办', { id: editing.id, kind: current });
         toast.success(`已保存${KIND_LABEL[current]}「${title.trim()}」`);
         onCreated();
         onOpenChange(false);
@@ -256,7 +256,7 @@ export function TodoForm({
       if (created['id'] !== undefined && minutes >= 0) {
         await syncEventReminder(storage, userId, String(created['id']), minutes);
       }
-      logInfo('todo', `已添加${KIND_LABEL[current]}`, { id: String(created['id'] ?? ''), title: title.trim() });
+      logInfo('todo', '已添加待办', { id: String(created['id'] ?? ''), kind: current });
       toast.success(`已添加${KIND_LABEL[current]}「${title.trim()}」`);
       update({ title: '', note: '', location: '', seatNo: '' });
       onCreated();
@@ -283,7 +283,7 @@ export function TodoForm({
     await run('正在删除…', async () => {
       try {
         await deleteEvent(storage, target.id);
-        logInfo('todo', `已删除${KIND_LABEL[current]}`, { id: target.id, title: name });
+        logInfo('todo', '已删除待办', { id: target.id, kind: current });
         toast.success(`已删除「${name}」`);
         onCreated();
         onOpenChange(false);

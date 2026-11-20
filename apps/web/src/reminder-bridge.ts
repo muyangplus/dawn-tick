@@ -2,7 +2,7 @@ import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { errorMessage } from './lib/errors.ts';
 import { invokeNative, REMINDER_ACTION_EVENT } from './lib/native.ts';
 import { loadPlugin, PLUGIN_NAMES, type ReminderActionsPlugin } from './lib/plugins.ts';
-import { logDebug, logWarn } from './log.ts';
+import { logDebug, logTrace, logWarn } from './log.ts';
 import { notifyNow, type NotifyPermission } from './notify.ts';
 import type { DeliveryItem, SnoozedDelivery } from './reminder-collect.ts';
 
@@ -67,7 +67,7 @@ export class ReminderBridge {
       if (info.notifications === 'denied') return 'denied';
       return null;
     } catch (cause: unknown) {
-      logWarn('reminder', '读取提醒权限状态失败', { message: errorMessage(cause) });
+      logWarn('reminder', '提醒权限状态读取失败', { message: errorMessage(cause) });
       return null;
     }
   }
@@ -86,7 +86,7 @@ export class ReminderBridge {
       });
       return true;
     } catch (cause: unknown) {
-      logWarn('reminder', '排定提醒失败，下次扫描重试', {
+      logWarn('reminder', '提醒排定失败，下次扫描重试', {
         title: item.title,
         message: errorMessage(cause),
       });
@@ -108,7 +108,7 @@ export class ReminderBridge {
         });
         return;
       } catch (cause: unknown) {
-        logWarn('reminder', '原生投递失败，回退到页面内通知', {
+        logWarn('reminder', '原生投递失败，改用页面内通知', {
           title: item.title,
           message: errorMessage(cause),
         });
@@ -128,7 +128,7 @@ export class ReminderBridge {
       }
       return out;
     } catch (cause: unknown) {
-      logWarn('reminder', '读取原生排定失败，本轮不对账', { message: errorMessage(cause) });
+      logWarn('reminder', '原生排定读取失败，本轮跳过对账', { message: errorMessage(cause) });
       return null;
     }
   }
@@ -139,7 +139,7 @@ export class ReminderBridge {
     try {
       await this.plugin.cancel({ id });
     } catch (cause: unknown) {
-      logWarn('reminder', '取消提醒失败', { id, message: errorMessage(cause) });
+      logWarn('reminder', '提醒取消失败', { id, message: errorMessage(cause) });
     }
   }
 
@@ -158,7 +158,7 @@ export class ReminderBridge {
       }
       return items;
     } catch (cause: unknown) {
-      logWarn('reminder', '读取提醒动作失败', { message: errorMessage(cause) });
+      logWarn('reminder', '提醒动作读取失败', { message: errorMessage(cause) });
       return [];
     }
   }
@@ -168,10 +168,10 @@ export class ReminderBridge {
     if (!isDesktopApp()) return;
     try {
       await invokeNative('set_pending_reminders', { items });
-      logDebug('reminder', '已同步托盘提醒动作', { count: items.length });
+      logTrace('reminder', '托盘提醒已同步', { count: items.length });
     } catch (cause: unknown) {
       // 下一次扫描还会再试；这里只记日志，不打扰用户
-      logWarn('reminder', '同步托盘提醒失败', { message: errorMessage(cause) });
+      logWarn('reminder', '托盘提醒同步失败', { message: errorMessage(cause) });
     }
   }
 
@@ -181,7 +181,7 @@ export class ReminderBridge {
     try {
       await invokeNative('clear_pending_reminder', { id });
     } catch (cause: unknown) {
-      logWarn('reminder', '清除托盘提醒失败', { id, message: errorMessage(cause) });
+      logWarn('reminder', '托盘提醒清除失败', { id, message: errorMessage(cause) });
     }
   }
 
@@ -219,7 +219,7 @@ export class ReminderBridge {
       }
       return permission;
     } catch (cause: unknown) {
-      logWarn('reminder', '提醒插件加载失败，回退到页面内提醒', {
+      logWarn('reminder', '提醒插件加载失败，改用页面内提醒', {
         message: errorMessage(cause),
       });
       return null;
@@ -237,7 +237,7 @@ export class ReminderBridge {
         if (this.stopped) unlisten();
         else this.unlisten = unlisten;
       } catch (cause: unknown) {
-        logWarn('reminder', '监听托盘提醒动作失败', { message: errorMessage(cause) });
+        logWarn('reminder', '托盘提醒动作监听失败', { message: errorMessage(cause) });
       }
     })();
   }

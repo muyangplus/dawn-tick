@@ -108,7 +108,8 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
     const result = await presetAction.run({
       scope: 'preset',
       label: '正在读取预设更新…',
-      log: '下载预设快照失败',
+      log: '预设快照下载失败',
+      logLevel: 'warn',
       fail: { what: '检查预设更新', next: '请稍后再试' },
       task: async () => {
         const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
@@ -131,7 +132,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           const message = fail('检查预设更新', status.error, '请稍后再试');
           setPresetResult(said(message));
           toast.error(message);
-          logWarn('preset', '检查预设更新失败', { error: status.error, current: currentVersion, source });
+          logWarn('preset', '预设更新检查失败', { error: status.error, current: currentVersion, source });
           return;
         }
         setPresetRemote(status.downloadSource ?? source);
@@ -168,7 +169,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         toast.success(message);
         // 预设要下次启动才套用：与其它待重启改动共用一条提示
         registerPendingRestart('preset-update');
-        logInfo('preset', '已下载预设快照', {
+        logInfo('preset', '预设快照已下载', {
           version: snapshot.version,
           hash: snapshot.hash,
           downloadSource: status.downloadSource ?? source,

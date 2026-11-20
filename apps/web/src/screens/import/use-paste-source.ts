@@ -29,7 +29,7 @@ import {
   type ImportDiagnosticsSummary,
   type ImportFieldMapping,
 } from '../../lib/import-diagnostics.ts';
-import { formatLogTimestamp, logEntries, logError, logInfo } from '../../log.ts';
+import { formatLogTimestamp, logDebug, logEntries, logInfo, logWarn } from '../../log.ts';
 import { useAction } from '../../lib/action.ts';
 import { saveText, toastSaved } from '../settings/file-export.ts';
 import { fileKind, unsupportedFileReason, type ImportFailure } from './import-flow-model.ts';
@@ -149,7 +149,16 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       ...(mapping === undefined ? {} : { mapping }),
     });
     setDiagnostics(summary);
-    logInfo('import', '识别诊断', importDiagnosticsLogDetail(summary, diagnosticsMeta()));
+    // 标题与样例行可能带姓名、学号：只留在用户主动复制的诊断文本里，不进日志
+    const { title: _title, samples: _samples, pageDiagnostics, ...detail } = importDiagnosticsLogDetail(
+      summary,
+      diagnosticsMeta(),
+    );
+    const page = pageDiagnostics as Record<string, unknown> | null;
+    logDebug('import', '识别诊断', {
+      ...detail,
+      pageDiagnostics: page === null ? null : { ...page, title: undefined },
+    });
   }
 
   /** 复制诊断信息：文本已由纯函数脱敏，失败时提示改用导出。 */
@@ -200,14 +209,14 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
         source: 'page',
         reason: result.warnings.join('；') || '没有识别到排课',
       });
-      logError('page-import', '未识别到课表', {
+      logWarn('import', '未识别到课表', {
         shape: result.shape,
         tables: result.tables,
         frames: countPastedFrames(text),
       });
       return;
     }
-    logInfo('page-import', '识别课表页面', {
+    logInfo('import', '课表页面已识别', {
       shape: result.shape,
       tables: result.tables,
       frames: countPastedFrames(text),
@@ -266,7 +275,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       });
       return;
     }
-    logInfo('page-import', '按手动映射解析', {
+    logInfo('import', '已按手动映射解析', {
       headerRow: mapHeaderRow,
       dayStart: mapDayStart,
       dayCount: mapDayCount,
@@ -286,7 +295,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     const result = await run({
       scope: 'import',
       label: '正在读取课表文件…',
-      log: '读取课表文件失败',
+      log: '课表文件读取失败',
       task: async () => {
         const semester = await loadSemester(storage, semesterId);
         if (semester === undefined) throw new Error('学期不存在');

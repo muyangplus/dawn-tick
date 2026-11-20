@@ -7,7 +7,7 @@ import { useAction } from '../../lib/action.ts';
 import { isAndroidApp } from '../../lib/capabilities.ts';
 import { getOrCreateLanDeviceId } from '../../lib/lan-device-id.ts';
 import type { ScannedPairRequest } from '../../lib/scan.ts';
-import { logWarn } from '../../log.ts';
+import { logDebug, logWarn } from '../../log.ts';
 import { copyText } from '../../system-actions.ts';
 import {
   LAN_SERVER_START_HINT,
@@ -107,7 +107,7 @@ export function LanSyncBlock({
     setNetworkError(result.error);
     setSelectedHost((current) => resolveLanHost(result.networks, current ?? readStoredLanHost()));
     if (result.error !== null) {
-      logWarn('lan-sync', '读取本机网络失败', { message: result.error });
+      logDebug('sync', '本机网络读取失败', { message: result.error });
       setStatus(said(`读取本机网络失败：${result.error}`));
     }
   };
@@ -162,7 +162,7 @@ export function LanSyncBlock({
           await respondLanServer(request.id, reply.status, reply.body);
         }
       } catch (cause: unknown) {
-        logWarn('lan-sync', '处理局域网请求失败', { message: errorMessage(cause) });
+        logWarn('sync', '局域网请求处理失败', { message: errorMessage(cause) });
       }
       if (!cancelled) timer = window.setTimeout(() => void tick(), LAN_SYNC_POLL_INTERVAL_MS);
     };
@@ -176,7 +176,7 @@ export function LanSyncBlock({
   async function startPairing(hostOverride?: string): Promise<void> {
     const host = hostOverride ?? selectedNetwork?.address;
     await action.run({
-      scope: 'lan-sync',
+      scope: 'sync',
       label: '正在开启局域网配对…',
       fail: false,
       task: async () => {

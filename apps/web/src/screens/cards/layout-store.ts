@@ -36,11 +36,11 @@ function plainConfig(config: LayoutConfig): Record<string, CardState> {
 
 /** 读取卡片布局配置；缺失或损坏时返回空配置（即全部用默认值） */
 export async function readLayout(storage: Storage): Promise<LayoutConfig> {
-  return readMetaJson(storage, LAYOUT_META_KEY, { parse: parseConfig, fallback: {}, scope: 'layout' });
+  return readMetaJson(storage, LAYOUT_META_KEY, { parse: parseConfig, fallback: {}, scope: 'app' });
 }
 
 /** 写回卡片布局配置；空配置表示全部恢复默认。写入失败会记日志并抛出，由界面提示。 */
 export async function writeLayout(storage: Storage, config: LayoutConfig): Promise<void> {
-  await writeMetaJson(storage, LAYOUT_META_KEY, plainConfig(config), { scope: 'layout' });
+  await writeMetaJson(storage, LAYOUT_META_KEY, plainConfig(config), { scope: 'app' });
 }
 

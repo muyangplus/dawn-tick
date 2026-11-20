@@ -88,7 +88,7 @@ export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialog
   async function saveIcs(): Promise<void> {
     if (plan === null) return;
     await exportAction.run({
-      scope: 'export',
+      scope: 'backup',
       label: '正在导出课表…',
       fail: false,
       task: async () => {

@@ -52,7 +52,7 @@ async function main(): Promise<void> {
   try {
     payload = decodePayload(encoded);
   } catch (cause: unknown) {
-    logError('import-window', '内容解码失败', { message: String(cause) });
+    logError('import', '内容解码失败', { message: String(cause) });
     show('内容读取失败', '请回到晓刻，用书签或粘贴页面内容');
     return;
   }
@@ -64,12 +64,12 @@ async function main(): Promise<void> {
 
   try {
     await invokeNative('submit_page_import', { payload, nonce });
-    logInfo('import-window', '交回页面内容', { bytes: payload.length });
+    logInfo('import', '页面内容已交回', { bytes: payload.length });
     show('已交给晓刻', `共 ${payload.length} 字节；关闭本窗口或返回教务页面`);
     window.setTimeout(() => window.history.back(), 2000);
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logError('import-window', '交回失败', { message });
+    logError('import', '页面内容交回失败', { message });
     show('交回失败', message);
   }
 }

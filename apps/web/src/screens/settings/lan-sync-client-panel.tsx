@@ -156,7 +156,7 @@ export function LanSyncClientPanel({
     dispatch({ type: 'pairing' });
     setPreview(null);
     await action.run({
-      scope: 'lan-sync',
+      scope: 'sync',
       label: '正在配对…',
       fail: false,
       task: async () => {
@@ -236,7 +236,7 @@ export function LanSyncClientPanel({
     const selected = preview.scopes;
     setProgress('正在合并对方变更…');
     await action.run({
-      scope: 'lan-sync',
+      scope: 'sync',
       label: '正在合并对方变更…',
       fail: false,
       task: async () => {
@@ -273,7 +273,7 @@ export function LanSyncClientPanel({
     }
     setProgress('正在推送到对方…');
     await action.run({
-      scope: 'lan-sync',
+      scope: 'sync',
       label: '正在推送到对方…',
       fail: false,
       task: async () => {

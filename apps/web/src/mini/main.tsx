@@ -16,7 +16,7 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
-import { describeError, logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
+import { describeError, installLogHandlers, logDebug, logError, logWarn } from '../log.ts';
 import { fail } from '../lib/fail.ts';
 import { formatCountdown, formatRemaining } from '../lib/format.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
@@ -82,7 +82,7 @@ function Mini() {
       ].join('|');
       if (signature !== lastSignature.current) {
         lastSignature.current = signature;
-        logInfo('mini', '悬浮窗数据已更新', {
+        logDebug('widget', '悬浮窗数据已更新', {
           week: next.week,
           current: next.currentLesson?.courseName ?? '',
           next: next.nextLesson?.courseName ?? '',
@@ -91,7 +91,7 @@ function Mini() {
       }
     } catch (cause: unknown) {
       // 原始异常只进日志；悬浮窗只显示用户语言
-      logWarn('mini', '悬浮窗数据加载失败', { message: describeError(cause) });
+      logError('widget', '悬浮窗数据加载失败', { message: describeError(cause) });
       setError(fail('课表读取失败', '数据暂时读不出来', '请稍后重试；仍失败请重启应用。').text);
     }
   }, []);
@@ -109,7 +109,7 @@ function Mini() {
         applyTheme(loaded.themePreset, loaded.theme);
         await reload();
       } catch (cause: unknown) {
-        logWarn('mini', '悬浮窗初始化失败', { message: describeError(cause) });
+        logError('widget', '悬浮窗初始化失败', { message: describeError(cause) });
         if (!cancelled) {
           setError(fail('悬浮窗读取失败', '无法打开本机数据', '请关闭后重新打开悬浮窗；仍失败请重启应用。').text);
         }
@@ -131,7 +131,7 @@ function Mini() {
         if (disposed) off();
         else stop = off;
       } catch (cause: unknown) {
-        logWarn('mini', '订阅数据变更失败', { message: describeError(cause) });
+        logWarn('widget', '数据变更订阅失败', { message: describeError(cause) });
       }
     })();
     return () => {

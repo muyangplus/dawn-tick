@@ -76,7 +76,7 @@ export function useReminders(
           toast.error('通知权限未授予，提醒不会弹出');
         }
       } catch (cause: unknown) {
-        logWarn('reminder', '读取提醒权限状态失败', { message: errorMessage(cause) });
+        logWarn('reminder', '提醒权限状态读取失败', { message: errorMessage(cause) });
       }
     },
   };

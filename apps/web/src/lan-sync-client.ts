@@ -2,7 +2,7 @@ import type { Storage } from '@dawn-tick/core';
 import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { errorMessage } from './lib/errors.ts';
 import { withTimeout } from './lib/timeout.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logDebug, logError, logInfo, logWarn } from './log.ts';
 import {
   LAN_PAIRING_TTL_MS,
   LAN_SYNC_PROTOCOL_VERSION,
@@ -81,7 +81,7 @@ export async function checkPeerReachable(
 ): Promise<PeerReachability> {
   const target = `${peer.host}:${peer.port}`;
   const path = '/ping';
-  logInfo('lan-sync', '配对前检查对方可达性', { peer: target, path });
+  logDebug('sync', '配对前预检对方可达性', { peer: target, path });
   try {
     const response = await withTimeout(
       lanFetch(`${peerBaseUrl(peer)}${path}`, { method: 'GET' }),
@@ -93,18 +93,18 @@ export async function checkPeerReachable(
       // 旧版本没有 /ping（原生白名单直接 404）：端口能回 HTTP 就说明可达，继续配对，
       // 让服务端在 /pair 上给出真正的业务错误，避免新客户端把旧版本判成「连不上」。
       if (response.status === 404) {
-        logWarn('lan-sync', '对方不支持 /ping，按可达继续配对', { peer: target, path, status: 404 });
+        logWarn('sync', '对方不支持 /ping，按可达继续配对', { peer: target, path, status: 404 });
         return { ok: true, status: 404, error: null, hint: null };
       }
       const error = lanResponseError(response.status, text, '连接对方');
-      logWarn('lan-sync', '对方可达性预检失败', { peer: target, path, status: response.status, error });
+      logError('sync', '对方可达性预检失败', { peer: target, path, status: response.status, error });
       return { ok: false, status: response.status, error, hint: LAN_PEER_UNREACHABLE_HINT };
     }
-    logInfo('lan-sync', '对方可达性预检通过', { peer: target, path, status: response.status });
+    logDebug('sync', '对方可达性预检通过', { peer: target, path, status: response.status });
     return { ok: true, status: response.status, error: null, hint: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '对方可达性预检异常', { peer: target, path, error });
+    logError('sync', '对方不可达', { peer: target, path, error });
     return { ok: false, status: 0, error, hint: LAN_PEER_UNREACHABLE_HINT };
   }
 }
@@ -141,7 +141,7 @@ export async function pingLanPeer(
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logInfo('lan-sync', '快速探测失败，将尝试 UDP 发现', { peer: target, error });
+    logDebug('sync', '快速探测失败，改用 UDP 发现', { peer: target, error });
     return { ok: false, status: 0, error };
   }
 }
@@ -156,7 +156,7 @@ export async function pingLanPeer(
   const path = '/pair';
   const trimmed = code.trim();
   // 诊断日志只记地址、路径、设备名与码长度；配对码与令牌本身不进日志。
-  logInfo('lan-sync', '开始配对', {
+  logDebug('sync', '开始配对', {
     peer: target,
     path,
     name: name?.trim() ?? '',
@@ -182,7 +182,7 @@ export async function pingLanPeer(
     const text = await response.text();
     if (!response.ok) {
       const error = lanResponseError(response.status, text, '配对');
-      logWarn('lan-sync', '配对被对方拒绝', {
+      logError('sync', '配对被对方拒绝', {
         peer: target,
         path,
         status: response.status,
@@ -193,15 +193,15 @@ export async function pingLanPeer(
     }
     const body = JSON.parse(text) as { token?: unknown; expiresAt?: unknown };
     if (typeof body.token !== 'string' || body.token === '') {
-      logWarn('lan-sync', '配对响应缺少令牌', { peer: target, path, status: response.status });
+      logError('sync', '配对响应缺少令牌', { peer: target, path, status: response.status });
       return { ok: false, session: null, error: '配对响应缺少配对令牌' };
     }
     const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : now + LAN_PAIRING_TTL_MS;
-    logInfo('lan-sync', '已与对方配对', { peer: target, path });
+    logInfo('sync', '配对完成', { peer: target, path });
     return { ok: true, session: { peer, token: body.token, expiresAt }, error: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '配对请求失败', { peer: target, path, error });
+    logError('sync', '配对请求失败', { peer: target, path, error });
     return { ok: false, session: null, error };
   }
 }
@@ -290,7 +290,7 @@ export async function pullFromPeer(
     if (!response.ok) return transferFailure(lanResponseError(response.status, text, '拉取'));
     const envelope = parseLanEnvelope(text);
     const result = await applyLanEnvelope(storage, envelope, { scopes, mode: 'merge', now });
-    logInfo('lan-sync', '已从对方拉取', { imported: result.imported, skipped: result.skipped });
+    logInfo('sync', '拉取完成', { imported: result.imported, skipped: result.skipped });
     return {
       ok: true,
       imported: result.imported,
@@ -301,7 +301,7 @@ export async function pullFromPeer(
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '拉取失败', { error });
+    logError('sync', '拉取失败', { error });
     return transferFailure(error);
   }
 }
@@ -334,7 +334,7 @@ export async function pushToPeer(
     const warnings = Array.isArray(parsed.warnings)
       ? parsed.warnings.filter((item): item is string => typeof item === 'string')
       : [];
-    logInfo('lan-sync', '已推送到对方', { imported: parsed.imported ?? 0 });
+    logInfo('sync', '推送完成', { imported: parsed.imported ?? 0 });
     return {
       ok: true,
       imported: typeof parsed.imported === 'number' ? parsed.imported : 0,
@@ -345,7 +345,7 @@ export async function pushToPeer(
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '推送失败', { error });
+    logError('sync', '推送失败', { error });
     return transferFailure(error);
   }
 }

@@ -13,7 +13,7 @@ import type { AppData } from '../../data.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 import { useAction } from '../../lib/action.ts';
 import { errorMessage } from '../../lib/errors.ts';
-import { logInfo, logWarn } from '../../log.ts';
+import { logError, logInfo } from '../../log.ts';
 
 /** 一次「设为连续假期」最多覆盖的天数 */
 const MAX_HOLIDAY_RANGE_DAYS = 60;
@@ -61,7 +61,7 @@ export function useScheduleActions(input: {
         return true;
       } catch (cause: unknown) {
         const message = errorMessage(cause);
-        logWarn('schedule', `${what}失败`, { message });
+        logError('timetable', '日程写入失败', { action: what, message });
         toast.error(`${what}失败：${message}`);
         return false;
       }
@@ -71,7 +71,7 @@ export function useScheduleActions(input: {
       async setHoliday(date) {
         if (semesterId === null) return false;
         return run({
-          scope: 'schedule',
+          scope: 'timetable',
           label: '正在设为假日…',
           ok: '已设为假日',
           fail: { what: '设为假日失败', next: '请重试。' },
@@ -91,7 +91,7 @@ export function useScheduleActions(input: {
       async setWorkday(date) {
         if (semesterId === null) return false;
         return run({
-          scope: 'schedule',
+          scope: 'timetable',
           label: '正在设为非假日…',
           ok: '已设为非假日',
           fail: { what: '设为非假日失败', next: '请重试。' },
@@ -118,7 +118,7 @@ export function useScheduleActions(input: {
           return false;
         }
         return run({
-          scope: 'schedule',
+          scope: 'timetable',
           label: '正在设为连续假期…',
           ok: `已把 ${dates.length} 天设为假日`,
           fail: { what: '设为连续假期失败', next: '请重试。' },
@@ -145,7 +145,7 @@ export function useScheduleActions(input: {
           return false;
         }
         return run({
-          scope: 'schedule',
+          scope: 'timetable',
           label: '正在停课…',
           ok: `已停掉当天 ${lessons.length} 节课`,
           fail: { what: '停课失败', next: '请重试。' },
@@ -174,7 +174,7 @@ export function useScheduleActions(input: {
         }
         const target = addDays(date, 1);
         return run({
-          scope: 'schedule',
+          scope: 'timetable',
           label: '正在顺延到次日…',
           ok: `已把当天 ${lessons.length} 节课顺延到 ${target}`,
           fail: { what: '顺延失败', next: '请重试。' },
@@ -200,7 +200,7 @@ export function useScheduleActions(input: {
       async setDone(event, done) {
         await write(done ? '标记完成' : '取消完成', async () => {
           await updateEvent(storage, event.id, { done: done ? 1 : 0 });
-          logInfo('schedule', done ? '条目标记完成' : '条目取消完成', { id: event.id, title: event.title });
+          logInfo('timetable', '条目完成状态已更新', { id: event.id, done });
         });
       },
 

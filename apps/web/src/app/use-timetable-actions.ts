@@ -5,7 +5,7 @@ import type { AdjustTarget } from '../components/adjust-dialog.tsx';
 import type { CourseFormPreset } from '../screens/course-form.tsx';
 import type { NavId } from '../components/nav.tsx';
 import { loadCourseDetail, weekDateOf, type LessonCell } from '../data.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logWarn } from '../log.ts';
 import { toast } from '../components/ui/toaster.tsx';
 import { lessonCellOf, type DetailState } from './lesson-cell.ts';
 import type { AppSession } from './use-app-session.ts';
@@ -132,12 +132,12 @@ export function useTimetableActions(input: {
       if (cell.eventId !== undefined) {
         const lab = data?.labs.find((row) => row.id === cell.eventId);
         if (lab !== undefined) {
-          logInfo('timetable', '打开实验详情', { id: lab.id, title: lab.title });
+          logDebug('timetable', '打开实验详情', { id: lab.id });
           setEditingEvent(lab);
           setTodoFormOpenState(true);
           return;
         }
-        logWarn('timetable', '实验条目不存在', { id: cell.eventId });
+        logWarn('timetable', '实验条目不存在，改开课程详情', { id: cell.eventId });
       }
       const loaded = await loadCourseDetail(storage, cell.courseId);
       setDetail({ cell, detail: loaded, date: lessonDateOf(cell) });

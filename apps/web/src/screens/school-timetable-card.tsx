@@ -82,7 +82,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
     const result = await run({
       scope: 'timetable',
       label: '正在按学校套用作息…',
-      log: '按学校套用作息失败',
+      log: '学校作息套用失败',
       task: async () => {
         const outcome = await applySchoolTimetable(storage, semesterId, school);
         setPickedId(school.id);
@@ -96,7 +96,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
           source: outcome.source,
         });
         setMessage(outcome.message);
-        logInfo('timetable', '按学校套用作息', {
+        logInfo('timetable', '学校作息已套用', {
           school: school.name,
           timetable: outcome.timetableId,
           exclusive: outcome.exclusive,

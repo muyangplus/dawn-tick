@@ -1,5 +1,5 @@
 import type { Storage } from '@dawn-tick/core';
-import { describeError, logWarn } from '../log.ts';
+import { describeError, logWarn, type LogScope } from '../log.ts';
 
 /**
  * `app_meta` 里 JSON 值的统一读写：解析、校验、失败兜底与日志只写一次，
@@ -15,12 +15,12 @@ export interface MetaJsonReadOptions<T> {
   parse: (value: unknown) => T | null;
   /** 键缺失、JSON 损坏或结构不合法时的返回值。 */
   fallback: T;
-  /** 失败日志的 scope；传 `null` 关闭日志（默认 `'meta'`）。 */
-  scope?: string | null;
+  /** 失败日志的 scope；传 `null` 关闭日志（默认 `'storage'`）。 */
+  scope?: LogScope | null;
 }
 
-function scopeOf(scope: string | null | undefined): string | null {
-  return scope === undefined ? 'meta' : scope;
+function scopeOf(scope: LogScope | null | undefined): LogScope | null {
+  return scope === undefined ? 'storage' : scope;
 }
 
 /**
@@ -69,8 +69,8 @@ export async function readMetaJson<T>(
 }
 
 export interface MetaJsonWriteOptions {
-  /** 失败日志的 scope；传 `null` 关闭日志（默认 `'meta'`）。 */
-  scope?: string | null;
+  /** 失败日志的 scope；传 `null` 关闭日志（默认 `'storage'`）。 */
+  scope?: LogScope | null;
 }
 
 /**
@@ -117,7 +117,7 @@ export async function readMetaNumber(
   storage: MetaReader,
   key: string,
   fallback: number,
-  options: { scope?: string | null } = {},
+  options: { scope?: LogScope | null } = {},
 ): Promise<number> {
   const scope = scopeOf(options.scope);
   let raw: string | undefined;

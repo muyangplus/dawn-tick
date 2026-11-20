@@ -107,7 +107,7 @@ export function CourseManager({
     if (copying === null) return;
     const source = copying;
     await run({
-      scope: 'course',
+      scope: 'timetable',
       label: '正在复制课程…',
       ok: withSchedules
         ? `已复制「${source.name}」及 ${source.schedules.length} 段排课`
@@ -138,7 +138,7 @@ export function CourseManager({
             });
           }
         }
-        logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
+        logInfo('timetable', '课程已复制', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
         setCopying(null);
         await reload();
         onChanged();
@@ -150,13 +150,13 @@ export function CourseManager({
     if (removing === null) return;
     const target = removing;
     await run({
-      scope: 'course',
+      scope: 'timetable',
       label: '正在删除课程…',
       ok: `已删除课程「${target.name}」`,
       fail: { what: '删除课程失败', next: '请重试；仍失败请重开应用后再删。' },
       task: async () => {
         await deleteCourse(storage, target.id);
-        logInfo('course', '删除课程', { id: target.id, schedules: target.schedules.length });
+        logInfo('timetable', '课程已删除', { id: target.id, schedules: target.schedules.length });
         setRemoving(null);
         await reload();
         onChanged();

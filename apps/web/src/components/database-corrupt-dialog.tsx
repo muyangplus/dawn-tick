@@ -7,6 +7,7 @@ import {
 } from '../db/corrupt-guard.ts';
 import { recoverDatabase } from '../db/recover.ts';
 import { logInfo, logWarn } from '../log.ts';
+import { pathForLog } from '../lib/log-redact.ts';
 import { openDataDirectory, relaunchApplication } from '../storage-config.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
@@ -61,11 +62,11 @@ export function DatabaseCorruptDialog() {
   async function openDataDir(): Promise<void> {
     const dir = await openDataDirectory();
     if (dir === null) {
-      logWarn('storage', '损坏对话框打开数据目录失败');
+      logWarn('storage', '数据目录打开失败', { from: 'corrupt-dialog' });
       toast.error('当前平台不支持打开数据目录；请手动定位程序旁的 data 目录');
       return;
     }
-    logInfo('storage', '损坏对话框打开数据目录', { dir });
+    logInfo('storage', '已打开数据目录', { from: 'corrupt-dialog', dir: pathForLog(dir) });
     toast.info(`已打开数据目录；备份在其中的 backups 子目录：${dir}`);
   }
 

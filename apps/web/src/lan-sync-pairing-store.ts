@@ -56,7 +56,7 @@ function localStore(local: LanLocalStorage | null): LanPairingStore | null {
       try {
         local.setItem(LAN_PAIRINGS_STORAGE_KEY, serializeLanPairings(pairings));
       } catch (cause: unknown) {
-        logWarn('lan-sync', '写入配对列表失败', {
+        logWarn('sync', '配对列表写入失败', {
           message: cause instanceof Error ? cause.message : String(cause),
         });
       }
@@ -96,7 +96,7 @@ export function createLanPairingStore(
     load: () => readMetaPairings(storage),
     save: async (pairings) => {
       await writeMetaJson(storage, LAN_PAIRINGS_META_KEY, JSON.parse(serializeLanPairings(pairings)), {
-        scope: 'lan-sync',
+        scope: 'sync',
       });
     },
   };
@@ -106,7 +106,7 @@ async function readMetaPairings(storage: Storage): Promise<LanPairing[]> {
   return readMetaJson(storage, LAN_PAIRINGS_META_KEY, {
     parse: parseLanPairings,
     fallback: [],
-    scope: 'lan-sync',
+    scope: 'sync',
   });
 }
 

@@ -1,6 +1,6 @@
 import { isAndroidApp } from './capabilities.ts';
 import { errorMessage } from './errors.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logInfo, logWarn } from '../log.ts';
 import { parsePairPayload, type PairPayload } from '../lan-pair-payload.ts';
 import type { BarcodeFormat, BarcodeScannerPlugin } from '@capacitor-mlkit/barcode-scanning';
 
@@ -65,7 +65,7 @@ async function loadScanner(): Promise<LoadedScanner | null> {
     const module = await import('@capacitor-mlkit/barcode-scanning');
     return { scanner: module.BarcodeScanner, qrCode: module.BarcodeFormat.QrCode };
   } catch (cause: unknown) {
-    logWarn('scan', '加载扫码组件失败', { message: errorMessage(cause) });
+    logWarn('import', '扫码组件加载失败', { message: errorMessage(cause) });
     return null;
   }
 }
@@ -94,7 +94,7 @@ export async function scanCodeOnce(): Promise<string | null> {
   try {
     supported = (await scanner.isSupported()).supported === true;
   } catch (cause: unknown) {
-    logWarn('scan', '查询扫码支持失败', { message: errorMessage(cause) });
+    logWarn('import', '扫码支持查询失败', { message: errorMessage(cause) });
   }
   if (!supported) throw new Error('当前设备不支持扫码；可以改用「粘贴配对信息」');
 
@@ -126,10 +126,10 @@ export async function scanCodeOnce(): Promise<string | null> {
       settled = true;
       void cleanup().then(() => {
         if (text === null) {
-          logInfo('scan', '扫码已取消');
+          logDebug('import', '扫码已取消');
           resolve(null);
         } else {
-          logInfo('scan', '扫码已读取', { length: text.length });
+          logInfo('import', '扫码已读取', { length: text.length });
           resolve(text);
         }
       });

@@ -1,5 +1,5 @@
 import type { Storage } from '@dawn-tick/core';
-import { logWarn } from '../log.ts';
+import { logError, logWarn } from '../log.ts';
 import { isAndroidApp, isDesktopApp } from './capabilities.ts';
 import { errorMessage } from './errors.ts';
 import { invokeNative } from './native.ts';
@@ -179,7 +179,7 @@ export async function revealSecret(raw: string | null | undefined): Promise<stri
   try {
     return await store.decrypt(envelope.ciphertext);
   } catch (cause: unknown) {
-    logWarn('credentials', '解密已保存的密码失败', { error: errorMessage(cause) });
+    logError('credentials', '已保存的密码解密失败', { error: errorMessage(cause) });
     throw new Error(`已保存的密码无法解密，请重新输入（${errorMessage(cause)}）`);
   }
 }
@@ -217,7 +217,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
       return { password: envelope.value, state: 'migrated', message: null, encryptionAvailable: true };
     } catch (cause: unknown) {
       const reason = errorMessage(cause);
-      logWarn('credentials', '旧明文密码迁移加密失败', { error: reason });
+      logWarn('credentials', '旧明文密码加密迁移失败，保持明文', { error: reason });
       return {
         password: envelope.value,
         state: 'plaintext',
@@ -240,7 +240,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
     return { password, state: 'encrypted', message: null, encryptionAvailable: true };
   } catch (cause: unknown) {
     const reason = errorMessage(cause);
-    logWarn('credentials', '解密已保存的密码失败', { error: reason });
+    logError('credentials', '已保存的密码解密失败', { error: reason });
     return {
       password: '',
       state: 'error',
@@ -274,7 +274,7 @@ export async function saveWebdavPassword(
       await storage.writeMeta(WEBDAV_PASSWORD_META_KEY, value);
       return null;
     } catch (cause: unknown) {
-      logWarn('credentials', '写入已保存的密码失败', { error: errorMessage(cause) });
+      logError('credentials', '密码写入失败', { error: errorMessage(cause) });
       return `写入失败：${errorMessage(cause)}`;
     }
   };
@@ -298,7 +298,7 @@ export async function saveWebdavPassword(
     ciphertext = await store.encrypt(password);
   } catch (cause: unknown) {
     const reason = errorMessage(cause);
-    logWarn('credentials', '加密 WebDAV 密码失败', { error: reason });
+    logError('credentials', 'WebDAV 密码加密失败', { error: reason });
     return { state: 'failed', message: null, error: `加密失败：${reason}`, encryptionAvailable: true };
   }
   let envelope: string;

@@ -108,7 +108,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     const target = pending;
     setImportError(null);
     const result = await run({
-      scope: 'onboarding',
+      scope: 'app',
       label: '正在导入备份…',
       fail: { what: '导入备份失败', next: '请检查备份文件后重试。' },
       confirm: () =>
@@ -145,7 +145,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
   ): Promise<void> {
     setError(null);
     const result = await run({
-      scope: 'onboarding',
+      scope: 'app',
       label: '正在创建学期…',
       task: async () => {
         const semester = await createSemester(storage, {

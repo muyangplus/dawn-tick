@@ -12,7 +12,7 @@ import {
   type ImportResult,
   type Storage,
 } from '@dawn-tick/core';
-import { logInfo, logWarn, logsText } from './log.ts';
+import { logDebug, logError, logInfo, logsText, logWarn } from './log.ts';
 import {
   BackupCryptoError,
   decryptBackup,
@@ -123,7 +123,8 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
     if (request.format === 'base64') {
       const plain = toBase64Utf8(json);
       const text = await sealText(plain, password);
-      logInfo('backup', encrypted ? '生成加密 Base64 备份文本' : '生成 Base64 备份文本', {
+      logInfo('backup', 'Base64 备份文本已生成', {
+        encrypted,
         modules: [...request.modules],
         rows,
       });
@@ -147,13 +148,14 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
         rows,
       };
       if (outcome.ok) {
-        logInfo('backup', encrypted ? '导出加密整包' : '导出整包', {
+        logInfo('backup', '整包已导出', {
+          encrypted,
           modules: [...request.modules],
           rows,
           entries: entries.map((entry) => entry.name),
         });
       } else if (!outcome.cancelled) {
-        logWarn('backup', encrypted ? '导出加密整包失败' : '导出整包失败', { error: outcome.error });
+        logError('backup', '整包导出失败', { encrypted, error: outcome.error });
       }
       return outcome;
     }
@@ -174,26 +176,29 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
       rows,
     };
     if (outcome.ok) {
-      logInfo('backup', encrypted ? '导出加密备份' : '导出备份', {
+      logInfo('backup', '备份已导出', {
+        encrypted,
         modules: [...request.modules],
         rows,
       });
     } else if (!outcome.cancelled) {
-      logWarn('backup', encrypted ? '导出加密备份失败' : '导出备份失败', { error: outcome.error });
+      logError('backup', '备份导出失败', { encrypted, error: outcome.error });
     }
     return outcome;
   } catch (cause: unknown) {
     const error = errorMessage(cause);
     // 损坏：日志保留原始 sqlx 文案，用户可见文案换成恢复引导（对话框由守卫统一弹出）
     if (reportCorrupt(cause, 'backup')) {
-      logWarn('backup', encrypted ? '加密导出失败' : '导出备份失败', {
+      logError('backup', '备份导出失败', {
+        encrypted,
         format: request.format,
         error,
         corrupt: true,
       });
       return { ...base, error: EXPORT_CORRUPT_MESSAGE, corrupt: true };
     }
-    logWarn('backup', encrypted ? '加密导出失败' : '导出备份失败', {
+    logError('backup', '备份导出失败', {
+      encrypted,
       format: request.format,
       error,
     });
@@ -245,12 +250,12 @@ export async function readImportFile(file: File, password?: string): Promise<Imp
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (isEncryptedBackupBytes(bytes)) {
         if (password === undefined) {
-          logInfo('backup', '整包已加密，等待口令', { name: file.name });
+          logDebug('backup', '整包已加密，等待口令', { name: file.name });
           return lockedResult();
         }
         const plain = await decryptBackupBytes(bytes, password);
         const { payload, extras } = await readPackageEntries(plain);
-        logInfo('backup', '读取加密整包', {
+        logDebug('backup', '加密整包已读取', {
           name: file.name,
           presets: extras.presets.snapshot !== null || extras.presets.content !== null,
           logs: extras.logs !== null,
@@ -258,7 +263,7 @@ export async function readImportFile(file: File, password?: string): Promise<Imp
         return { payload, extras, error: null, locked: false };
       }
       const { payload, extras } = await readPackageEntries(bytes);
-      logInfo('backup', '读取整包', {
+      logDebug('backup', '整包已读取', {
         name: file.name,
         presets: extras.presets.snapshot !== null || extras.presets.content !== null,
         logs: extras.logs !== null,
@@ -268,17 +273,17 @@ export async function readImportFile(file: File, password?: string): Promise<Imp
     const text = await file.text();
     if (isEncryptedBackup(text)) {
       if (password === undefined) {
-        logInfo('backup', '备份文件已加密，等待口令', { name: file.name });
+        logDebug('backup', '备份文件已加密，等待口令', { name: file.name });
         return lockedResult();
       }
       const payload = parseImportText(await decryptBackup(text, password));
-      logInfo('backup', '读取加密备份文件', { name: file.name });
+      logDebug('backup', '加密备份文件已解密', { name: file.name });
       return { payload, extras: null, error: null, locked: false };
     }
     return { payload: parseImportText(text), extras: null, error: null, locked: false };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('backup', '读取备份文件失败', { name: file.name, error });
+    logWarn('backup', '备份文件读取失败', { name: file.name, error });
     return failedResult(error);
   }
 }
@@ -301,11 +306,11 @@ export async function importPastedText(
   try {
     // 解密出的内容可能是 JSON，也可能是 Base64（加密前是哪种就还是哪种）
     const payload = parseImportText(await decryptBackup(trimmed, password));
-    logInfo('backup', '已解密粘贴的备份文本');
+    logDebug('backup', '粘贴的备份文本已解密');
     return { payload, extras: null, error: null, locked: false };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('backup', '解密备份文本失败', { error });
+    logWarn('backup', '备份文本解密失败', { error });
     return failedResult(error);
   }
 }
@@ -339,7 +344,7 @@ export async function importConfig(
   const presets = result.presets;
   const extras = options.extras ?? null;
   const logsSkipped = extras !== null && extras.logs !== null;
-  logInfo('backup', '导入备份', {
+  logInfo('backup', '备份已导入', {
     mode: options.mode,
     modules: [...options.modules],
     imported: result.imported,

@@ -13,7 +13,7 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { toast } from '../../components/ui/toaster.tsx';
-import { logError, logInfo } from '../../log.ts';
+import { logInfo, logWarn } from '../../log.ts';
 import {
   adapterInfo,
   loadPresetContext,
@@ -151,10 +151,10 @@ export function useWindowSource({
     const result = extractTimetableFromHtml(stripPageMarkers(payload));
     if (result.schedules.length === 0) {
       setWindowNote(result.warnings.join('；'));
-      logError('import-window', '回传内容未识别到课表', { shape: result.shape, tables: result.tables });
+      logWarn('import', '回传内容未识别到课表', { shape: result.shape, tables: result.tables });
       return;
     }
-    logInfo('import-window', '教务窗口回传并识别', {
+    logInfo('import', '教务窗口回传内容已识别', {
       shape: result.shape,
       tables: result.tables,
       schedules: result.schedules.length,

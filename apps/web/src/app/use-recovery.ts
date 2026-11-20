@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import { clearLogs, describeError, logError, logInfo, logWarn, logsText } from '../log.ts';
+import { clearLogs, describeError, logError, logInfo, logsText, logWarn } from '../log.ts';
+import { pathForLog } from '../lib/log-redact.ts';
 import { dayStampUtc } from '../lib/dates.ts';
 import { fail } from '../lib/fail.ts';
 import { restoreLatestBackupSnapshot } from '../lib/recovery.ts';
@@ -27,7 +28,7 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
 
   /** 回退警告条「重试」：原生侧重启会重新打开数据库；浏览器侧退回整页刷新。 */
   const retryStorage = useCallback(async (): Promise<void> => {
-    logInfo('storage', '用户请求重试打开原生存储', { fallback });
+    logInfo('storage', '重试打开原生存储', { fallback });
     if (await relaunchApplication()) return;
     try {
       globalThis.location.reload();
@@ -53,12 +54,12 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
         );
         return;
       }
-      logInfo('log', '已导出诊断日志', { path: saved.path, bytes: entries.length });
+      logInfo('log', '诊断日志已导出', { path: pathForLog(saved.path), chars: entries.length });
       toast.success(saved.path === null ? '已下载日志' : '已导出日志');
       // 回退期间不写临时存储：导出已经完成，清空留到原生库恢复后
       if (!fallback) await clearLogs();
     } catch (cause: unknown) {
-      logError('log', '打开日志失败', { message: describeError(cause) });
+      logError('log', '日志导出失败', { message: describeError(cause) });
       toast.error(fail('打开日志失败', '日志暂时读不出来', '请稍后重试；仍失败请在「设备与同步」里查看。').text);
     }
   }, [fallback]);
@@ -87,7 +88,7 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
       );
       return;
     }
-    logInfo('storage', '打开数据目录', { dir });
+    logInfo('storage', '已打开数据目录', { dir: pathForLog(dir) });
     toast.info(`已打开数据目录；备份在其中 backups 子目录：${dir}`);
   }, []);
 

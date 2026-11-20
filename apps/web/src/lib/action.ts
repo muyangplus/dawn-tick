@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { logWarn } from '../log.ts';
+import { logError, logWarn, type LogScope } from '../log.ts';
 import { useBusyAction } from './busy.ts';
 import { errorMessage } from './errors.ts';
 import { fail } from './fail.ts';
@@ -12,8 +12,8 @@ export interface ActionFailure {
 }
 
 export interface ActionSpec<T> {
-  /** 日志 scope，例如 `course`、`timetable` */
-  scope: string;
+  /** 日志范围，见 `lib/log-scopes.ts` */
+  scope: LogScope;
   /** 进行中的整页蒙版文案 */
   label: string;
   /** 成功 toast：给了才弹 */
@@ -22,6 +22,8 @@ export interface ActionSpec<T> {
   fail?: ActionFailure | false;
   /** 失败日志文案；默认用 `fail.what`，传 `false` 关掉日志 */
   log?: string | false;
+  /** 失败日志级别：默认 error；网络检查这类可重试、不碰数据的动作用 warn */
+  logLevel?: 'error' | 'warn';
   /** 二次确认：返回 false 直接放弃，且不进入 busy */
   confirm?: () => boolean | Promise<boolean>;
   task: () => Promise<T>;
@@ -73,9 +75,8 @@ export function useAction(): ActionApi {
         const message = errorMessage(cause);
         if (spec.log !== false) {
           const failure = spec.fail === undefined || spec.fail === false ? undefined : spec.fail.what;
-          logWarn(spec.scope, typeof spec.log === 'string' ? spec.log : (failure ?? '操作失败'), {
-            message,
-          });
+          const write = spec.logLevel === 'warn' ? logWarn : logError;
+          write(spec.scope, typeof spec.log === 'string' ? spec.log : (failure ?? '操作失败'), { message });
         }
         if (spec.fail !== undefined && spec.fail !== false) {
           toast.error(fail(spec.fail.what, message, spec.fail.next ?? '请重试').text);

@@ -35,7 +35,7 @@ export function NewSemesterForm({ storage, userId, settings, onChanged }: NewSem
   async function addSemester(): Promise<void> {
     if (semesterName.trim().length === 0 || semesterStart.length === 0) return;
     await run({
-      scope: 'semester',
+      scope: 'timetable',
       label: '正在新建学期…',
       ok: '已新建学期并设为当前学期',
       fail: { what: '新建学期失败', next: '请重试；仍失败请重开应用后再试。' },
@@ -47,7 +47,7 @@ export function NewSemesterForm({ storage, userId, settings, onChanged }: NewSem
           totalWeeks: semesterWeeks,
           timeZone: settings.timeZone,
         });
-        logInfo('semester', '新建学期', {
+        logInfo('timetable', '学期已新建', {
           name: semesterName.trim(),
           startDate: semesterStart,
           totalWeeks: semesterWeeks,
@@ -109,7 +109,7 @@ export function EditSemesterDialog({ semester, storage, onClose, onChanged }: Ed
       return;
     }
     await run({
-      scope: 'semester',
+      scope: 'timetable',
       label: '正在保存学期设置…',
       ok: '已保存学期设置',
       fail: { what: '保存学期设置失败', next: '请重试；仍失败请重开应用后再改。' },
@@ -120,7 +120,7 @@ export function EditSemesterDialog({ semester, storage, onClose, onChanged }: Ed
           total_weeks: Math.min(30, Math.max(1, editWeeks)),
           time_zone: editZone,
         });
-        logInfo('semester', '修改学期', {
+        logInfo('timetable', '学期已修改', {
           id: semester.id,
           startDate: editStart,
           totalWeeks: editWeeks,
@@ -192,12 +192,12 @@ export function DeleteSemesterDialog({ semester, storage, onClose, onChanged }: 
 
   async function confirmRemove(): Promise<void> {
     await run({
-      scope: 'semester',
+      scope: 'timetable',
       label: '正在删除学期…',
       fail: { what: '删除学期失败', next: '请重试；仍失败请重开应用后再删。' },
       task: async () => {
         const report = await deleteSemesterDeep(storage, semester.id);
-        logInfo('semester', '删除学期', { id: semester.id, ...report });
+        logInfo('timetable', '学期已删除', { id: semester.id, ...report });
         toast.success(
           `已删除「${semester.name}」：课程 ${COUNT('course', report.courses)}、排课 ${COUNT('schedule', report.schedules)}、节次 ${COUNT('period', report.slots)}、日程 ${COUNT('event', report.events)}、提醒 ${COUNT('reminder', report.reminders)}`,
         );

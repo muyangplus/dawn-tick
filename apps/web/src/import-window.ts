@@ -1,7 +1,8 @@
 import { canOpenImportWindow, isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { PLUGIN_NAMES, loadPlugin, type SchoolWindowPlugin } from './lib/plugins.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logError, logInfo } from './log.ts';
+import { urlForLog } from './lib/log-redact.ts';
 import { withTimeout } from './lib/timeout.ts';
 import type { SchoolEntry } from '@dawn-tick/core';
 
@@ -39,11 +40,11 @@ export async function openImportWindow(url: string): Promise<ImportWindowResult>
     try {
       await invokeNative('open_import_window', { url });
       rememberImportUrl(url);
-      logInfo('import-window', '打开教务窗口', { url, platform: 'tauri' });
+      logInfo('import', '教务窗口已打开', { url: urlForLog(url), platform: 'tauri' });
       return { ok: true };
     } catch (cause: unknown) {
       const error = nativeErrorMessage(cause);
-      logWarn('import-window', '打开教务窗口失败', { message: error });
+      logError('import', '教务窗口打开失败', { message: error });
       return { ok: false, error };
     }
   }
@@ -55,11 +56,11 @@ export async function openImportWindow(url: string): Promise<ImportWindowResult>
       const result = await withTimeout(plugin.open({ url }), 300_000, '打开教务窗口超时，请关闭后重试');
       rememberImportUrl(url);
       const payload = typeof result?.payload === 'string' ? result.payload : '';
-      logInfo('import-window', '移动端教务窗口结束', { url, bytes: payload.length });
+      logInfo('import', '移动端教务窗口已关闭', { url: urlForLog(url), bytes: payload.length });
       return { ok: true, payload };
     } catch (cause: unknown) {
       const error = nativeErrorMessage(cause);
-      logWarn('import-window', '移动端教务窗口失败', { message: error });
+      logError('import', '移动端教务窗口失败', { message: error });
       return { ok: false, error };
     }
   }

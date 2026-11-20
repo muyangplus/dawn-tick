@@ -16,7 +16,7 @@ export async function loadTrustedTokens(storage: Storage): Promise<TrustedToken[
   return readMetaJson(storage, LAN_TRUSTED_TOKENS_META_KEY, {
     parse: parseTrustedTokens,
     fallback: [],
-    scope: 'lan-sync',
+    scope: 'sync',
   });
 }
 
@@ -27,7 +27,7 @@ export async function saveTrustedTokens(
 ): Promise<void> {
   try {
     await writeMetaJson(storage, LAN_TRUSTED_TOKENS_META_KEY, trustedTokensValue(tokens), {
-      scope: 'lan-sync',
+      scope: 'sync',
     });
   } catch {
     // 写失败不阻断同步：本次运行仍以内存里的列表为准

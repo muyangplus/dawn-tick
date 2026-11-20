@@ -17,7 +17,7 @@ import {
   type SnoozePlan,
   type Suppression,
 } from './lib/reminder-actions.ts';
-import { logDebug, logWarn } from './log.ts';
+import { logDebug, logError, logInfo, logTrace, logWarn } from './log.ts';
 import { notifyNow, type NotifyPermission } from './notify.ts';
 import { toast } from './lib/toast.ts';
 import {
@@ -126,7 +126,7 @@ export class ReminderScheduler {
     if (permission === 'granted') this.options.onPermission('granted');
     else if (permission === 'denied') {
       this.options.onPermission('denied');
-      logWarn('reminder', '通知权限未授予：提醒不会弹出');
+      logWarn('reminder', '通知权限未授予');
     }
     if (this.stopped) return;
     await this.tickSafely();
@@ -216,7 +216,7 @@ export class ReminderScheduler {
       await this.syncTray();
     }
     toast.success(`已贪睡 ${plan.minutes} 分钟`);
-    logDebug('reminder', '提醒动作：贪睡', { id: plan.id, nextTriggerAt: plan.triggerAt });
+    logInfo('reminder', '提醒已贪睡', { id: plan.id, nextTriggerAt: plan.triggerAt });
   }
 
   private async applyMute(plan: MutePlan, source: ReminderActionSource): Promise<void> {
@@ -237,12 +237,12 @@ export class ReminderScheduler {
     if (source === 'desktop') await this.bridge.clearTray(plan.id);
     await this.syncTray();
     toast.success(`已勿扰 ${plan.minutes} 分钟`);
-    logDebug('reminder', '提醒动作：勿扰', { targetId: plan.targetId, until: plan.until });
+    logInfo('reminder', '提醒已勿扰', { targetId: plan.targetId, until: plan.until });
   }
 
   private async applyDone(plan: DonePlan, source: ReminderActionSource): Promise<void> {
     if (plan.write.eventId.length === 0) {
-      logWarn('reminder', '提醒动作缺少条目 id，无法写回完成状态', { id: plan.id });
+      logError('reminder', '提醒动作缺少条目 id', { id: plan.id });
       toast.error('无法定位要完成的条目');
       return;
     }
@@ -250,7 +250,7 @@ export class ReminderScheduler {
       // 复用条目完成逻辑：写 events.done，和日程卡片上的「完成」是同一列
       await updateEvent(this.options.storage, plan.write.eventId, plan.write.fields);
     } catch (cause: unknown) {
-      logWarn('reminder', '提醒动作写回完成状态失败', {
+      logError('reminder', '完成状态写回失败', {
         eventId: plan.write.eventId,
         message: errorMessage(cause),
       });
@@ -270,14 +270,14 @@ export class ReminderScheduler {
     if (source === 'desktop') await this.bridge.clearTray(plan.id);
     await this.syncTray();
     toast.success('已标记完成');
-    logDebug('reminder', '提醒动作：完成', { eventId: plan.write.eventId, id: plan.id });
+    logInfo('reminder', '提醒条目已标记完成', { eventId: plan.write.eventId, id: plan.id });
   }
 
   private async applyAction(payload: ReminderActionPayload, source: ReminderActionSource): Promise<void> {
     try {
       const action = parseReminderAction(payload.action);
       if (action === null) {
-        logWarn('reminder', '未知的提醒动作', { action: payload.action });
+        logWarn('reminder', '提醒动作未知', { action: payload.action });
         return;
       }
       const entry =
@@ -295,7 +295,7 @@ export class ReminderScheduler {
       };
       const plan = planReminderAction(target, action, now, this.options.timeZone);
       if (plan === null) {
-        logWarn('reminder', '提醒动作不适用于当前提醒', { action: payload.action, kind });
+        logWarn('reminder', '提醒动作不适用', { action: payload.action, kind });
         if (source === 'desktop') await this.bridge.clearTray(String(payload.id));
         return;
       }
@@ -303,7 +303,7 @@ export class ReminderScheduler {
       else if (plan.action === 'mute') await this.applyMute(plan, source);
       else await this.applyDone(plan, source);
     } catch (cause: unknown) {
-      logWarn('reminder', '处理提醒动作失败', {
+      logError('reminder', '提醒动作处理失败', {
         action: payload.action,
         message: errorMessage(cause),
       });
@@ -319,10 +319,10 @@ export class ReminderScheduler {
     try {
       await this.bridge.deliver(item);
     } catch (cause: unknown) {
-      logWarn('reminder', '提醒投递失败', { title: item.title, message: errorMessage(cause) });
+      logError('reminder', '提醒投递失败', { title: item.title, message: errorMessage(cause) });
       return;
     }
-    logDebug('reminder', '提醒已触发', { title: item.title, kind: item.kind, triggerAt: item.triggerAt });
+    logInfo('reminder', '提醒已投递', { title: item.title, kind: item.kind, triggerAt: item.triggerAt });
     await this.syncTray();
   }
 
@@ -351,7 +351,7 @@ export class ReminderScheduler {
       if (native.get(id) === item.triggerAt || this.nativeSnoozes.has(id)) continue;
       if (await this.bridge.schedule(item)) scheduled += 1;
     }
-    if (cancelled > 0 || scheduled > 0) logDebug('reminder', '原生排定对账', { cancelled, scheduled });
+    if (cancelled > 0 || scheduled > 0) logDebug('reminder', '原生排定已对账', { cancelled, scheduled });
   }
 
   private async tick(): Promise<void> {
@@ -380,7 +380,7 @@ export class ReminderScheduler {
       this.snoozes = rest;
       for (const item of due) {
         await notifyNow(item.title, item.detail);
-        logDebug('reminder', '贪睡提醒再次投递', { key: item.key, title: item.title });
+        logInfo('reminder', '贪睡提醒已再次投递', { key: item.key, title: item.title });
       }
     }
 
@@ -420,7 +420,7 @@ export class ReminderScheduler {
       }
       await this.reconcileNative(now);
     }
-    logDebug('reminder', '提醒扫描', {
+    logTrace('reminder', '提醒扫描', {
       upcoming: items.length,
       enabled: this.options.defaults.enabled,
       minutes: this.options.defaults.minutes,

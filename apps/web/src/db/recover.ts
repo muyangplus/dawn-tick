@@ -5,7 +5,7 @@
  * 恢复成功后由调用方重启应用——运行中的 sqlx 连接已经不可用，不能热切换。
  */
 import { invokeNative, nativeErrorMessage } from '../lib/native.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logError, logInfo, logWarn } from '../log.ts';
 
 /** 与 Rust `recover::RecoverOutcome` 的 camelCase 序列化逐字对应。 */
 export interface RecoverDatabaseOutcome {
@@ -34,13 +34,13 @@ export async function recoverDatabase(): Promise<RecoverDatabaseOutcome> {
   try {
     const outcome = await invokeNative<RecoverDatabaseOutcome>('recover_database');
     if (outcome === undefined || typeof outcome.recovered !== 'boolean') {
-      logWarn('storage', '自动恢复在当前平台不可用');
+      logWarn('storage', '当前平台不支持自动恢复');
       return failed(RECOVER_UNSUPPORTED);
     }
     if (outcome.recovered) {
       logInfo('storage', '运行中数据库已从快照恢复', { snapshot: outcome.snapshot });
     } else {
-      logWarn('storage', '运行中数据库恢复未完成', { snapshot: outcome.snapshot, reason: outcome.reason });
+      logError('storage', '运行中数据库恢复未完成', { snapshot: outcome.snapshot, reason: outcome.reason });
     }
     return {
       recovered: outcome.recovered,
@@ -49,7 +49,7 @@ export async function recoverDatabase(): Promise<RecoverDatabaseOutcome> {
     };
   } catch (cause: unknown) {
     const reason = nativeErrorMessage(cause);
-    logWarn('storage', '运行中数据库恢复失败', { message: reason });
+    logError('storage', '运行中数据库恢复失败', { message: reason });
     return failed(reason);
   }
 }

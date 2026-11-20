@@ -16,8 +16,10 @@ import {
   defaultLogLevel,
   describeError,
   loadLogs,
+  logDebug,
   logError,
   logInfo,
+  type LogScope,
   logWarn,
 } from '../log.ts';
 import { CHANNEL } from '../channel.ts';
@@ -25,6 +27,7 @@ import { applyCachedPreset } from '../preset-update.ts';
 import { applyTheme } from '../theme.ts';
 import { maybeAutoBackup, takeRecoveryNotice } from '../backup.ts';
 import { maybeAutoSync } from '../webdav.ts';
+import { textForLog } from '../lib/log-redact.ts';
 
 /** 启动失败：区分损坏（走备份恢复）与其它（重试/日志），文案统一由 fail() 生成。 */
 export interface BootFailure {
@@ -34,7 +37,7 @@ export interface BootFailure {
 
 /** 启动阶段：只用于失败时定位是哪一步没有完成 */
 interface BootStage {
-  scope: string;
+  scope: LogScope;
   label: string;
 }
 
@@ -76,17 +79,17 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
     const opened = await openStorage();
     /** 临时回退：原生库打不开，改用浏览器存储；按 Q5 只读，启动阶段也不写任何数据 */
     const readOnly = isFallbackStorage(opened);
-    stage = { scope: 'data', label: '数据载入' };
+    stage = { scope: 'app', label: '数据载入' };
     // 回退期间连日志也不写临时库：只留在内存与原生日志里
     attachLogStorage(readOnly ? readOnlyStorage(opened) : opened);
     await loadLogs();
     // 预设只在启动时套用一次：缓存版本高于内置且正文合法才切换，运行时不替换。
     if (readOnly) {
-      logWarn('storage', '临时回退期间跳过启动预设写入', { kind: opened.kind });
+      logDebug('storage', '只读回退中，跳过启动预设写入', { kind: opened.kind });
     } else {
       try {
         const preset = await applyCachedPreset(opened);
-        logInfo('preset', '启动套用预设', {
+        logDebug('preset', '启动预设已套用', {
           version: preset.version,
           source: preset.applied ? 'cached' : 'builtin',
           applied: preset.applied,
@@ -94,7 +97,7 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
         });
       } catch (cause: unknown) {
         const message = describeError(cause);
-        logWarn('preset', '启动套用预设失败，继续使用内置预设', { message });
+        logWarn('preset', '缓存预设套用失败，改用内置预设', { message });
       }
     }
     // 首次启动按系统时区对齐一次；之后完全以用户选择为准（默认上海）
@@ -107,7 +110,7 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
           : '';
       if (systemZone.length > 0 && isValidTimeZone(systemZone) && systemZone !== loaded.timeZone) {
         loaded = await writeSettings(opened, { timeZone: systemZone });
-        logInfo('settings', '首次启动按系统时区对齐', { from: DEFAULT_SETTINGS.timeZone, to: systemZone });
+        logInfo('settings', '首次启动已对齐系统时区', { from: DEFAULT_SETTINGS.timeZone, to: systemZone });
       }
       await opened.writeMeta(TIME_ZONE_ALIGNED_META_KEY, '1');
     }
@@ -115,12 +118,12 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
     const storedLogLevel = await opened.readMeta('log_level');
     if (!readOnly && (storedLogLevel === undefined || storedLogLevel === null || storedLogLevel === '')) {
       loaded = await writeSettings(opened, { logLevel: defaultLogLevel(CHANNEL) });
-      logInfo('settings', '初始化日志级别', { level: loaded.logLevel, channel: CHANNEL });
+      logDebug('settings', '日志级别已初始化', { level: loaded.logLevel, channel: CHANNEL });
     }
     if (hooks.isCancelled?.() === true) return { ok: true };
     const resolvedMode = applyTheme(loaded.themePreset, loaded.theme);
     hooks.onReady({ storage: opened, settings: loaded, readOnly, resolvedMode });
-    logInfo('storage', '存储就绪', {
+    logInfo('app', '启动完成', {
       kind: opened.kind,
       fallback: readOnly,
       theme: loaded.themePreset,
@@ -129,11 +132,11 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
     const recovered = await takeRecoveryNotice();
     if (recovered !== null) hooks.onNotice?.(recovered);
     if (readOnly) {
-      logWarn('storage', '临时回退期间跳过自动备份与自动同步', { kind: opened.kind });
+      logDebug('storage', '只读回退中，跳过自动备份与自动同步', { kind: opened.kind });
     } else {
       const snapshot = await maybeAutoBackup(opened, loaded, { startup: true });
       if (snapshot !== null) {
-        logInfo('backup', '启动自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
+        logDebug('backup', '启动自动备份完成', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
       }
     }
     await hooks.loadData(opened, loaded);
@@ -145,24 +148,24 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
           if (sync.action === 'remote-newer') {
             hooks.onRemoteNewer?.({ name: sync.name, detail: sync.detail });
           } else if (sync.action === 'uploaded') {
-            logInfo('webdav', '启动自动同步已上传', { name: sync.name });
+            logInfo('sync', '启动自动同步已上传', { name: sync.name });
           } else if (sync.action === 'error') {
-            logWarn('webdav', '启动自动同步失败', { detail: sync.detail });
+            logWarn('sync', '启动自动同步失败', { detail: textForLog(sync.detail ?? '') });
           }
         })
-        .catch((cause: unknown) => logWarn('webdav', '启动自动同步失败', { detail: describeError(cause) }));
+        .catch((cause: unknown) => logWarn('sync', '启动自动同步失败', { detail: textForLog(describeError(cause)) }));
     }
     const manager = globalThis.navigator?.storage;
     if (manager !== undefined && typeof manager.persist === 'function') {
       const granted = await manager.persist();
       hooks.onPersistent?.(granted);
-      logInfo('storage', '持久化申请', { granted });
+      logDebug('storage', '持久化存储申请已返回', { granted });
     }
     return { ok: true };
   } catch (cause: unknown) {
     const message = describeError(cause);
     if (isCorruptDatabase(cause)) {
-      logError('storage', '数据库损坏，未载入数据', { message });
+      logError('storage', '数据库损坏，数据未载入', { message });
       return {
         ok: false,
         error: {
@@ -171,7 +174,7 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
         },
       };
     }
-    logError(stage.scope, `${stage.label}失败`, { message });
+    logError(stage.scope, '启动阶段失败', { stage: stage.label, message });
     return {
       ok: false,
       error: {
@@ -203,16 +206,16 @@ export function startDailyMaintenance(input: {
   const timer = globalThis.setInterval(() => {
     void maybeAutoBackup(input.storage, input.settings, { startup: false }).then((snapshot) => {
       if (snapshot !== null) {
-        logInfo('backup', '每日自动备份', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
+        logDebug('backup', '每日自动备份完成', { name: snapshot.id, kind: snapshot.kind, bytes: snapshot.bytes });
       }
     });
     void maybeAutoSync(input.storage, input.settings, { startup: false }).then((outcome) => {
       if (outcome.action === 'remote-newer') {
         input.onRemoteNewer({ name: outcome.name, detail: outcome.detail });
       } else if (outcome.action === 'uploaded') {
-        logInfo('webdav', '每日自动同步已上传', { name: outcome.name });
+        logInfo('sync', '每日自动同步已上传', { name: outcome.name });
       } else if (outcome.action === 'error') {
-        logWarn('webdav', '每日自动同步失败', { detail: outcome.detail });
+        logWarn('sync', '每日自动同步失败', { detail: textForLog(outcome.detail ?? '') });
       }
     });
   }, DAILY_BACKUP_CHECK_MS);

@@ -198,7 +198,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           ],
         });
         await replaceTimeSlots(storage, semesterId, periods);
-        logInfo('timetable', '生成节次', { periods: periods.length, duration, breakMinutes });
+        logInfo('timetable', '节次已生成', { periods: periods.length, duration, breakMinutes });
         toast.success(`已生成 ${periods.length} 个节次`);
         await reload();
         onChanged();
@@ -235,7 +235,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           source: selectedPreset.source ?? null,
           count: selectedPreset.periods.length,
         });
-        logInfo('timetable', '套用作息预设', {
+        logInfo('timetable', '作息预设已套用', {
           id: selectedPreset.id,
           periods: selectedPreset.periods.length,
           duration: spacing.durationMinutes,
@@ -257,7 +257,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       task: async () => {
         // 追加的一节接在最后一节之后：间隔用界面上的课间
         const created = await appendTimeSlot(storage, semesterId, duration, breakMinutes);
-        logInfo('timetable', '追加节次', {
+        logInfo('timetable', '节次已追加', {
           periodNo: created['period_no'],
           startTime: created['start_time'],
           breakMinutes,
@@ -275,7 +275,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     try {
       await updateTimeSlot(storage, slot.id, changes);
-      logInfo('timetable', '修改节次时间', { periodNo: slot.period_no, ...changes });
+      logInfo('timetable', '节次时间已修改', { periodNo: slot.period_no, ...changes });
       await reload();
       onChanged();
       return true;
@@ -317,7 +317,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           { anchorPeriodNo: anchor, durationMinutes: duration, breakMinutes },
         );
         await replaceTimeSlots(storage, semesterId, reflowedSlots(rows, planned));
-        logInfo('timetable', '按锚点顺延重排', {
+        logInfo('timetable', '节次已按锚点顺延', {
           anchor,
           section: current.section,
           duration,
@@ -346,7 +346,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           );
           return;
         }
-        logInfo('timetable', '删除节次', { periodNo });
+        logInfo('timetable', '节次已删除', { periodNo });
         await reload();
         onChanged();
       },

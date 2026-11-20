@@ -5,7 +5,7 @@ import { getOrCreateLanDeviceId } from './lib/lan-device-id.ts';
 import { invokeNative, type LanSyncListen, type LanSyncRequest } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { withTimeout } from './lib/timeout.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logError, logInfo, logWarn } from './log.ts';
 import {
   createPairing,
   type Pairing,
@@ -158,7 +158,7 @@ export async function startLanServer(options: StartLanServerOptions = {}): Promi
       return { ok: false, info: null, error: startLanServerError('当前平台不支持开启局域网配对') };
     }
     const pairing = createPairing(now);
-    logInfo('lan-sync', '已开启局域网配对', { host: listen.host, port: listen.port });
+    logInfo('sync', '已开启局域网配对', { host: listen.host, port: listen.port });
     return {
       ok: true,
       info: {
@@ -172,7 +172,7 @@ export async function startLanServer(options: StartLanServerOptions = {}): Promi
     };
   } catch (cause: unknown) {
     const reason = errorMessage(cause);
-    logWarn('lan-sync', '开启局域网配对失败', {
+    logError('sync', '局域网配对开启失败', {
       message: reason,
       raw: String(cause),
       host: options.host ?? '',
@@ -193,7 +193,7 @@ export async function stopLanServer(): Promise<void> {
       await plugin?.stop();
     }
   } catch (cause: unknown) {
-    logWarn('lan-sync', '停止局域网配对失败', { message: errorMessage(cause) });
+    logWarn('sync', '局域网配对停止失败', { message: errorMessage(cause) });
   }
 }
 

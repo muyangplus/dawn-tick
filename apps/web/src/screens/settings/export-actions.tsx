@@ -12,7 +12,7 @@ import {
   type TimetableImageModel,
 } from '../../lib/timetable-image.ts';
 import { fail } from '../../copy/zh.ts';
-import { logWarn } from '../../log.ts';
+import { logError } from '../../log.ts';
 import { saveBinaryFile } from '../../system-actions.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
@@ -87,7 +87,7 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
       );
     } catch (cause: unknown) {
       const message = errorMessage(cause);
-      logWarn('export', `${what}失败`, { message });
+      logError('backup', '导出失败', { what, message });
       const corrupt = isCorruptDatabase(cause);
       toast.error(
         fail(
@@ -144,7 +144,7 @@ export function ShareExportAction({ storage }: { storage: Storage }) {
       if (result.saved) toastSaved(`已导出课表分享文件（${exported.semesterName}）`, result.path);
     } catch (cause: unknown) {
       const message = errorMessage(cause);
-      logWarn('export', '导出课表分享文件失败', { message });
+      logError('backup', '课表分享文件导出失败', { message });
       toast.error(fail('导出课表分享文件', message, '请重试；仍失败可先导出备份再反馈'));
     } finally {
       setBusy(false);

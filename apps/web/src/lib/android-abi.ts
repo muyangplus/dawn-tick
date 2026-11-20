@@ -114,7 +114,7 @@ async function detectAndroidAbi(): Promise<AndroidAbi> {
     const value = await withTimeout(probe(), timeoutForTests, '读取设备 ABI 超时');
     return parseAndroidAbi(value);
   } catch (cause: unknown) {
-    logWarn('update', '读取设备 ABI 失败，按 arm64-v8a 处理', { message: errorMessage(cause) });
+    logWarn('update', '设备 ABI 读取失败，按 arm64-v8a 处理', { message: errorMessage(cause) });
     return DEFAULT_ANDROID_ABI;
   }
 }

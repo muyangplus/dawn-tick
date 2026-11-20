@@ -143,7 +143,7 @@ export function AdjustDialog({
     const plan = planned.plan;
     if (plan.scope === 'weekly') {
       const result = await run({
-        scope: 'adjust',
+        scope: 'timetable',
         label: '正在改为每周…',
         ok: `已改为每周 ${WEEKDAY_LABELS[plan.dayOfWeek - 1] ?? ''} ${formatPeriodRange(plan.periodStart, plan.periodEnd)}`,
         fail: { what: '改为每周失败', next: '请重试；仍失败请重新打开调课弹窗。' },
@@ -157,13 +157,13 @@ export function AdjustDialog({
       });
       if (!result.ok) return;
       warnOverlap({ dayOfWeek: plan.dayOfWeek, periodStart: plan.periodStart, periodEnd: plan.periodEnd, week: null });
-      logInfo('adjust', '已改为每周', { scheduleId: plan.scheduleId, dayOfWeek: plan.dayOfWeek });
+      logInfo('timetable', '已改为每周', { scheduleId: plan.scheduleId, dayOfWeek: plan.dayOfWeek });
       onChanged();
       onOpenChange(false);
       return;
     }
     const result = await run({
-      scope: 'adjust',
+      scope: 'timetable',
       label: '正在调课…',
       ok: `已把这一次课调到 ${plan.finalDate} ${formatPeriodRange(plan.periodStart, plan.periodEnd)}`,
       fail: { what: '调课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
@@ -183,7 +183,7 @@ export function AdjustDialog({
       periodEnd: plan.periodEnd,
       week: plan.week,
     });
-    logInfo('adjust', '已记录调课', {
+    logInfo('timetable', '已记录调课', {
       scheduleId: plan.scheduleId,
       date: sourceDate,
       newDate: plan.finalDate,
@@ -202,7 +202,7 @@ export function AdjustDialog({
     }
     const plan = planned.plan;
     const result = await run({
-      scope: 'adjust',
+      scope: 'timetable',
       label: '正在停课…',
       ok: '已记录停课',
       fail: { what: '停课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
@@ -215,7 +215,7 @@ export function AdjustDialog({
         }),
     });
     if (!result.ok) return;
-    logInfo('adjust', '已记录停课', { scheduleId: plan.scheduleId, date: sourceDate });
+    logInfo('timetable', '已记录停课', { scheduleId: plan.scheduleId, date: sourceDate });
     onChanged();
     onOpenChange(false);
   }
@@ -240,14 +240,14 @@ export function AdjustDialog({
     }
     const examPlan = planned.plan;
     const result = await run({
-      scope: 'adjust',
+      scope: 'timetable',
       label: '正在改为考试…',
       ok: `已改为考试：${examPlan.date} ${formatPeriodRange(examPlan.periodStart, examPlan.periodEnd)}`,
       fail: { what: '改为考试失败', next: '请重试；仍失败请重新打开调课弹窗。' },
       task: () => applyExam(storage, examPlan, { userId: USER_ID, semesterId: semesterId() }),
     });
     if (!result.ok) return;
-    logInfo('adjust', '已改为考试', {
+    logInfo('timetable', '已改为考试', {
       scheduleId: examPlan.scheduleId,
       date: examPlan.date,
       periods: `${examPlan.periodStart}-${examPlan.periodEnd}`,
@@ -265,7 +265,7 @@ export function AdjustDialog({
     }
     const swapPlan = planned.plan;
     const result = await run({
-      scope: 'adjust',
+      scope: 'timetable',
       label: '正在调休…',
       ok: '已记录调休',
       fail: { what: '调休失败', next: '请重试；仍失败请重新打开调课弹窗。' },
@@ -276,7 +276,7 @@ export function AdjustDialog({
         }),
     });
     if (!result.ok) return;
-    logInfo('adjust', '已记录调休', { from: swapPlan.from, to: swapPlan.to });
+    logInfo('timetable', '已记录调休', { from: swapPlan.from, to: swapPlan.to });
     onChanged();
     onOpenChange(false);
   }
@@ -296,7 +296,7 @@ export function AdjustDialog({
     }
     const extraPlan = planned.plan;
     const result = await run({
-      scope: 'adjust',
+      scope: 'timetable',
       label: '正在临时加课…',
       ok: `已加课：第 ${extraPlan.week} 周 ${WEEKDAY_LABELS[extraPlan.dayOfWeek - 1] ?? ''}`,
       fail: { what: '临时加课失败', next: '请重试；仍失败请重新打开调课弹窗。' },

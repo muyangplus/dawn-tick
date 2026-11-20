@@ -1,6 +1,6 @@
 import { BACKUP_META_KEYS, LAN_EXCLUDED_KEYS, moduleStores, type Storage } from '@dawn-tick/core';
 import { errorMessage } from './lib/errors.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logDebug, logError, logInfo } from './log.ts';
 import {
   LAN_SCOPES,
   formatScope,
@@ -130,11 +130,11 @@ export async function previewPullFromPeer(
     if (!response.ok) return emptyPreview(lanResponseError(response.status, text, '预览'));
     const envelope = parseLanEnvelope(text);
     const stats = await countLanChanges(storage, envelope, scopes);
-    logInfo('lan-sync', '已取得同步预览', { total: stats.total });
+    logDebug('sync', '同步预览已取得', { total: stats.total });
     return { ok: true, envelope, stats, bytes: lanUtf8Length(text), error: null };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '预览失败', { error });
+    logError('sync', '同步预览失败', { error });
     return emptyPreview(error);
   }
 }
@@ -151,7 +151,7 @@ export async function applyLanPreview(
   }
   try {
     const result = await applyLanEnvelope(storage, envelope, { scopes, mode: 'merge', now });
-    logInfo('lan-sync', '已确认合并预览', { imported: result.imported, skipped: result.skipped });
+    logInfo('sync', '预览内容已合并', { imported: result.imported, skipped: result.skipped });
     return {
       ok: true,
       imported: result.imported,
@@ -162,7 +162,7 @@ export async function applyLanPreview(
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
-    logWarn('lan-sync', '合并预览失败', { error });
+    logError('sync', '预览内容合并失败', { error });
     return { ok: false, imported: 0, skipped: 0, warnings: [], error, bytes: 0 };
   }
 }

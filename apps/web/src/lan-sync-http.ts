@@ -138,7 +138,7 @@ export async function lanFetch(url: string, init: RequestInit = {}): Promise<Res
       );
     } catch (cause: unknown) {
       if (!retryable) throw cause;
-      logWarn('lan-sync', '桌面局域网直连失败，回退 WebView fetch', {
+      logWarn('sync', '桌面直连失败，改用 WebView fetch', {
         message: cause instanceof Error ? cause.message : String(cause),
       });
     }
@@ -147,7 +147,7 @@ export async function lanFetch(url: string, init: RequestInit = {}): Promise<Res
       return await androidFetch(url, init);
     } catch (cause: unknown) {
       if (!retryable) throw cause;
-      logWarn('lan-sync', 'Android 原生 HTTP 失败，回退 fetch', {
+      logWarn('sync', 'Android 原生 HTTP 失败，改用 fetch', {
         message: cause instanceof Error ? cause.message : String(cause),
       });
     }

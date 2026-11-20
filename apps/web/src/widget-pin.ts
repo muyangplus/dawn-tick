@@ -85,11 +85,11 @@ export async function pinWidget(id: MobileWidget['id']): Promise<PinWidgetResult
   try {
     const result = await plugin.requestPin({ provider: id });
     const status = pinStatusOf(result?.status);
-    logInfo('widget', '请求添加主屏小组件', { provider: id, status, reason: result?.reason ?? null });
+    logInfo('widget', '已请求添加主屏小组件', { provider: id, status, reason: result?.reason ?? null });
     return { status, reason: result?.reason };
   } catch (cause: unknown) {
     const reason = nativeErrorMessage(cause);
-    logWarn('widget', '请求添加主屏小组件失败', { provider: id, message: reason });
+    logWarn('widget', '主屏小组件添加请求失败', { provider: id, message: reason });
     return { status: 'error', reason };
   }
 }
@@ -109,7 +109,7 @@ export async function readMobileWidgetStates(): Promise<MobileWidgetState[] | nu
     }
     return states;
   } catch (cause: unknown) {
-    logWarn('widget', '读取主屏小组件状态失败', {
+    logWarn('widget', '主屏小组件状态读取失败', {
       message: nativeErrorMessage(cause),
     });
     return null;
