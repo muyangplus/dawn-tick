@@ -101,30 +101,26 @@ pub(crate) fn install_panic_logger() {
         // 已实测：把便携版放在受限制的目录里运行时，WebView2 的 App Container
         // 无法使用其中的数据目录，表现为 setup 阶段「拒绝访问」。
         if text.contains("Failed to setup app") && (text.contains("拒绝访问") || text.contains("os error 5")) {
-            message.push_str(
-                "\n\n可能原因：程序所在目录的权限不允许 WebView2 在其中创建数据目录。\n\
-                 请把 DawnTick.exe 移到你有完全控制权的普通目录（例如桌面或文档下新建的文件夹）再运行。\n\
-                 确认方式：把整个文件夹复制到桌面后双击运行，若能启动即为该原因。",
-            );
+            message.push_str(copy::startup::WEBVIEW_ACCESS_DENIED_HINT);
         }
-        message.push_str(&format!("\n\n数据目录与日志：{}", data_root_hint()));
-        show_error_box("晓刻 DawnTick 启动失败", &message);
+        message.push_str(&copy::startup::data_root_line(data_root_hint()));
+        show_error_box(copy::startup::START_FAILED_TITLE, &message);
         default_hook(info);
     }));
 }
 
 /// 便于用户排查的目录提示。
 pub(crate) fn data_root_hint() -> String {
-    let mut parts = vec![format!("数据目录 {}", data_dir().display())];
+    let mut parts = vec![copy::startup::data_dir_part(data_dir().display())];
     if let Ok(base) = std::env::var("LOCALAPPDATA") {
-        parts.push(format!("日志回退目录 {base}\\com.dawntick.app"));
+        parts.push(copy::startup::log_fallback_dir_part(&base));
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            parts.push(format!("程序目录 {}", dir.display()));
+            parts.push(copy::startup::program_dir_part(dir.display()));
         }
     }
-    parts.join("；")
+    parts.join(copy::startup::PART_SEPARATOR)
 }
 
 /// 启动失败时给出可见提示，避免进程静默退出。

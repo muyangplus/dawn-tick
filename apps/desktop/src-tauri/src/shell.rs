@@ -31,7 +31,7 @@ pub(crate) fn shell_open(target: &str, what: &str) -> Result<(), String> {
         )
     };
     if (result as isize) <= 32 {
-        return Err(format!("{what}失败（代码 {}）", result as isize));
+        return Err(copy::shell::open_failed(what, result as isize));
     }
     Ok(())
 }
@@ -40,17 +40,17 @@ pub(crate) fn shell_open(target: &str, what: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
     if !external_url_is_allowed(&url) {
-        return Err("只支持 http 与 https 链接".to_string());
+        return Err(copy::shell::HTTP_ONLY.to_string());
     }
     #[cfg(windows)]
     {
-        shell_open(&url, "打开默认浏览器")?;
+        shell_open(&url, copy::shell::OPEN_BROWSER)?;
         log_info("link", format!("已在默认浏览器打开链接 url={}", redact_url(&url)));
         Ok(())
     }
     #[cfg(not(windows))]
     {
-        Err("当前平台不支持".to_string())
+        Err(copy::common::UNSUPPORTED_PLATFORM.to_string())
     }
 }
 
@@ -92,7 +92,7 @@ pub fn open_log_dir() -> Result<String, String> {
     create_dir_all(&dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
     #[cfg(windows)]
     {
-        shell_open(&dir.to_string_lossy(), "打开日志目录")?;
+        shell_open(&dir.to_string_lossy(), copy::shell::OPEN_LOG_DIR)?;
         log_debug("log", format!("已打开日志目录 dir={}", dir.display()));
     }
     Ok(dir.to_string_lossy().to_string())

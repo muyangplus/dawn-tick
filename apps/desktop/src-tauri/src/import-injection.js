@@ -106,7 +106,7 @@
     panel.style.cssText =
       'position:fixed;right:18px;bottom:78px;z-index:2147483647;width:420px;max-width:80vw;padding:12px;border-radius:12px;background:#fff;color:#141414;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:13px;line-height:1.5';
     var title = document.createElement('div');
-    title.textContent = '页面太大或带不过来，请全选下面的内容复制，回到晓刻粘贴导入';
+    title.textContent = '内容没能自动交给晓刻。请全选下面的内容复制，回到晓刻粘贴导入';
     var box = document.createElement('textarea');
     box.value = payload;
     box.style.cssText = 'width:100%;height:120px;margin-top:8px;font-size:11px';

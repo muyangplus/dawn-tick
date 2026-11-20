@@ -1,4 +1,5 @@
 
+mod copy;
 mod fs_commands;
 mod install_kind;
 mod instance_lock;
@@ -102,12 +103,9 @@ pub fn run() {
                     return;
                 }
                 Err(error) => {
-                    let message = format!(
-                        "{reason}。\n申请管理员权限失败（{error}）。\n\n\
-                         为避免两个实例同时写坏数据库，本次启动已停止，未打开数据库。"
-                    );
+                    let message = copy::startup::elevation_failed(&reason, &error);
                     log_error("permission", format!("申请管理员权限失败，启动停止 reason={reason} error={error}"));
-                    show_error_box("晓刻 DawnTick 无法启动", &message);
+                    show_error_box(copy::startup::CANNOT_START_TITLE, &message);
                     return;
                 }
             }
@@ -116,18 +114,14 @@ pub fn run() {
             let focused = focus_main_window();
             if !focused {
                 log_warn("app", "已有实例在运行，唤回窗口失败");
-                show_error_box(
-                    "晓刻 DawnTick 已在运行",
-                    "已有实例在运行，请先关闭它。\n\n\
-                     若看不到窗口，可在任务管理器里结束 DawnTick.exe 后重试。",
-                );
+                show_error_box(copy::startup::ALREADY_RUNNING_TITLE, copy::startup::ALREADY_RUNNING);
             }
             log_info("app", "本次启动退出，交给已有实例");
             return;
         }
         InstanceRole::Blocked(reason) => {
             log_error("app", format!("启动停止，未打开数据库 reason={reason}"));
-            show_error_box("晓刻 DawnTick 无法启动", &reason);
+            show_error_box(copy::startup::CANNOT_START_TITLE, &reason);
             return;
         }
     };
@@ -174,10 +168,8 @@ pub fn run() {
     if launch_has_elevate_marker() && !database_writable() {
         log_info("storage", "等待数据库文件可写");
         if !instance_lock::wait_until(std::time::Duration::from_secs(10), database_writable) {
-            let message = "已取得实例锁，但数据库文件仍不可写（可能被其它程序占用）。\n\n\
-                           请关闭占用数据库的程序后重试；本次启动未打开数据库。";
             log_error("storage", "数据库文件等待超时仍不可写，启动停止");
-            show_error_box("晓刻 DawnTick 无法打开数据库", message);
+            show_error_box(copy::startup::DATABASE_LOCKED_TITLE, copy::startup::DATABASE_NOT_WRITABLE);
             return;
         }
         log_info("storage", "数据库文件已可写");
@@ -362,10 +354,10 @@ pub fn run() {
         });
 
     if let Err(error) = builder.run(tauri::generate_context!()) {
-        let message = format!("运行 Tauri 应用失败: {error}");
+        let message = copy::startup::run_failed(&error);
         log_error("app", format!("Tauri 运行失败 error={error}"));
         eprintln!("{message}");
-        show_error_box("晓刻 DawnTick 启动失败", &message);
+        show_error_box(copy::startup::START_FAILED_TITLE, &message);
     }
 }
 

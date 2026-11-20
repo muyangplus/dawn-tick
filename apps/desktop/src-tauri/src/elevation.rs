@@ -29,13 +29,13 @@ pub(crate) fn is_elevated() -> bool {
 #[cfg(windows)]
 pub(crate) fn request_elevation_restart() -> Result<(), String> {
     if is_elevated() {
-        return Err("已具备管理员权限，无需提权".to_string());
+        return Err(copy::elevation::ALREADY_ELEVATED.to_string());
     }
 
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    let exe = std::env::current_exe().map_err(|error| format!("取程序路径失败: {error}"))?;
+    let exe = std::env::current_exe().map_err(copy::common::program_path_failed)?;
     let mut params: Vec<String> = std::env::args().skip(1).filter(|arg| arg != ELEVATE_MARKER).collect();
     params.push(ELEVATE_MARKER.to_string());
     let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
@@ -53,7 +53,7 @@ pub(crate) fn request_elevation_restart() -> Result<(), String> {
         )
     };
     if (result as isize) <= 32 {
-        return Err(format!("申请管理员权限被取消或失败（代码 {}）", result as isize));
+        return Err(copy::elevation::request_failed(result as isize));
     }
     log_info("permission", "管理员实例已启动");
     Ok(())
@@ -74,7 +74,7 @@ pub async fn relaunch_elevated() -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        Err("当前平台不支持".to_string())
+        Err(copy::common::UNSUPPORTED_PLATFORM.to_string())
     }
 }
 

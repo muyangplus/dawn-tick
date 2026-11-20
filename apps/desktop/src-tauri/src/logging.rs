@@ -106,12 +106,12 @@ pub(crate) fn ensure_console() {
             return;
         }
         if AllocConsole() != 0 {
-            let title: Vec<u16> = "晓刻 DawnTick 日志"
+            let title: Vec<u16> = crate::copy::window::DEV_CONSOLE_TITLE
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
             SetConsoleTitleW(title.as_ptr());
-            let _ = writeln!(std::io::stdout(), "晓刻 DawnTick 日志已连接到本控制台");
+            let _ = writeln!(std::io::stdout(), "{}", crate::copy::window::DEV_CONSOLE_ATTACHED);
         }
     }
 }

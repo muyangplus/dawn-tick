@@ -46,15 +46,15 @@ pub async fn submit_page_import(app: tauri::AppHandle, payload: String, nonce: S
     let expected = IMPORT_NONCE.lock().map(|guard| guard.clone()).unwrap_or(None);
     if !import_nonce_matches(expected.as_deref(), &nonce) {
         log_warn("import", "教务页面回传的校验值不符，已拒绝");
-        return Err("内容不是从本次打开的教务窗口交回的，请重新打开教务窗口".into());
+        return Err(copy::import::NONCE_MISMATCH.into());
     }
     if !payload.contains("<<<DAWNTICK>>>") {
         log_warn("import", "教务页面回传内容缺少标记，已拒绝");
-        return Err("内容缺少标记".into());
+        return Err(copy::import::MARKER_MISSING.into());
     }
     log_info("import", format!("教务页面已回传内容 bytes={}", payload.len()));
     app.emit("import-payload", payload)
-        .map_err(|error| format!("转发回传内容失败: {error}"))
+        .map_err(copy::import::forward_failed)
 }
 
 /// 打开内嵌教务窗口，由用户自行登录并打开课表页。
@@ -62,7 +62,7 @@ pub async fn submit_page_import(app: tauri::AppHandle, payload: String, nonce: S
 #[tauri::command]
 pub async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<(), String> {
     use tauri::Manager;
-    let parsed: tauri::Url = url.parse().map_err(|error| format!("网址不正确: {error}"))?;
+    let parsed: tauri::Url = url.parse().map_err(copy::import::invalid_url)?;
     log_debug("import", format!("开始创建教务窗口 url={}", redact_url(parsed.as_str())));
     if let Some(existing) = app.get_webview_window(IMPORT_WINDOW) {
         let _ = existing.close();
@@ -74,7 +74,7 @@ pub async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<()
     let injection = import_injection_with(&nonce);
     let new_window_target = app.clone();
     tauri::WebviewWindowBuilder::new(&app, IMPORT_WINDOW, tauri::WebviewUrl::External(parsed))
-        .title("登录教务并打开课表页")
+        .title(copy::window::IMPORT_TITLE)
         .inner_size(1100.0, 780.0)
         .initialization_script(&injection)
         // 记录每次页面导航，便于判断「点了没反应」是没触发跳转还是被拦下。
@@ -98,7 +98,7 @@ pub async fn open_import_window(app: tauri::AppHandle, url: String) -> Result<()
             tauri::webview::NewWindowResponse::Deny
         })
         .build()
-        .map_err(|error| format!("打开教务窗口失败: {error}"))?;
+        .map_err(copy::import::open_failed)?;
     log_info("import", "教务窗口已打开");
     Ok(())
 }

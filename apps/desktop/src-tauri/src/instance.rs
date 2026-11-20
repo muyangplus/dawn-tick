@@ -52,7 +52,7 @@ pub(crate) fn focus_main_window() -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE,
     };
-    let title: Vec<u16> = "晓刻 DawnTick".encode_utf16().chain(std::iter::once(0)).collect();
+    let title: Vec<u16> = copy::app::NAME.encode_utf16().chain(std::iter::once(0)).collect();
     let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
     if hwnd == 0 {
         log_warn("app", "已有实例的主窗口不存在，无法唤回");
@@ -95,18 +95,10 @@ pub(crate) fn decide_instance() -> InstanceRole {
             if looks_like_access_denied(&reason) {
                 ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
                 if !elevated {
-                    return InstanceRole::NeedsElevation(format!(
-                        "数据目录不可写，无法建立实例锁（{reason}）"
-                    ));
+                    return InstanceRole::NeedsElevation(copy::instance::data_dir_not_writable(&reason));
                 }
             }
-            InstanceRole::Blocked(format!(
-                "无法在数据目录建立实例锁：{reason}\n\n\
-                 为避免两个实例同时写坏数据库，本次启动已停止，不会打开数据库。\n\
-                 请把程序移到可写目录，或以管理员身份运行后重试。\n\n\
-                 锁文件：{}",
-                lock.display()
-            ))
+            InstanceRole::Blocked(copy::instance::lock_unavailable(&reason, lock.display()))
         }
         instance_lock::Gate::Busy { lock, reason } => {
             log_info("app", format!("实例锁被占用 lock={} reason={reason}", lock.display()));
@@ -117,16 +109,11 @@ pub(crate) fn decide_instance() -> InstanceRole {
                         log_info("app", "提权实例已取得实例锁");
                         InstanceRole::Owner(lock)
                     }
-                    instance_lock::Gate::Busy { .. } => InstanceRole::Blocked(format!(
-                        "等待旧实例退出超时（{} 秒），本次未打开数据库。\n\
-                         请关闭所有晓刻窗口（可在任务管理器结束 DawnTick.exe）后重试。\n\n\
-                         锁文件：{}",
+                    instance_lock::Gate::Busy { .. } => InstanceRole::Blocked(copy::instance::handoff_timeout(
                         INSTANCE_HANDOFF_TIMEOUT.as_secs(),
-                        lock.display()
+                        lock.display(),
                     )),
-                    instance_lock::Gate::Unavailable { reason, .. } => InstanceRole::Blocked(format!(
-                        "等待旧实例退出后仍无法建立实例锁（{reason}），本次未打开数据库。"
-                    )),
+                    instance_lock::Gate::Unavailable { reason, .. } => InstanceRole::Blocked(copy::instance::handoff_lock_failed(&reason)),
                 };
             }
 
@@ -147,7 +134,7 @@ pub(crate) fn decide_instance() -> InstanceRole {
                         InstanceRole::FocusExisting
                     }
                     instance_lock::Gate::Unavailable { reason, .. } => {
-                        InstanceRole::Blocked(format!("接管实例锁失败（{reason}），本次未打开数据库。"))
+                        InstanceRole::Blocked(copy::instance::takeover_failed(&reason))
                     }
                 };
             }
@@ -183,7 +170,7 @@ pub(crate) fn decide_instance() -> InstanceRole {
                     InstanceRole::FocusExisting
                 }
                 instance_lock::Gate::Unavailable { reason, .. } => {
-                    InstanceRole::Blocked(format!("接管实例锁失败（{reason}），本次未打开数据库。"))
+                    InstanceRole::Blocked(copy::instance::takeover_failed(&reason))
                 }
             }
         }

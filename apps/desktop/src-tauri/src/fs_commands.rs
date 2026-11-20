@@ -26,7 +26,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|error| format!("读取文件失败: {error}"))?;
+    let bytes = std::fs::read(path).map_err(crate::copy::update::read_failed)?;
     Ok(sha256_hex(&bytes))
 }
 
@@ -36,7 +36,7 @@ pub fn normalize_sha256(text: &str) -> Result<String, String> {
     if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(value)
     } else {
-        Err("缺少有效的 SHA-256 校验值".to_string())
+        Err(crate::copy::update::SHA256_MISSING.to_string())
     }
 }
 
@@ -52,7 +52,7 @@ pub fn safe_update_name(name: &str) -> Result<String, String> {
     if ok {
         Ok(base.to_string())
     } else {
-        Err(format!("更新包文件名不合法: {name}"))
+        Err(crate::copy::update::invalid_name(name))
     }
 }
 
@@ -66,10 +66,10 @@ pub fn resolve_staged(
     let safe = safe_update_name(name)?;
     let expected = normalize_sha256(expected_sha256)?;
     let path = dir.join(&safe);
-    let canonical = std::fs::canonicalize(&path).map_err(|_| format!("更新包不存在: {safe}"))?;
-    let root = std::fs::canonicalize(dir).map_err(|_| "更新暂存目录不存在".to_string())?;
+    let canonical = std::fs::canonicalize(&path).map_err(|_| crate::copy::update::not_found(&safe))?;
+    let root = std::fs::canonicalize(dir).map_err(|_| crate::copy::update::STAGING_MISSING.to_string())?;
     if !crate::paths::path_inside(&canonical, &root) || !canonical.is_file() {
-        return Err("更新包必须位于应用的更新暂存目录".to_string());
+        return Err(crate::copy::update::OUTSIDE_STAGING.to_string());
     }
     let extension_ok = canonical
         .extension()
@@ -77,11 +77,11 @@ pub fn resolve_staged(
         .map(|ext| extensions.iter().any(|allowed| ext.eq_ignore_ascii_case(allowed)))
         .unwrap_or(false);
     if !extension_ok {
-        return Err(format!("更新包类型不对，只接受 {}", extensions.join(" / ")));
+        return Err(crate::copy::update::wrong_type(extensions.join(" / ")));
     }
     let actual = sha256_file(&canonical)?;
     if actual != expected {
-        return Err("更新包校验失败：文件在下载后被改动，请重新下载".to_string());
+        return Err(crate::copy::update::TAMPERED.to_string());
     }
     Ok(canonical)
 }
@@ -100,13 +100,13 @@ pub struct StagedUpdate {
 pub async fn stage_update(name: String, base64: String) -> Result<StagedUpdate, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let safe = safe_update_name(&name)?;
-        let bytes = crate::decode_base64(&base64).ok_or_else(|| "内容不是合法的 Base64".to_string())?;
+        let bytes = crate::decode_base64(&base64).ok_or_else(|| crate::copy::common::INVALID_BASE64.to_string())?;
         let dir = updates_dir();
-        std::fs::create_dir_all(&dir).map_err(|error| format!("创建更新暂存目录失败: {error}"))?;
+        std::fs::create_dir_all(&dir).map_err(crate::copy::update::create_staging_failed)?;
         let target = dir.join(&safe);
         let staging = dir.join(format!("{safe}.part"));
-        std::fs::write(&staging, &bytes).map_err(|error| format!("写入更新包失败: {error}"))?;
-        std::fs::rename(&staging, &target).map_err(|error| format!("写入更新包失败: {error}"))?;
+        std::fs::write(&staging, &bytes).map_err(crate::copy::update::write_failed)?;
+        std::fs::rename(&staging, &target).map_err(crate::copy::update::write_failed)?;
         crate::log_info("update", format!("更新包已暂存 name={safe} bytes={}", bytes.len()));
         Ok(StagedUpdate {
             name: safe,
@@ -115,7 +115,7 @@ pub async fn stage_update(name: String, base64: String) -> Result<StagedUpdate, 
         })
     })
     .await
-    .map_err(|error| format!("后台任务失败: {error}"))?
+    .map_err(crate::copy::common::background_task_failed)?
 }
 
 /// 导出文件：Rust 弹「另存为」后写入。用户取消返回 `None`。
@@ -131,8 +131,8 @@ pub async fn save_file(
 ) -> Result<Option<String>, String> {
     let bytes = match (text, base64) {
         (Some(text), None) => text.into_bytes(),
-        (None, Some(encoded)) => crate::decode_base64(&encoded).ok_or_else(|| "内容不是合法的 Base64".to_string())?,
-        _ => return Err("要写入的内容缺失".to_string()),
+        (None, Some(encoded)) => crate::decode_base64(&encoded).ok_or_else(|| crate::copy::common::INVALID_BASE64.to_string())?,
+        _ => return Err(crate::copy::files::NOTHING_TO_WRITE.to_string()),
     };
     // 对话框的阻塞版本不能在主线程或 async 工作线程里等：放到阻塞线程池
     tauri::async_runtime::spawn_blocking(move || {
@@ -146,14 +146,14 @@ pub async fn save_file(
         let Some(chosen) = chosen else {
             return Ok(None);
         };
-        let path = chosen.into_path().map_err(|error| format!("保存位置不可用: {error}"))?;
-        std::fs::write(&path, &bytes).map_err(|error| format!("写入失败: {error}"))?;
+        let path = chosen.into_path().map_err(crate::copy::files::location_unavailable)?;
+        std::fs::write(&path, &bytes).map_err(crate::copy::files::write_failed)?;
         let shown = path.to_string_lossy().to_string();
         crate::log_info("backup", format!("文件已导出 path={shown} bytes={}", bytes.len()));
         Ok(Some(shown))
     })
     .await
-    .map_err(|error| format!("后台任务失败: {error}"))?
+    .map_err(crate::copy::common::background_task_failed)?
 }
 
 #[cfg(test)]

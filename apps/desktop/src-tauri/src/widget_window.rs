@@ -327,7 +327,7 @@ pub(crate) fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow
     }
     let (width, height) = widget_size(DEFAULT_VARIANT);
     let built = WebviewWindowBuilder::new(app, "mini", WebviewUrl::App("mini.html".into()))
-        .title("晓刻 DawnTick · 悬浮窗")
+        .title(crate::copy::window::WIDGET_TITLE)
         .inner_size(width, height)
         // 允许用户拉伸手柄（Web 侧调 startResizeDragging），但尺寸被夹在上下限之间
         .min_inner_size(MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT)

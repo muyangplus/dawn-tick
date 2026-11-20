@@ -177,7 +177,7 @@ pub fn device_name() -> String {
         .ok()
         .map(|name| name.trim().to_string())
         .filter(|name| valid_name(name))
-        .unwrap_or_else(|| "Windows 设备".to_string())
+        .unwrap_or_else(|| crate::copy::lan::DEFAULT_DEVICE_NAME.to_string())
 }
 
 /// 开始广播（幂等：已有广播线程先停掉再起）。

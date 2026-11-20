@@ -294,7 +294,7 @@ pub fn list_networks() -> Vec<LanNetwork> {
         // 枚举失败时退回路由探测的单地址，至少让 UI 有一项可选。
         if let Some(address) = crate::lan_sync::probe_lan_ipv4() {
             networks.push(to_lan_network(&InterfaceAddress {
-                name: "本机网络".to_string(),
+                name: crate::copy::lan::DEFAULT_NETWORK_NAME.to_string(),
                 address,
                 netmask: DEFAULT_NETMASK,
             }));

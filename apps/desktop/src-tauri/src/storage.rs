@@ -109,9 +109,9 @@ pub(crate) fn resolve_storage_path(text: &str) -> PathBuf {
 
 /// 建目录并写探针，确认这个位置真能写进去。
 pub(crate) fn ensure_writable_dir(dir: &std::path::Path) -> Result<(), String> {
-    create_dir_all(dir).map_err(|error| format!("创建目录失败({error})"))?;
+    create_dir_all(dir).map_err(copy::storage::create_dir_failed)?;
     let probe = dir.join("dawntick-storage-probe.tmp");
-    std::fs::write(&probe, b"probe").map_err(|error| format!("写入失败({error})"))?;
+    std::fs::write(&probe, b"probe").map_err(copy::storage::write_failed)?;
     let _ = std::fs::remove_file(&probe);
     Ok(())
 }
@@ -126,7 +126,7 @@ pub(crate) fn choose_data_dir(default: PathBuf, custom: Option<String>) -> (Path
         Ok(()) => (candidate, None),
         Err(error) => (
             default,
-            Some(format!("自定义存储位置不可用（{error}），已改用默认位置")),
+            Some(copy::storage::custom_unavailable(&error)),
         ),
     }
 }
@@ -297,7 +297,7 @@ pub async fn set_storage_path(path: String) -> Result<StorageInfo, String> {
     // 要复制整个数据库：放到阻塞线程池
     tauri::async_runtime::spawn_blocking(move || set_storage_path_blocking(path))
         .await
-        .map_err(|error| format!("后台任务失败: {error}"))?
+        .map_err(copy::common::background_task_failed)?
 }
 
 pub(crate) fn set_storage_path_blocking(path: String) -> Result<StorageInfo, String> {
@@ -314,10 +314,10 @@ pub(crate) fn set_storage_path_blocking(path: String) -> Result<StorageInfo, Str
     // 先取旧目录：写入引导文件后 data_dir() 就指向新目录了
     let current = data_dir();
     if let Some(parent) = config_file.parent() {
-        create_dir_all(parent).map_err(|error| format!("创建引导文件目录失败: {error}"))?;
+        create_dir_all(parent).map_err(copy::storage::save_failed)?;
     }
     if !write_json(&config_file, &StorageConfig { path: text.clone() }) {
-        return Err("写入引导文件失败".to_string());
+        return Err(copy::storage::CONFIG_WRITE_FAILED.to_string());
     }
     let copied = if same_path(&current, &target) {
         Vec::new()
@@ -338,7 +338,7 @@ pub fn open_data_dir() -> Result<String, String> {
     create_dir_all(&dir).map_err(|error| format!("创建数据目录失败: {error}"))?;
     #[cfg(windows)]
     {
-        shell_open(&dir.to_string_lossy(), "打开数据目录")?;
+        shell_open(&dir.to_string_lossy(), copy::shell::OPEN_DATA_DIR)?;
         log_debug("storage", format!("已打开数据目录 dir={}", dir.display()));
     }
     Ok(dir.to_string_lossy().to_string())

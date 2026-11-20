@@ -54,38 +54,38 @@ pub fn parse_target(raw: &str) -> Result<LanTarget, String> {
     let text = raw.trim();
     let rest = text
         .strip_prefix("http://")
-        .ok_or_else(|| "局域网直连只支持 http:// 地址".to_string())?;
+        .ok_or_else(|| crate::copy::lan_http::HTTP_ONLY.to_string())?;
     if rest.is_empty() {
-        return Err("目标地址为空".to_string());
+        return Err(crate::copy::lan_http::EMPTY_TARGET.to_string());
     }
     if rest.contains('#') {
-        return Err("目标地址不能带片段".to_string());
+        return Err(crate::copy::lan_http::FRAGMENT.to_string());
     }
     let (authority, path_and_query) = match rest.find('/') {
         Some(index) => (&rest[..index], &rest[index..]),
         None => (rest, "/"),
     };
     if authority.is_empty() {
-        return Err("目标地址缺少主机".to_string());
+        return Err(crate::copy::lan_http::MISSING_HOST.to_string());
     }
     if authority.contains('@') {
-        return Err("目标地址不能带用户名密码".to_string());
+        return Err(crate::copy::lan_http::USERINFO.to_string());
     }
     if authority.contains('[') {
-        return Err("只支持 IPv4 局域网地址".to_string());
+        return Err(crate::copy::lan_http::IPV4_ONLY.to_string());
     }
     let (host_text, port_text) = match authority.rsplit_once(':') {
         Some((host, port)) => (host, Some(port)),
         None => (authority, None),
     };
     if host_text.contains(':') {
-        return Err("只支持 IPv4 局域网地址".to_string());
+        return Err(crate::copy::lan_http::IPV4_ONLY.to_string());
     }
     let host: Ipv4Addr = host_text
         .parse()
-        .map_err(|_| "目标地址必须是 IPv4".to_string())?;
+        .map_err(|_| crate::copy::lan_http::HOST_NOT_IPV4.to_string())?;
     if !is_lan_ipv4(host) {
-        return Err("局域网直连只接受局域网目标".to_string());
+        return Err(crate::copy::lan_http::NOT_LAN.to_string());
     }
     let port = match port_text {
         None | Some("") => 80,
@@ -93,7 +93,7 @@ pub fn parse_target(raw: &str) -> Result<LanTarget, String> {
             .parse::<u16>()
             .ok()
             .filter(|port| *port != 0)
-            .ok_or_else(|| "目标端口不合法".to_string())?,
+            .ok_or_else(|| crate::copy::lan_http::BAD_PORT.to_string())?,
     };
     let path_and_query = if path_and_query.starts_with('/') {
         path_and_query.to_string()
@@ -127,29 +127,29 @@ pub fn build_request(
 ) -> Result<String, String> {
     let method = method.trim().to_ascii_uppercase();
     if !matches!(method.as_str(), "GET" | "POST" | "OPTIONS") {
-        return Err(format!("不支持的请求方法：{method}"));
+        return Err(crate::copy::lan_http::unsupported_method(&method));
     }
     let body = body.unwrap_or("");
     let mut lines: Vec<(String, String)> = Vec::new();
     let mut total = 0usize;
     if let Some(headers) = headers {
         if headers.len() > MAX_HEADERS {
-            return Err("请求头过多".to_string());
+            return Err(crate::copy::lan_http::TOO_MANY_HEADERS.to_string());
         }
         for (name, value) in headers {
             let name = name.trim();
             if invalid_header_name(name) {
-                return Err(format!("请求头名称不合法：{name}"));
+                return Err(crate::copy::lan_http::bad_header_name(name));
             }
             if value.contains('\r') || value.contains('\n') {
-                return Err(format!("请求头 {name} 的值不能包含换行"));
+                return Err(crate::copy::lan_http::header_newline(name));
             }
             if reserved_header(name) {
                 continue;
             }
             total += name.len() + value.len() + 4;
             if total > MAX_REQUEST_HEADER_BYTES {
-                return Err("请求头过大".to_string());
+                return Err(crate::copy::lan_http::HEADERS_TOO_LARGE.to_string());
             }
             lines.push((name.to_string(), value.trim().to_string()));
         }
@@ -186,18 +186,18 @@ pub fn decode_chunked(raw: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let mut index = 0usize;
     loop {
-        let line_end = find_crlf(raw, index).ok_or_else(|| "chunked 响应不完整".to_string())?;
+        let line_end = find_crlf(raw, index).ok_or_else(|| crate::copy::lan_http::CHUNKED_INCOMPLETE.to_string())?;
         let line = std::str::from_utf8(&raw[index..line_end])
-            .map_err(|_| "chunked 长度行不是 UTF-8".to_string())?;
+            .map_err(|_| crate::copy::lan_http::CHUNK_SIZE_NOT_UTF8.to_string())?;
         let size_text = line.split(';').next().unwrap_or("").trim();
         let size = usize::from_str_radix(size_text, 16)
-            .map_err(|_| "chunked 长度行不合法".to_string())?;
+            .map_err(|_| crate::copy::lan_http::CHUNK_SIZE_INVALID.to_string())?;
         index = line_end + 2;
         if size == 0 {
             // trailer：一直读到空行；没有 trailer 时紧接一个 CRLF。
             loop {
                 let trailer_end = find_crlf(raw, index)
-                    .ok_or_else(|| "chunked 响应缺少结束空行".to_string())?;
+                    .ok_or_else(|| crate::copy::lan_http::CHUNKED_NO_END.to_string())?;
                 let trailer = &raw[index..trailer_end];
                 index = trailer_end + 2;
                 if trailer.is_empty() {
@@ -207,17 +207,17 @@ pub fn decode_chunked(raw: &[u8]) -> Result<Vec<u8>, String> {
         }
         // 对方给的块长可能大得离谱：加法溢出在 debug 构建（dev 渠道）里会直接 panic
         if out.len().checked_add(size).map_or(true, |total| total > MAX_RESPONSE_BYTES) {
-            return Err("响应体超过 20MB 上限".to_string());
+            return Err(crate::copy::lan_http::BODY_TOO_LARGE.to_string());
         }
         let data_end = index
             .checked_add(size)
-            .ok_or_else(|| "chunked 长度溢出".to_string())?;
+            .ok_or_else(|| crate::copy::lan_http::CHUNK_OVERFLOW.to_string())?;
         let terminated = data_end
             .checked_add(2)
             .filter(|end| *end <= raw.len())
-            .ok_or_else(|| "chunked 响应不完整".to_string())?;
+            .ok_or_else(|| crate::copy::lan_http::CHUNKED_INCOMPLETE.to_string())?;
         if &raw[data_end..terminated] != b"\r\n" {
-            return Err("chunked 数据段缺少 CRLF".to_string());
+            return Err(crate::copy::lan_http::CHUNK_NO_CRLF.to_string());
         }
         out.extend_from_slice(&raw[index..data_end]);
         index = terminated;
@@ -230,21 +230,21 @@ pub fn parse_http_response(raw: &[u8]) -> Result<LanHttpResponse, String> {
         .windows(4)
         .take(HEAD_LIMIT)
         .position(|window| window == b"\r\n\r\n")
-        .ok_or_else(|| "响应头不完整".to_string())?;
+        .ok_or_else(|| crate::copy::lan_http::HEAD_INCOMPLETE.to_string())?;
     let head = std::str::from_utf8(&raw[..head_end])
-        .map_err(|_| "响应头不是 UTF-8".to_string())?;
+        .map_err(|_| crate::copy::lan_http::HEAD_NOT_UTF8.to_string())?;
     let mut lines = head.split("\r\n");
     let status_line = lines.next().unwrap_or_default();
     let mut parts = status_line.split_whitespace();
     let version = parts.next().unwrap_or_default();
     if !version.starts_with("HTTP/1.") {
-        return Err("响应不是 HTTP/1.x".to_string());
+        return Err(crate::copy::lan_http::NOT_HTTP1.to_string());
     }
     let status = parts
         .next()
         .and_then(|text| text.parse::<u16>().ok())
         .filter(|status| (100..=599).contains(status))
-        .ok_or_else(|| "响应状态行不合法".to_string())?;
+        .ok_or_else(|| crate::copy::lan_http::BAD_STATUS_LINE.to_string())?;
     let mut content_length: Option<usize> = None;
     let mut chunked = false;
     for line in lines {
@@ -256,9 +256,9 @@ pub fn parse_http_response(raw: &[u8]) -> Result<LanHttpResponse, String> {
         if name == "content-length" {
             let length: usize = value
                 .parse()
-                .map_err(|_| "Content-Length 不合法".to_string())?;
+                .map_err(|_| crate::copy::lan_http::BAD_CONTENT_LENGTH.to_string())?;
             if length > MAX_RESPONSE_BYTES {
-                return Err("响应体超过 20MB 上限".to_string());
+                return Err(crate::copy::lan_http::BODY_TOO_LARGE.to_string());
             }
             content_length = Some(length);
         } else if name == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked") {
@@ -270,16 +270,16 @@ pub fn parse_http_response(raw: &[u8]) -> Result<LanHttpResponse, String> {
         decode_chunked(body_bytes)?
     } else if let Some(length) = content_length {
         if body_bytes.len() < length {
-            return Err("响应体不完整".to_string());
+            return Err(crate::copy::lan_http::BODY_INCOMPLETE.to_string());
         }
         body_bytes[..length].to_vec()
     } else {
         body_bytes.to_vec()
     };
     if body.len() > MAX_RESPONSE_BYTES {
-        return Err("响应体超过 20MB 上限".to_string());
+        return Err(crate::copy::lan_http::BODY_TOO_LARGE.to_string());
     }
-    let body = String::from_utf8(body).map_err(|_| "响应体不是 UTF-8".to_string())?;
+    let body = String::from_utf8(body).map_err(|_| crate::copy::lan_http::BODY_NOT_UTF8.to_string())?;
     Ok(LanHttpResponse { status, body })
 }
 
@@ -294,16 +294,16 @@ pub fn read_http_response(reader: &mut impl Read) -> Result<LanHttpResponse, Str
             Ok(read) => {
                 buffer.extend_from_slice(&chunk[..read]);
                 if buffer.len() > limit {
-                    return Err("响应体超过 20MB 上限".to_string());
+                    return Err(crate::copy::lan_http::BODY_TOO_LARGE.to_string());
                 }
             }
             Err(error)
                 if error.kind() == std::io::ErrorKind::WouldBlock
                     || error.kind() == std::io::ErrorKind::TimedOut =>
             {
-                return Err("读取局域网响应超时".to_string());
+                return Err(crate::copy::lan_http::READ_TIMEOUT.to_string());
             }
-            Err(error) => return Err(format!("读取局域网响应失败：{error}")),
+            Err(error) => return Err(crate::copy::lan_http::read_failed(error)),
         }
     }
     parse_http_response(&buffer)
@@ -322,19 +322,19 @@ pub fn perform_request(
     let request = build_request(method, &target, headers, body)?;
     let address = SocketAddr::new(IpAddr::V4(target.host), target.port);
     let mut stream = TcpStream::connect_timeout(&address, Duration::from_millis(timeout))
-        .map_err(|error| format!("连接 {address} 失败：{error}"))?;
+        .map_err(|error| crate::copy::lan_http::connect_failed(address, error))?;
     stream
         .set_read_timeout(Some(Duration::from_millis(timeout)))
-        .map_err(|error| format!("设置读超时失败：{error}"))?;
+        .map_err(crate::copy::lan_http::read_timeout_setup_failed)?;
     stream
         .set_write_timeout(Some(Duration::from_millis(timeout)))
-        .map_err(|error| format!("设置写超时失败：{error}"))?;
+        .map_err(crate::copy::lan_http::write_timeout_setup_failed)?;
     stream
         .write_all(request.as_bytes())
-        .map_err(|error| format!("发送局域网请求失败：{error}"))?;
+        .map_err(crate::copy::lan_http::send_failed)?;
     stream
         .flush()
-        .map_err(|error| format!("发送局域网请求失败：{error}"))?;
+        .map_err(crate::copy::lan_http::send_failed)?;
     read_http_response(&mut stream)
 }
 
@@ -349,7 +349,7 @@ pub async fn lan_http_request(
 ) -> Result<LanHttpResponse, String> {
     tauri::async_runtime::spawn_blocking(move || lan_http_request_blocking(method, url, headers, body, timeout_ms))
         .await
-        .map_err(|error| format!("后台任务失败: {error}"))?
+        .map_err(crate::copy::common::background_task_failed)?
 }
 
 pub fn lan_http_request_blocking(

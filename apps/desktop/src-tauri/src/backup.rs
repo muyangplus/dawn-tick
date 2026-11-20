@@ -61,7 +61,7 @@ pub(crate) fn safe_backup_name(name: &str) -> Result<String, String> {
         || !trimmed.starts_with("dawn-tick-")
         || !trimmed.ends_with(".db")
     {
-        return Err("快照名不合法".to_string());
+        return Err(copy::backup::INVALID_NAME.to_string());
     }
     Ok(trimmed.to_string())
 }
@@ -163,18 +163,18 @@ pub async fn restore_backup(name: String) -> Result<String, String> {
     let safe = safe_backup_name(&name)?;
     let source = backups_dir().join(&safe);
     if !source.is_file() {
-        return Err("快照不存在".to_string());
+        return Err(copy::backup::NOT_FOUND.to_string());
     }
     let bytes = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
     if bytes == 0 {
-        return Err("快照是空文件，无法恢复".to_string());
+        return Err(copy::backup::EMPTY.to_string());
     }
     if !database_healthy_async(&source).await {
-        return Err("快照已损坏，无法恢复".to_string());
+        return Err(copy::backup::CORRUPT.to_string());
     }
     write_json(&pending_restore_file(), &PendingRestore { name: safe.clone() })
         .then_some(())
-        .ok_or_else(|| "写入恢复请求失败".to_string())?;
+        .ok_or_else(|| copy::backup::QUEUE_FAILED.to_string())?;
     log_info("backup", format!("快照恢复已排队，重启后套用 name={safe}"));
     Ok(safe)
 }
@@ -359,23 +359,23 @@ pub(crate) fn repair_database(dir: &std::path::Path) -> Option<String> {
         Ok(saved) => saved,
         Err(error) => {
             log_error("storage", format!("数据库损坏，原文件留存失败 error={error}"));
-            return Some(format!("数据库损坏，暂时无法留存原文件（{error}），重启后再试"));
+            return Some(copy::backup::repair_keep_failed(&error));
         }
     };
     match newest_healthy_snapshot(&dir.join("backups")) {
         Some((name, path)) => match std::fs::copy(&path, &db) {
             Ok(_) => {
                 log_warn("storage", format!("数据库损坏，已用快照恢复 kept={saved} snapshot={name}"));
-                Some(format!("数据库损坏，已留存 {saved}，并用快照 {name} 恢复"))
+                Some(copy::backup::repaired(&name, &saved))
             }
             Err(error) => {
                 log_error("storage", format!("数据库损坏，快照复制失败 kept={saved} snapshot={name} error={error}"));
-                Some(format!("数据库损坏，已留存 {saved}，恢复快照失败（{error}）"))
+                Some(copy::backup::repair_copy_failed(&error, &saved))
             }
         },
         None => {
             log_error("storage", format!("数据库损坏，没有可用快照 kept={saved}"));
-            Some(format!("数据库损坏，已留存 {saved}，未找到可用快照"))
+            Some(copy::backup::repair_no_snapshot(&saved))
         }
     }
 }

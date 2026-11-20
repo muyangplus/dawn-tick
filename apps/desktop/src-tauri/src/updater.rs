@@ -13,7 +13,7 @@ const INSTALLER_EXTENSIONS: [&str; 2] = ["exe", "msi"];
 #[cfg(windows)]
 fn launch(target: &Path) -> Result<(), String> {
     // 用系统「打开」动词：.exe 直接运行，.msi 交给 msiexec 并显示安装界面
-    crate::shell_open(&target.to_string_lossy(), "启动安装程序")
+    crate::shell_open(&target.to_string_lossy(), crate::copy::shell::START_INSTALLER)
 }
 
 /// 非 Windows 平台的兜底：直接执行（本仓库实际发布只有 Windows 安装包）。
@@ -22,7 +22,7 @@ fn launch(target: &Path) -> Result<(), String> {
     std::process::Command::new(target)
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动安装包失败: {error}"))
+        .map_err(crate::copy::update::installer_failed)
 }
 
 /// 运行已暂存的安装包（自动更新的最后一步）。

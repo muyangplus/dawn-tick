@@ -55,9 +55,9 @@ impl ReminderAction {
 
     fn label(self) -> &'static str {
         match self {
-            ReminderAction::Snooze => "贪睡 10 分钟",
-            ReminderAction::Done => "完成",
-            ReminderAction::Mute => "勿扰 1 小时",
+            ReminderAction::Snooze => crate::copy::reminder::SNOOZE,
+            ReminderAction::Done => crate::copy::reminder::DONE,
+            ReminderAction::Mute => crate::copy::reminder::MUTE,
         }
     }
 
@@ -115,15 +115,15 @@ fn tray_title(title: &str) -> String {
 
 /// 重建并返回托盘菜单（基础项 + 提醒子菜单）。
 pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-    let show_main = MenuItem::with_id(app, "show_main", "显示主窗口", true, None::<&str>)?;
-    let show_mini = MenuItem::with_id(app, "show_mini", "显示悬浮窗", true, None::<&str>)?;
-    let hide_mini = MenuItem::with_id(app, "hide_mini", "隐藏悬浮窗", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let show_main = MenuItem::with_id(app, "show_main", crate::copy::tray::SHOW_MAIN, true, None::<&str>)?;
+    let show_mini = MenuItem::with_id(app, "show_mini", crate::copy::tray::SHOW_MINI, true, None::<&str>)?;
+    let hide_mini = MenuItem::with_id(app, "hide_mini", crate::copy::tray::HIDE_MINI, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", crate::copy::tray::QUIT, true, None::<&str>)?;
 
-    let mut reminders = SubmenuBuilder::with_id(app, "reminders", "提醒");
+    let mut reminders = SubmenuBuilder::with_id(app, "reminders", crate::copy::tray::REMINDERS);
     let items = pending_snapshot();
     if items.is_empty() {
-        reminders = reminders.text("reminder:none", "暂无待提醒");
+        reminders = reminders.text("reminder:none", crate::copy::tray::NO_PENDING);
     } else {
         for (index, item) in items.iter().take(MAX_TRAY_ITEMS).enumerate() {
             let mut group = SubmenuBuilder::with_id(
