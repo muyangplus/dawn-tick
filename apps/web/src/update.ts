@@ -12,6 +12,7 @@ import { ensureAndroidAbi } from './lib/android-abi.ts';
 import { errorMessage } from './lib/errors.ts';
 import { withTimeout } from './lib/timeout.ts';
 import {
+  compareBuilds,
   compareVersions,
   isPrereleaseOrDraft,
   isUpdateManifest,
@@ -22,6 +23,7 @@ import { updateTaskCopy } from './copy/update-task.ts';
 
 /** 发布解析（版本比较、资产挑选、beta 候选）在 `lib/update-release.ts`，这里转出保持调用路径不变。 */
 export {
+  compareBuilds,
   compareVersions,
   isUpdateManifest,
   manifestFromRelease,
@@ -149,7 +151,7 @@ function emptyStatus(feed: UpdateChannel, current: string, source: UpdateSource)
 function manifestStatus(status: UpdateStatus, manifest: UpdateManifest, currentVersion: string): UpdateStatus {
   return {
     ...status,
-    available: compareVersions(manifest.version, currentVersion) > 0,
+    available: compareBuilds(manifest.version, currentVersion) > 0,
     latest: manifest.version,
     manifest,
   };

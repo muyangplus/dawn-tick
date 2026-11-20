@@ -1,6 +1,7 @@
 import type { Storage } from '@dawn-tick/core';
 import {
   UPDATE_RELEASES_API,
+  compareBuilds,
   compareVersions,
   manifestFromRelease,
   type UpdateChannel,
@@ -53,7 +54,7 @@ export async function clearIgnoredVersion(storage: Pick<Storage, 'writeMeta'>): 
 /** 远端最新版是否就是被忽略的那一个版本（比较时忽略 `v` 前缀与空白）。 */
 export function isIgnoredVersion(remote: string | null, ignored: string | null): boolean {
   if (remote === null || remote.trim() === '' || ignored === null || ignored.trim() === '') return false;
-  return compareVersions(remote, ignored) === 0;
+  return compareBuilds(remote, ignored) === 0;
 }
 
 export interface PromptDecision {
@@ -71,7 +72,7 @@ export interface PromptDecision {
  */
 export function shouldPrompt({ remote, current, ignored }: PromptDecision): boolean {
   if (remote === null || remote.trim() === '') return false;
-  if (compareVersions(remote, current) <= 0) return false;
+  if (compareBuilds(remote, current) <= 0) return false;
   return !isIgnoredVersion(remote, ignored);
 }
 

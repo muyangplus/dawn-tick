@@ -5,6 +5,7 @@ import {
   UPDATE_FEEDS,
   UPDATE_RELEASES_API,
   checkForUpdate,
+  compareBuilds,
   compareVersions,
   defaultReceiveBeta,
   pickBetaCandidate,
@@ -116,6 +117,43 @@ test('dev 构建时间戳不参与版本比较', () => {
   assert.equal(compareVersions('0.1.0', '0.1.0.202610132203'), 0);
   assert.ok(compareVersions('0.2.0', '0.1.0.202610132203') > 0, '更高基础版本仍是更新');
   assert.ok(compareVersions('0.1.0.202610132203', '0.1.9') < 0);
+});
+
+test('compareBuilds：同基础版本按 dev 构建时间戳比先后', () => {
+  assert.ok(compareBuilds('0.8.0.202611200803', '0.8.0.202611190000') > 0, '更新的时间戳更大');
+  assert.ok(compareBuilds('0.8.0.202611190000', '0.8.0.202611200803') < 0, '更旧的时间戳更小');
+  assert.equal(compareBuilds('0.8.0.202611200803', '0.8.0.202611200803'), 0, '同一时间戳相等');
+  assert.ok(compareBuilds('v0.8.0.202611200803', '0.8.0.202611190000') > 0, '允许 v 前缀');
+  assert.equal(compareBuilds('v0.8.0.202611200803', '0.8.0.202611200803'), 0);
+});
+
+test('compareBuilds：任一侧没有时间戳只比基础版本', () => {
+  assert.equal(compareBuilds('0.8.0.202611200803', '0.8.0'), 0, '打戳对未打戳视为相同');
+  assert.equal(compareBuilds('0.8.0', '0.8.0.202611200803'), 0);
+  assert.ok(compareBuilds('0.9.0.202611010000', '0.8.0.202611200803') > 0, '基础版本更高时不看时间戳');
+  assert.ok(compareBuilds('0.8.0.202611200803', '0.9.0.202611010000') < 0);
+  assert.ok(compareBuilds('0.9.0', '0.8.0.202611200803') > 0);
+});
+
+test('dev 渠道：同基础版本的更新构建算更新，本地未打戳的构建不提示', async () => {
+  const devManifest = async () =>
+    manifestResponse(versionBody({ channel: 'dev', version: '0.8.0.202611200803', tag: 'dev-latest' }));
+
+  const newer = await checkForUpdate({
+    channel: 'dev',
+    receiveBeta: false,
+    currentVersion: '0.8.0.202611190000',
+    fetchImpl: devManifest,
+  });
+  assert.equal(newer.available, true, '远端构建时间戳更新');
+
+  const local = await checkForUpdate({
+    channel: 'dev',
+    receiveBeta: false,
+    currentVersion: '0.8.0',
+    fetchImpl: devManifest,
+  });
+  assert.equal(local.available, false, '本地未打戳的构建只比基础版本');
 });
 
 test('dev 渠道永远只查 dev 源', () => {

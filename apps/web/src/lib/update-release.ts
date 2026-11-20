@@ -75,6 +75,26 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/** dev 构建版本尾部的时间戳：`0.8.0.202611200803` 的 `202611200803`。 */
+const BUILD_STAMP = /^v?\d+\.\d+\.\d+\.(\d{12})$/;
+
+function buildStampOf(value: string): string | null {
+  return BUILD_STAMP.exec(value.trim())?.[1] ?? null;
+}
+
+/**
+ * 判断有没有更新时用：基础版本相同、两边都带构建时间戳，再按时间戳比先后。
+ * 本地未打戳的构建只比基础版本，不会总提示更新；升级后弹更新内容等仍用 `compareVersions`。
+ */
+export function compareBuilds(a: string, b: string): number {
+  const order = compareVersions(a, b);
+  if (order !== 0) return order;
+  const left = buildStampOf(a);
+  const right = buildStampOf(b);
+  if (left === null || right === null) return 0;
+  return left.localeCompare(right);
+}
+
 export function isUpdateManifest(value: unknown): value is UpdateManifest {
   if (typeof value !== 'object' || value === null) return false;
   const row = value as Partial<UpdateManifest>;
