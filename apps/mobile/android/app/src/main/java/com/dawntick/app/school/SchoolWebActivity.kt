@@ -18,9 +18,6 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import com.dawntick.app.diag.NativeLog
 
-/** 诊断日志标签：原生侧按标签区分教务窗口事件。 */
-private const val LOG_TAG = "SchoolWeb"
-
 /** 应用内教务窗口：用户自行登录并打开课表页，页面右下角的「导入到晓刻」把内容交回 Web 层。 */
 class SchoolWebActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -34,9 +31,13 @@ class SchoolWebActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         title = "登录教务并打开课表页"
         val url = intent.getStringExtra("url").orEmpty()
-        NativeLog.info(this, LOG_TAG, "onCreate url=${NativeLog.redactUrl(url)} length=${url.length}")
+        NativeLog.debug(
+            this,
+            "import",
+            "SchoolWebActivity.onCreate 创建教务窗口 url=${NativeLog.redactUrl(url)} length=${url.length}",
+        )
         if (url.isEmpty()) {
-            NativeLog.warn(this, LOG_TAG, "onCreate 缺少 url，直接关闭窗口")
+            NativeLog.error(this, "import", "SchoolWebActivity.onCreate 缺少 url，窗口已关闭")
             finish()
             return
         }
@@ -63,8 +64,9 @@ class SchoolWebActivity : AppCompatActivity() {
                 if (scheme != "http" && scheme != "https") {
                     NativeLog.warn(
                         this@SchoolWebActivity,
-                        LOG_TAG,
-                        "拦截非 http(s) 跳转 scheme=${scheme ?: "(无)"} url=${NativeLog.redactUrl(target.toString())}",
+                        "import",
+                        "SchoolWebActivity 已拦截非 http(s) 跳转 scheme=${scheme ?: "(无)"} " +
+                            "url=${NativeLog.redactUrl(target.toString())}",
                     )
                     return true
                 }
@@ -72,32 +74,45 @@ class SchoolWebActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                NativeLog.info(this@SchoolWebActivity, LOG_TAG, "onPageStarted url=${NativeLog.redactUrl(url)}")
+                NativeLog.debug(
+                    this@SchoolWebActivity,
+                    "import",
+                    "SchoolWebActivity.onPageStarted 开始加载 url=${NativeLog.redactUrl(url)}",
+                )
             }
 
             override fun onPageFinished(view: WebView, loadedUrl: String?) {
-                NativeLog.info(this@SchoolWebActivity, LOG_TAG, "onPageFinished url=${NativeLog.redactUrl(loadedUrl)}")
+                NativeLog.debug(
+                    this@SchoolWebActivity,
+                    "import",
+                    "SchoolWebActivity.onPageFinished 加载完成 url=${NativeLog.redactUrl(loadedUrl)}",
+                )
                 // 注入脚本自带 window.__dtImportReady 守卫，重复注入不会叠加按钮。
                 view.evaluateJavascript(INJECTION, null)
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                NativeLog.error(
-                    this@SchoolWebActivity,
-                    LOG_TAG,
-                    "onReceivedError code=${error.errorCode} desc=${error.description} " +
-                        "mainFrame=${request.isForMainFrame} url=${NativeLog.redactUrl(request.url?.toString())}",
-                )
+                // 主框架加载失败用户看到的是错误页；子资源失败多半不影响课表页，只记 warn
+                val message = "SchoolWebActivity.onReceivedError 加载失败 code=${error.errorCode} " +
+                    "desc=${error.description} mainFrame=${request.isForMainFrame} " +
+                    "url=${NativeLog.redactUrl(request.url?.toString())}"
+                if (request.isForMainFrame) {
+                    NativeLog.error(this@SchoolWebActivity, "import", message)
+                } else {
+                    NativeLog.warn(this@SchoolWebActivity, "import", message)
+                }
             }
         }
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                // 页面脚本报错是「按钮没反应」的常见原因；只记 ERROR，避免日志被埋点刷满
+                // 页面脚本报错是「按钮没反应」的常见原因；只记 ERROR，避免日志被埋点刷满。
+                // 教务页自己的脚本错误不等于晓刻失败，记 warn。
                 if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                    NativeLog.error(
+                    NativeLog.warn(
                         this@SchoolWebActivity,
-                        LOG_TAG,
-                        "控制台错误 ${message.message()} (${message.sourceId()}:${message.lineNumber()})",
+                        "import",
+                        "SchoolWebActivity 教务页控制台报错 message=${message.message()} " +
+                            "source=${NativeLog.redactUrl(message.sourceId())} line=${message.lineNumber()}",
                     )
                 }
                 return false
@@ -113,12 +128,20 @@ class SchoolWebActivity : AppCompatActivity() {
                 // 改为在当前 WebView 内跳转，登录会话与「导入到晓刻」按钮都保留。
                 val transport = resultMsg.obj as? WebView.WebViewTransport
                 if (transport == null) {
-                    NativeLog.warn(this@SchoolWebActivity, LOG_TAG, "onCreateWindow 没有拿到 WebViewTransport")
+                    NativeLog.warn(
+                        this@SchoolWebActivity,
+                        "import",
+                        "SchoolWebActivity.onCreateWindow 缺少 WebViewTransport，新窗口已忽略",
+                    )
                     return false
                 }
                 val child = transport.webView
                 if (child == null) {
-                    NativeLog.warn(this@SchoolWebActivity, LOG_TAG, "onCreateWindow 没有拿到子 WebView")
+                    NativeLog.warn(
+                        this@SchoolWebActivity,
+                        "import",
+                        "SchoolWebActivity.onCreateWindow 缺少子 WebView，新窗口已忽略",
+                    )
                     return false
                 }
                 child.webViewClient = object : WebViewClient() {
@@ -130,8 +153,9 @@ class SchoolWebActivity : AppCompatActivity() {
                         if (scheme != "http" && scheme != "https") {
                             NativeLog.warn(
                                 this@SchoolWebActivity,
-                                LOG_TAG,
-                                "拦截新窗口非 http(s) 跳转 url=${NativeLog.redactUrl(request.url.toString())}",
+                                "import",
+                                "SchoolWebActivity 已拦截新窗口非 http(s) 跳转 " +
+                                    "url=${NativeLog.redactUrl(request.url.toString())}",
                             )
                             return true
                         }

@@ -49,26 +49,52 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
 | `openNotificationSettings` | `channelId?: string` | `opened: boolean` | 有渠道 id 时直达该渠道 |
 | `readNativeLog` | `maxBytes?: number` | `text?: string`、`path?: string`、`bytes?: number` | 读 `filesDir/diag/native.log` 最近约 200 行；默认读尾部 256KB，`maxBytes` 限制读取字节数 |
 | `clearNativeLog` | 无 | `cleared: boolean` | 清空当前日志与滚动文件 `native.log.1` |
+| `setNativeLogLevel` | `level: string` | 无 | 设置原生日志级别门槛（`error` / `warn` / `info` / `debug` / `trace`），存于 `dawn_tick_diag` 偏好，重启后仍生效；未知值忽略 |
 | `abi` | 无 | `primary?: string`、`abis?: string[]` | Android 更新拆包的设备 ABI：`Build.SUPPORTED_ABIS` 原序返回，`primary` 取第一个；客户端据此在 arm64-v8a / armeabi-v7a 包中选择（见 `apps/web/src/lib/android-abi.ts`）。旧安装包没有本方法时调用失败，Web 层按 arm64-v8a 回退 |
 
 ### 1.1 原生诊断日志
 
-真机没有 logcat 时，用这段日志排查「内嵌教务窗口打不开 / 外部链接确认后没反应 / 小组件空白」：
+真机没有 logcat 时，用这段日志排查「内嵌教务窗口打不开 / 外部链接确认后没反应 / 小组件空白 / 局域网配对失败」：
 
 - 位置：`<app files>/diag/native.log`（应用私有目录，卸载即清除）。
-- 格式：`2026-11-07 14:20:10.123 I [SchoolWindow] open 入口 url=https://…/path length=64`；
-  级别 `I` / `W` / `E`，标签对应插件或组件（`startup`、`SchoolWindow`、`SchoolWeb`、`SystemActions`、
-  `WidgetStore`、`WidgetRefresher`、`WidgetPin`）。
+- 格式：`时间 [级别] 范围: 消息`，与 Web、桌面同一口径，例如
+  `2026-11-07 14:20:10.123 [info] import: SchoolWindow.open 打开教务窗口 url=https://…/path length=64`。
+  消息先写一句事实，上下文以 `key=value` 跟在后面；消息里带类名或方法名（如 `WidgetStore.load`）便于搜索；
+  换行折成空格，一条事件一行。
+- 级别（从严到详）：
+  - `error`：影响用户或数据的失败；
+  - `warn`：已降级或已自动恢复；
+  - `info`：关键流程节点，一次用户操作最多 1–2 条；
+  - `debug`：排查用的中间状态；
+  - `trace`：高频细节。
+- 级别门槛：默认 `info`；Web 端经 `SystemActions.setNativeLogLevel` 同步，原生侧持久化在 `dawn_tick_diag` 偏好里，
+  后台任务（小组件刷新等）也按它过滤。
+- 范围：只用 `NativeLog.SCOPES` 登记的 16 个值，三端共用（`apps/web/src/lib/log-scopes.ts`、桌面 `LOG_SCOPES`）：
+  `app`（启动、运行时、窗口）、`storage`（数据库、本地存储）、`backup`（备份与导出）、`sync`（局域网同步）、
+  `reminder`（提醒与通知）、`permission`（系统权限）、`widget`（桌面小组件）、`update`（应用更新）、
+  `preset`（预设）、`import`（课表导入与教务 WebView 窗口）、`timetable`（课表）、`todo`（待办）、
+  `settings`（设置）、`credentials`（凭据）、`link`（外部链接）、`log`（日志本身）。未登记的范围只在 logcat 告警。
 - 滚动：单文件约 512KB，写满后改名为 `native.log.1`（旧的 `.1` 丢弃）。
 - 读取：`SystemActions.readNativeLog`（应用内「导出诊断日志」使用）→ 返回文本与绝对路径；
   `clearNativeLog` 清空。
-- 记录点：`MainActivity` 启动版本与插件自检、`SchoolWindow.open` 入口/构造 Intent/`startActivityForResult`、
-  `SchoolWebActivity` 的 `onCreate` / `onPageStarted` / `onPageFinished` / `onReceivedError` / 控制台 ERROR、
-  `openExternal` 入口/scheme 校验/`startActivity` 成功与异常、`WidgetStore.load` 的候选库存在性/打开异常/
-  snapshot 行是否为空/JSON 解析异常、`WidgetRefresher` 刷新触发与结果、`WidgetPin.requestPin` 各分支、
-  `LanSync` 的 `start/stop/networks/scanDiscovery` 入口与结果、`LanNetworks.list` 摘要、socket bind
-  与 UDP 广播 / multicast lock 失败（标签 `DawnTickLanSync` / `DawnTickLanDiscovery`）。
-- 隐私：URL 只记 scheme + host + path（查询串可能带登录 token，不写日志）。
+- 记录点（按范围）：
+  - `app`：`MainActivity` 启动版本（info）、插件自检（通过 debug，缺插件 error）、自检异常（warn）。
+  - `import`：`SchoolWindow.open` 打开与窗口关闭（info）、缺地址 / 构造 Intent / `startActivityForResult` 失败（error）；
+    `SchoolWebActivity` 的 `onCreate` / `onPageStarted` / `onPageFinished`（debug）、主框架 `onReceivedError`（error，
+    子资源 warn）、拦截非 http(s) 跳转 / 教务页控制台 ERROR / `onCreateWindow` 拿不到子窗口（warn）。
+  - `link`：`SystemActions.openExternal` 入口与交给浏览器（info）、scheme 校验（debug）、缺地址 / scheme 不支持 /
+    `startActivity` 失败（error）。
+  - `permission`：电池优化设置页、通知设置页打不开（error）。
+  - `log`：`setNativeLogLevel` 同步级别、`clearNativeLog` 清空（info）。
+  - `widget`：`WidgetStore.load` 候选库与快照读取（debug / trace）、单个候选库打开或解析失败（warn）、
+    最终读不出快照（error）；`WidgetRefresher.refreshAll` 开始（trace）与结果（debug）；
+    `WidgetPinPlugin.requestPin` 入口与结束（info）、不支持 / 停用 / 未弹出确认（warn）、未知组件（error）。
+  - `sync`：`LanSync` 的 `start`（入口与监听成功 info，超时 / 失败 error）、`stop`（info）、`networks`
+    （候选摘要 info，回退链路地址或候选为空 warn，失败 error）、`scanDiscovery`（结果 info，失败 error）、
+    `respond` 回写失败与指定地址失效（warn）；`LanNetworkStatusReader` 读取失败、UDP 广播 / 发现端口 bind /
+    multicast lock 失败（warn，不影响开配对）。
+- 隐私：URL 只记 scheme + host + path（`NativeLog.redactUrl`，查询串可能带登录 token）；令牌、配对码、密码、
+  Cookie 一律不写日志。
 
 
 ## 2. SchoolWindow

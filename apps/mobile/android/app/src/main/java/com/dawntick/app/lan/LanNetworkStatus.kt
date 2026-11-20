@@ -16,7 +16,7 @@ import com.getcapacitor.JSObject
  *
  * 边界：
  * - 只读状态，不做任何网络操作；`ACCESS_NETWORK_STATE` 已在 AndroidManifest 声明，无需运行时权限；
- * - 读取失败时四个布尔全部为 false，并把原因写 `NativeLog`（标签 `DawnTickLanSync`），
+ * - 读取失败时四个布尔全部为 false，并把原因写 `NativeLog`（范围 `sync`），
  *   界面就会退回原来的「未发现局域网地址」文案，不会误报「已连接 Wi-Fi」；
  * - `ipv4Count` 由调用方传入（`LanNetworks.list()` 的结果数），这里不重复枚举。
  */
@@ -44,8 +44,6 @@ data class LanNetworkStatus(
 
 /** 通过 `ConnectivityManager` 判断当前有哪些传输类型（Wi-Fi / 有线 / 移动数据 / VPN）。 */
 object LanNetworkStatusReader {
-    private const val TAG = "DawnTickLanSync"
-
     /**
      * 读当前状态；[ipv4Count] 与 [interfaceSummary] 由调用方传入，避免重复枚举网卡。
      *
@@ -77,7 +75,7 @@ object LanNetworkStatusReader {
             reason = NativeLog.describe(error)
         }
         if (reason != null) {
-            NativeLog.warn(context, TAG, "读取网络状态失败：$reason")
+            NativeLog.warn(context, "sync", "LanNetworkStatusReader.read 读取网络状态失败 cause=$reason")
         }
         return LanNetworkStatus(
             wifi = wifi,
@@ -130,7 +128,7 @@ object LanNetworkStatusReader {
                 }
             }
         } catch (error: Throwable) {
-            NativeLog.warn(context, TAG, "ConnectivityManager 兜底读取失败：${NativeLog.describe(error)}")
+            NativeLog.warn(context, "sync", "LanNetworkStatusReader.linkCandidates 读取链路地址失败", error)
         }
         return LanNetworks.sort(result)
     }

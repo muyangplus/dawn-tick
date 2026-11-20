@@ -3,7 +3,6 @@ package com.dawntick.app.lan
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.util.Log
 import com.dawntick.app.diag.NativeLog
 import org.json.JSONObject
 import java.net.DatagramPacket
@@ -125,7 +124,8 @@ object LanDiscoveryCodec {
 
 /** Wi-Fi 组播锁：部分 ROM 不允许没有 multicast lock 的 UDP 广播/接收；失败只记日志。 */
 internal object LanMulticast {
-    fun acquire(context: Context, tag: String): WifiManager.MulticastLock? {
+    /** [caller] 只进日志文本，便于区分广播端与扫描端。 */
+    fun acquire(context: Context, caller: String): WifiManager.MulticastLock? {
         return try {
             val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
                 ?: return null
@@ -133,10 +133,15 @@ internal object LanMulticast {
                 setReferenceCounted(false)
                 acquire()
             }
-            NativeLog.info(context, tag, "已获取 Wi-Fi multicast lock")
+            NativeLog.debug(context, "sync", "LanMulticast.acquire 已获取 Wi-Fi multicast lock caller=$caller")
             lock
         } catch (error: Throwable) {
-            NativeLog.warn(context, tag, "获取 Wi-Fi multicast lock 失败（不影响开配对）：${NativeLog.describe(error)}")
+            NativeLog.warn(
+                context,
+                "sync",
+                "LanMulticast.acquire 获取 Wi-Fi multicast lock 失败，配对仍可用 caller=$caller",
+                error,
+            )
             null
         }
     }
@@ -153,8 +158,6 @@ internal object LanMulticast {
  * 整个启动过程 `runCatching` 包裹：发现失败只记日志，绝不能影响「开启配对」的 resolve。
  */
 object LanDiscoveryAdvertiser {
-    private const val TAG = "DawnTickLanDiscovery"
-
     @Volatile private var running = false
     @Volatile private var socket: DatagramSocket? = null
     @Volatile private var thread: Thread? = null
@@ -162,8 +165,7 @@ object LanDiscoveryAdvertiser {
 
     fun start(context: Context, host: String, port: Int, name: String, deviceId: String? = null) {
         runCatching { startInternal(context, host, port, name, deviceId) }.onFailure { error ->
-            Log.w(TAG, "启动局域网广播失败：${error.message ?: error.javaClass.simpleName}")
-            NativeLog.warn(context, TAG, "启动局域网广播失败：${NativeLog.describe(error)}")
+            NativeLog.warn(context, "sync", "LanDiscoveryAdvertiser.start 启动局域网广播失败 host=$host port=$port", error)
         }
     }
 
@@ -177,14 +179,14 @@ object LanDiscoveryAdvertiser {
             runCatching { targets.add(InetAddress.getByName(text)) }
         }
         if (targets.isEmpty()) return
-        multicastLock = LanMulticast.acquire(context, TAG)
+        multicastLock = LanMulticast.acquire(context, "LanDiscoveryAdvertiser")
         running = true
         thread = Thread {
             val active = try {
                 DatagramSocket().apply { broadcast = true }
             } catch (error: Exception) {
                 running = false
-                NativeLog.warn(context, TAG, "广播 socket 创建失败：${NativeLog.describe(error)}")
+                NativeLog.warn(context, "sync", "LanDiscoveryAdvertiser 创建广播 socket 失败", error)
                 return@Thread
             }
             socket = active
@@ -230,7 +232,7 @@ object LanDiscoveryAdvertiser {
 object LanDiscovery {
     fun scan(context: Context, timeoutMs: Int = LAN_DISCOVERY_DEFAULT_TIMEOUT_MS): List<LanDiscoveryPeer> {
         val timeout = timeoutMs.coerceIn(100, LAN_DISCOVERY_MAX_TIMEOUT_MS)
-        val lock = LanMulticast.acquire(context, "DawnTickLanDiscovery")
+        val lock = LanMulticast.acquire(context, "LanDiscovery.scan")
         try {
             val socket = try {
                 DatagramSocket(null).apply {
@@ -239,7 +241,7 @@ object LanDiscovery {
                     soTimeout = 200
                 }
             } catch (error: Exception) {
-                NativeLog.warn(context, "DawnTickLanDiscovery", "绑定发现端口失败：${NativeLog.describe(error)}")
+                NativeLog.warn(context, "sync", "LanDiscovery.scan 绑定发现端口失败 port=$LAN_DISCOVERY_PORT", error)
                 return emptyList()
             }
             val peers = mutableListOf<LanDiscoveryPeer>()

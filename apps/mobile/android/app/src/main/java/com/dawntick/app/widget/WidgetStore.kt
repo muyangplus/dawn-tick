@@ -92,7 +92,6 @@ data class WidgetReadResult(
 /** 读取 Web 层写入 app_meta.widget_snapshot 的快照，避免小组件重复实现课表逻辑。 */
 object WidgetStore {
     private const val SNAPSHOT_KEY = "widget_snapshot"
-    private const val TAG = "WidgetStore"
 
     private val databaseCandidates = listOf(
         "dawn_tick",
@@ -105,13 +104,17 @@ object WidgetStore {
         val candidates = databaseCandidates.map { context.getDatabasePath(it) }
         val existing = candidates.filter { it.exists() }
         if (existing.isEmpty()) {
-            NativeLog.info(context, TAG, "候选库都不存在 ${candidates.joinToString { it.name }}")
+            NativeLog.debug(
+                context,
+                "widget",
+                "WidgetStore.load 候选库都不存在 candidates=${candidates.joinToString(",") { it.name }}",
+            )
             return WidgetReadResult(null, WidgetReadStatus.NO_DATABASE)
         }
-        NativeLog.info(
+        NativeLog.trace(
             context,
-            TAG,
-            "存在候选库 ${existing.joinToString { it.name }}（候选共 ${candidates.size} 个）",
+            "widget",
+            "WidgetStore.load 找到候选库 existing=${existing.joinToString(",") { it.name }} total=${candidates.size}",
         )
 
         var openError: String? = null
@@ -119,29 +122,34 @@ object WidgetStore {
         for (file in existing) {
             val value = readValue(context, file)
             if (value.error != null) {
-                NativeLog.warn(context, TAG, "候选库 ${file.name} 打开/查询失败：${value.error}")
+                NativeLog.warn(context, "widget", "WidgetStore.load 打开或查询候选库失败 file=${file.name} cause=${value.error}")
                 if (openError == null) openError = value.error
                 continue
             }
             if (!value.found) {
-                NativeLog.info(context, TAG, "候选库 ${file.name} 没有 $SNAPSHOT_KEY 行")
+                NativeLog.debug(context, "widget", "WidgetStore.load 候选库没有快照行 file=${file.name} key=$SNAPSHOT_KEY")
                 continue
             }
             if (value.json.isNullOrBlank()) {
-                NativeLog.warn(context, TAG, "候选库 ${file.name} 的 $SNAPSHOT_KEY 为空")
+                NativeLog.warn(context, "widget", "WidgetStore.load 快照行为空 file=${file.name} key=$SNAPSHOT_KEY")
                 continue
             }
             val snapshot = try {
                 parseSnapshot(value.json)
             } catch (error: Exception) {
-                NativeLog.error(context, TAG, "解析 ${file.name} 的 $SNAPSHOT_KEY JSON 失败", error)
+                NativeLog.warn(
+                    context,
+                    "widget",
+                    "WidgetStore.load 解析快照 JSON 失败 file=${file.name} key=$SNAPSHOT_KEY",
+                    error,
+                )
                 if (parseError == null) parseError = NativeLog.describe(error)
                 continue
             }
-            NativeLog.info(
+            NativeLog.debug(
                 context,
-                TAG,
-                "读取成功 file=${file.name} bytes=${value.json.length} week=${snapshot.week}",
+                "widget",
+                "WidgetStore.load 读取快照成功 file=${file.name} bytes=${value.json.length} week=${snapshot.week}",
             )
             return WidgetReadResult(snapshot, WidgetReadStatus.OK)
         }
@@ -149,15 +157,15 @@ object WidgetStore {
         // 有库文件但没有可用快照：优先报「解析失败」，其次「打开失败」，都没有才算没数据
         return when {
             parseError != null -> {
-                NativeLog.warn(context, TAG, "快照存在但解析失败：$parseError")
+                NativeLog.error(context, "widget", "WidgetStore.load 快照存在但解析失败 cause=$parseError")
                 WidgetReadResult(null, WidgetReadStatus.PARSE_FAILED, parseError)
             }
             openError != null -> {
-                NativeLog.warn(context, TAG, "候选库存在但读取失败：$openError")
+                NativeLog.error(context, "widget", "WidgetStore.load 候选库存在但读取失败 cause=$openError")
                 WidgetReadResult(null, WidgetReadStatus.OPEN_FAILED, openError)
             }
             else -> {
-                NativeLog.info(context, TAG, "候选库都没有可用的 $SNAPSHOT_KEY，按尚未创建学期处理")
+                NativeLog.debug(context, "widget", "WidgetStore.load 没有可用快照，按尚未创建学期处理 key=$SNAPSHOT_KEY")
                 WidgetReadResult(null, WidgetReadStatus.NO_SNAPSHOT)
             }
         }
@@ -178,17 +186,21 @@ object WidgetStore {
         // 打开失败、没有快照行、或者行的值为空，都说明只读视图可能没看到 WAL 里的提交
         val emptyResult = outcome.error != null || !outcome.found || outcome.json.isNullOrBlank()
         if (emptyResult && (wal.exists() || shm.exists())) {
-            NativeLog.info(
+            NativeLog.debug(
                 context,
-                TAG,
-                "只读读取未命中（${outcome.error ?: "无快照行"}），存在 -wal/-shm，改用 OPEN_READWRITE 重试",
+                "widget",
+                "WidgetStore.readValue 只读未命中，改用读写重试 file=${file.name} cause=${outcome.error ?: "无快照行"}",
             )
             val retried = query(file, SQLiteDatabase.OPEN_READWRITE)
             if (retried.error == null && retried.found && !retried.json.isNullOrBlank()) {
-                NativeLog.info(context, TAG, "读写重试成功（WAL 已回放）file=${file.name}")
+                NativeLog.debug(context, "widget", "WidgetStore.readValue 读写重试成功，WAL 已回放 file=${file.name}")
                 outcome = retried
             } else {
-                NativeLog.warn(context, TAG, "读写重试仍未读到：${retried.error ?: "无快照行"}")
+                NativeLog.debug(
+                    context,
+                    "widget",
+                    "WidgetStore.readValue 读写重试仍未读到快照 file=${file.name} cause=${retried.error ?: "无快照行"}",
+                )
                 // 第一次只读失败、第二次也失败时，保留第一次原因（通常是只读模式拒绝 WAL）
                 if (outcome.error == null && retried.error != null) outcome = retried
             }

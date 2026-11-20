@@ -7,10 +7,8 @@ import com.dawntick.app.diag.NativeLog
 
 /** 四个小组件的统一刷新入口。 */
 object WidgetRefresher {
-    private const val TAG = "WidgetRefresher"
-
     fun refreshAll(context: Context) {
-        NativeLog.info(context, TAG, "刷新开始")
+        NativeLog.trace(context, "widget", "WidgetRefresher.refreshAll 开始刷新")
         val manager = AppWidgetManager.getInstance(context)
         val read = WidgetStore.load(context)
 
@@ -26,10 +24,10 @@ object WidgetRefresher {
         val examIds = manager.getAppWidgetIds(ComponentName(context, ExamCountdownWidget::class.java))
         for (id in examIds) manager.updateAppWidget(id, WidgetRenderer.buildExamCountdown(context, read, id))
 
-        NativeLog.info(
+        NativeLog.debug(
             context,
-            TAG,
-            "刷新结束 status=${read.status} error=${read.error ?: "无"} " +
+            "widget",
+            "WidgetRefresher.refreshAll 刷新完成 status=${read.status} error=${read.error ?: "无"} " +
                 "next=${nextIds.size} today=${todayIds.size} week=${weekIds.size} exam=${examIds.size}",
         )
     }
