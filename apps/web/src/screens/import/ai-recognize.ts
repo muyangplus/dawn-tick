@@ -10,6 +10,22 @@ import {
 } from '@dawn-tick/core';
 import { importPasteCopy } from '../../copy/import-paste.ts';
 
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  nbsp: ' ',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  amp: '&',
+};
+const ENTITY_RE = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-z]+));/g;
+
+/** 一遍解码：解出来的 & 不再参与下一轮，`&#38;amp;` 得到字面的 `&amp;`。 */
+function decodeEntity(entity: string, dec?: string, hex?: string, name?: string): string {
+  if (name !== undefined) return Object.hasOwn(NAMED_ENTITIES, name) ? (NAMED_ENTITIES[name] as string) : entity;
+  const code = dec === undefined ? Number.parseInt(hex ?? '', 16) : Number(dec);
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+}
+
 /** 网页文本里的标签对模型没用，只占上下文：去掉标签、合并空白。 */
 export function aiInputOf(text: string): string {
   const stripped = stripPageMarkers(text);
@@ -19,7 +35,7 @@ export function aiInputOf(text: string): string {
     .replace(/<\/(td|th)>/gi, ' | ')
     .replace(/<\/(tr|p|div|li|br)>|<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
+    .replace(ENTITY_RE, decodeEntity)
     .replace(/[ \t]+/g, ' ')
     .replace(/\n\s*\n+/g, '\n')
     .trim();

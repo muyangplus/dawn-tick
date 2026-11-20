@@ -150,6 +150,47 @@ test('extractJson：容忍代码块与前后说明文字', () => {
   assert.throws(() => extractJson('[a, b]'), /无法解析/);
 });
 
+test('extractJson：按括号配对取 JSON，后记里的括号不影响', () => {
+  assert.deepEqual(extractJson('[{"a":1}]\n（注：见[1]）'), [{ a: 1 }]);
+  assert.deepEqual(extractJson('{"t":"a]b"} 后记}'), { t: 'a]b' }, '字符串里的括号不计入配对');
+  assert.deepEqual(extractJson('[{"t":"a\\"[{"}] 尾]'), [{ t: 'a"[{' }], '转义引号不结束字符串');
+  assert.deepEqual(extractJson('[{"t":"a\\\\"}] 尾]'), [{ t: 'a\\' }], '转义的反斜杠之后引号照常结束字符串');
+  assert.deepEqual(extractJson('```json\n{"items":[{"a":"}"}]}\n```\n（共 1 条）'), { items: [{ a: '}' }] });
+  assert.throws(() => extractJson('[{"a":1}'), /不完整/);
+  assert.throws(() => extractJson('[{"t":"]"}'), /不完整/, '只有字符串里的收尾括号仍算不完整');
+});
+
+test('extractJson：前面说明里的括号段跳过，优先取结构化结果', () => {
+  assert.deepEqual(extractJson('见[1]说明\n[{"a":1}]'), [{ a: 1 }], '引用标号之后的数组才是结果');
+  assert.deepEqual(extractJson('[1,2] 和 {"items":[]}'), { items: [] }, '对象优先于纯数字数组');
+  assert.deepEqual(extractJson('参考[1][2]：\n```json\n[[1,2]]\n```'), [[1, 2]], '含数组的数组算结构化');
+  assert.deepEqual(extractJson('见(1) [] 结束 [{"a":1}]'), [], '空数组算结构化，取第一个');
+  assert.deepEqual(extractJson('[1,2]'), [1, 2], '都不是结构化时取第一个能解析的');
+  assert.deepEqual(extractJson('[1] 然后 [2]'), [1]);
+  assert.deepEqual(extractJson('见[注] 结果 [3]'), [3], '解析不了的段跳过');
+});
+
+test('extractJson：解析失败的段不往段内找', () => {
+  assert.throws(() => extractJson('[{"a":1},]'), /无法解析/, '尾逗号整段失败，不退回内层对象');
+  assert.throws(() => extractJson('说明 {"items":[{"a":1}],} 结束'), /无法解析/);
+  assert.throws(() => extractJson('[a] 与 {b}'), /无法解析/, '每段都解析不了');
+});
+
+test('extractJson：没收尾的段之后不再找，之前有能解析的段则退回它', () => {
+  assert.throws(() => extractJson('[{"a":1}'), /不完整/);
+  assert.throws(() => extractJson('见[注] 然后 [{"a":1}'), /不完整/, '之前的段解析不了仍报不完整');
+  assert.deepEqual(extractJson('见[1] 然后 [{"a":1}'), [1], '退回之前第一个能解析的段');
+  assert.deepEqual(extractJson('{"items":[]} 然后 [{"a":1}'), { items: [] }, '结构化的段先返回，不看后面');
+  assert.throws(() => extractJson('{ 后面还有 [{"a":1}]'), /不完整/, '没收尾的括号把后面都包进去');
+});
+
+test('课表草稿：说明文字里带引用标号也能取到条目', () => {
+  const row = { courseName: '高等数学', dayOfWeek: 1, periodStart: 1, periodEnd: 2, weeks: [1, 2] };
+  const result = parseScheduleDrafts(`参考[1]：\n${JSON.stringify([row])}`, SEMESTER);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.items, [{ ...row, room: null, teacher: null }]);
+});
+
 const SEMESTER = { totalWeeks: 16, periodCount: 10 };
 const ALL_WEEKS = Array.from({ length: 16 }, (_, index) => index + 1);
 
@@ -182,6 +223,47 @@ test('课表草稿：周次文本支持区间与列表，超出学期的去掉',
   assert.deepEqual(weeksOf('3~1'), [1, 2, 3], '倒序区间按升序展开');
   assert.deepEqual(weeksOf('12-20'), [12, 13, 14, 15, 16]);
   assert.deepEqual(weeksOf([3, '2', 2, 0, 17, 1.5]), [2, 3], '去重、排序、丢掉学期外与非整数');
+});
+
+test('课表草稿：周次可以是单个数字，文本里的「第」「周」去掉', () => {
+  const weeksOf = (weeks: unknown): number[] | undefined =>
+    parseScheduleDrafts(JSON.stringify([{ courseName: 'X', dayOfWeek: 1, periodStart: 1, weeks }]), SEMESTER).items[0]?.weeks;
+  assert.deepEqual(weeksOf(5), [5]);
+  assert.deepEqual(weeksOf('1-16周'), ALL_WEEKS);
+  assert.deepEqual(weeksOf('第1-8周'), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(weeksOf('第3周,5周'), [3, 5]);
+  assert.deepEqual(weeksOf('1-16 周'), ALL_WEEKS, '周字和数字之间有空格');
+  assert.deepEqual(weeksOf('第2-4周，第10周'), [2, 3, 4, 10]);
+});
+
+test('课表草稿：周次区间先截到学期范围再展开', () => {
+  const weeksOf = (weeks: unknown): number[] | undefined =>
+    parseScheduleDrafts(JSON.stringify([{ courseName: 'X', dayOfWeek: 1, periodStart: 1, weeks }]), SEMESTER).items[0]?.weeks;
+  const started = performance.now();
+  assert.deepEqual(weeksOf('1-9000000000000'), ALL_WEEKS);
+  assert.deepEqual(weeksOf('9000000000000-0'), ALL_WEEKS, '倒序且含 0');
+  assert.deepEqual(weeksOf('第1-50000000周'), ALL_WEEKS);
+  assert.ok(performance.now() - started < 200, '大数区间不逐周展开');
+  assert.deepEqual(weeksOf('0-3'), [1, 2, 3]);
+});
+
+test('课表草稿：单个数字周次在学期外时跳过并说明', () => {
+  const result = parseScheduleDrafts(
+    JSON.stringify([
+      { courseName: '第三十周', dayOfWeek: 1, periodStart: 1, weeks: 30 },
+      { courseName: '第零周', dayOfWeek: 1, periodStart: 1, weeks: 0 },
+      { courseName: '半周', dayOfWeek: 1, periodStart: 1, weeks: 2.5 },
+      { courseName: '远期', dayOfWeek: 1, periodStart: 1, weeks: '第30周' },
+    ]),
+    SEMESTER,
+  );
+  assert.deepEqual(result.items, []);
+  assert.deepEqual(result.warnings, [
+    '「第三十周」周次不在本学期内，已跳过',
+    '「第零周」周次不在本学期内，已跳过',
+    '「半周」周次不在本学期内，已跳过',
+    '「远期」周次不在本学期内，已跳过',
+  ]);
 });
 
 test('课表草稿：周次全在学期外时跳过并说明', () => {

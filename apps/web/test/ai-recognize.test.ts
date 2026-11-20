@@ -53,6 +53,42 @@ test('aiInputOf：去掉标签、脚本与样式，单元格用竖线分隔，�
   assert.doesNotMatch(text, /\n\s*\n/, '不留空行');
 });
 
+test('aiInputOf：HTML 里的常见实体还原成字符', () => {
+  const html = '<table><tr><td>A&amp;B 班</td><td>&lt;实验&gt;</td><td>&quot;选修&quot; 张&#39;s</td></tr></table>';
+  assert.equal(aiInputOf(html), 'A&B 班 | <实验> | "选修" 张\'s |');
+});
+
+test('aiInputOf：&amp; 最后还原，不连带二次解码', () => {
+  assert.equal(aiInputOf('<p>&amp;lt;td&amp;gt; &amp;quot; &amp;#39; &amp;amp;</p>'), '&lt;td&gt; &quot; &#39; &amp;');
+  assert.equal(aiInputOf('<p>&amp;nbsp;x</p>'), '&nbsp;x');
+});
+
+test('aiInputOf：HTML 里的数字实体还原成字符', () => {
+  assert.equal(aiInputOf('<p>&#39;a&#039; &#60;b&#x27; &#X3C;c</p>'), "'a' <b' <c");
+  assert.equal(aiInputOf('<p>&#x4E2D;&#25991;</p>'), '中文');
+  assert.equal(aiInputOf('<p>&#128512;</p>'), '\u{1F600}', '超出 BMP 的码点');
+});
+
+test('aiInputOf：越界的数字实体原样保留', () => {
+  assert.equal(aiInputOf('<p>&#0; &#x110000; &#x10FFFF;</p>'), '&#0; &#x110000; \u{10FFFF}');
+});
+
+test('aiInputOf：命名与数字实体一遍还原，不连带二次解码', () => {
+  assert.equal(aiInputOf('<p>&amp;#60; &amp;#x27;</p>'), '&#60; &#x27;');
+  assert.equal(aiInputOf('<p>&#38;lt; &#38;quot;</p>'), '&lt; &quot;', '数字实体还原出的 & 不再与后文组成实体');
+  assert.equal(aiInputOf('<p>&#38;amp;</p>'), '&amp;');
+  assert.equal(aiInputOf('<p>&amp;amp;</p>'), '&amp;');
+});
+
+test('aiInputOf：未知名称与原型上的名称原样保留', () => {
+  assert.equal(aiInputOf('<p>&copy; &constructor; &toString; &AMP;</p>'), '&copy; &constructor; &toString; &AMP;');
+  assert.equal(aiInputOf('<p>&__proto__; &hasOwnProperty;</p>'), '&__proto__; &hasOwnProperty;');
+});
+
+test('aiInputOf：纯文本里的实体原样保留', () => {
+  assert.equal(aiInputOf(' A&amp;B &lt;实验&gt; '), 'A&amp;B &lt;实验&gt;');
+});
+
 test('aiInputOf：去掉书签粘贴的页面标记', () => {
   const pasted = '前缀<<<DAWNTICK>>>{"url":"https://jw.example.edu"}<<<FRAME>>><table><tr><td>高数</td></tr></table><<<END>>>尾巴';
   const text = aiInputOf(pasted);
