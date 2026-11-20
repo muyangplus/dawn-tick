@@ -16,6 +16,8 @@ export const timelineCopy = {
   dateLabel: (month: number, day: number, weekday: string) => `${month} 月 ${day} 日 ${weekday}`,
   makeup: '调休',
   cancelled: '停课',
+  /** 停课条目副标题：原来的节次与时间 */
+  cancelledFrom: (period: string, time: string | null) => (time === null ? period : `${period} ${time}`),
   rescheduled: '调课',
   movedTo: (date: string, period: string | null) => (period === null ? `改至 ${date}` : `改至 ${date} ${period}`),
   overdue: '已过期',

@@ -1415,6 +1415,15 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     (cancelledRow?.textContent ?? '').includes('停课'),
     cancelledRow?.textContent?.trim() ?? '(无)',
   );
+  // 停课条目的时间列只写「停课」，原节次与时间挪到副标题
+  const cancelledStatus = cancelledRow?.querySelector('[data-role="timeline-status"]')?.textContent?.trim() ?? '(无)';
+  check(
+    '日程时间线：停课条目时间列显示停课，副标题是原节次',
+    cancelledRow?.getAttribute('data-kind') === 'adjust' &&
+      cancelledStatus === '停课' &&
+      (cancelledRow?.textContent ?? '').includes('第 9–10 节'),
+    `${cancelledStatus} / ${cancelledRow?.textContent?.trim() ?? '(无)'}`,
+  );
   if (clickByText(view.container, '课表')) await flush(16);
   const cancelledCard = view.container.querySelector('[data-tone="cancelled"]');
   check(

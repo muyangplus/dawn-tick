@@ -263,12 +263,18 @@ function TimelineRow({
         className="tabular flex w-12 shrink-0 flex-col items-center justify-center gap-0.5 text-xs font-medium leading-tight text-ink"
         data-role={item.kind === 'lesson' ? 'lesson-time' : 'timeline-time'}
       >
-        {item.startText === null && item.endText !== null && (
-          <span className="text-[10px] font-normal text-muted">{timelineCopy.dueLabel}</span>
+        {item.statusText !== undefined && item.statusText !== null ? (
+          <span data-role="timeline-status">{item.statusText}</span>
+        ) : (
+          <>
+            {item.startText === null && item.endText !== null && (
+              <span className="text-[10px] font-normal text-muted">{timelineCopy.dueLabel}</span>
+            )}
+            {item.startText !== null && <span>{item.startText}</span>}
+            {item.startText !== null && item.endText !== null && <span aria-hidden>–</span>}
+            {item.endText !== null && <span>{item.endText}</span>}
+          </>
         )}
-        {item.startText !== null && <span>{item.startText}</span>}
-        {item.startText !== null && item.endText !== null && <span aria-hidden>–</span>}
-        {item.endText !== null && <span>{item.endText}</span>}
       </span>
       {/* 颜色竖条：把左侧时间与右侧内容隔开；课程用课程色，其余用主题主色 */}
       <span

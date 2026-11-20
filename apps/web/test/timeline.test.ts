@@ -11,7 +11,7 @@ import { formatCountdown, formatDayCountdown, formatRemaining, formatShortCountd
 import { buildTimeline, splitTimeline } from '../src/screens/cards/timeline.ts';
 import type { AppData } from '../src/data.ts';
 import { appDataOf } from './kit/app-data.ts';
-import type { EventRow, Occurrence } from '@dawn-tick/core';
+import type { EventRow, ManagedCourse, Occurrence, TimeSlotRow } from '@dawn-tick/core';
 
 const LESSON: Occurrence = {
   date: '2026-10-13',
@@ -190,11 +190,97 @@ test('时间线：停课记录默认已完成，不计入未完成安排', () =>
   const items = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0));
   const cancel = items.find((item) => item.key === 'adjust-e-cancel');
   assert.ok(cancel !== undefined);
-  assert.equal(cancel.detail, '停课');
+  // 没关联排课：时间列写「停课」，副标题留空
+  assert.equal(cancel.statusText, '停课');
+  assert.equal(cancel.detail, '');
   assert.equal(cancel.done, true);
   assert.equal(cancel.completed, true);
   assert.equal(cancel.checkable, false);
   const { main, completed } = splitTimeline(items);
   assert.equal(completed.filter((item) => item.key === 'adjust-e-cancel').length, 1);
   assert.equal(main.filter((item) => item.key === 'adjust-e-cancel').length, 0);
+});
+
+/** 作息表：第 3、4 节 10:00–11:40 */
+const SLOT_ROWS = [
+  { period_no: 3, start_time: '10:00', end_time: '10:45' },
+  { period_no: 4, start_time: '10:55', end_time: '11:40' },
+] as unknown as TimeSlotRow[];
+
+function courseWith(schedule: Partial<ManagedCourse['schedules'][number]>): ManagedCourse {
+  return {
+    id: 'c-2',
+    name: '大学物理',
+    shortName: null,
+    teacher: null,
+    location: null,
+    color: '#4F8DFD',
+    credits: null,
+    note: null,
+    schedules: [
+      {
+        id: 'sch-phy',
+        dayOfWeek: 2,
+        periodStart: 3,
+        periodEnd: 4,
+        weeks: [6],
+        room: null,
+        startTime: null,
+        endTime: null,
+        ...schedule,
+      },
+    ],
+  };
+}
+
+const PHYSICS_CANCEL = { ...CANCEL_EVENT, id: 'e-phy', title: '停课：大学物理', ref_schedule_id: 'sch-phy' } as EventRow;
+
+test('时间线：停课条目副标题是原节次与作息表时间，按原开始时间排序', () => {
+  const data = makeData({ courses: [courseWith({})], slots: SLOT_ROWS, reschedules: [PHYSICS_CANCEL] });
+  const items = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0));
+  const cancel = items.find((item) => item.key === 'adjust-e-phy');
+  assert.ok(cancel !== undefined);
+  assert.equal(cancel.statusText, '停课');
+  assert.equal(cancel.detail, '第 3–4 节 10:00–11:40');
+  assert.equal(cancel.minute, 600);
+  assert.equal(cancel.completed, true);
+});
+
+test('时间线：停课条目的时间以排课自定义时间为准', () => {
+  const data = makeData({
+    courses: [courseWith({ startTime: '13:30', endTime: '15:05' })],
+    slots: SLOT_ROWS,
+    reschedules: [PHYSICS_CANCEL],
+  });
+  const cancel = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0)).find((item) => item.key === 'adjust-e-phy');
+  assert.equal(cancel?.detail, '第 3–4 节 13:30–15:05');
+  assert.equal(cancel?.minute, 13 * 60 + 30);
+});
+
+test('时间线：停课排课没有作息时间时只写节次', () => {
+  const data = makeData({ courses: [courseWith({ periodStart: 7, periodEnd: 7 })], slots: SLOT_ROWS, reschedules: [PHYSICS_CANCEL] });
+  const cancel = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0)).find((item) => item.key === 'adjust-e-phy');
+  assert.equal(cancel?.detail, '第 7 节');
+});
+
+test('时间线：找不到停课对应的排课时副标题留空', () => {
+  const orphan = { ...PHYSICS_CANCEL, ref_schedule_id: 'sch-gone' } as EventRow;
+  const data = makeData({ courses: [courseWith({})], slots: SLOT_ROWS, reschedules: [orphan] });
+  const cancel = buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0)).find((item) => item.key === 'adjust-e-phy');
+  assert.equal(cancel?.detail, '');
+  assert.equal(cancel?.statusText, '停课');
+});
+
+test('时间线：非停课的调整不带 statusText', () => {
+  const move = {
+    ...CANCEL_EVENT,
+    id: 'e-move',
+    action: 'move',
+    new_date: '2026-10-15',
+    new_period_start: 5,
+    new_period_end: 6,
+  } as EventRow;
+  const item = buildTimeline(makeData({ reschedules: [move] }), '2026-10-13', 0).find((entry) => entry.key === 'adjust-e-move');
+  assert.equal(item?.statusText, null);
+  assert.equal(item?.detail, '改至 2026-10-15 第 5–6 节');
 });

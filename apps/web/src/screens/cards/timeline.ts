@@ -29,6 +29,8 @@ export interface TimelineItem {
   startText: string | null;
   /** 左侧竖排时间列下半：结束时间（课程）或截止时间（待办/考试） */
   endText: string | null;
+  /** 时间列改写状态（停课）：非空时时间列只显示这几个字，原时间挪到副标题 */
+  statusText?: string | null;
   /** 结束/截止时间戳；null 表示没有时间，永不自动完成 */
   endEpoch: number | null;
   /** 手动勾选（只有带事件行的待办/考试会有） */
@@ -86,6 +88,27 @@ function isOverdue(endEpoch: number | null, now: number): boolean {
   return endEpoch !== null && endEpoch <= now;
 }
 
+/** 停课记录对应的原课次：节次与起止时间（自定义时间优先，否则按作息表）；找不到排课返回 null。 */
+function originalSlotOf(
+  data: AppData,
+  scheduleId: string | null,
+): { period: string; time: string | null; minute: number } | null {
+  if (scheduleId === null) return null;
+  for (const course of data.courses) {
+    const schedule = course.schedules.find((row) => row.id === scheduleId);
+    if (schedule === undefined) continue;
+    const start = schedule.startTime ?? data.slots.find((slot) => slot.period_no === schedule.periodStart)?.start_time ?? null;
+    const end = schedule.endTime ?? data.slots.find((slot) => slot.period_no === schedule.periodEnd)?.end_time ?? null;
+    const [hour, minute] = (start ?? '00:00').split(':').map(Number);
+    return {
+      period: formatPeriodRange(schedule.periodStart, schedule.periodEnd),
+      time: start === null || end === null ? null : `${start}–${end}`,
+      minute: (hour ?? 0) * 60 + (minute ?? 0),
+    };
+  }
+  return null;
+}
+
 /** 把某一天的课程、调课与待办合成一条时间线 */
 export function buildTimeline(data: AppData, date: string, now: number = Date.now()): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -130,6 +153,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (itemDate !== null && itemDate !== date) continue;
     // 停课只说明这节课不上了，不是待办：默认已完成，直接进「已完成」分组，不计入未完成安排
     const cancelled = item.action === 'cancel';
+    const original = cancelled ? originalSlotOf(data, item.ref_schedule_id ?? null) : null;
     const newPeriod =
       item.new_period_start === null
         ? null
@@ -138,7 +162,9 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       item.type === 'makeup'
         ? timelineCopy.makeup
         : cancelled
-          ? timelineCopy.cancelled
+          ? original === null
+            ? ''
+            : timelineCopy.cancelledFrom(original.period, original.time)
           : item.new_date !== null
             ? timelineCopy.movedTo(item.new_date, newPeriod)
             : timelineCopy.rescheduled;
@@ -149,7 +175,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     items.push({
       key: `adjust-${item.id}`,
       date: itemDate,
-      minute: minuteOf(startAt, data.timeZone),
+      minute: original?.minute ?? minuteOf(startAt, data.timeZone),
       rank: 1,
       kind: 'adjust',
       nature: item.nature === 'lab' ? NATURE.lab : NATURE.adjust,
@@ -158,6 +184,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       location: item.location ?? item.new_room ?? null,
       startText: startAt === null ? null : formatTime(startAt, data.timeZone),
       endText: endEpoch === null ? null : formatTime(endEpoch, data.timeZone),
+      statusText: cancelled ? timelineCopy.cancelled : null,
       endEpoch,
       done,
       autoDone,
