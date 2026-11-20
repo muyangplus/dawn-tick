@@ -10,6 +10,7 @@ import {
   checkSource,
   DELEGATED,
   enclosingFunction,
+  findExceptionMessages,
   forbiddenInExpression,
   functionRanges,
   innermostBlock,
@@ -298,6 +299,79 @@ test('call.reject：中文字面量报出，资源取值、英文、注释与 er
   assert.deepEqual(result.unlogged, [], '同一个函数块里已有 warn');
 });
 
+test('异常消息：旧 SecretVault.decrypt 的 require 中文消息报出', () => {
+  const source = `internal object SecretVault {
+    fun decrypt(encoded: String): String {
+        val combined = Base64.decode(encoded, Base64.NO_WRAP)
+        require(combined.size > IV_BYTES) { "密文长度不对" }
+        return String(combined)
+    }
+}`;
+  const result = checkSource(source, opts({ scope: 'credentials' }));
+  assert.deepEqual(result.exceptionCjk, [{ line: 4, kind: 'require', text: '"密文长度不对"' }]);
+  assert.deepEqual(result.cjk, [], 'call.reject 规则本身不覆盖这里');
+  const fixed = source.replace('"密文长度不对"', '"ciphertext shorter than IV"');
+  assert.deepEqual(checkSource(fixed, opts({ scope: 'credentials' })).exceptionCjk, []);
+});
+
+test('异常消息：require / check / requireNotNull / checkNotNull / error / throw 的中文字面量报出', () => {
+  const source = `fun a(id: String?, size: Int) {
+    check(size > 0) { "大小为 0" }
+    val v = requireNotNull(id) { "缺少 \${size}" }
+    checkNotNull(id) {
+        "未初始化"
+    }
+    if (size > 9) error("太大")
+    if (size > 8) return error("也太大")
+    throw IllegalStateException("状态不对")
+    throw java.io.IOException("读不到 $size", cause)
+    throw new IllegalArgumentException("Java 写法")
+}`;
+  const result = checkSource(source, opts());
+  assert.deepEqual(
+    result.exceptionCjk.map((item) => [item.line, item.kind, item.text]),
+    [
+      [2, 'check', '"大小为 0"'],
+      [3, 'requireNotNull', '"缺少 \${size}"'],
+      [5, 'checkNotNull', '"未初始化"'],
+      [7, 'error', '"太大"'],
+      [8, 'error', '"也太大"'],
+      [9, 'throw IllegalStateException', '"状态不对"'],
+      [10, 'throw IOException', '"读不到 $size"'],
+      [11, 'throw IllegalArgumentException', '"Java 写法"'],
+    ],
+  );
+});
+
+test('异常消息：英文、注释、NativeLog 消息、无 lambda 的 require、方法调用与声明不报', () => {
+  const source = `fun a(id: String?, call: PluginCall) {
+    require(id != null) { "missing id" } // 缺少 id
+    require(id.isNotEmpty())
+    check(id.length < 9) {
+        NativeLog.warn(context, "reminder", "id 过长")
+        "id too long"
+    }
+    /* throw IllegalStateException("注释里") */
+    val text = "require(x) { \"字符串里\" }"
+    validator.check(id) { "接收者上的方法" }
+    Result::error
+    throw IllegalStateException(context.getString(R.string.reminder_missing_id))
+    throw error
+    catch (error: Exception) { NativeLog.warn(context, "reminder", "失败 \${error.javaClass.simpleName}") }
+}
+fun error(message: String): Nothing = throw IllegalStateException(message)
+fun check(flag: Boolean) { }`;
+  const result = checkSource(source, opts());
+  assert.deepEqual(result.exceptionCjk, []);
+  const masked = maskSource(source, lexSource(source, 'kotlin'));
+  const kinds = findExceptionMessages(masked, bracePairs(masked)).map((item) => item.kind);
+  assert.deepEqual(
+    kinds,
+    ['require', 'check', 'throw IllegalStateException', 'throw IllegalStateException'],
+    '无 lambda 的 require、接收者上的方法、函数引用、throw 变量与 fun 声明都不收',
+  );
+});
+
 // ---------------------------------------------------------------- 全仓
 
 const NATIVE_LOG = `object NativeLog {
@@ -379,6 +453,7 @@ test('仓库内提醒、密钥库、安装、分享四块的失败分支日志�
     ...result.scopeProblems.map((item) => `${item.file}:${item.line} ${item.problem}`),
     ...result.forbidden.map((item) => `${item.file}:${item.line} ${item.reason}`),
     ...result.cjk.map((item) => `${item.file}:${item.line} ${item.text}`),
+    ...result.exceptionCjk.map((item) => `${item.file}:${item.line} ${item.kind} ${item.text}`),
     ...result.badDelegates.map((item) => `${item.site} ${item.problem}`),
     ...result.stale.map((item) => `${item.site} 已失效`),
   ];

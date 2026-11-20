@@ -11,7 +11,9 @@
  * 3. 日志消息不插值、不拼接 `FORBIDDEN` 里的值（明文、密文、提醒标题正文、完整路径、文件与提醒对象）；
  *    `file.file.name`、`record.id`、`title != null` 这类只取名字、编号或判空的不算；
  *    `credentials` 范围另外不带异常对象、不取 `.message`（异常 message 可能带密文片段），只记类名；
- * 4. `call.reject(` 的实参里没有中日韩字符的字符串字面量：提示文案走 strings.xml。
+ * 4. `call.reject(` 的实参里没有中日韩字符的字符串字面量：提示文案走 strings.xml；
+ *    异常消息同样不写中文（`error.message` 会被转进 reject）：`require` / `check` / `requireNotNull` / `checkNotNull`
+ *    的尾随 lambda、`error(…)` 与 `throw Xxx(…)` 的实参里没有中日韩字面量。注释与其中的 NativeLog 消息不算。
  *
  * 块按花括号配对，只认 code 片段（词法复用 check-log-scopes 的 lexSource）；
  * `runCatching` / `onFailure` 这类不带 catch 关键字的失败分支不在覆盖范围内。
@@ -240,6 +242,35 @@ function rejectKey(masked, source, reject) {
   return args.slice(0, end).replace(/\s+/g, '');
 }
 
+/** 不带接收者的前置条件函数：消息在尾随 lambda 里。 */
+const PRECONDITIONS = ['require', 'check', 'requireNotNull', 'checkNotNull'];
+
+/**
+ * 异常消息所在的范围：`[{ index, kind, start, end }]`，start / end 为括号或花括号本身。
+ * `x.check(`、`fun error(` 这类方法调用与声明不算；`throw` 认 Kotlin `throw X(` 与 Java `throw new X(`。
+ */
+export function findExceptionMessages(masked, pairs) {
+  const found = [];
+  const pattern = new RegExp(`(?<![.:]\\s*)\\b(${PRECONDITIONS.join('|')}|error)\\s*\\(|\\bthrow\\s+(?:new\\s+)?([\\w.]+)\\s*\\(`, 'g');
+  for (const match of masked.matchAll(pattern)) {
+    if (/\bfun\s+$/.test(masked.slice(Math.max(0, match.index - 12), match.index))) continue;
+    const open = match.index + match[0].length - 1;
+    const close = matchParen(masked, open);
+    if (match[1] === undefined) {
+      found.push({ index: match.index, kind: `throw ${match[2].split('.').at(-1)}`, start: open, end: close });
+    } else if (match[1] === 'error') {
+      found.push({ index: match.index, kind: 'error', start: open, end: close });
+    } else {
+      const lambda = /^\s*\{/.exec(masked.slice(close + 1));
+      if (lambda === null) continue;
+      const braceAt = close + lambda[0].length;
+      const block = pairs.find((pair) => pair.open === braceAt);
+      found.push({ index: match.index, kind: match[1], start: braceAt, end: block?.close ?? masked.length });
+    }
+  }
+  return found;
+}
+
 // ---------------------------------------------------------------- 消息内容
 
 /** 去掉表达式里的字符串字面量（模板里的 `"是"` 之类），只留代码。 */
@@ -323,7 +354,7 @@ function forbiddenInRange(source, segments, range, lang, options) {
 /**
  * 检查一个源文件。
  * options：`lang`（kotlin | java）、`scope`（区域约定范围）、`scopes`（NativeLog.SCOPES）、`allowSites`（本文件登记的 site）。
- * 返回 `{ calls, sites, unlogged, scopeProblems, forbidden, cjk, usedSites }`，问题项带 line。
+ * 返回 `{ calls, sites, unlogged, scopeProblems, forbidden, cjk, exceptionCjk, usedSites }`，问题项带 line。
  */
 export function checkSource(source, { lang = 'kotlin', scope, scopes, allowSites = new Set() } = {}) {
   const segments = lexSource(source, lang);
@@ -397,7 +428,21 @@ export function checkSource(source, { lang = 'kotlin', scope, scopes, allowSites
       if (hasCjk(text)) cjk.push({ line: lineAt(source, segment.start), text });
     }
   }
-  return { calls, sites, unlogged, scopeProblems, forbidden, cjk, usedSites, functions, failureLogs };
+  // 异常消息：NativeLog 的实参（日志按约定写中文）不算
+  const logSpans = calls.map((call) => {
+    const args = [call.scope, ...call.messages].filter(Boolean);
+    return { start: args[0]?.start ?? 0, end: args.at(-1)?.end ?? 0 };
+  });
+  const inLog = (segment) => logSpans.some((span) => segment.start >= span.start && segment.end <= span.end);
+  const exceptionCjk = [];
+  for (const item of findExceptionMessages(masked, pairs)) {
+    for (const segment of segments) {
+      if (segment.kind !== 'string' || segment.end <= item.start || segment.start >= item.end || inLog(segment)) continue;
+      const text = source.slice(segment.start, segment.end);
+      if (hasCjk(text)) exceptionCjk.push({ line: lineAt(source, segment.start), kind: item.kind, text });
+    }
+  }
+  return { calls, sites, unlogged, scopeProblems, forbidden, cjk, exceptionCjk, usedSites, functions, failureLogs };
 }
 
 // ---------------------------------------------------------------- 全仓
@@ -413,7 +458,7 @@ function areaFiles(root, area) {
 }
 
 /**
- * 全仓检查。返回 `{ files, calls, sites, missingAreas, unlogged, scopeProblems, forbidden, cjk, badDelegates, stale }`，
+ * 全仓检查。返回 `{ files, calls, sites, missingAreas, unlogged, scopeProblems, forbidden, cjk, exceptionCjk, badDelegates, stale }`，
  * 问题项带 file（相对 PACKAGE_DIR）。
  */
 export function checkAndroidLogs({ root = ROOT, areas = AREAS, delegated = DELEGATED } = {}) {
@@ -421,7 +466,7 @@ export function checkAndroidLogs({ root = ROOT, areas = AREAS, delegated = DELEG
   const scopes = parseAndroidScopes(existsSync(scopesSource) ? readFileSync(scopesSource, 'utf8') : '') ?? [];
   const results = new Map();
   const missingAreas = [];
-  const out = { files: [], calls: 0, sites: 0, unlogged: [], scopeProblems: [], forbidden: [], cjk: [] };
+  const out = { files: [], calls: 0, sites: 0, unlogged: [], scopeProblems: [], forbidden: [], cjk: [], exceptionCjk: [] };
   for (const area of areas) {
     const files = areaFiles(root, area);
     if (files === null || files.length === 0) {
@@ -441,7 +486,7 @@ export function checkAndroidLogs({ root = ROOT, areas = AREAS, delegated = DELEG
       out.files.push(file);
       out.calls += result.calls.length;
       out.sites += result.sites.length;
-      for (const key of ['unlogged', 'scopeProblems', 'forbidden', 'cjk']) {
+      for (const key of ['unlogged', 'scopeProblems', 'forbidden', 'cjk', 'exceptionCjk']) {
         for (const item of result[key]) out[key].push({ file, ...item });
       }
     }
@@ -478,6 +523,9 @@ if (invokedDirectly) {
     console.log(`[FAIL] ${at(file, line)}: ${callee} 的消息不应带这个值（${reason}）`);
   }
   for (const { file, line, text } of result.cjk) console.log(`[FAIL] ${at(file, line)}: call.reject 里有中文字面量 ${text}，改用 strings.xml`);
+  for (const { file, line, kind, text } of result.exceptionCjk) {
+    console.log(`[FAIL] ${at(file, line)}: ${kind} 的异常消息里有中文字面量 ${text}，message 会转进 reject，改用英文并在插件里换 strings.xml`);
+  }
   for (const { file, site, delegate, problem } of result.badDelegates) {
     console.log(`[FAIL] DELEGATED ${file} ${site}: 委托的 ${delegate} ${problem}`);
   }
@@ -488,6 +536,7 @@ if (invokedDirectly) {
     result.scopeProblems.length +
     result.forbidden.length +
     result.cjk.length +
+    result.exceptionCjk.length +
     result.badDelegates.length +
     result.stale.length;
   if (failures > 0) {
@@ -496,6 +545,6 @@ if (invokedDirectly) {
   }
   console.log(
     `安卓失败分支日志：${result.files.length} 个文件、${result.sites} 处 catch / reject 均有 warn 或已登记委托，` +
-      `${result.calls} 处日志范围与区域一致，消息不带敏感值，reject 无中文字面量`,
+      `${result.calls} 处日志范围与区域一致，消息不带敏感值，reject 与异常消息无中文字面量`,
   );
 }
