@@ -770,3 +770,147 @@ fn cleanup_empty_backups_only_removes_empty_snapshots() {
     assert_eq!(cleanup_empty_backups_in(&temp.join("missing")), 0, "目录不存在按 0 处理");
     let _ = std::fs::remove_dir_all(&temp);
 }
+
+/// 改日志级别门槛与写文件开关的用例串行执行，结束时还原默认值（info、写文件）。
+static LOG_SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn with_log_settings<R>(level: &str, file_enabled: bool, run: impl FnOnce() -> R) -> R {
+    let _guard = LOG_SETTINGS_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    set_log_settings(level.to_string(), file_enabled);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
+    set_log_settings("info".to_string(), true);
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+const LOG_LEVEL_NAMES: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
+
+/// 五级门槛 × 五级日志行：门槛及更严重的写，更详细的丢。
+#[test]
+fn should_write_filters_by_threshold() {
+    for (threshold_index, threshold) in LOG_LEVEL_NAMES.iter().enumerate() {
+        with_log_settings(threshold, true, || {
+            for (line_index, level) in LOG_LEVEL_NAMES.iter().enumerate() {
+                let line = format!("2026-11-20 10:00:00.000 +08:00 [{level}] app: 消息");
+                assert_eq!(
+                    should_write(&line),
+                    line_index <= threshold_index,
+                    "门槛 {threshold}，行级别 {level}"
+                );
+            }
+        });
+    }
+}
+
+/// 写文件开关关闭时任何级别都不写。
+#[test]
+fn should_write_respects_file_switch() {
+    with_log_settings("trace", false, || {
+        for level in LOG_LEVEL_NAMES {
+            assert!(!should_write(&format!("2026-11-20 10:00:00.000 +08:00 [{level}] app: x")));
+        }
+    });
+}
+
+/// 级别取行内第一个 `[...]`；没有或认不出时按 info。
+#[test]
+fn should_write_parses_first_bracket_and_defaults_to_info() {
+    with_log_settings("warn", true, || {
+        assert!(!should_write("2026-11-20 10:00:00.000 +08:00 没有级别的行"), "无级别按 info");
+        assert!(!should_write("2026-11-20 10:00:00.000 +08:00 [verbose] app: x"), "未知级别按 info");
+        assert!(
+            should_write("2026-11-20 10:00:00.000 +08:00 [error] app: 消息里还有 [trace] 字样"),
+            "只看第一个方括号"
+        );
+    });
+    with_log_settings("info", true, || {
+        assert!(should_write("2026-11-20 10:00:00.000 +08:00 [verbose] app: x"));
+    });
+}
+
+/// 前端传来认不出的级别时门槛按 info。
+#[test]
+fn set_log_settings_unknown_level_falls_back_to_info() {
+    with_log_settings("loud", true, || {
+        assert!(should_write("t [info] app: x"));
+        assert!(!should_write("t [debug] app: x"));
+    });
+}
+
+/// 级别名、序号与 `LogLevel` 枚举一致。
+#[test]
+fn log_level_names_and_ranks_agree() {
+    let levels = [LogLevel::Error, LogLevel::Warn, LogLevel::Info, LogLevel::Debug, LogLevel::Trace];
+    for (index, level) in levels.iter().enumerate() {
+        assert_eq!(level.as_str(), LOG_LEVEL_NAMES[index]);
+        assert_eq!(usize::from(level_rank(level.as_str())), index + 1);
+    }
+}
+
+/// `log_at` 的行格式与换行折叠（`log_line` / `one_line` 是 `log_at` 写盘前的纯函数部分）。
+#[test]
+fn log_line_collapses_newlines() {
+    assert_eq!(log_line(LogLevel::Warn, "storage", "一行"), "[warn] storage: 一行");
+    assert_eq!(
+        log_line(LogLevel::Error, "app", "第一行\n  第二行  \r\n\r\n第三行\r"),
+        "[error] app: 第一行 第二行 第三行"
+    );
+    assert_eq!(one_line("\n\n"), "");
+    assert_eq!(one_line("  首尾空白保留  "), "  首尾空白保留  ", "无换行时原样返回");
+    assert!(matches!(one_line("无换行"), std::borrow::Cow::Borrowed(_)), "无换行不分配");
+    assert!(!log_line(LogLevel::Trace, "widget", "a\nb\rc").contains(['\n', '\r']));
+}
+
+/// 未登记的范围在开发构建里直接断言失败（断言在写盘之前，不碰文件）。
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "未登记的日志范围")]
+fn log_at_rejects_unregistered_scope() {
+    // 经函数指针调用：tools/verify/check-log-scopes.mjs 只扫直接调用，故意写错的范围不让它报出
+    let log: fn(LogLevel, &str, &str) = log_at;
+    log(LogLevel::Info, "probe", "x");
+}
+
+#[test]
+fn log_scopes_are_unique_and_lowercase() {
+    let unique: std::collections::BTreeSet<_> = LOG_SCOPES.iter().collect();
+    assert_eq!(unique.len(), LOG_SCOPES.len(), "LOG_SCOPES 有重复项");
+    assert_eq!(LOG_SCOPES.len(), 16);
+    for scope in LOG_SCOPES {
+        assert!(!scope.is_empty() && scope.chars().all(|c| c.is_ascii_lowercase()), "{scope}");
+    }
+}
+
+#[test]
+fn redact_url_strips_userinfo_query_fragment_and_params() {
+    assert_eq!(
+        redact_url("https://alice:s3cret@dav.example.com/remote.php/dav/?token=abc#top"),
+        "https://dav.example.com/remote.php/dav/"
+    );
+    assert_eq!(
+        redact_url("http://jw.example.edu.cn/jsxsd/kbcx;jsessionid=ABC123?xnm=2026"),
+        "http://jw.example.edu.cn/jsxsd/kbcx"
+    );
+    assert_eq!(redact_url("https://example.com#frag"), "https://example.com");
+    assert_eq!(redact_url("https://example.com?q=1"), "https://example.com");
+    assert_eq!(redact_url("http://192.168.1.8:37421/sync/pull?since=1"), "http://192.168.1.8:37421/sync/pull");
+    assert_eq!(redact_url("https://user@host.example/a;b=c/d"), "https://host.example/a");
+    assert_eq!(redact_url("host.example/path?x=1"), "host.example/path", "无 scheme 也去掉查询串");
+    assert_eq!(redact_url("https://example.com/plain"), "https://example.com/plain", "干净链接原样保留");
+}
+
+/// 前端转来的日志行：明细为空或 null 时省略，消息与明细里的换行折成一行。
+#[test]
+fn event_line_folds_frontend_message_and_detail() {
+    assert_eq!(event_line("info", "app", "启动", None), "[info] app: 启动");
+    assert_eq!(event_line("info", "app", "启动", Some("")), "[info] app: 启动");
+    assert_eq!(event_line("info", "app", "启动", Some("null")), "[info] app: 启动");
+    assert_eq!(
+        event_line("warn", "sync", "连接失败\n请重试", Some("{\"step\":1}")),
+        "[warn] sync: 连接失败 请重试 {\"step\":1}"
+    );
+    assert_eq!(
+        event_line("error", "app", "脚本错误", Some("{\"stack\":\"at a\r\n  at b\"}")),
+        "[error] app: 脚本错误 {\"stack\":\"at a at b\"}"
+    );
+    assert!(!event_line("trace", "log", "a\r\nb", Some("c\nd")).contains(['\n', '\r']));
+}

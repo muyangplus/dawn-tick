@@ -276,7 +276,17 @@ impl LogLevel {
 /// 消息里的换行（弹窗文案、panic 信息）压成空格，保证一条日志只占一行。
 pub(crate) fn log_at(level: LogLevel, scope: &str, message: &str) {
     debug_assert!(LOG_SCOPES.contains(&scope), "未登记的日志范围：{scope}");
-    let message = if message.contains(['\n', '\r']) {
+    append_log(&log_line(level, scope, message));
+}
+
+/// `log_at` 写出的行（不含时间前缀）：`[级别] 范围: 消息`，消息已压成一行。
+pub(crate) fn log_line(level: LogLevel, scope: &str, message: &str) -> String {
+    format!("[{}] {scope}: {}", level.as_str(), one_line(message))
+}
+
+/// 换行压成空格：按 `\n` / `\r` 切开，各段去掉首尾空白，丢掉空段后用单个空格连接。
+pub(crate) fn one_line(message: &str) -> std::borrow::Cow<'_, str> {
+    if message.contains(['\n', '\r']) {
         std::borrow::Cow::Owned(
             message
                 .split(['\n', '\r'])
@@ -287,8 +297,7 @@ pub(crate) fn log_at(level: LogLevel, scope: &str, message: &str) {
         )
     } else {
         std::borrow::Cow::Borrowed(message)
-    };
-    append_log(&format!("[{}] {scope}: {message}", level.as_str()));
+    }
 }
 
 /// 写进日志的网址只留 `scheme://host/path`：去掉 userinfo、query、fragment 与 `;` 路径参数，
@@ -354,10 +363,16 @@ pub async fn log_event(level: String, scope: String, message: String, detail: Op
 }
 
 pub(crate) fn log_event_blocking(level: String, scope: String, message: String, detail: Option<String>) {
-    // detail 为前端附带的 JSON 明细；为空时省略，保证日志行格式稳定
+    append_log(&event_line(&level, &scope, &message, detail.as_deref()));
+}
+
+/// 前端日志落盘的行（不含时间前缀）：`[级别] 范围: 消息 明细`。
+/// detail 为前端附带的 JSON 明细；为空或 `null` 时省略，保证日志行格式稳定。
+/// 前端消息或明细带换行时同样折成一行，导出与按级别过滤都按行处理。
+pub(crate) fn event_line(level: &str, scope: &str, message: &str, detail: Option<&str>) -> String {
     let tail = match detail {
         Some(text) if !text.is_empty() && text != "null" => format!(" {text}"),
         _ => String::new(),
     };
-    append_log(&format!("[{level}] {scope}: {message}{tail}"));
+    one_line(&format!("[{level}] {scope}: {message}{tail}")).into_owned()
 }
