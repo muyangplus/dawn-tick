@@ -19,6 +19,7 @@ import {
   type EmptyTarget,
 } from './drag-session.ts';
 import { occupied } from './week-grid-helpers.ts';
+import { weekCopy } from '../../copy/timetable-week.ts';
 
 /** 拖动过程中需要的最小指针信息：React 合成事件与原生 PointerEvent 都满足。 */
 export type DragPointer = Pick<PointerEvent, 'pointerId' | 'clientY' | 'preventDefault'>;
@@ -140,7 +141,7 @@ export function useEmptySlot({ data, periodCount, rowHeight, sectionRef, onQuick
     const key = clash === null ? '' : `${clash.name}:${clash.start}-${clash.end}`;
     if (key === lastClash.current) return;
     lastClash.current = key;
-    if (clash !== null) toast.info(`${clashLabel(clash)}，仍可继续新建`);
+    if (clash !== null) toast.info(weekCopy.clashCanContinue(clashLabel(clash)));
   }
 
   /** 带当前范围打开加课弹窗：点「＋」与拖动松手共用；预填的周次取该列日期所在的周。 */
@@ -241,7 +242,7 @@ export function useEmptySlot({ data, periodCount, rowHeight, sectionRef, onQuick
     if (current === null) return;
     if (active.mode === 'wheel') {
       const changed = current.start !== active.startPeriod || current.end !== active.endPeriod;
-      if (changed) toast.success(`已调整为 ${formatPeriodRange(current.start, current.end)}`);
+      if (changed) toast.success(weekCopy.rangeAdjusted(formatPeriodRange(current.start, current.end)));
       return;
     }
     // 仅点击了块内空白：交给按钮自身的 click，本处不弹窗

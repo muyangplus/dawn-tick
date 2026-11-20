@@ -1,6 +1,7 @@
 import { MapPin, User } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { cn } from '../lib/cn.ts';
+import { courseCardCopy } from '../copy/timetable-course-card.ts';
 
 export interface CourseCardProps {
   name: string;
@@ -40,22 +41,22 @@ export function CourseCard({
   const label =
     badge ??
     (resolvedTone === 'ghost' ? (
-      <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted">非本周</span>
+      <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted">{courseCardCopy.otherWeekBadge}</span>
     ) : resolvedTone === 'cancelled' ? (
       <span
         className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted"
         data-role="cancelled-label"
       >
-        停课
+        {courseCardCopy.cancelledBadge}
       </span>
     ) : resolvedTone === 'movedOut' ? (
       <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted" data-role="moved-out-label">
-        已调课
+        {courseCardCopy.movedOutBadge}
       </span>
     ) : resolvedTone === 'holiday' ? (
       // 假期名称完整显示，长名称换行，不省略
       <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-muted" data-role="holiday-label">
-        {holidayLabel ?? '放假'}
+        {holidayLabel ?? courseCardCopy.holidayFallback}
       </span>
     ) : undefined);
   const content = (

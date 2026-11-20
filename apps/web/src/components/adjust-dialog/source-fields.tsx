@@ -5,6 +5,7 @@ import { EmptyState } from '../ui/empty-state.tsx';
 import { Field, Input } from '../ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/controls.tsx';
 import type { AdjustCourse, AdjustSchedule, AdjustSectionProps } from './section-props.ts';
+import { adjustCopy } from '../../copy/timetable-adjust.ts';
 
 interface SourceFieldsProps extends AdjustSectionProps {
   data: AppData;
@@ -18,9 +19,9 @@ export function AdjustSourceFields({ form, update, data, course, schedules, sche
   const { mode, courseId, scheduleId, sourceDate } = form;
   return (
     <div className="flex flex-col gap-3">
-      <Field label="课程">
+      <Field label={adjustCopy.courseLabel}>
         <Select value={courseId} onValueChange={(value) => update({ courseId: value })}>
-          <SelectTrigger aria-label="课程">{course?.name ?? '选择课程'}</SelectTrigger>
+          <SelectTrigger aria-label={adjustCopy.courseLabel}>{course?.name ?? adjustCopy.coursePlaceholder}</SelectTrigger>
           <SelectContent>
             {data.courses.map((item) => (
               <SelectItem key={item.id} value={item.id}>
@@ -31,13 +32,13 @@ export function AdjustSourceFields({ form, update, data, course, schedules, sche
         </Select>
       </Field>
       {schedules.length === 0 ? (
-        <EmptyState size="sm" tone="muted" title="这门课还没有排课，请在课程管理中添加排课" />
+        <EmptyState size="sm" tone="muted" title={adjustCopy.noSchedules} />
       ) : (
-        <Field label="课次">
+        <Field label={adjustCopy.scheduleLabel}>
           <Select value={scheduleId} onValueChange={(value) => update({ scheduleId: value })}>
-            <SelectTrigger aria-label="课次">
+            <SelectTrigger aria-label={adjustCopy.scheduleLabel}>
               {schedule === undefined
-                ? '选择课次'
+                ? adjustCopy.schedulePlaceholder
                 : `${WEEKDAY_LABELS[schedule.dayOfWeek - 1] ?? ''} ${formatPeriodRange(
                     schedule.periodStart,
                     schedule.periodEnd,
@@ -54,13 +55,13 @@ export function AdjustSourceFields({ form, update, data, course, schedules, sche
         </Field>
       )}
       <Field
-        label="原日期"
-        hint={mode === 'exam' ? '这一天的这节课会被移除' : '这一天的那节课次被调整'}
+        label={adjustCopy.sourceDateLabel}
+        hint={mode === 'exam' ? adjustCopy.sourceDateHintExam : adjustCopy.sourceDateHintMove}
       >
         <Input
           type="date"
           value={sourceDate}
-          aria-label="原日期"
+          aria-label={adjustCopy.sourceDateLabel}
           onChange={(event) => update({ sourceDate: event.target.value })}
         />
       </Field>

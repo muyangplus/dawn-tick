@@ -45,10 +45,11 @@ import { toast } from './ui/toaster.tsx';
 import { useAction } from '../lib/action.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { logInfo } from '../log.ts';
+import { periodsCopy } from '../copy/timetable-periods.ts';
 
-const SECTION_LABEL = { am: '上午', pm: '下午', night: '晚上' } as const;
+const SECTION_LABEL = periodsCopy.sections;
 /** 「本次启动期间不再询问」的勾选框文案 */
-const SCOPE_OPT_OUT_LABEL = '本次启动期间不再询问';
+const SCOPE_OPT_OUT_LABEL = periodsCopy.scopeOptOut;
 
 /** 「本次启动期间不再询问」只放模块级变量，不写 localStorage、不落盘；重新挂载仍有效，重启后恢复询问。 */
 let scopeOptOut = false;
@@ -108,10 +109,10 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const selectedPreset = findTimetable(presetId);
   const presetHint =
     selectedPreset === undefined
-      ? '套用后整表按该作息重排'
-      : `${selectedPreset.periods.length} 节${
+      ? periodsCopy.presetHintEmpty
+      : `${periodsCopy.periodCount(selectedPreset.periods.length)}${
           selectedPreset.source !== undefined && selectedPreset.source.length > 0
-            ? ` · ${selectedPreset.source}`
+            ? periodsCopy.sourceSuffix(selectedPreset.source)
             : ''
         }`;
 
@@ -160,7 +161,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   function optOutScopeAsk(): void {
     scopeOptOut = true;
     setOptOutScope(true);
-    toast.info('本次启动期间不再询问调整范围');
+    toast.info(periodsCopy.scopeOptedOut);
   }
 
   /** 关掉「调整范围」对话框（只改这一节 / 取消 / Esc / ✕），之后新的编辑可以重新询问。 */
@@ -186,7 +187,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     const result = await run({
       scope: 'timetable',
-      label: '正在生成节次…',
+      label: periodsCopy.generating,
       task: async () => {
         const periods = generatePeriods({
           durationMinutes: duration,
@@ -199,7 +200,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         });
         await replaceTimeSlots(storage, semesterId, periods);
         logInfo('timetable', '节次已生成', { periods: periods.length, duration, breakMinutes });
-        toast.success(`已生成 ${periods.length} 个节次`);
+        toast.success(periodsCopy.generated(periods.length));
         await reload();
         onChanged();
       },
@@ -213,7 +214,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     const result = await run({
       scope: 'timetable',
-      label: '正在套用作息…',
+      label: periodsCopy.applyingPreset,
       task: async () => {
         await replaceTimeSlots(
           storage,
@@ -241,7 +242,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           duration: spacing.durationMinutes,
           breakMinutes: spacing.breakMinutes,
         });
-        toast.success(`已套用「${selectedPreset.name}」作息（${selectedPreset.periods.length} 节）`);
+        toast.success(periodsCopy.presetApplied(selectedPreset.name, selectedPreset.periods.length));
         await reload();
         onChanged();
       },
@@ -253,7 +254,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     const result = await run({
       scope: 'timetable',
-      label: '正在追加节次…',
+      label: periodsCopy.appending,
       task: async () => {
         // 追加的一节接在最后一节之后：间隔用界面上的课间
         const created = await appendTimeSlot(storage, semesterId, duration, breakMinutes);
@@ -262,7 +263,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           startTime: created['start_time'],
           breakMinutes,
         });
-        toast.success(`已添加第 ${created['period_no']} 节`);
+        toast.success(periodsCopy.appended(String(created['period_no'])));
         await reload();
         onChanged();
       },
@@ -300,16 +301,16 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     const result = await run({
       scope: 'timetable',
-      label: '正在顺延重排…',
+      label: periodsCopy.reflowing,
       task: async () => {
         const rows = await listTimeSlots(storage, semesterId);
         if (rows.length === 0) {
-          setMessage('没有可重排的节次，请先生成节次');
+          setMessage(periodsCopy.reflowNoSlots);
           return;
         }
         const anchor = current.periodNo;
         if (!rows.some((row) => row.period_no === anchor)) {
-          setMessage(`第 ${anchor} 节不存在，无法顺延重排`);
+          setMessage(periodsCopy.reflowAnchorMissing(anchor));
           return;
         }
         const planned = reflowPeriods(
@@ -323,7 +324,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           duration,
           breakMinutes,
         });
-        toast.success(`第 ${anchor} 节起已顺延：每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`);
+        toast.success(periodsCopy.reflowed(anchor, duration, breakMinutes));
         await reload();
         onChanged();
       },
@@ -335,14 +336,14 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
     setMessage(null);
     const result = await run({
       scope: 'timetable',
-      label: '正在删除节次…',
+      label: periodsCopy.removing,
       task: async () => {
         const outcome = await deleteTimeSlot(storage, semesterId, periodNo);
         if (!outcome.deleted) {
           setMessage(
             outcome.usedBy > 0
-              ? `第 ${periodNo} 节被 ${outcome.usedBy} 条排课占用，请先调整`
-              : `第 ${periodNo} 节不存在`,
+              ? periodsCopy.periodInUse(periodNo, outcome.usedBy)
+              : periodsCopy.periodMissing(periodNo),
           );
           return;
         }
@@ -357,24 +358,24 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
   const draftError = draft === null ? null : paramError(duration, breakMinutes);
 
   return (
-    <SectionCard title="作息" icon={CalendarRange}>
+    <SectionCard title={periodsCopy.title} icon={CalendarRange}>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="每节时长（分钟）" error={durationFieldError(duration)}>
+        <Field label={periodsCopy.durationLabel} error={durationFieldError(duration)}>
           <Input
             type="number"
             min={MIN_DURATION}
             max={MAX_DURATION}
-            aria-label="每节时长（分钟）"
+            aria-label={periodsCopy.durationLabel}
             value={duration}
             onChange={(event) => setDuration(Number(event.target.value))}
           />
         </Field>
-        <Field label="课间（分钟）" error={breakFieldError(breakMinutes)}>
+        <Field label={periodsCopy.breakLabel} error={breakFieldError(breakMinutes)}>
           <Input
             type="number"
             min={MIN_BREAK}
             max={MAX_BREAK}
-            aria-label="课间（分钟）"
+            aria-label={periodsCopy.breakLabel}
             value={breakMinutes}
             onChange={(event) => setBreakMinutes(Number(event.target.value))}
           />
@@ -382,7 +383,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       </div>
 
       <div className="flex flex-col gap-2">
-        <Field label="作息预设" hint={presetHint}>
+        <Field label={periodsCopy.presetLabel} hint={presetHint}>
           <Combobox
             items={presetOptions}
             keyOf={(preset) => preset.id}
@@ -396,14 +397,14 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               <span className="flex min-w-0 flex-col">
                 <span className="truncate">{preset.name}</span>
                 <span className="truncate text-xs text-muted">
-                  {preset.periods.length} 节
-                  {preset.source !== undefined && preset.source.length > 0 ? ` · ${preset.source}` : ''}
+                  {periodsCopy.periodCount(preset.periods.length)}
+                  {preset.source !== undefined && preset.source.length > 0 ? periodsCopy.sourceSuffix(preset.source) : ''}
                 </span>
               </span>
             )}
-            placeholder={selectedPreset?.name ?? '输入学校或作息名搜索'}
-            ariaLabel="作息预设"
-            emptyText="没有匹配的作息"
+            placeholder={selectedPreset?.name ?? periodsCopy.presetPlaceholder}
+            ariaLabel={periodsCopy.presetLabel}
+            emptyText={periodsCopy.presetEmpty}
           />
         </Field>
         <div className="flex flex-wrap items-center gap-2">
@@ -414,12 +415,12 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
             disabled={selectedPreset === undefined}
             onClick={() => void applyPreset()}
           >
-            套用此作息
+            {periodsCopy.applyPreset}
           </Button>
           {appliedPreset !== null && (
             <span className="text-xs text-muted" data-role="preset-summary">
-              预设：{appliedPreset.name}（{appliedPreset.count} 节）
-              {appliedPreset.source !== null ? ` · ${appliedPreset.source}` : ''}
+              {periodsCopy.appliedPreset(appliedPreset.name, appliedPreset.count)}
+              {appliedPreset.source !== null ? periodsCopy.sourceSuffix(appliedPreset.source) : ''}
             </span>
           )}
         </div>
@@ -427,9 +428,9 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
 
       <div className="flex flex-col gap-2">
         <div className="grid grid-cols-3 gap-2 text-xs font-medium text-muted">
-          <span>时段</span>
-          <span>第一节开始</span>
-          <span>节数</span>
+          <span>{periodsCopy.blockHeader}</span>
+          <span>{periodsCopy.blockStartHeader}</span>
+          <span>{periodsCopy.blockCountHeader}</span>
         </div>
         {[
           { label: SECTION_LABEL.am, start: amStart, setStart: setAmStart, count: amCount, setCount: setAmCount },
@@ -450,7 +451,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               min={0}
               max={20}
               value={block.count}
-              aria-label={`${block.label}节数`}
+              aria-label={periodsCopy.blockCountAria(block.label)}
               onChange={(event) => block.setCount(Number(event.target.value))}
             />
           </div>
@@ -460,26 +461,26 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" size="sm" loading={busy} onClick={() => void generate()}>
           <Wand2 className="size-4" aria-hidden />
-          自动生成节次
+          {periodsCopy.generate}
         </Button>
         <Button variant="secondary" size="sm" loading={busy} onClick={() => void append()}>
           <Plus className="size-4" aria-hidden />
-          追加一节
+          {periodsCopy.append}
         </Button>
       </div>
       {message !== null && <InlineError>{message}</InlineError>}
 
       {slots.length === 0 ? (
-        <EmptyState size="sm" tone="muted" title="还没有节次，请先生成节次" />
+        <EmptyState size="sm" tone="muted" title={periodsCopy.empty} />
       ) : (
         <ul className="flex flex-col gap-1">
           {slots.map((slot) => (
             <li key={slot.id} className="flex min-h-tap items-center gap-2 text-sm">
-              <span className="tabular w-16 shrink-0 text-ink">第 {slot.period_no} 节</span>
+              <span className="tabular w-16 shrink-0 text-ink">{periodsCopy.period(slot.period_no)}</span>
               <Input
                 type="time"
                 className="w-28"
-                aria-label={`第 ${slot.period_no} 节开始时间`}
+                aria-label={periodsCopy.startAria(slot.period_no)}
                 value={slot.start_time}
                 onChange={(event) => {
                   if (!isClockText(event.target.value)) return;
@@ -491,7 +492,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               <Input
                 type="time"
                 className="w-28"
-                aria-label={`第 ${slot.period_no} 节结束时间`}
+                aria-label={periodsCopy.endAria(slot.period_no)}
                 value={slot.end_time}
                 onChange={(event) => {
                   if (!isClockText(event.target.value)) return;
@@ -503,7 +504,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={`删除第 ${slot.period_no} 节`}
+                aria-label={periodsCopy.removeAria(slot.period_no)}
                 disabled={busy}
                 onClick={() => void remove(slot.period_no)}
               >
@@ -514,10 +515,8 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         </ul>
       )}
       <span className="flex items-center gap-1 text-xs text-muted">
-        每节起止时间可单独修改
-        <HelpHint label="改节次时间">
-          改完会问一次作用范围：只改这一节，或按每节时长与课间从这一节起顺延后面的节次。
-        </HelpHint>
+        {periodsCopy.editHint}
+        <HelpHint label={periodsCopy.editHelpLabel}>{periodsCopy.editHelp}</HelpHint>
       </span>
 
       <FormDialog
@@ -525,17 +524,17 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
         onOpenChange={(open) => {
           if (!open) closeScope();
         }}
-        title="调整范围"
-        description="这次改动要应用到哪些节次？"
+        title={periodsCopy.scopeTitle}
+        description={periodsCopy.scopeDescription}
         contentAttrs={{ 'data-role': 'scope-dialog' }}
-        submitLabel="从这一节起顺延重排"
-        cancelLabel="取消"
+        submitLabel={periodsCopy.scopeSubmit}
+        cancelLabel={periodsCopy.scopeCancel}
         submitting={busy}
         submitDisabled={draftError !== null}
         onSubmit={() => void reflowFromAnchor()}
         extra={
-          <Button type="button" variant="ghost" size="sm" aria-label="只改这一节" onClick={() => closeScope()}>
-            只改这一节
+          <Button type="button" variant="ghost" size="sm" aria-label={periodsCopy.scopeOnlyThis} onClick={() => closeScope()}>
+            {periodsCopy.scopeOnlyThis}
           </Button>
         }
       >
@@ -543,7 +542,7 @@ export function PeriodSettings({ storage, semesterId, onChanged }: PeriodSetting
           <span>
             {draft === null
               ? ''
-              : `第 ${draft.periodNo} 节已改；顺延按每节 ${duration} 分钟、课间 ${breakMinutes} 分钟`}
+              : periodsCopy.scopeSummary(draft.periodNo, duration, breakMinutes)}
           </span>
           {draftError !== null && <InlineError>{draftError}</InlineError>}
         </div>

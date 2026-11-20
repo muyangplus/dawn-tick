@@ -26,6 +26,7 @@ import { AdjustSourceFields } from './adjust-dialog/source-fields.tsx';
 import { AdjustMoveFields } from './adjust-dialog/move-fields.tsx';
 import { AdjustExamFields, AdjustExtraFields, AdjustSwapFields } from './adjust-dialog/target-fields.tsx';
 import { AdjustFooter } from './adjust-dialog/footer.tsx';
+import { adjustCopy } from '../copy/timetable-adjust.ts';
 
 export type { AdjustMode, AdjustScope, AdjustTarget } from '../screens/timetable/move-controller.ts';
 
@@ -121,7 +122,7 @@ export function AdjustDialog({
   }): void {
     const overlap = overlapAt(data.courses, { ...position, excludeCourseId: courseId });
     if (overlap !== null) {
-      toast.info(`调整后与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
+      toast.info(adjustCopy.overlapToast(overlap.name, formatPeriodRange(overlap.start, overlap.end)));
     }
   }
 
@@ -144,9 +145,9 @@ export function AdjustDialog({
     if (plan.scope === 'weekly') {
       const result = await run({
         scope: 'timetable',
-        label: '正在改为每周…',
-        ok: `已改为每周 ${WEEKDAY_LABELS[plan.dayOfWeek - 1] ?? ''} ${formatPeriodRange(plan.periodStart, plan.periodEnd)}`,
-        fail: { what: '改为每周失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+        label: adjustCopy.weeklyBusy,
+        ok: adjustCopy.weeklyDone(WEEKDAY_LABELS[plan.dayOfWeek - 1] ?? '', formatPeriodRange(plan.periodStart, plan.periodEnd)),
+        fail: adjustCopy.weeklyFail,
         task: () =>
           applyMove(storage, plan, {
             userId: USER_ID,
@@ -164,9 +165,9 @@ export function AdjustDialog({
     }
     const result = await run({
       scope: 'timetable',
-      label: '正在调课…',
-      ok: `已把这一次课调到 ${plan.finalDate} ${formatPeriodRange(plan.periodStart, plan.periodEnd)}`,
-      fail: { what: '调课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+      label: adjustCopy.moveBusy,
+      ok: adjustCopy.moveDone(plan.finalDate, formatPeriodRange(plan.periodStart, plan.periodEnd)),
+      fail: adjustCopy.moveFail,
       task: () =>
         applyMove(storage, plan, {
           userId: USER_ID,
@@ -203,9 +204,9 @@ export function AdjustDialog({
     const plan = planned.plan;
     const result = await run({
       scope: 'timetable',
-      label: '正在停课…',
-      ok: '已记录停课',
-      fail: { what: '停课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+      label: adjustCopy.cancelBusy,
+      ok: adjustCopy.cancelDone,
+      fail: adjustCopy.cancelFail,
       task: () =>
         applyCancel(storage, plan, {
           userId: USER_ID,
@@ -241,9 +242,9 @@ export function AdjustDialog({
     const examPlan = planned.plan;
     const result = await run({
       scope: 'timetable',
-      label: '正在改为考试…',
-      ok: `已改为考试：${examPlan.date} ${formatPeriodRange(examPlan.periodStart, examPlan.periodEnd)}`,
-      fail: { what: '改为考试失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+      label: adjustCopy.examBusy,
+      ok: adjustCopy.examDone(examPlan.date, formatPeriodRange(examPlan.periodStart, examPlan.periodEnd)),
+      fail: adjustCopy.examFail,
       task: () => applyExam(storage, examPlan, { userId: USER_ID, semesterId: semesterId() }),
     });
     if (!result.ok) return;
@@ -266,9 +267,9 @@ export function AdjustDialog({
     const swapPlan = planned.plan;
     const result = await run({
       scope: 'timetable',
-      label: '正在调休…',
-      ok: '已记录调休',
-      fail: { what: '调休失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+      label: adjustCopy.swapBusy,
+      ok: adjustCopy.swapDone,
+      fail: adjustCopy.swapFail,
       task: () =>
         applySwap(storage, swapPlan, {
           userId: USER_ID,
@@ -297,9 +298,9 @@ export function AdjustDialog({
     const extraPlan = planned.plan;
     const result = await run({
       scope: 'timetable',
-      label: '正在临时加课…',
-      ok: `已加课：第 ${extraPlan.week} 周 ${WEEKDAY_LABELS[extraPlan.dayOfWeek - 1] ?? ''}`,
-      fail: { what: '临时加课失败', next: '请重试；仍失败请重新打开调课弹窗。' },
+      label: adjustCopy.extraBusy,
+      ok: adjustCopy.extraDone(extraPlan.week, WEEKDAY_LABELS[extraPlan.dayOfWeek - 1] ?? ''),
+      fail: adjustCopy.extraFail,
       task: () => applyExtra(storage, extraPlan, { semesterId: semesterId() }),
     });
     if (!result.ok) return;
@@ -309,23 +310,24 @@ export function AdjustDialog({
 
   const moveFromLabel = schedule === undefined ? '' : formatPeriodRange(schedule.periodStart, schedule.periodEnd);
   const moveToLabel = `${newDate} ${formatPeriodRange(periodStart, periodEnd)}`;
+  const courseLabel = course?.name ?? adjustCopy.fallbackCourseName;
   const description =
     mode === 'move'
-      ? `把「${course?.name ?? '课程'}」${moveFromLabel}调整为 ${moveToLabel}`
+      ? adjustCopy.descriptionMove(courseLabel, moveFromLabel, moveToLabel)
       : mode === 'cancel'
-        ? `停掉「${course?.name ?? '课程'}」${sourceDate} 的这一次课，其他周次不受影响`
+        ? adjustCopy.descriptionCancel(courseLabel, sourceDate)
         : mode === 'swap'
-          ? '把原日期那天的课表整体搬到目标上课日'
+          ? adjustCopy.descriptionSwap
           : mode === 'exam'
-            ? `把「${course?.name ?? '课程'}」${sourceDate} 的这一次课改成 ${newDate} 的考试，原课次从课表移除`
-            : '只加这一次，可在课程管理里删除';
+            ? adjustCopy.descriptionExam(courseLabel, sourceDate, newDate)
+            : adjustCopy.descriptionExtra;
 
   return (
     <FormSurface
       open={open}
       onOpenChange={onOpenChange}
       container={container}
-      title="调课"
+      title={adjustCopy.title}
       description={description}
       contentAttrs={{
         'data-role': 'adjust-dialog',

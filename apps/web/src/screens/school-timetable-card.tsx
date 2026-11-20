@@ -17,6 +17,7 @@ import {
   type PresetContext,
   type School,
 } from './school-picker-model.ts';
+import { schoolCopy } from '../copy/timetable-school.ts';
 
 export interface SchoolTimetableCardProps {
   storage: Storage;
@@ -81,7 +82,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
     // 套用期间直接忽略后续点击：连点两行会并发写 time_slots，第二次覆盖第一次
     const result = await run({
       scope: 'timetable',
-      label: '正在按学校套用作息…',
+      label: schoolCopy.applying,
       log: '学校作息套用失败',
       task: async () => {
         const outcome = await applySchoolTimetable(storage, semesterId, school);
@@ -105,8 +106,8 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
         });
         toast.success(
           outcome.exclusive
-            ? `已套用「${school.name}」作息（${outcome.periods} 节）`
-            : `该校暂无专属作息，已套用通用作息（${outcome.periods} 节）`,
+            ? schoolCopy.appliedExclusive(school.name, outcome.periods)
+            : schoolCopy.appliedFallback(outcome.periods),
         );
         setPickerOpen(false);
         await reloadSlots();
@@ -115,53 +116,53 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
     });
     // 落库失败的具体原因只进日志；界面按统一句式给原因与下一步
     if (!result.ok && result.error !== null) {
-      setMessage(fail('套用失败', '作息没能写入本机', '请重试；仍失败请重启应用。').text);
+      setMessage(fail(schoolCopy.applyFailWhat, schoolCopy.applyFailReason, schoolCopy.applyFailNext).text);
     }
   }
 
   const presetLine =
     context === null
-      ? '正在读取预设…'
+      ? schoolCopy.presetLoading
       : context.problem !== null
-        ? `预设索引不可用：${context.problem}`
-        : `预设 ${context.version}${context.kind === 'cached' ? '（已更新）' : '（内置）'}`;
+        ? schoolCopy.presetUnavailable(context.problem)
+        : context.kind === 'cached'
+          ? schoolCopy.presetCached(context.version)
+          : schoolCopy.presetBuiltIn(context.version);
 
   return (
-    <SectionCard title="按学校套用作息" icon={CalendarClock} badge={presetLine}>
+    <SectionCard title={schoolCopy.cardTitle} icon={CalendarClock} badge={presetLine}>
       <span className="text-xs text-muted">
-        按该校作息重排节次
+        {schoolCopy.cardHint}
       </span>
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant="secondary"
-          aria-label="按学校套用作息"
+          aria-label={schoolCopy.pickAria}
           loading={busy}
           disabled={semesterId === ''}
           onClick={() => void openPicker()}
         >
-          选择学校
+          {schoolCopy.pickButton}
         </Button>
         {recent !== null && (
           <Button
             size="sm"
             variant="primary"
-            aria-label={`一键套用 ${recent.name} 的作息`}
+            aria-label={schoolCopy.applyRecentAria(recent.name)}
             loading={busy}
             disabled={semesterId === ''}
             data-role="recent-school-apply"
             onClick={() => void applyForSchool(recent)}
           >
-            一键套用：{recent.name}
+            {schoolCopy.applyRecent(recent.name)}
           </Button>
         )}
         <span className="text-xs text-muted" data-role="school-timetable-status">
-          {slots.length === 0 ? '当前没有节次' : `当前 ${slots.length} 个节次`}
+          {slots.length === 0 ? schoolCopy.slotsNone : schoolCopy.slotsCount(slots.length)}
           {applied === null
             ? ''
-            : ` · 上次套用：${applied.school} → ${applied.timetable}（${applied.periods} 节，${
-                applied.exclusive ? '专属作息' : '通用作息'
-              }）`}
+            : schoolCopy.lastApplied(applied.school, applied.timetable, applied.periods, applied.exclusive)}
         </span>
       </div>
       {message !== null && (
@@ -171,14 +172,14 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
       )}
       {applied !== null && applied.source !== null && (
         <span className="text-xs text-muted" data-role="school-timetable-source">
-          作息来源：{applied.source}
+          {schoolCopy.source(applied.source)}
         </span>
       )}
 
       <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
         <DialogContent
-          title="按学校套用作息"
-          description="按学校作息重排节次"
+          title={schoolCopy.cardTitle}
+          description={schoolCopy.dialogApplyDescription}
         >
           <SchoolPicker
             context={context}
@@ -189,7 +190,7 @@ export function SchoolTimetableCard({ storage, semesterId, onChanged }: SchoolTi
           />
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPickerOpen(false)}>
-              取消
+              {schoolCopy.cancel}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -8,6 +8,7 @@ import {
   type PeriodSection,
   type TimeSlotRow,
 } from '@dawn-tick/core';
+import { periodsCopy } from '../copy/timetable-periods.ts';
 
 /** 每节时长与课间的可输入范围：与 core 的生成/顺延算法同一口径 */
 export const MIN_DURATION = PERIOD_DURATION_MIN;
@@ -36,21 +37,21 @@ export function within(value: number, min: number, max: number): boolean {
 /** 重排参数越界时的说明，null 表示可以顺延重排。 */
 export function paramError(durationMinutes: number, breakMinutes: number): string | null {
   if (!within(durationMinutes, MIN_DURATION, MAX_DURATION)) {
-    return `每节时长 ${MIN_DURATION}–${MAX_DURATION} 分钟，当前 ${durationMinutes} 分钟`;
+    return periodsCopy.durationOutOfRange(MIN_DURATION, MAX_DURATION, durationMinutes);
   }
   if (!within(breakMinutes, MIN_BREAK, MAX_BREAK)) {
-    return `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟，当前 ${breakMinutes} 分钟`;
+    return periodsCopy.breakOutOfRange(MIN_BREAK, MAX_BREAK, breakMinutes);
   }
   return null;
 }
 
 /** 输入框下方的字段级错误：只标越界的那一项，避免两条重复文案。 */
 export function durationFieldError(value: number): string | undefined {
-  return within(value, MIN_DURATION, MAX_DURATION) ? undefined : `每节时长 ${MIN_DURATION}–${MAX_DURATION} 分钟`;
+  return within(value, MIN_DURATION, MAX_DURATION) ? undefined : periodsCopy.durationRange(MIN_DURATION, MAX_DURATION);
 }
 
 export function breakFieldError(value: number): string | undefined {
-  return within(value, MIN_BREAK, MAX_BREAK) ? undefined : `课间 ${MIN_BREAK}–${MAX_BREAK} 分钟`;
+  return within(value, MIN_BREAK, MAX_BREAK) ? undefined : periodsCopy.breakRange(MIN_BREAK, MAX_BREAK);
 }
 
 /** 按名称、id、来源过滤作息预设；空关键词返回全部。 */

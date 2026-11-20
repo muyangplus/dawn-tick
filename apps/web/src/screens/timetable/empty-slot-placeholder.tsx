@@ -3,6 +3,7 @@ import { cn } from '../../lib/cn.ts';
 import { formatPeriodRange } from '../../lib/format.ts';
 import type { Clash, EmptyDragMode, EmptyTarget } from './drag-session.ts';
 import type { DragPointer } from './use-empty-slot.ts';
+import { weekCopy } from '../../copy/timetable-week.ts';
 
 /**
  * 44px 透明命中区：视觉尺寸不变，用伪元素把命中区外扩到触控口径（见 `--spacing-tap` 的 min-h-tap / size-tap 口径）。
@@ -74,7 +75,7 @@ export function EmptySlotPlaceholder({
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
         <button
           type="button"
-          aria-label="在此新建课程"
+          aria-label={weekCopy.createHereAria}
           className={cn(
             'flex size-5 shrink-0 items-center justify-center rounded-sm text-primary-strong hover:bg-surface-muted',
             TAP_AREA,
@@ -102,7 +103,7 @@ export function EmptySlotPlaceholder({
             </span>
             {clash !== null && (
               <span data-role="empty-clash" className="max-w-full truncate text-[10px] text-danger-strong">
-                与「{clash.name}」重叠
+                {weekCopy.clashShort(clash.name)}
               </span>
             )}
           </div>
@@ -111,7 +112,7 @@ export function EmptySlotPlaceholder({
       <div className="flex items-center justify-center gap-1 text-[11px]">
         <button
           type="button"
-          aria-label="上一节"
+          aria-label={weekCopy.prevPeriodAria}
           className={cn(
             'flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink',
             TAP_AREA,
@@ -128,14 +129,14 @@ export function EmptySlotPlaceholder({
         <div
           role="spinbutton"
           tabIndex={0}
-          aria-label="节次范围"
+          aria-label={weekCopy.periodRangeAria}
           aria-valuemin={placeholder.start}
           aria-valuemax={periodCount}
           aria-valuenow={placeholder.end}
           aria-valuetext={formatPeriodRange(placeholder.start, placeholder.end)}
           data-role="period-wheel"
           data-tap-area="44"
-          title="拖动、滚轮或 ↑/↓ 调整节次范围；Enter 新建课程，Esc 取消"
+          title={weekCopy.periodWheelTitle}
           className={cn(
             'tabular cursor-ns-resize select-none whitespace-nowrap rounded-sm px-1 text-ink',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
@@ -173,7 +174,7 @@ export function EmptySlotPlaceholder({
         </div>
         <button
           type="button"
-          aria-label="下一节"
+          aria-label={weekCopy.nextPeriodAria}
           className={cn(
             'flex size-4 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-surface-muted hover:text-ink',
             TAP_AREA,

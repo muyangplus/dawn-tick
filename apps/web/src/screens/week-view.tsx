@@ -16,6 +16,7 @@ import { WeekEmptyState } from './timetable/week-empty-state.tsx';
 import { GridPads, PeriodAxis, WeekHeaderRow } from './timetable/week-grid-chrome.tsx';
 import { EmptySlotPlaceholder } from './timetable/empty-slot-placeholder.tsx';
 import { DragGhost, LessonBlock } from './timetable/lesson-block.tsx';
+import { weekCopy } from '../copy/timetable-week.ts';
 
 export interface QuickCreatePreset {
   dayOfWeek: number;
@@ -136,7 +137,7 @@ export function WeekView({
   return (
     <section
       ref={sectionRef}
-      aria-label="周视图"
+      aria-label={weekCopy.viewAria}
       className="flex flex-col gap-2"
       onTouchStart={(event) => {
         touchStart.current = event.touches[0]?.clientX ?? null;

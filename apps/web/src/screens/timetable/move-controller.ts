@@ -17,6 +17,7 @@ import {
 } from '@dawn-tick/core';
 import { dayRangeOf } from '../../lib/day-nav.ts';
 import { weekDateOf } from '../../data.ts';
+import { adjustCopy } from '../../copy/timetable-adjust.ts';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -54,10 +55,10 @@ export function periodsValid(start: number, end: number): boolean {
 
 /** 日期溢出判定：不在学期内时返回说明，null 表示可用。 */
 export function semesterDateError(semester: SemesterRow | null, date: string, label: string): string | null {
-  if (semester === null) return '还没有学期';
-  if (!DATE_RE.test(date)) return `请先选择${label}`;
+  if (semester === null) return adjustCopy.noSemester;
+  if (!DATE_RE.test(date)) return adjustCopy.pickDate(label);
   const range = dayRangeOf(semester);
-  if (date < range.first || date > range.last) return `${label}要在学期内（${range.first} 至 ${range.last}）`;
+  if (date < range.first || date > range.last) return adjustCopy.dateOutOfSemester(label, range.first, range.last);
   return null;
 }
 
@@ -116,14 +117,14 @@ export interface MoveInput {
 export function planMove(input: MoveInput): MovePlanResult {
   const { semester, schedule } = input;
   if (semester === null || schedule === undefined) {
-    return { ok: false, message: '请先选课程与要调整的课次' };
+    return { ok: false, message: adjustCopy.pickMoveSource };
   }
   if (!periodsValid(input.periodStart, input.periodEnd)) {
-    return { ok: false, message: '节次需要是 1 起、且结束不小于开始' };
+    return { ok: false, message: adjustCopy.invalidPeriods };
   }
-  const sourceError = semesterDateError(semester, input.sourceDate, '原日期');
+  const sourceError = semesterDateError(semester, input.sourceDate, adjustCopy.sourceDateLabel);
   if (sourceError !== null) return { ok: false, message: sourceError };
-  const targetError = semesterDateError(semester, input.newDate, '调整后日期');
+  const targetError = semesterDateError(semester, input.newDate, adjustCopy.newDateLabel);
   if (targetError !== null) return { ok: false, message: targetError };
 
   const targetDay = dayOfWeek(input.newDate);
@@ -134,7 +135,7 @@ export function planMove(input: MoveInput): MovePlanResult {
       input.periodStart === schedule.periodStart &&
       input.periodEnd === schedule.periodEnd
     ) {
-      return { ok: false, message: '目标位置和现在一样，没有需要调整的' };
+      return { ok: false, message: adjustCopy.sameAsBefore };
     }
     return {
       ok: true,
@@ -155,21 +156,21 @@ export function planMove(input: MoveInput): MovePlanResult {
   if (input.scope === 'week') {
     const wanted = Number(input.targetWeek);
     if (!Number.isInteger(wanted) || wanted < 1 || wanted > semester.total_weeks) {
-      return { ok: false, message: `目标周要在 1–${semester.total_weeks} 周之间` };
+      return { ok: false, message: adjustCopy.targetWeekRange(semester.total_weeks) };
     }
     finalDate = weekDateOf(semester, wanted, targetDay);
-    const overflow = semesterDateError(semester, finalDate, '目标周');
+    const overflow = semesterDateError(semester, finalDate, adjustCopy.targetWeekLabel);
     if (overflow !== null) {
       const range = dayRangeOf(semester);
-      return { ok: false, message: `目标周超出学期范围（${range.first} 至 ${range.last}）` };
+      return { ok: false, message: adjustCopy.targetWeekOutOfSemester(range.first, range.last) };
     }
   }
   const sameWeek = weekOfDate(finalDate, semester.start_date) === weekOfDate(input.sourceDate, semester.start_date);
   if (input.scope === 'this' && !sameWeek) {
-    return { ok: false, message: '「这一次」只改本周；跨周改用「指定日期」' };
+    return { ok: false, message: adjustCopy.thisScopeCrossWeek };
   }
   if (finalDate === input.sourceDate && input.periodStart === schedule.periodStart && input.periodEnd === schedule.periodEnd) {
-    return { ok: false, message: '目标位置和现在一样，没有需要调整的' };
+    return { ok: false, message: adjustCopy.sameAsBefore };
   }
   return {
     ok: true,
@@ -210,7 +211,7 @@ export async function applyMove(storage: Storage, plan: MovePlan, input: MoveWri
     refScheduleId: plan.scheduleId,
     onDate: input.sourceDate,
     action: 'move',
-    title: `调课：${input.courseName}`,
+    title: adjustCopy.moveRecordTitle(input.courseName),
     newDate: plan.finalDate,
     newPeriodStart: plan.periodStart,
     newPeriodEnd: plan.periodEnd,
@@ -226,9 +227,9 @@ export function planCancel(input: {
   sourceDate: string;
 }): MovePlanResult {
   if (input.semester === null || input.schedule === undefined) {
-    return { ok: false, message: '请先选课程与要停的课次' };
+    return { ok: false, message: adjustCopy.pickCancelSource };
   }
-  const error = semesterDateError(input.semester, input.sourceDate, '原日期');
+  const error = semesterDateError(input.semester, input.sourceDate, adjustCopy.sourceDateLabel);
   if (error !== null) return { ok: false, message: error };
   return {
     ok: true,
@@ -256,7 +257,7 @@ export async function applyCancel(
     refScheduleId: plan.scheduleId,
     onDate: input.sourceDate,
     action: 'cancel',
-    title: `停课：${input.courseName}`,
+    title: adjustCopy.cancelRecordTitle(input.courseName),
   });
 }
 
@@ -315,18 +316,18 @@ export function examClockOf(
 export function planExam(input: ExamInput): ExamPlanResult {
   const { semester, schedule } = input;
   if (semester === null || schedule === undefined) {
-    return { ok: false, message: '请先选课程与要改成考试的课次' };
+    return { ok: false, message: adjustCopy.pickExamSource };
   }
   if (!periodsValid(input.periodStart, input.periodEnd)) {
-    return { ok: false, message: '节次需要是 1 起、且结束不小于开始' };
+    return { ok: false, message: adjustCopy.invalidPeriods };
   }
-  const sourceError = semesterDateError(semester, input.sourceDate, '原日期');
+  const sourceError = semesterDateError(semester, input.sourceDate, adjustCopy.sourceDateLabel);
   if (sourceError !== null) return { ok: false, message: sourceError };
-  const targetError = semesterDateError(semester, input.date, '考试日期');
+  const targetError = semesterDateError(semester, input.date, adjustCopy.examDateLabel);
   if (targetError !== null) return { ok: false, message: targetError };
   const clock = examClockOf(input.slots, input.periodStart, input.periodEnd);
   if (clock === null) {
-    return { ok: false, message: `第 ${input.periodStart}–${input.periodEnd} 节没有对应的作息时间` };
+    return { ok: false, message: adjustCopy.noSlotForPeriods(input.periodStart, input.periodEnd) };
   }
   const title = input.courseName.trim();
   const note = input.note.trim();
@@ -335,7 +336,7 @@ export function planExam(input: ExamInput): ExamPlanResult {
     plan: {
       scheduleId: schedule.id,
       courseId: input.courseId,
-      title: title.length === 0 ? '考试' : title,
+      title: title.length === 0 ? adjustCopy.examFallbackTitle : title,
       sourceDate: input.sourceDate,
       date: input.date,
       dayOfWeek: dayOfWeek(input.date),
@@ -378,7 +379,7 @@ export async function applyExam(
     refScheduleId: plan.scheduleId,
     onDate: plan.sourceDate,
     action: 'cancel',
-    title: `改为考试：${plan.title}`,
+    title: adjustCopy.examRecordTitle(plan.title),
   });
 }
 
@@ -393,10 +394,10 @@ export function planSwap(input: {
   restFrom: string;
   restTo: string;
 }): { ok: true; plan: SwapPlan } | { ok: false; message: string } {
-  if (input.semester === null) return { ok: false, message: '还没有学期' };
-  const fromError = semesterDateError(input.semester, input.restFrom, '原日期课表');
+  if (input.semester === null) return { ok: false, message: adjustCopy.noSemester };
+  const fromError = semesterDateError(input.semester, input.restFrom, adjustCopy.swapFromLabel);
   if (fromError !== null) return { ok: false, message: fromError };
-  const toError = semesterDateError(input.semester, input.restTo, '目标上课日');
+  const toError = semesterDateError(input.semester, input.restTo, adjustCopy.swapToLabel);
   if (toError !== null) return { ok: false, message: toError };
   return { ok: true, plan: { from: input.restFrom, to: input.restTo } };
 }
@@ -411,7 +412,7 @@ export async function applySwap(
     userId: input.userId,
     semesterId: input.semesterId,
     type: 'makeup',
-    title: `${plan.from} 的课表调到 ${plan.to}`,
+    title: adjustCopy.swapEventTitle(plan.from, plan.to),
     onDate: plan.to,
     asDayOfWeek: dayOfWeek(plan.from),
   });
@@ -438,15 +439,15 @@ export function planExtra(input: {
   periodStart: number;
   periodEnd: number;
 }): { ok: true; plan: ExtraPlan } | { ok: false; message: string } {
-  if (input.semester === null) return { ok: false, message: '还没有学期' };
+  if (input.semester === null) return { ok: false, message: adjustCopy.noSemester };
   const name = input.courseName.trim();
   if (input.courseId === '' && name.length === 0) {
-    return { ok: false, message: '请选择课程或填写课程名称' };
+    return { ok: false, message: adjustCopy.pickExtraCourse };
   }
   if (!periodsValid(input.periodStart, input.periodEnd)) {
-    return { ok: false, message: '节次需要是 1 起、且结束不小于开始' };
+    return { ok: false, message: adjustCopy.invalidPeriods };
   }
-  const error = semesterDateError(input.semester, input.date, '加课日期');
+  const error = semesterDateError(input.semester, input.date, adjustCopy.extraDateLabel);
   if (error !== null) return { ok: false, message: error };
   return {
     ok: true,

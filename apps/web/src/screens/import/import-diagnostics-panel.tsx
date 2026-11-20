@@ -3,7 +3,13 @@ import { ChevronDown, Stethoscope } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '../../components/ui/button.tsx';
 import { cn } from '../../lib/cn.ts';
-import { mappingText, type ImportDiagnosticsSummary } from '../../lib/import-diagnostics.ts';
+import {
+  mappingText,
+  SAMPLE_ROW_LIMIT,
+  SAMPLE_ROW_MAX_CHARS,
+  type ImportDiagnosticsSummary,
+} from '../../lib/import-diagnostics.ts';
+import { importDiagnosticsCopy } from '../../copy/import-diagnostics.ts';
 
 export interface ImportDiagnosticsPanelProps {
   summary: ImportDiagnosticsSummary;
@@ -14,10 +20,10 @@ export interface ImportDiagnosticsPanelProps {
 }
 
 const METRICS = [
-  { key: 'frames', label: '帧数' },
-  { key: 'tables', label: '表格数' },
-  { key: 'kbTables', label: '疑似课表数' },
-  { key: 'gridCells', label: '网格单元数' },
+  { key: 'frames', label: importDiagnosticsCopy.metrics.frames },
+  { key: 'tables', label: importDiagnosticsCopy.metrics.tables },
+  { key: 'kbTables', label: importDiagnosticsCopy.metrics.kbTables },
+  { key: 'gridCells', label: importDiagnosticsCopy.metrics.gridCells },
 ] as const;
 
 /**
@@ -44,7 +50,7 @@ export function ImportDiagnosticsPanel({ summary, defaultOpen, onCopy, onExport 
         className="dt-nav-item flex min-h-tap w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-ink hover:bg-surface"
       >
         <Stethoscope className="size-4 shrink-0 text-muted" aria-hidden />
-        <span>查看识别诊断</span>
+        <span>{importDiagnosticsCopy.toggle}</span>
         <ChevronDown
           className={cn('dt-chevron ml-auto size-4 shrink-0 text-muted', open && 'rotate-180')}
           aria-hidden
@@ -73,29 +79,30 @@ export function ImportDiagnosticsPanel({ summary, defaultOpen, onCopy, onExport 
           data-role="import-diagnostics-loading"
           className={cn('text-xs', summary.loading ? 'text-warning-strong' : 'text-muted')}
         >
-          是否仍在加载：{summary.loading ? '是' : '否'}
-          {summary.loading ? ' · 请等课表显示完整后重新识别' : ''}
+          {importDiagnosticsCopy.loadingLine(summary.loading)}
         </p>
 
         {(summary.system !== null || summary.url !== null || summary.title !== null) && (
           <p className="break-words text-[11px] text-muted" data-role="import-diagnostics-page">
-            {summary.system ?? '通用识别'} · {summary.url ?? '页面地址未知'} · {summary.title ?? '标题未知'}
+            {importDiagnosticsCopy.pageLine(summary.system, summary.url, summary.title)}
           </p>
         )}
 
         {!summary.fromPage && (
           <p className="text-[11px] text-muted">
-            当前内容没有携带书签 / 窗口诊断，表格数按粘贴内容估算；重新安装书签后再复制可获得完整诊断。
+            {importDiagnosticsCopy.estimatedNote}
           </p>
         )}
 
         <p className="break-words text-[11px] text-ink" data-role="import-diagnostics-mapping">
-          匹配字段映射：{mappingText(summary.mapping)}
+          {importDiagnosticsCopy.mappingLine(mappingText(summary.mapping))}
         </p>
 
         {summary.sampleRows.length > 0 && (
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] text-muted">前 3 行样例（每行截断到 120 字符）</span>
+            <span className="text-[11px] text-muted">
+              {importDiagnosticsCopy.samplesTitle(SAMPLE_ROW_LIMIT, SAMPLE_ROW_MAX_CHARS)}
+            </span>
             <ol className="flex flex-col gap-1 text-[11px] text-ink">
               {summary.sampleRows.map((row, index) => (
                 <li key={index} className="break-all rounded bg-surface px-2 py-1 font-mono">
@@ -113,10 +120,10 @@ export function ImportDiagnosticsPanel({ summary, defaultOpen, onCopy, onExport 
             className="w-full tablet:w-auto"
             onClick={() => void onCopy()}
           >
-            复制诊断信息
+            {importDiagnosticsCopy.copyButton}
           </Button>
           <Button size="sm" variant="ghost" className="w-full tablet:w-auto" onClick={() => void onExport()}>
-            导出诊断日志
+            {importDiagnosticsCopy.exportButton}
           </Button>
         </div>
       </CollapsiblePrimitive.Content>

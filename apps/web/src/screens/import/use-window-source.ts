@@ -31,6 +31,7 @@ import {
   rememberedImportUrl,
   saveCustomSchool,
 } from '../../import-window.ts';
+import { importWindowCopy } from '../../copy/import-window.ts';
 
 export interface WindowSourceOptions {
   storage: Storage;
@@ -119,7 +120,7 @@ export function useWindowSource({
       const matched = SYSTEM_ENTRIES.find((item) => item.id === info?.systemId);
       if (matched !== undefined) setSchoolSystem(matched.id);
       setImportUrl('');
-      setWindowNote(`${school.name} 暂无内置入口：用「按入口补齐」生成`);
+      setWindowNote(importWindowCopy.noBuiltInEntry(school.name));
       return;
     }
 
@@ -127,10 +128,10 @@ export function useWindowSource({
     setSchoolSystem(match.entry.system);
     if (match.entry.url.trim() !== '') {
       setImportUrl(match.url);
-      setWindowNote(`已填入 ${match.entry.name} 的教务入口（${systemEntry(match.entry.system).label}）`);
+      setWindowNote(importWindowCopy.entryFilled(match.entry.name, systemEntry(match.entry.system).label));
     } else {
       setImportUrl('');
-      setWindowNote(`${match.entry.name} 没有内置入口：先按入口补齐`);
+      setWindowNote(importWindowCopy.noBuiltInEntry(match.entry.name));
     }
   }
 
@@ -142,7 +143,7 @@ export function useWindowSource({
     const name = schoolName.trim().length > 0 ? schoolName : schoolDomain.trim();
     const id = schoolId.trim().length > 0 ? schoolId : `user-${name}`;
     setCustomSchools(saveCustomSchool({ id, name, system: schoolSystem, url: schoolDomain.trim(), source: 'user' }));
-    setWindowNote(`「${name}」已保存到我的学校列表`);
+    setWindowNote(importWindowCopy.schoolSaved(name));
   }
 
   /** 教务窗口回传的页面内容，直接走识别。桌面端走事件，移动端由打开调用直接返回。 */
@@ -150,7 +151,7 @@ export function useWindowSource({
     onPayloadText(payload);
     const result = extractTimetableFromHtml(stripPageMarkers(payload));
     if (result.schedules.length === 0) {
-      setWindowNote(result.warnings.join('；'));
+      setWindowNote(result.warnings.join(importWindowCopy.warningSeparator));
       logWarn('import', '回传内容未识别到课表', { shape: result.shape, tables: result.tables });
       return;
     }
@@ -159,8 +160,8 @@ export function useWindowSource({
       tables: result.tables,
       schedules: result.schedules.length,
     });
-    setWindowNote(`已从教务窗口识别到 ${result.schedules.length} 条排课，请核对后导入`);
-    toast.success(`已从教务窗口识别到 ${result.schedules.length} 条排课`);
+    setWindowNote(importWindowCopy.recognized(result.schedules.length));
+    toast.success(importWindowCopy.recognizedToast(result.schedules.length));
     onAccepted(result.schedules, result.warnings);
   }
 
@@ -183,16 +184,16 @@ export function useWindowSource({
     try {
       const result = await openImportWindow(importUrl.trim());
       if (!result.ok) {
-        setWindowNote(result.error ?? '打开失败');
+        setWindowNote(result.error ?? importWindowCopy.openFailed);
         return;
       }
       if (result.payload !== undefined) {
         // 移动端：窗口关闭时已经把页面内容带回来
-        if (result.payload === '') setWindowNote('已关闭教务窗口，没有带回页面内容');
+        if (result.payload === '') setWindowNote(importWindowCopy.closedEmpty);
         else handleImportPayload(result.payload);
         return;
       }
-      setWindowNote('窗口已打开：登录后用窗口右下角「导入到晓刻」');
+      setWindowNote(importWindowCopy.opened);
     } finally {
       setOpening(false);
     }
@@ -200,7 +201,7 @@ export function useWindowSource({
 
   async function closeWindow(): Promise<void> {
     await closeImportWindow();
-    setWindowNote('已关闭教务窗口');
+    setWindowNote(importWindowCopy.closed);
   }
 
   return {

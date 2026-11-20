@@ -1,6 +1,7 @@
 import type { AdjustMode } from '../../screens/timetable/move-controller.ts';
 import { Button } from '../ui/button.tsx';
 import { DialogFooter } from '../ui/dialog.tsx';
+import { adjustCopy } from '../../copy/timetable-adjust.ts';
 
 interface AdjustFooterProps {
   mode: AdjustMode;
@@ -15,10 +16,10 @@ export function AdjustFooter({ mode, busy, disabled, onCancel, onSubmit }: Adjus
   return (
     <DialogFooter>
       <Button variant="ghost" onClick={onCancel}>
-        取消
+        {adjustCopy.cancelButton}
       </Button>
       <Button variant="primary" loading={busy} disabled={disabled} onClick={onSubmit}>
-        {mode === 'cancel' ? '确认停课' : mode === 'exam' ? '改为考试' : '应用调整'}
+        {adjustCopy.submit[mode]}
       </Button>
     </DialogFooter>
   );

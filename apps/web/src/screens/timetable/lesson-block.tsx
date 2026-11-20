@@ -5,6 +5,7 @@ import { formatPeriodRange } from '../../lib/format.ts';
 import { minuteOf, minuteToY, type GridMetrics, type GridSlot } from '../../lib/grid-metrics.ts';
 import { LESSON_TOUCH_ACTION, lessonDraggable } from './drag-session.ts';
 import type { DragState } from './use-lesson-drag.ts';
+import { weekCopy } from '../../copy/timetable-week.ts';
 
 export interface LessonBlockProps {
   lesson: LessonCell;
@@ -59,7 +60,7 @@ export function LessonBlock({
   const top = Math.max(0, Math.min(rawTop, gridHeight - height));
   // 读屏播报：星期 + 节次 + 课程名 + 周次 + 地点（有则加）
   const ariaParts = [weekday, formatPeriodRange(lesson.periodStart, lesson.periodEnd), lesson.name];
-  if (week !== null) ariaParts.push(`第 ${week} 周`);
+  if (week !== null) ariaParts.push(weekCopy.weekAria(week));
   if (lesson.room !== null && lesson.room !== '') ariaParts.push(lesson.room);
   return (
     <div
@@ -108,18 +109,18 @@ export function LessonBlock({
         badge={
           lesson.lab ? (
             <span className="inline-block rounded-sm bg-surface px-1 text-[10px] text-accent-strong" data-role="lab-label">
-              {lesson.eventLabel ?? '日程'}
+              {lesson.eventLabel ?? weekCopy.eventBadgeFallback}
             </span>
           ) : lesson.movedIn ? (
             <span
               className="inline-block rounded-sm bg-surface px-1 text-[10px] text-primary-strong"
               data-role="moved-in-label"
             >
-              调课
+              {weekCopy.movedInBadge}
             </span>
           ) : undefined
         }
-        holidayLabel={lesson.holiday && holidayFirstDay ? holidayName ?? '放假' : '放假'}
+        holidayLabel={lesson.holiday && holidayFirstDay ? holidayName ?? weekCopy.holidayFallback : weekCopy.holidayFallback}
         onClick={onClick}
         className={cn('h-full', lessonDraggable(lesson) && 'cursor-grab select-none')}
       />

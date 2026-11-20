@@ -1,6 +1,7 @@
 import { rangesOverlap } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../../data.ts';
 import { formatPeriodRange } from '../../lib/format.ts';
+import { weekCopy } from '../../copy/timetable-week.ts';
 
 /** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
 export const LONG_PRESS_MS = 350;
@@ -237,5 +238,5 @@ export function firstClash(data: AppData, date: string, start: number, end: numb
 
 /** 重叠提示：与「高等数学」第 1–2 节重叠。 */
 export function clashLabel(clash: Clash): string {
-  return `与「${clash.name}」${formatPeriodRange(clash.start, clash.end)}重叠`;
+  return weekCopy.clash(clash.name, formatPeriodRange(clash.start, clash.end));
 }

@@ -33,6 +33,7 @@ import { formatLogTimestamp, logDebug, logEntries, logInfo, logWarn } from '../.
 import { useAction } from '../../lib/action.ts';
 import { saveText, toastSaved } from '../settings/file-export.ts';
 import { fileKind, unsupportedFileReason, type ImportFailure } from './import-flow-model.ts';
+import { importPasteCopy } from '../../copy/import-paste.ts';
 
 export interface PasteSourceOptions {
   storage: Storage;
@@ -166,9 +167,9 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     if (diagnostics === null) return;
     try {
       await navigator.clipboard.writeText(renderImportDiagnosticsText(diagnostics, diagnosticsMeta()));
-      toast.success('诊断信息已复制');
+      toast.success(importPasteCopy.diagnosticsCopied);
     } catch {
-      toast.error('浏览器未允许写入剪贴板，请改用「导出诊断日志」');
+      toast.error(importPasteCopy.clipboardDenied);
     }
   }
 
@@ -191,10 +192,10 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       name,
       renderImportDiagnosticsText(diagnostics, diagnosticsMeta(), { logLines }),
       'txt',
-      '导入诊断日志',
+      importPasteCopy.diagnosticsSaveTitle,
     );
     if (!result.saved) return;
-    toastSaved('已导出导入诊断日志', result.path);
+    toastSaved(importPasteCopy.diagnosticsExported, result.path);
   }
 
   /** 通用网页导入：识别粘贴进来的课表页面，不绑定具体学校。 */
@@ -207,7 +208,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     if (result.schedules.length === 0) {
       setPageFailure({
         source: 'page',
-        reason: result.warnings.join('；') || '没有识别到排课',
+        reason: result.warnings.join(importPasteCopy.warningSeparator) || importPasteCopy.noSchedules,
       });
       logWarn('import', '未识别到课表', {
         shape: result.shape,
@@ -229,9 +230,9 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     try {
       await navigator.clipboard.writeText(PAGE_BOOKMARKLET);
       setBookmarkCopied(true);
-      toast.success('已复制，粘贴到浏览器书签的地址栏');
+      toast.success(importPasteCopy.bookmarkCopied);
     } catch {
-      setClipboardFailure({ source: 'clipboard', reason: '浏览器未允许写入剪贴板，请手动复制下方代码' });
+      setClipboardFailure({ source: 'clipboard', reason: importPasteCopy.bookmarkClipboardDenied });
     }
   }
 
@@ -271,7 +272,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     if (result.schedules.length === 0) {
       setMappingFailure({
         source: 'mapping',
-        reason: result.warnings.join('；') || '没有识别到排课',
+        reason: result.warnings.join(importPasteCopy.warningSeparator) || importPasteCopy.noSchedules,
       });
       return;
     }
@@ -294,11 +295,11 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     }
     const result = await run({
       scope: 'import',
-      label: '正在读取课表文件…',
+      label: importPasteCopy.readingFile,
       log: '课表文件读取失败',
       task: async () => {
         const semester = await loadSemester(storage, semesterId);
-        if (semester === undefined) throw new Error('学期不存在');
+        if (semester === undefined) throw new Error(importPasteCopy.noSemester);
         if (kind === 'ics') {
           const calendar = parseIcs(await file.text(), { defaultTimeZone: semester.time_zone });
           const timeSlots = await listTimeSlots(storage, semesterId);
@@ -336,7 +337,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     });
     if (!result.ok && result.error !== null) {
       // 解析器的内部报错只进日志；界面给用户能理解的原因与下一步
-      setFileFailure({ source: 'file', reason: '文件里的课表没能识别' });
+      setFileFailure({ source: 'file', reason: importPasteCopy.fileNotRecognized });
     }
   }
 

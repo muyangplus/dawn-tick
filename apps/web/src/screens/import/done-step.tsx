@@ -1,6 +1,7 @@
 import { Button } from '../../components/ui/button.tsx';
 import { InlineError } from '../../components/ui/inline-error.tsx';
 import { ImportSurface } from './import-surface.tsx';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 export interface DoneStepProps {
   warnings: readonly string[];
@@ -12,14 +13,14 @@ export interface DoneStepProps {
 export function DoneStep({ warnings, onRestart, onClose }: DoneStepProps) {
   return (
     <ImportSurface data-role="import-done">
-      <span className="text-sm text-ink">导入完成</span>
-      {warnings.length > 0 && <InlineError>{warnings.join('；')}</InlineError>}
+      <span className="text-sm text-ink">{importFlowCopy.doneTitle}</span>
+      {warnings.length > 0 && <InlineError>{warnings.join(importFlowCopy.warningSeparator)}</InlineError>}
       <div className="flex flex-col gap-2 tablet:flex-row">
         <Button variant="secondary" className="w-full tablet:w-auto" onClick={onRestart}>
-          继续导入
+          {importFlowCopy.importMore}
         </Button>
         <Button variant="primary" className="w-full tablet:w-auto" onClick={onClose}>
-          完成
+          {importFlowCopy.finish}
         </Button>
       </div>
     </ImportSurface>

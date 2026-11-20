@@ -7,6 +7,7 @@ import {
   compactStepLabel,
   type ImportStep,
 } from './import-flow-model.ts';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 export interface StepBarProps {
   step: ImportStep;
@@ -24,7 +25,7 @@ export function StepBar({ step, onBack }: StepBarProps) {
         {compactStepLabel(step)}
       </p>
       <ol
-        aria-label="导入步骤"
+        aria-label={importFlowCopy.stepsAria}
         className="hidden items-center gap-2 overflow-x-auto pb-1 text-xs tablet:flex"
       >
         {STEP_TITLES.map((label, index) => {
@@ -53,14 +54,14 @@ export function StepBar({ step, onBack }: StepBarProps) {
           <Button
             size="sm"
             variant="secondary"
-            aria-label="上一步"
+            aria-label={importFlowCopy.backAria}
             className="w-full tablet:w-auto"
             onClick={onBack}
           >
-            上一步
+            {importFlowCopy.back}
           </Button>
           <span className="text-center text-xs text-muted tablet:text-left">
-            当前第 {step} 步 / 共 {STEP_COUNT} 步
+            {importFlowCopy.stepProgress(step, STEP_COUNT)}
           </span>
         </div>
       )}

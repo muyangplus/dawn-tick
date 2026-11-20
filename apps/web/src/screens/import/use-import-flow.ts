@@ -17,6 +17,7 @@ import {
   type PasteSource,
   type SelectionMode,
 } from './import-flow-model.ts';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 export interface ImportFlowOptions {
   storage: Storage;
@@ -114,8 +115,8 @@ export function useImportFlow({ storage, semesterId, onDone }: ImportFlowOptions
   async function confirm(): Promise<void> {
     await run({
       scope: 'import',
-      label: '正在导入课表…',
-      fail: { what: '导入课表失败', next: '请检查文件与勾选项后重试。' },
+      label: importFlowCopy.importing,
+      fail: importFlowCopy.importFail,
       task: async () => {
         const chosen = schedules.filter((_, index) => selected.has(index));
         const applied = await applyImport(storage, semesterId, chosen);
@@ -129,7 +130,7 @@ export function useImportFlow({ storage, semesterId, onDone }: ImportFlowOptions
           skipped: applied.skippedSchedules,
         });
         toast.success(
-          `新增课程 ${applied.createdCourses} · 排课 ${applied.createdSchedules} · 跳过重复 ${applied.skippedSchedules}`,
+          importFlowCopy.imported(applied.createdCourses, applied.createdSchedules, applied.skippedSchedules),
         );
         dispatch({ type: 'done' });
         // 导入完成就关掉内嵌教务窗口，避免用户还要自己关

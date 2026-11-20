@@ -3,6 +3,7 @@ import type { AppData } from '../../data.ts';
 import { cn } from '../../lib/cn.ts';
 import { formatMonthDayRange } from '../../lib/dates.ts';
 import { padLabel, type GridMetrics, type GridSlot } from '../../lib/grid-metrics.ts';
+import { weekCopy } from '../../copy/timetable-week.ts';
 
 /** 表头行：节次列 + 每列的星期、日期、今天/放假标记。 */
 export function WeekHeaderRow({ data }: { data: AppData }) {
@@ -11,7 +12,7 @@ export function WeekHeaderRow({ data }: { data: AppData }) {
       className="grid border-b border-line"
       style={{ gridTemplateColumns: `var(--dt-axis) repeat(${data.windowDates.length}, minmax(0, 1fr))` }}
     >
-      <div className="px-2 py-2 text-center text-xs text-muted">节次</div>
+      <div className="px-2 py-2 text-center text-xs text-muted">{weekCopy.periodColumn}</div>
       {data.windowDates.map((date) => {
         const label = WEEKDAY_LABELS[nextDayOfWeek(date) - 1] ?? '';
         const isToday = date === data.today;
@@ -27,8 +28,8 @@ export function WeekHeaderRow({ data }: { data: AppData }) {
             <span className="flex flex-col items-center gap-0.5">
               <span className="truncate">{label}</span>
               <span className="tabular text-[9px] text-muted tablet:text-[10px]">{formatMonthDayRange(date)}</span>
-              {isToday && <span className="text-[9px] text-muted tablet:text-[10px]">今天</span>}
-              {isHoliday && <span className="text-[9px] text-muted tablet:text-[10px]">放假</span>}
+              {isToday && <span className="text-[9px] text-muted tablet:text-[10px]">{weekCopy.todayMark}</span>}
+              {isHoliday && <span className="text-[9px] text-muted tablet:text-[10px]">{weekCopy.holidayMark}</span>}
             </span>
           </div>
         );

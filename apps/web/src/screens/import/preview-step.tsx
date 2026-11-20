@@ -4,6 +4,7 @@ import { ImportSurface } from './import-surface.tsx';
 import { PreviewList } from './preview-list.tsx';
 import { previewSummary } from './import-flow-model.ts';
 import type { ImportFlowApi } from './use-import-flow.ts';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 export interface PreviewStepProps {
   flow: ImportFlowApi;
@@ -32,7 +33,7 @@ export function PreviewStep({ flow }: PreviewStepProps) {
               disabled={!flow.duplicatesKnown}
               onChange={(event) => flow.setConflictOnly(event.target.checked)}
             />
-            只看冲突项{flow.conflictCount > 0 ? `（${flow.conflictCount}）` : ''}
+            {importFlowCopy.conflictOnly(flow.conflictCount)}
           </label>
         </div>
 
@@ -44,7 +45,7 @@ export function PreviewStep({ flow }: PreviewStepProps) {
             disabled={flow.visibleIndexes.length === 0 || flow.visibleSelectedCount === flow.visibleIndexes.length}
             onClick={() => flow.batchSelect('all')}
           >
-            全选
+            {importFlowCopy.selectAll}
           </Button>
           <Button
             size="sm"
@@ -53,7 +54,7 @@ export function PreviewStep({ flow }: PreviewStepProps) {
             disabled={flow.visibleSelectedCount === 0}
             onClick={() => flow.batchSelect('none')}
           >
-            清空
+            {importFlowCopy.selectNone}
           </Button>
           <Button
             size="sm"
@@ -62,11 +63,11 @@ export function PreviewStep({ flow }: PreviewStepProps) {
             disabled={flow.visibleIndexes.length === 0}
             onClick={() => flow.batchSelect('invert')}
           >
-            反选
+            {importFlowCopy.invert}
           </Button>
           {flow.filteringConflicts && (
             <span className="col-span-3 text-xs text-muted tablet:col-span-1">
-              筛选态：批选只作用于可见行
+              {importFlowCopy.filterNote}
             </span>
           )}
         </div>
@@ -82,11 +83,11 @@ export function PreviewStep({ flow }: PreviewStepProps) {
 
         {flow.filteringConflicts && flow.visibleIndexes.length === 0 && (
           <p data-role="import-no-conflict" className="text-xs text-muted">
-            没有冲突项
+            {importFlowCopy.noConflicts}
           </p>
         )}
 
-        {flow.warnings.length > 0 && <InlineError>{flow.warnings.join('；')}</InlineError>}
+        {flow.warnings.length > 0 && <InlineError>{flow.warnings.join(importFlowCopy.warningSeparator)}</InlineError>}
 
         <div className="flex flex-col gap-2 tablet:flex-row">
           <Button
@@ -96,10 +97,10 @@ export function PreviewStep({ flow }: PreviewStepProps) {
             disabled={flow.selected.size === 0}
             onClick={() => void flow.confirm()}
           >
-            确认导入
+            {importFlowCopy.confirm}
           </Button>
           <Button variant="ghost" className="w-full tablet:w-auto" onClick={flow.back}>
-            返回
+            {importFlowCopy.previewBack}
           </Button>
         </div>
       </ImportSurface>

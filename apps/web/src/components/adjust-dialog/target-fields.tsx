@@ -2,53 +2,54 @@ import type { AppData } from '../../data.ts';
 import { Field, Input } from '../ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/controls.tsx';
 import type { AdjustSectionProps } from './section-props.ts';
+import { adjustCopy } from '../../copy/timetable-adjust.ts';
 
 /** 改为考试：考试日期、节次与备注；日期与节次复用改期的字段。 */
 export function AdjustExamFields({ form, update }: AdjustSectionProps) {
   const { newDate, newStart, newEnd, examNote } = form;
   return (
     <div className="flex flex-col gap-3">
-      <Field label="考试日期" hint="默认取「调整后日期」，可跨周">
+      <Field label={adjustCopy.examDateLabel} hint={adjustCopy.examDateHint}>
         <Input
           type="date"
           value={newDate}
-          aria-label="考试日期"
+          aria-label={adjustCopy.examDateLabel}
           onChange={(event) => update({ newDate: event.target.value })}
         />
       </Field>
       <div className="flex flex-wrap gap-3">
-        <Field label="起始节">
+        <Field label={adjustCopy.periodStartLabel}>
           <Input
             type="number"
             min={1}
             max={40}
             className="w-20"
-            aria-label="考试起始节"
+            aria-label={adjustCopy.examStartAria}
             value={newStart}
             onChange={(event) => update({ newStart: event.target.value })}
           />
         </Field>
-        <Field label="结束节">
+        <Field label={adjustCopy.periodEndLabel}>
           <Input
             type="number"
             min={1}
             max={40}
             className="w-20"
-            aria-label="考试结束节"
+            aria-label={adjustCopy.examEndAria}
             value={newEnd}
             onChange={(event) => update({ newEnd: event.target.value })}
           />
         </Field>
       </div>
-      <Field label="备注（可选）">
+      <Field label={adjustCopy.examNoteLabel}>
         <Input
           value={examNote}
-          aria-label="考试备注"
-          placeholder="如 开卷、带计算器"
+          aria-label={adjustCopy.examNoteAria}
+          placeholder={adjustCopy.examNotePlaceholder}
           onChange={(event) => update({ examNote: event.target.value })}
         />
       </Field>
-      <span className="text-xs text-muted">考试写进日程并开启倒计时，原课次按停课处理</span>
+      <span className="text-xs text-muted">{adjustCopy.examFootnote}</span>
     </div>
   );
 }
@@ -58,19 +59,19 @@ export function AdjustSwapFields({ form, update }: AdjustSectionProps) {
   const { restFrom, restTo } = form;
   return (
     <div className="flex flex-col gap-3">
-      <Field label="原日期课表">
+      <Field label={adjustCopy.swapFromLabel}>
         <Input
           type="date"
           value={restFrom}
-          aria-label="原日期课表"
+          aria-label={adjustCopy.swapFromLabel}
           onChange={(event) => update({ restFrom: event.target.value })}
         />
       </Field>
-      <Field label="目标上课日" hint="原日课表整体搬过来" help="调休后，目标日按原日课表上课">
+      <Field label={adjustCopy.swapToLabel} help={adjustCopy.swapToHelp}>
         <Input
           type="date"
           value={restTo}
-          aria-label="目标上课日"
+          aria-label={adjustCopy.swapToLabel}
           onChange={(event) => update({ restTo: event.target.value })}
         />
       </Field>
@@ -83,10 +84,10 @@ export function AdjustExtraFields({ form, update, data }: AdjustSectionProps & {
   const { extraCourse, extraName, extraDate, extraStart, extraEnd } = form;
   return (
     <div className="flex flex-col gap-3">
-      <Field label="已有课程">
+      <Field label={adjustCopy.extraCourseLabel}>
         <Select value={extraCourse} onValueChange={(value) => update({ extraCourse: value })}>
-          <SelectTrigger aria-label="已有课程">
-            {data.courses.find((item) => item.id === extraCourse)?.name ?? '选择课程'}
+          <SelectTrigger aria-label={adjustCopy.extraCourseLabel}>
+            {data.courses.find((item) => item.id === extraCourse)?.name ?? adjustCopy.coursePlaceholder}
           </SelectTrigger>
           <SelectContent>
             {data.courses.map((item) => (
@@ -97,47 +98,47 @@ export function AdjustExtraFields({ form, update, data }: AdjustSectionProps & {
           </SelectContent>
         </Select>
       </Field>
-      <Field label="或自定义课程名称" hint="填了就按这个名字新建一门课">
+      <Field label={adjustCopy.extraNameLabel} hint={adjustCopy.extraNameHint}>
         <Input
           value={extraName}
-          aria-label="或自定义课程名称"
-          placeholder="如 形势与政策（补课）"
+          aria-label={adjustCopy.extraNameLabel}
+          placeholder={adjustCopy.extraNamePlaceholder}
           onChange={(event) => update({ extraName: event.target.value })}
         />
       </Field>
-      <Field label="加课日期">
+      <Field label={adjustCopy.extraDateLabel}>
         <Input
           type="date"
           value={extraDate}
-          aria-label="加课日期"
+          aria-label={adjustCopy.extraDateLabel}
           onChange={(event) => update({ extraDate: event.target.value })}
         />
       </Field>
       <div className="flex flex-wrap gap-3">
-        <Field label="起始节">
+        <Field label={adjustCopy.periodStartLabel}>
           <Input
             type="number"
             min={1}
             max={40}
             className="w-20"
-            aria-label="起始节"
+            aria-label={adjustCopy.periodStartLabel}
             value={extraStart}
             onChange={(event) => update({ extraStart: event.target.value })}
           />
         </Field>
-        <Field label="结束节">
+        <Field label={adjustCopy.periodEndLabel}>
           <Input
             type="number"
             min={1}
             max={40}
             className="w-20"
-            aria-label="结束节"
+            aria-label={adjustCopy.periodEndLabel}
             value={extraEnd}
             onChange={(event) => update({ extraEnd: event.target.value })}
           />
         </Field>
       </div>
-      <span className="text-xs text-muted">只加这一次，可在课程管理里删除</span>
+      <span className="text-xs text-muted">{adjustCopy.extraFootnote}</span>
     </div>
   );
 }
