@@ -13,10 +13,10 @@ export const lessonCopy = {
   deleteCourseButton: '删除整门课',
 
   deleteScheduleTitle: '删除排课',
-  deleteScheduleConfirm: '删除排课',
+  deleteScheduleConfirm: '确认删除',
   scheduleDeleted: '已删除排课',
   deleteCourseTitle: '删除课程',
-  deleteCourseConfirm: '删除课程',
+  deleteCourseConfirm: '确认删除',
   schedulesPart: '排课',
   remindersPart: '提醒',
   courseDeleted: (name: string) => `已删除「${name}」`,

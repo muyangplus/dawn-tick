@@ -34,7 +34,7 @@ export const snapshotsCopy = {
   restoreConfirm: '恢复此快照',
   deleteTitle: '删除快照',
   deleteDescription: DELETE('该快照'),
-  deleteConfirm: '删除此快照',
+  deleteConfirm: '确认删除',
   restoring: '正在恢复快照…',
   restoreWhat: '恢复快照',
   restoreQueued: '已排好快照恢复，重启后生效',

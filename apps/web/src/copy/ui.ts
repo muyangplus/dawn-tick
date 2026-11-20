@@ -6,7 +6,7 @@ export const uiCopy = {
     closeAria: '关闭',
     submitButton: '保存',
     cancelButton: '取消',
-    dangerConfirmButton: '删除',
+    dangerConfirmButton: '确认删除',
   },
 
   confirm: {

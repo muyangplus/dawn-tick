@@ -45,6 +45,7 @@ import { updateTaskCopy } from '../src/copy/update-task.ts';
 import { adjustCopy } from '../src/copy/timetable-adjust.ts';
 import { courseFormCopy } from '../src/copy/timetable-course-form.ts';
 import { updateSettingsCopy } from '../src/copy/update-settings.ts';
+import { semestersCopy } from '../src/copy/settings-semesters.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
@@ -5261,14 +5262,14 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(8);
   const deleteDialogText = document.body.textContent ?? '';
   check('删除确认说明后果', deleteDialogText.includes('不可撤销'), deleteDialogText.slice(-40));
-  // 确认按钮写明动作（「删除学期」），与触发按钮同名：只点确认框里的主按钮
+  // 确认框标题仍是「删除学期」，主按钮统一为「确认删除」：只点确认框里的按钮
   const semesterDeleteConfirm =
     [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
-      (item) => (item.textContent ?? '').trim() === '删除学期',
+      (item) => (item.textContent ?? '').trim() === semestersCopy.deleteConfirm,
     ) ?? null;
   check(
-    '删除学期确认按钮写明动作',
-    (semesterDeleteConfirm?.textContent ?? '').trim() === '删除学期',
+    '删除学期确认按钮为确认删除',
+    semestersCopy.deleteConfirm === '确认删除' && semesterDeleteConfirm !== null,
     semesterDeleteConfirm?.textContent?.trim() ?? '(无)',
   );
   semesterDeleteConfirm?.click();
@@ -5401,7 +5402,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   clickByLabel(remounted.container, '删除学期');
   await flush(10);
   const defaultSemesterDeleteConfirm = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
-    (item) => (item.textContent ?? '').trim() === '删除学期',
+    (item) => (item.textContent ?? '').trim() === semestersCopy.deleteConfirm,
   );
   if (defaultSemesterDeleteConfirm !== undefined) {
     defaultSemesterDeleteConfirm.click();

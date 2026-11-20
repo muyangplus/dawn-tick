@@ -54,7 +54,7 @@ export const semestersCopy = {
   saveFailed: { what: '保存学期设置失败', next: '请重试；仍失败请重开应用后再改。' },
 
   deleteTitle: '删除学期',
-  deleteConfirm: '删除学期',
+  deleteConfirm: '确认删除',
   deleteDescription: (name: string, counts: SemesterRemoveCounts) => DELETE(name, removeParts(counts)),
   deletingLabel: '正在删除学期…',
   deleteFailed: { what: '删除学期失败', next: '请重试；仍失败请重开应用后再删。' },
