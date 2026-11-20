@@ -55,6 +55,10 @@ class SecretStorePlugin : Plugin() {
         }
         try {
             call.resolve(JSObject().put("value", SecretVault.decrypt(ciphertext)))
+        } catch (error: IllegalArgumentException) {
+            // Base64 解不开或长度不足 IV
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.decrypt 密文格式无效 cause=${error.javaClass.simpleName}")
+            call.reject(context.getString(R.string.secret_ciphertext_invalid))
         } catch (error: Exception) {
             NativeLog.warn(context, SCOPE, "SecretStorePlugin.decrypt 解密失败 cause=${error.javaClass.simpleName}")
             call.reject(context.getString(R.string.secret_decrypt_failed, error.message ?: error.javaClass.simpleName))

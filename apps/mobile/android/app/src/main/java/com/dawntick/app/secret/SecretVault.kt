@@ -53,7 +53,8 @@ internal object SecretVault {
     /** 解密 Base64(IV + 密文)；密钥丢失或内容被改动时抛异常。 */
     fun decrypt(encoded: String): String {
         val combined = Base64.decode(encoded, Base64.NO_WRAP)
-        require(combined.size > IV_BYTES) { "密文长度不对" }
+        // 插件把 IllegalArgumentException 换成 strings.xml 里的提示，这里的 message 不外露
+        require(combined.size > IV_BYTES) { "ciphertext shorter than IV" }
         val iv = combined.copyOfRange(0, IV_BYTES)
         val sealed = combined.copyOfRange(IV_BYTES, combined.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)

@@ -80,6 +80,7 @@
     <string name="secret_missing_value">缺少 value</string>
     <string name="secret_encrypt_failed">加密失败：%1$s</string>
     <string name="secret_missing_ciphertext">缺少 ciphertext</string>
+    <string name="secret_ciphertext_invalid">密文格式无效</string>
     <string name="secret_decrypt_failed">解密失败：%1$s</string>
 
     <!-- 局域网配对；lan_start_timeout 与 Web sync-lan.ts 的 serverStartTimeout 句式一致 -->
