@@ -3,14 +3,23 @@ package com.dawntick.app.reminder
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.dawntick.app.diag.NativeLog
+
+private const val SCOPE = "reminder"
 
 /** 闹钟到点：取回排定记录并投递通知；静音窗口内直接丢弃。 */
 class ReminderAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getLongExtra(ReminderStore.EXTRA_ID, -1L)
         if (id < 0) return
-        val record = ReminderStore.find(context, id) ?: return
+        NativeLog.debug(context, SCOPE, "ReminderAlarmReceiver.onReceive 闹钟到点 id=$id")
+        val record = ReminderStore.find(context, id)
+        if (record == null) {
+            NativeLog.warn(context, SCOPE, "ReminderAlarmReceiver.onReceive 没有对应的提醒记录 id=$id")
+            return
+        }
         if (ReminderStore.isMuted(context, record.targetId)) {
+            NativeLog.debug(context, SCOPE, "ReminderAlarmReceiver.onReceive 勿扰中，已丢弃提醒 id=$id")
             ReminderStore.remove(context, id)
             return
         }
@@ -27,9 +36,11 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 class ReminderBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
-        for (record in ReminderStore.list(context)) {
+        val records = ReminderStore.list(context)
+        for (record in records) {
             ReminderAlarms.schedule(context, record)
         }
+        NativeLog.debug(context, SCOPE, "ReminderBootReceiver.onReceive 已重新排定提醒 count=${records.size} trigger=${intent.action}")
     }
 }
 
@@ -54,12 +65,20 @@ internal object ReminderActionHandler {
     )
 
     fun apply(context: Context, id: Long, action: String): Boolean {
-        val record = ReminderStore.find(context, id) ?: return false
-        if (!ReminderActionTable.supports(record.kind, action)) return false
-        val handler = handlers[action] ?: return false
+        val record = ReminderStore.find(context, id)
+        if (record == null) {
+            NativeLog.warn(context, SCOPE, "ReminderActionHandler.apply 没有对应的提醒记录 id=$id action=$action")
+            return false
+        }
+        val handler = handlers[action]
+        if (handler == null || !ReminderActionTable.supports(record.kind, action)) {
+            NativeLog.warn(context, SCOPE, "ReminderActionHandler.apply 不支持的提醒动作 id=$id action=$action kind=${record.kind}")
+            return false
+        }
         handler(context, record)
         ReminderStore.queueAction(context, PendingAction(id, action, record.targetId, record.kind))
         ReminderActionBridge.notify(context, id, action, record.targetId, record.kind)
+        NativeLog.info(context, SCOPE, "ReminderActionHandler.apply 已执行通知动作 id=$id action=$action kind=${record.kind}")
         return true
     }
 

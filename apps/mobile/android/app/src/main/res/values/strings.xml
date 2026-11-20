@@ -51,9 +51,13 @@
     <string name="reminder_action_snooze">贪睡 %1$d 分钟</string>
     <string name="reminder_action_done">完成</string>
     <string name="reminder_action_mute">勿扰 %1$d 分钟</string>
+    <string name="reminder_missing_schedule_fields">缺少 id / at / title</string>
+    <string name="reminder_missing_id">缺少 id</string>
 
     <!-- 文件分享与安装 -->
     <string name="share_chooser_title">分享</string>
+    <string name="share_no_app">没有可分享该文件的应用</string>
+    <string name="share_reveal_failed">打不开所在目录，也无法分享该文件</string>
     <string name="install_not_apk">只能安装 .apk 文件</string>
     <string name="install_permission_needed">未获准安装应用，请到系统设置允许晓刻安装未知应用后重试</string>
     <string name="install_no_installer">没有能打开安装包的应用</string>

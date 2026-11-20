@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import com.dawntick.app.R
+import com.dawntick.app.diag.NativeLog
 import com.dawntick.app.files.LocalFile
 import com.dawntick.app.files.LocalFileException
 import com.getcapacitor.JSObject
@@ -37,10 +38,13 @@ class ApkInstallerPlugin : Plugin() {
         val file = try {
             LocalFile.resolve(context, call.getString("path"))
         } catch (error: LocalFileException) {
+            NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.installApk 安装包路径无效", error)
             call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
-        if (!file.file.name.endsWith(APK_SUFFIX, ignoreCase = true)) {
+        val name = file.file.name
+        if (!name.endsWith(APK_SUFFIX, ignoreCase = true)) {
+            NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.installApk 不是 APK 文件 name=$name")
             call.reject(context.getString(R.string.install_not_apk))
             return
         }
@@ -48,6 +52,7 @@ class ApkInstallerPlugin : Plugin() {
             if (openUnknownSourcesSettings()) {
                 call.resolve(JSObject().put("opened", false).put("needsPermission", true))
             } else {
+                NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.installApk 未获准安装应用，设置页也打不开")
                 call.reject(context.getString(R.string.install_permission_needed))
             }
             return
@@ -55,6 +60,7 @@ class ApkInstallerPlugin : Plugin() {
         val uri = try {
             file.contentUri(context)
         } catch (error: LocalFileException) {
+            NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.installApk 安装包无法换成 content URI name=$name", error)
             call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
@@ -66,8 +72,10 @@ class ApkInstallerPlugin : Plugin() {
         intent.clipData = ClipData.newRawUri("apk", uri)
         try {
             context.startActivity(intent)
+            NativeLog.info(context, SCOPE, "ApkInstallerPlugin.installApk 已唤起系统安装器 name=$name")
             call.resolve(JSObject().put("opened", true))
         } catch (error: ActivityNotFoundException) {
+            NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.installApk 没有能打开安装包的应用 name=$name", error)
             call.reject(context.getString(R.string.install_no_installer), error)
         }
     }
@@ -89,17 +97,21 @@ class ApkInstallerPlugin : Plugin() {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
                 context.startActivity(intent)
+                NativeLog.info(context, SCOPE, "ApkInstallerPlugin.openUnknownSourcesSettings 已打开设置页 page=${intent.action}")
                 return true
             } catch (error: ActivityNotFoundException) {
                 // 换下一个候选页
+                NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.openUnknownSourcesSettings 系统没有该设置页 page=${intent.action}", error)
             } catch (error: SecurityException) {
                 // 个别 ROM 把设置页也锁了，继续试
+                NativeLog.warn(context, SCOPE, "ApkInstallerPlugin.openUnknownSourcesSettings 设置页拒绝打开 page=${intent.action}", error)
             }
         }
         return false
     }
 
     companion object {
+        private const val SCOPE = "update"
         private const val APK_SUFFIX = ".apk"
         private const val APK_MIME = "application/vnd.android.package-archive"
     }

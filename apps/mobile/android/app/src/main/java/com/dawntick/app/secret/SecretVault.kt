@@ -28,11 +28,14 @@ internal object SecretVault {
     private const val KEY_BITS = 256
 
     /** 密钥库是否可用；不可用时 Web 层回退明文并显式提示。只读检查，不生成密钥。 */
-    fun isAvailable(): Boolean = try {
+    fun isAvailable(): Boolean = unavailableCause() == null
+
+    /** 密钥库打不开时的异常；可用时为 null。给调用方记日志用。 */
+    fun unavailableCause(): Exception? = try {
         KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        true
-    } catch (_: Exception) {
-        false
+        null
+    } catch (error: Exception) {
+        error
     }
 
     /** 加密 UTF-8 文本，返回 Base64(IV + 密文)。 */

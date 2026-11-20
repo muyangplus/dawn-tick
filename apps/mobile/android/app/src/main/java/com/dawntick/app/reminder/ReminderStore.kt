@@ -1,6 +1,7 @@
 package com.dawntick.app.reminder
 
 import android.content.Context
+import com.dawntick.app.diag.NativeLog
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -34,6 +35,7 @@ internal object ReminderStore {
     private const val KEY_REMINDERS = "scheduled"
     private const val KEY_ACTIONS = "pending_actions"
     private const val KEY_MUTES = "mutes"
+    private const val SCOPE = "reminder"
 
     /** 通知按钮/闹钟广播的 extra 键与 action。 */
     const val EXTRA_ID = "com.dawntick.app.reminder.ID"
@@ -51,7 +53,13 @@ internal object ReminderStore {
         val raw = prefs(context).getString(key, "[]") ?: "[]"
         return try {
             JSONArray(raw)
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            // JSONException 的 message 会带原文片段（含提醒标题），只记类名
+            NativeLog.warn(
+                context,
+                SCOPE,
+                "ReminderStore.readArray 持久化数据解析失败，已按空列表处理 key=$key cause=${error.javaClass.simpleName}",
+            )
             JSONArray()
         }
     }

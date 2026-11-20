@@ -9,6 +9,8 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import com.dawntick.app.R
+import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -82,7 +84,12 @@ class ReminderActionsPlugin : Plugin() {
         val at = (call.data.opt("at") as? Number)?.toLong()
         val title = call.getString("title")
         if (id == null || at == null || title == null) {
-            call.reject("缺少 id / at / title")
+            NativeLog.warn(
+                context,
+                SCOPE,
+                "ReminderActionsPlugin.schedule 参数不全 hasId=${id != null} hasAt=${at != null} hasTitle=${title != null}",
+            )
+            call.reject(context.getString(R.string.reminder_missing_schedule_fields))
             return
         }
         val record = ReminderRecord(
@@ -103,7 +110,8 @@ class ReminderActionsPlugin : Plugin() {
     fun cancel(call: PluginCall) {
         val id = (call.data.opt("id") as? Number)?.toLong()
         if (id == null) {
-            call.reject("缺少 id")
+            NativeLog.warn(context, SCOPE, "ReminderActionsPlugin.cancel 缺少参数 id")
+            call.reject(context.getString(R.string.reminder_missing_id))
             return
         }
         ReminderStore.remove(context, id)
@@ -156,10 +164,12 @@ class ReminderActionsPlugin : Plugin() {
                     .put("kind", item.kind),
             )
         }
+        NativeLog.debug(context, SCOPE, "ReminderActionsPlugin.pollActions 已取走待处理动作 count=${actions.length()}")
         call.resolve(JSObject().put("actions", actions))
     }
 
     private companion object {
         const val EVENT_ACTION = "actionPerformed"
+        const val SCOPE = "reminder"
     }
 }
