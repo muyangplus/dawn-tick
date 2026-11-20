@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn class_actions_have_no_done() {
         let labels: Vec<&str> = actions_for_kind("class").iter().map(|action| action.label()).collect();
-        assert_eq!(labels, vec!["贪睡 10 分钟", "勿扰 1 小时"]);
+        assert_eq!(labels, vec!["贪睡 10 分钟", "勿扰 60 分钟"]);
         assert!(!actions_for_kind("class").contains(&ReminderAction::Done));
     }
 
@@ -234,7 +234,7 @@ mod tests {
     fn event_actions_include_done() {
         for kind in ["todo", "homework", "exam", "lab", "temp", "unknown"] {
             let labels: Vec<&str> = actions_for_kind(kind).iter().map(|action| action.label()).collect();
-            assert_eq!(labels, vec!["贪睡 10 分钟", "完成", "勿扰 1 小时"], "{kind}");
+            assert_eq!(labels, vec!["贪睡 10 分钟", "完成", "勿扰 60 分钟"], "{kind}");
         }
     }
 

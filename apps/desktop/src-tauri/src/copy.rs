@@ -146,7 +146,7 @@ pub(crate) mod tray {
 pub(crate) mod reminder {
     pub const SNOOZE: &str = "贪睡 10 分钟";
     pub const DONE: &str = "完成";
-    pub const MUTE: &str = "勿扰 1 小时";
+    pub const MUTE: &str = "勿扰 60 分钟";
 }
 
 pub(crate) mod autostart {
