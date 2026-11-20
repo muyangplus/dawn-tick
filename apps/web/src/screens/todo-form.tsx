@@ -6,10 +6,8 @@ import {
   formatDate,
   MAX_PERIODS,
   periodsForClockRange,
-  plusMinutesText,
   updateEvent,
   weeksToMask,
-  WEEKDAY_LABELS,
   type EventRow,
   type SemesterRow,
   type Storage,
@@ -18,25 +16,11 @@ import {
 import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
 import { errorMessage } from '../lib/errors.ts';
-import { formatPeriodRange } from '../lib/format.ts';
-import { Button } from '../components/ui/button.tsx';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
 import { DELETE } from '../copy/zh.ts';
-import { DialogFooter } from '../components/ui/dialog.tsx';
 import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
-import { WeekPicker } from '../components/week-picker.tsx';
-import { Field, Input, Textarea } from '../components/ui/input.tsx';
-import { HelpHint } from '../components/ui/help-hint.tsx';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SwitchField,
-} from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import {
-  ADVANCE_OPTIONS,
   advanceIdFor,
   advanceMinutesOf,
   blankTodoForm,
@@ -49,16 +33,15 @@ import {
   type EventFormKind,
   type TodoFormState,
 } from './todo-form-model.ts';
+import { KIND_LABEL } from './todo-form/section-props.ts';
+import { TodoBasicFields } from './todo-form/basic-fields.tsx';
+import { TodoTimeFields } from './todo-form/time-fields.tsx';
+import { TodoLabFields } from './todo-form/lab-fields.tsx';
+import { TodoDetailFields } from './todo-form/detail-fields.tsx';
+import { TodoFooter } from './todo-form/footer.tsx';
 
 /** 待办类型：日程 / 作业 / 考试 / 实验。 */
 export type { EventFormKind } from './todo-form-model.ts';
-
-const KIND_LABEL: Record<EventFormKind, string> = {
-  todo: '日程',
-  homework: '作业',
-  exam: '考试',
-  lab: '实验',
-};
 
 export interface TodoFormProps {
   open: boolean;
@@ -365,254 +348,26 @@ export function TodoForm({
       description={editing === null ? '选类型后填字段' : '保存写回这一条'}
       contentAttrs={{ 'data-role': 'todo-form' }}
     >
-      <Field label="类型">
-        <div className="flex flex-wrap gap-2">
-          {(['todo', 'homework', 'exam', 'lab'] as const).map((item) => (
-            <Button
-              key={item}
-              size="sm"
-              variant={current === item ? 'primary' : 'secondary'}
-              aria-label={`待办类型：${KIND_LABEL[item]}`}
-              aria-pressed={current === item}
-              onClick={() => changeKind(item)}
-            >
-              {KIND_LABEL[item]}
-            </Button>
-          ))}
-        </div>
-      </Field>
-      <Field label={isExam ? '考试名称' : isLab ? '实验名称' : isHomework ? '作业名称' : '标题'}>
-        <Input
-          value={title}
-          aria-label={isExam ? '考试名称' : isLab ? '实验名称' : isHomework ? '作业名称' : '标题'}
-          onChange={(event) => update({ title: event.target.value })}
-        />
-      </Field>
-      {!isExam && (
-        <Field label="关联课程（可选）" hint={isLab ? '实验会挂在课的同一列里展示' : '关联后归入该课程'}>
-          <Select value={courseId} onValueChange={(value) => update({ courseId: value })}>
-            <SelectTrigger aria-label="关联课程">
-              {courses.find((item) => item.id === courseId)?.name ?? '不关联'}
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">不关联</SelectItem>
-              {courses.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      )}
-      <div className="flex flex-wrap gap-3">
-        <Field label={isExam ? '考试日期' : isLab ? '首次日期' : '日期'}>
-          <Input
-            type="date"
-            value={dueDate}
-            aria-label={isExam ? '考试日期' : isLab ? '首次日期' : '日期'}
-            onChange={(event) => update({ dueDate: event.target.value })}
-          />
-        </Field>
-        {!isLab && !customTime && (
-          <Field label={isExam ? '开考时间' : '时间'}>
-            <Input
-              type="time"
-              value={dueTime}
-              aria-label={isExam ? '开考时间' : '时间'}
-              onChange={(event) => update({ dueTime: event.target.value })}
-            />
-          </Field>
-        )}
-        {customTime && (
-          <>
-            <Field label="开始时间">
-              <Input
-                type="time"
-                value={startTime}
-                aria-label="开始时间"
-                onChange={(event) => {
-                  const start = event.target.value;
-                  update({ startTime: start, endTime: endTime <= start ? plusMinutesText(start, 90) : endTime });
-                }}
-              />
-            </Field>
-            <Field label="结束时间">
-              <Input
-                type="time"
-                value={endTime}
-                aria-label="结束时间"
-                onChange={(event) => update({ endTime: event.target.value })}
-              />
-            </Field>
-          </>
-        )}
-        <Field label="提前提醒">
-          <Select value={advance} onValueChange={(value) => update({ advance: value })}>
-            <SelectTrigger aria-label={isExam ? '考试提前提醒' : '待办提前提醒'}>
-              {ADVANCE_OPTIONS.find((item) => item.id === advance)?.label ?? '提前 1 天'}
-            </SelectTrigger>
-            <SelectContent>
-              {ADVANCE_OPTIONS.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
-      <SwitchField
-        label="自定义时间"
-        description="按真实起止时间显示"
-        checked={customTime}
-        onCheckedChange={(checked) => update({ customTime: checked })}
-        ariaLabel="自定义时间"
-      />
+      <TodoBasicFields form={form} update={update} courses={courses} onChangeKind={changeKind} />
+      <TodoTimeFields form={form} update={update} />
       {isLab && (
-        <div className="flex flex-col gap-2" data-role="lab-fields">
-          <SwitchField
-            label="每周重复"
-            description="关闭时只在这一天"
-            checked={labRepeat}
-            onCheckedChange={(checked) => update({ labRepeat: checked })}
-            ariaLabel="实验每周重复"
-          />
-          {labRepeat && (
-            <>
-              <Field label="星期">
-                <Select value={String(labWeekday)} onValueChange={(value) => update({ labWeekday: Number(value) })}>
-                  <SelectTrigger aria-label="实验星期">
-                    {WEEKDAY_LABELS[labWeekday - 1] ?? '周一'}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WEEKDAY_LABELS.map((label, index) => (
-                      <SelectItem key={label} value={String(index + 1)}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <WeekPicker
-                totalWeeks={semester?.total_weeks ?? 20}
-                value={labWeeks}
-                onValueChange={(value) => update({ labWeeks: value })}
-                showShortcuts={false}
-                dataRole="lab-weeks"
-              />
-              <span className="flex items-center gap-1 text-xs text-muted">
-                每周重复按上面的「星期」
-                <HelpHint label="每周重复">起始日期只决定首次上课日，之后按「星期」与所选周次重复</HelpHint>
-              </span>
-            </>
-          )}
-          <div className="flex flex-wrap gap-3">
-            {!customTime && (
-              <>
-                <Field label="起始节">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={40}
-                    className="w-24"
-                    aria-label="实验起始节"
-                    value={labPeriodStart}
-                    onChange={(event) => update({ labPeriodStart: event.target.value })}
-                  />
-                </Field>
-                <Field label="结束节">
-                  <Input
-                    type="number"
-                    min={1}
-                    max={40}
-                    className="w-24"
-                    aria-label="实验结束节"
-                    value={labPeriodEnd}
-                    onChange={(event) => update({ labPeriodEnd: event.target.value })}
-                  />
-                </Field>
-              </>
-            )}
-            {customTime && (
-              <span className="self-center text-xs text-muted">
-                已按起止时间回填节次{clockPeriods === null
-                  ? ''
-                  : `（${formatPeriodRange(clockPeriods.periodStart, clockPeriods.periodEnd)}）`}
-              </span>
-            )}
-          </div>
-        </div>
+        <TodoLabFields
+          form={form}
+          update={update}
+          totalWeeks={semester?.total_weeks ?? 20}
+          clockPeriods={clockPeriods}
+        />
       )}
-      {(isExam || isLab) && (
-        <div className="flex flex-wrap gap-3">
-          <Field label="地点（可选）">
-            <Input
-              value={location}
-              aria-label={isLab ? '实验地点' : '考试地点'}
-              onChange={(event) => update({ location: event.target.value })}
-            />
-          </Field>
-          {isExam && (
-            <Field label="座位号（可选）">
-              <Input value={seatNo} aria-label="座位号" onChange={(event) => update({ seatNo: event.target.value })} />
-            </Field>
-          )}
-        </div>
-      )}
-      <SwitchField
-        label="开启倒计时"
-        description="在倒计时卡片里显示剩余天数"
-        checked={switches.countdown}
-        onCheckedChange={(checked) => update({ countdown: checked })}
-        ariaLabel="开启倒计时"
+      <TodoDetailFields form={form} update={update} />
+      <TodoFooter
+        editingTitle={editing === null ? null : editing.title}
+        busy={busy}
+        canSave={title.trim().length > 0}
+        onRemove={() => void remove()}
+        onCancel={() => onOpenChange(false)}
+        onCopy={() => void copyOne()}
+        onSave={() => void submit()}
       />
-      <SwitchField
-        label="显示在课表上"
-        description="占用课表格子"
-        checked={showInTimetable}
-        onCheckedChange={(checked) => update({ showInTimetable: checked })}
-        ariaLabel="显示在课表上"
-      />
-      <SwitchField
-        label="需要手动确认完成"
-        description="打开后不会自动完成，过期仍留在待办列表"
-        checked={switches.manualDone}
-        onCheckedChange={(checked) => update({ manualDone: checked })}
-        ariaLabel="需要手动确认完成"
-      />
-      <Field label="备注">
-        <Textarea value={note} aria-label="备注" onChange={(event) => update({ note: event.target.value })} />
-      </Field>
-      <DialogFooter>
-        {editing !== null && (
-          <Button
-            variant="danger"
-            className="mr-auto"
-            loading={busy}
-            aria-label={`删除条目 ${editing.title}`}
-            onClick={() => void remove()}
-          >
-            删除这条
-          </Button>
-        )}
-        <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
-          取消
-        </Button>
-        {editing !== null && (
-          <Button variant="secondary" loading={busy} onClick={() => void copyOne()}>
-            复制一条
-          </Button>
-        )}
-        <Button
-          variant="primary"
-          loading={busy}
-          disabled={title.trim().length === 0}
-          onClick={() => void submit()}
-        >
-          保存
-        </Button>
-      </DialogFooter>
     </FormSurface>
   );
 }
