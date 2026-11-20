@@ -1,5 +1,6 @@
 package com.dawntick.app.secret
 
+import com.dawntick.app.R
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -25,13 +26,13 @@ class SecretStorePlugin : Plugin() {
     fun encrypt(call: PluginCall) {
         val value = call.getString("value")
         if (value == null) {
-            call.reject("缺少 value")
+            call.reject(context.getString(R.string.secret_missing_value))
             return
         }
         try {
             call.resolve(JSObject().put("ciphertext", SecretVault.encrypt(value)))
         } catch (error: Exception) {
-            call.reject("加密失败：${error.message ?: error.javaClass.simpleName}")
+            call.reject(context.getString(R.string.secret_encrypt_failed, error.message ?: error.javaClass.simpleName))
         }
     }
 
@@ -40,13 +41,13 @@ class SecretStorePlugin : Plugin() {
     fun decrypt(call: PluginCall) {
         val ciphertext = call.getString("ciphertext")
         if (ciphertext == null) {
-            call.reject("缺少 ciphertext")
+            call.reject(context.getString(R.string.secret_missing_ciphertext))
             return
         }
         try {
             call.resolve(JSObject().put("value", SecretVault.decrypt(ciphertext)))
         } catch (error: Exception) {
-            call.reject("解密失败：${error.message ?: error.javaClass.simpleName}")
+            call.reject(context.getString(R.string.secret_decrypt_failed, error.message ?: error.javaClass.simpleName))
         }
     }
 }

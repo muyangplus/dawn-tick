@@ -1,5 +1,6 @@
 package com.dawntick.app.lan
 
+import com.dawntick.app.R
 import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
@@ -54,7 +55,7 @@ class LanSyncPlugin : Plugin() {
             }
             if (settled.compareAndSet(false, true)) {
                 diagError("LanSync.start 开启局域网配对超时 timeoutMs=$START_TIMEOUT_MS")
-                call.reject("开启配对超时：请确认已连接 Wi-Fi 后重试")
+                call.reject(context.getString(R.string.lan_start_timeout, (START_TIMEOUT_MS / 1000).toInt()))
             }
         }.apply {
             isDaemon = true
@@ -73,7 +74,7 @@ class LanSyncPlugin : Plugin() {
                         // 与桌面 lan_sync_start 一致：地址变了就先停旧监听再起新的
                         existing?.stop()
                         server = null
-                        val started = LanSyncServer.start(host)
+                        val started = LanSyncServer.start(context, host)
                         server = started
                         diagInfo("LanSync.start 监听成功 host=${started.host} port=${started.port}")
                         started
@@ -86,7 +87,7 @@ class LanSyncPlugin : Plugin() {
                         context,
                         active.host,
                         active.port,
-                        LanDiscoveryCodec.deviceName(),
+                        LanDiscoveryCodec.deviceName(context),
                         requestedDeviceId,
                     )
                     diagDebug("LanSync.start 局域网发现广播已启动")

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
+import com.dawntick.app.R
 import com.dawntick.app.files.LocalFile
 import com.dawntick.app.files.LocalFileException
 import com.getcapacitor.JSObject
@@ -33,13 +34,13 @@ class FileSharePlugin : Plugin() {
         val file = try {
             LocalFile.resolve(context, call.getString("path"))
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
         val uri = try {
             file.contentUri(context)
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
         val mimeType = resolveMimeType(file.file.name, call.getString("mimeType"))
@@ -61,7 +62,7 @@ class FileSharePlugin : Plugin() {
         val file = try {
             LocalFile.resolve(context, call.getString("path"))
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
         val directory = file.directoryDocumentUri()
@@ -78,7 +79,7 @@ class FileSharePlugin : Plugin() {
         val uri = try {
             file.contentUri(context)
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
         if (!startSend(uri, resolveMimeType(file.file.name, null))) {
@@ -111,7 +112,7 @@ class FileSharePlugin : Plugin() {
         send.putExtra(Intent.EXTRA_STREAM, uri)
         send.clipData = ClipData.newRawUri("export", uri)
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        val chooser = Intent.createChooser(send, "分享")
+        val chooser = Intent.createChooser(send, context.getString(R.string.share_chooser_title))
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(chooser)

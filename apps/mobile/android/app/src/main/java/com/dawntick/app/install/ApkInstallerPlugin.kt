@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import com.dawntick.app.R
 import com.dawntick.app.files.LocalFile
 import com.dawntick.app.files.LocalFileException
 import com.getcapacitor.JSObject
@@ -36,25 +37,25 @@ class ApkInstallerPlugin : Plugin() {
         val file = try {
             LocalFile.resolve(context, call.getString("path"))
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
         if (!file.file.name.endsWith(APK_SUFFIX, ignoreCase = true)) {
-            call.reject("只能安装 .apk 文件")
+            call.reject(context.getString(R.string.install_not_apk))
             return
         }
         if (!canInstallPackages()) {
             if (openUnknownSourcesSettings()) {
                 call.resolve(JSObject().put("opened", false).put("needsPermission", true))
             } else {
-                call.reject("请到系统设置允许本应用安装未知应用后重试")
+                call.reject(context.getString(R.string.install_permission_needed))
             }
             return
         }
         val uri = try {
             file.contentUri(context)
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
         val intent = Intent(Intent.ACTION_VIEW)
@@ -67,7 +68,7 @@ class ApkInstallerPlugin : Plugin() {
             context.startActivity(intent)
             call.resolve(JSObject().put("opened", true))
         } catch (error: ActivityNotFoundException) {
-            call.reject("没有可处理安装包的应用", error)
+            call.reject(context.getString(R.string.install_no_installer), error)
         }
     }
 

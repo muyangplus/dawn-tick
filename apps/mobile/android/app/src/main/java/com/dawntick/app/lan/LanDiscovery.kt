@@ -3,6 +3,7 @@ package com.dawntick.app.lan
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import com.dawntick.app.R
 import com.dawntick.app.diag.NativeLog
 import org.json.JSONObject
 import java.net.DatagramPacket
@@ -116,9 +117,9 @@ object LanDiscoveryCodec {
             (octets[0].toInt() and 0xFF) == 100 && (octets[1].toInt() and 0xFF) in 64..127
     }
 
-    fun deviceName(): String {
+    fun deviceName(context: Context): String {
         val name = Build.MODEL?.trim().orEmpty()
-        return if (name.isEmpty()) "Android 设备" else name.take(48)
+        return if (name.isEmpty()) context.getString(R.string.lan_device_fallback_name) else name.take(48)
     }
 }
 

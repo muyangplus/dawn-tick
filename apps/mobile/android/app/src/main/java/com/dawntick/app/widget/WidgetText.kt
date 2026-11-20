@@ -1,5 +1,7 @@
 package com.dawntick.app.widget
 
+import android.content.Context
+import com.dawntick.app.R
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -39,9 +41,9 @@ object WidgetText {
         }
     }
 
-    fun countdown(startsAt: Long): String {
+    fun countdown(context: Context, startsAt: Long): String {
         val diff = startsAt - System.currentTimeMillis()
-        if (diff <= 0) return "即将开始"
+        if (diff <= 0) return context.getString(R.string.widget_starting_soon)
         val totalSeconds = diff / 1000
         val hours = totalSeconds / 3600
         val minutes = (totalSeconds % 3600) / 60
@@ -68,7 +70,7 @@ object WidgetText {
         }
     }
 
-    fun daysLeft(startsAt: Long): String {
+    fun daysLeft(context: Context, startsAt: Long): String {
         val calendarNow = Calendar.getInstance()
         val calendarExam = Calendar.getInstance().apply { timeInMillis = startsAt }
         val startOfToday = calendarNow.apply {
@@ -84,6 +86,10 @@ object WidgetText {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         val days = TimeUnit.MILLISECONDS.toDays(startOfExam - startOfToday)
-        return if (days <= 0) "今天" else "$days 天"
+        return if (days <= 0) {
+            context.getString(R.string.widget_exam_today)
+        } else {
+            context.getString(R.string.widget_exam_days, days.toInt())
+        }
     }
 }

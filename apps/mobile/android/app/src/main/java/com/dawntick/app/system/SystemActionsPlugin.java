@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
 
+import com.dawntick.app.R;
 import com.dawntick.app.diag.NativeLog;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -50,7 +51,7 @@ public class SystemActionsPlugin extends Plugin {
         );
         if (raw == null || raw.trim().isEmpty()) {
             NativeLog.error(getContext(), "link", "SystemActions.openExternal 缺少链接地址");
-            call.reject("缺少链接地址");
+            call.reject(getContext().getString(R.string.system_link_missing));
             return;
         }
         String trimmed = raw.trim();
@@ -63,7 +64,7 @@ public class SystemActionsPlugin extends Plugin {
                     "SystemActions.openExternal scheme 不受支持 scheme=" + (scheme.isEmpty() ? "(无)" : scheme)
                             + " url=" + NativeLog.redactUrl(trimmed)
             );
-            call.reject("只支持 http 与 https 链接");
+            call.reject(getContext().getString(R.string.system_link_unsupported));
             return;
         }
         NativeLog.debug(

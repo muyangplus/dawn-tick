@@ -19,14 +19,17 @@ import com.dawntick.app.R
  */
 internal object ReminderNotifier {
     const val CHANNEL_ID = "dawntick-reminders"
-    private const val CHANNEL_NAME = "提醒"
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "课前提醒与日程提醒"
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            context.getString(R.string.reminder_channel_name),
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = context.getString(R.string.reminder_channel_description)
             enableVibration(true)
         }
         manager.createNotificationChannel(channel)
@@ -45,7 +48,7 @@ internal object ReminderNotifier {
             .setContentIntent(openIntent(context))
 
         for ((index, action) in ReminderActionTable.ids(record.kind).withIndex()) {
-            builder.addAction(0, ReminderActionTable.label(action), actionIntent(context, record.id, action, index))
+            builder.addAction(0, ReminderActionTable.label(context, action), actionIntent(context, record.id, action, index))
         }
 
         try {

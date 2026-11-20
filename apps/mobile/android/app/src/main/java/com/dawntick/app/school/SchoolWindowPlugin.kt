@@ -3,6 +3,7 @@ package com.dawntick.app.school
 import android.app.Activity
 import android.content.Intent
 import androidx.activity.result.ActivityResult
+import com.dawntick.app.R
 import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -34,7 +35,7 @@ class SchoolWindowPlugin : Plugin() {
         )
         if (url.isNullOrBlank()) {
             NativeLog.error(context, "import", "SchoolWindow.open 缺少教务地址")
-            call.reject("缺少教务地址")
+            call.reject(context.getString(R.string.school_missing_url))
             return
         }
 
