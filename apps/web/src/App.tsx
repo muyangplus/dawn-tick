@@ -329,6 +329,12 @@ export function App() {
         onClose={actions.closeDetail}
         onEditCourse={actions.openCourseById}
         onAdjust={(cell) => actions.openAdjustForLesson(cell, detail.date)}
+        adjustment={
+          detail.cell.adjustId === undefined
+            ? null
+            : (data.reschedules.find((row) => row.id === detail.cell.adjustId) ?? null)
+        }
+        onEditAdjust={actions.openAdjustEdit}
       />
     );
 

@@ -1445,6 +1445,20 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       (cancelledCard?.className ?? '').includes('cursor-grab') ? '有' : '无'
     }`,
   );
+  // 单击停课的课次：详情顶部写明已停课，并给出修改 / 删除调整
+  cancelledCard?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush(10);
+  const adjustSection = document.querySelector('[data-role="lesson-adjustment"]');
+  const adjustSectionText = adjustSection?.textContent ?? '';
+  check(
+    '单击停课课次：详情显示停课说明与修改、删除调整',
+    adjustSectionText.includes(`${cancelDate} 这一次已停课`) &&
+      adjustSectionText.includes('修改调整') &&
+      adjustSectionText.includes('删除调整'),
+    adjustSectionText.trim() || '(无)',
+  );
+  document.querySelector<HTMLElement>('[aria-label="关闭课程详情"]')?.click();
+  await flush(6);
   if (clickByText(view.container, '日程')) await flush(12);
 
   if (clickMenu(view.container, '添加', '加待办')) await flush(12);

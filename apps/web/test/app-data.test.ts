@@ -358,14 +358,14 @@ test('buildGrid：主课次、停课、调课落点、虚线与实验各就各�
     weeks: Array.from({ length: 20 }, (_, index) => index + 1),
   });
   const englishScheduleId = String(englishSchedule['id']);
-  await createReschedule(storage, {
+  const cancelRecord = await createReschedule(storage, {
     userId: USER_ID,
     semesterId: semester.id,
     refScheduleId: englishScheduleId,
     onDate: weekDateOf(semester, 3, 2),
     action: 'cancel',
   });
-  await createReschedule(storage, {
+  const moveRecord = await createReschedule(storage, {
     userId: USER_ID,
     semesterId: semester.id,
     refScheduleId: englishScheduleId,
@@ -419,6 +419,7 @@ test('buildGrid：主课次、停课、调课落点、虚线与实验各就各�
   assert.equal(cell.inWeek, true);
   assert.equal(cell.holiday, false);
   assert.equal(cell.cancelled, false);
+  assert.equal('adjustId' in cell, false, '没调整过的课次不带 adjustId');
   // 实验格：按节次落到 5、带 eventId 与实验角标
   const labCell = week1.grid.get(`${monday}:5`)?.find((item) => item.eventId !== undefined);
   assert.ok(labCell !== undefined);
@@ -434,16 +435,26 @@ test('buildGrid：主课次、停课、调课落点、虚线与实验各就各�
   // 第 3 周：英语那节课停课
   const week3Date = weekDateOf(semester, 3, 2);
   const week3 = gridOf([week3Date], [3]);
-  assert.equal(week3.grid.get(`${week3Date}:1`)?.find((item) => item.scheduleId === englishScheduleId)?.cancelled, true);
+  const cancelledCell = week3.grid.get(`${week3Date}:1`)?.find((item) => item.scheduleId === englishScheduleId);
+  assert.equal(cancelledCell?.cancelled, true);
+  assert.equal(cancelledCell?.adjustId, String(cancelRecord['id']), '停课格带停课记录 id');
+  // 其他周的英语不受这条停课影响
+  const week5Date = weekDateOf(semester, 5, 2);
+  const week5Cell = gridOf([week5Date], [5]).grid.get(`${week5Date}:1`)?.find((item) => item.scheduleId === englishScheduleId);
+  assert.equal(week5Cell?.cancelled, false);
+  assert.equal(week5Cell?.adjustId, undefined);
 
   // 第 4 周：原位置标「已调课」，落点格标「调课」
   const week4Tuesday = weekDateOf(semester, 4, 2);
   const week4Thursday = weekDateOf(semester, 4, 4);
   const week4 = gridOf([week4Tuesday, week4Thursday], [4, 4]);
-  assert.equal(week4.grid.get(`${week4Tuesday}:1`)?.find((item) => item.scheduleId === englishScheduleId)?.movedOut, true);
+  const movedOut = week4.grid.get(`${week4Tuesday}:1`)?.find((item) => item.scheduleId === englishScheduleId);
+  assert.equal(movedOut?.movedOut, true);
+  assert.equal(movedOut?.adjustId, String(moveRecord['id']), '调走的原位置带调课记录 id');
   const movedIn = week4.grid.get(`${week4Thursday}:3`)?.find((item) => item.movedIn === true);
   assert.ok(movedIn !== undefined);
   assert.equal(movedIn.periodEnd, 4);
+  assert.equal(movedIn.adjustId, String(moveRecord['id']), '落点格带同一条调课记录 id');
 });
 
 test('buildTimelineData：按日期归档并给出正在上 / 下一节', () => {

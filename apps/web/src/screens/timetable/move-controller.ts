@@ -35,10 +35,14 @@ export interface AdjustTarget {
   date: string;
   periodStart: number;
   periodEnd: number;
-  /** 拖动入口的落点：目标日期与目标起始节，打开时预填进「改期」 */
-  drop?: { date: string; periodStart: number } | undefined;
+  /** 拖动入口的落点：目标日期与目标起始节，打开时预填进「改期」；修改已有调课时带上原结束节 */
+  drop?: { date: string; periodStart: number; periodEnd?: number | undefined } | undefined;
   /** 入口预选的主操作，缺省为「改期」 */
   mode?: AdjustMode | undefined;
+  /** 修改已有调整：保存成功后删掉这条旧记录，由新记录替换 */
+  replaceEventId?: string | undefined;
+  /** 修改已有调课时预填的新教室 */
+  room?: string | null | undefined;
 }
 
 /** 目标位置上已有的课；只用来提醒，不拦截（课程允许重叠）。 */

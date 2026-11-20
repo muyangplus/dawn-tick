@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
+import { WEEKDAY_LABELS, deleteEvent, type Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
-import { useAction } from '../lib/action.ts';
+import { useAction, type ActionApi } from '../lib/action.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 import { logInfo } from '../log.ts';
 import {
@@ -80,7 +80,18 @@ export function AdjustDialog({
     extraEnd,
     examNote,
   } = form;
-  const { busy, run } = useAction();
+  const { busy, run: runAction } = useAction();
+  // 修改已有调整：新记录写成功后再删旧记录，写失败时旧记录原样保留
+  const replaceEventId = target?.replaceEventId;
+  const run: ActionApi['run'] = (spec) =>
+    runAction({
+      ...spec,
+      task: async () => {
+        const value = await spec.task();
+        if (replaceEventId !== undefined) await deleteEvent(storage, replaceEventId);
+        return value;
+      },
+    });
   const semester = data.semester;
 
   const course = useMemo(() => data.courses.find((item) => item.id === courseId), [data.courses, courseId]);

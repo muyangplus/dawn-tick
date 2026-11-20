@@ -10,6 +10,8 @@ import { toast } from '../components/ui/toaster.tsx';
 import { lessonCellOf, type DetailState } from './lesson-cell.ts';
 import type { AppSession } from './use-app-session.ts';
 import { appShellCopy } from '../copy/app-shell.ts';
+import { lessonCopy } from '../copy/timetable-lesson.ts';
+import { adjustmentEditTarget } from '../screens/timetable/lesson-adjustment.ts';
 
 /** 事件表单的种类：待办 / 考试 */
 export type EventFormKind = 'todo' | 'exam';
@@ -50,6 +52,8 @@ export interface TimetableActions {
   openLessonFromSchedule: (target: AdjustTarget) => Promise<void>;
   openLessonFromDay: (lesson: Occurrence) => void;
   openAdjustForLesson: (cell: LessonCell, date: string) => void;
+  /** 课程详情里的「修改调整」：带着原停课 / 调课记录打开调课弹窗，保存时替换 */
+  openAdjustEdit: (event: EventRow) => void;
   openAdjustForDrop: (cell: LessonCell, date: string, period: number) => void;
   /** 打开某条日程的详情编辑 */
   openEvent: (event: EventRow) => void;
@@ -186,6 +190,21 @@ export function useTimetableActions(input: {
         periodStart: cell.periodStart,
         periodEnd: cell.periodEnd,
       });
+      setAdjustOpenState(true);
+    },
+    [guardWrite, data],
+  );
+
+  const openAdjustEdit = useCallback(
+    (event: EventRow): void => {
+      if (!guardWrite('调课')) return;
+      const target = adjustmentEditTarget(event, data?.courses ?? []);
+      if (target === null) {
+        toast.error(lessonCopy.adjustSourceMissing);
+        return;
+      }
+      setDetail(null);
+      setAdjust(target);
       setAdjustOpenState(true);
     },
     [guardWrite, data],
@@ -347,6 +366,7 @@ export function useTimetableActions(input: {
     openLessonFromSchedule,
     openLessonFromDay,
     openAdjustForLesson,
+    openAdjustEdit,
     openAdjustForDrop,
     openEvent,
     openCourseById,

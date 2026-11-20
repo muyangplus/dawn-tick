@@ -74,8 +74,12 @@ export function adjustFormOnOpen(target: AdjustTarget | null, context: AdjustOpe
       sourceDate: target.date,
       newDate,
       newStart: String(drop?.periodStart ?? target.periodStart),
-      newEnd: String(drop === undefined ? target.periodEnd : drop.periodStart + (target.periodEnd - target.periodStart)),
-      newRoom: '',
+      newEnd: String(
+        drop === undefined
+          ? target.periodEnd
+          : (drop.periodEnd ?? drop.periodStart + (target.periodEnd - target.periodStart)),
+      ),
+      newRoom: target.room ?? '',
       examNote: '',
       targetWeek: String(weekOf(newDate)),
       scope: sameWeek ? 'this' : 'date',

@@ -20,4 +20,19 @@ export const lessonCopy = {
   schedulesPart: '排课',
   remindersPart: '提醒',
   courseDeleted: (name: string) => `已删除「${name}」`,
+
+  /** 课表单击已调整的课次：说明、修改与删除 */
+  adjustAria: '这一次课的调整',
+  adjustCancelled: (date: string) => `${date} 这一次已停课`,
+  adjustMovedOut: (date: string, newDate: string, period: string | null) =>
+    period === null ? `${date} 这一次已调到 ${newDate}` : `${date} 这一次已调到 ${newDate} ${period}`,
+  adjustMovedIn: (date: string) => `由 ${date} 的课调来`,
+  editAdjustButton: '修改调整',
+  deleteAdjustButton: '删除调整',
+  deleteAdjustTitle: '删除调整',
+  deleteAdjustDescription: '删除后这一次课恢复原样。',
+  deleteAdjustConfirm: '确认删除',
+  adjustDeleted: '已删除调整',
+  adjustDeleteWhat: '删除调整',
+  adjustSourceMissing: '找不到原来的排课，只能删除这条调整',
 } as const;

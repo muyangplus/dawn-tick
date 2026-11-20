@@ -1,9 +1,12 @@
 import { CalendarClock, MapPin, PencilLine, Trash2, User, X } from 'lucide-react';
-import { deleteCourse, deleteSchedule, WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
+import { deleteCourse, deleteEvent, deleteSchedule, WEEKDAY_LABELS, type EventRow, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
-import { COUNT, DELETE } from '../copy/common.ts';
+import { COUNT, DELETE, fail } from '../copy/common.ts';
+import { errorMessage } from '../lib/errors.ts';
+import { logWarn } from '../log.ts';
+import { adjustmentSummary } from '../screens/timetable/lesson-adjustment.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 import { ReminderForm } from './reminder-form.tsx';
 import { toast } from './ui/toaster.tsx';
@@ -20,6 +23,10 @@ export interface LessonDetailProps {
   onEditCourse?: (courseId: string) => void;
   /** 打开「调课」弹窗（改期／停课／调休／临时加课），目标就是当前这一课次 */
   onAdjust?: (cell: LessonCell) => void;
+  /** 这一格对应的停课 / 调课记录（课表单击已调整的课次时才有） */
+  adjustment?: EventRow | null;
+  /** 「修改调整」：带着原记录打开调课弹窗；缺省时只能删除 */
+  onEditAdjust?: (event: EventRow) => void;
 }
 
 export function LessonDetail({
@@ -31,7 +38,28 @@ export function LessonDetail({
   onClose,
   onEditCourse,
   onAdjust,
+  adjustment = null,
+  onEditAdjust,
 }: LessonDetailProps) {
+  async function removeAdjustment(event: EventRow): Promise<void> {
+    const ok = await confirmAction({
+      title: lessonCopy.deleteAdjustTitle,
+      description: lessonCopy.deleteAdjustDescription,
+      confirmLabel: lessonCopy.deleteAdjustConfirm,
+    });
+    if (!ok) return;
+    try {
+      await deleteEvent(storage, event.id);
+    } catch (cause: unknown) {
+      logWarn('timetable', '删除调整失败', { eventId: event.id, error: errorMessage(cause) });
+      toast.error(fail(lessonCopy.adjustDeleteWhat, errorMessage(cause)));
+      return;
+    }
+    toast.success(lessonCopy.adjustDeleted);
+    onChanged();
+    onClose();
+  }
+
   async function removeSchedule(id: string, label: string): Promise<void> {
     const ok = await confirmAction({
       title: lessonCopy.deleteScheduleTitle,
@@ -88,6 +116,28 @@ export function LessonDetail({
           <X className="size-4" aria-hidden />
         </Button>
       </div>
+
+      {adjustment !== null && (
+        <section
+          className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3"
+          aria-label={lessonCopy.adjustAria}
+          data-role="lesson-adjustment"
+        >
+          <span className="text-sm text-ink">{adjustmentSummary(cell, adjustment)}</span>
+          <div className="flex flex-wrap gap-2">
+            {onEditAdjust !== undefined && (
+              <Button variant="secondary" size="sm" onClick={() => onEditAdjust(adjustment)}>
+                <PencilLine className="size-4" aria-hidden />
+                {lessonCopy.editAdjustButton}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => void removeAdjustment(adjustment)}>
+              <Trash2 className="size-4" aria-hidden />
+              {lessonCopy.deleteAdjustButton}
+            </Button>
+          </div>
+        </section>
+      )}
 
       <section className="flex flex-col gap-2" aria-label={lessonCopy.schedulesAria}>
         <span className="text-sm font-medium text-ink">{lessonCopy.schedulesTitle}</span>
