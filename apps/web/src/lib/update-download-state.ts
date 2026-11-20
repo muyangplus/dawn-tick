@@ -1,4 +1,5 @@
 /** 自动更新的界面状态机：阶段、进度与事件归约，纯函数。 */
+import { updateTaskCopy } from '../copy/update-task.ts';
 
 export type UpdatePlatform = 'windows' | 'android' | 'web';
 
@@ -59,12 +60,12 @@ export function isUpdateBusy(phase: UpdatePhase): boolean {
 export function reduceUpdateState(state: UpdateDownloadState, event: UpdateEvent): UpdateDownloadState {
   switch (event.type) {
     case 'check':
-      return state.phase === 'idle' ? { ...state, phase: 'checking', message: '正在检查更新…' } : state;
+      return state.phase === 'idle' ? { ...state, phase: 'checking', message: updateTaskCopy.checking } : state;
     case 'start':
       if (state.phase !== 'idle' && state.phase !== 'checking' && state.phase !== 'failed' && state.phase !== 'done') {
         return state;
       }
-      return { ...INITIAL_UPDATE_STATE, phase: 'downloading', message: '正在下载安装包…' };
+      return { ...INITIAL_UPDATE_STATE, phase: 'downloading', message: updateTaskCopy.downloading };
     case 'progress': {
       if (state.phase !== 'downloading') return state;
       const total = event.total !== null && event.total > 0 ? event.total : null;
@@ -73,10 +74,10 @@ export function reduceUpdateState(state: UpdateDownloadState, event: UpdateEvent
     }
     case 'verify':
       return state.phase === 'downloading'
-        ? { ...state, phase: 'verifying', progress: 1, message: '正在校验安装包…' }
+        ? { ...state, phase: 'verifying', progress: 1, message: updateTaskCopy.verifying }
         : state;
     case 'install':
-      return state.phase === 'verifying' ? { ...state, phase: 'installing', message: '正在写入安装包…' } : state;
+      return state.phase === 'verifying' ? { ...state, phase: 'installing', message: updateTaskCopy.writing } : state;
     case 'done':
       return state.phase === 'idle' || isUpdateBusy(state.phase)
         ? {
@@ -102,7 +103,7 @@ export function reduceUpdateState(state: UpdateDownloadState, event: UpdateEvent
           }
         : state;
     case 'cancel':
-      return isUpdateBusy(state.phase) ? { ...INITIAL_UPDATE_STATE, message: '已取消下载' } : state;
+      return isUpdateBusy(state.phase) ? { ...INITIAL_UPDATE_STATE, message: updateTaskCopy.cancelled } : state;
     case 'reset':
       return INITIAL_UPDATE_STATE;
     default:

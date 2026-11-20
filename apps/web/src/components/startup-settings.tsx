@@ -6,6 +6,7 @@ import { SwitchField } from './ui/controls.tsx';
 import { Button } from './ui/button.tsx';
 import { elevateAutoStart, readAutoStart, saveStartupPrefs, writeAutoStart } from '../autostart.ts';
 import { useAction } from '../lib/action.ts';
+import { startupCopy } from '../copy/settings-startup.ts';
 
 export interface StartupSettingsProps {
   supported: boolean;
@@ -47,7 +48,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
     setCanElevate(false);
     const result = await run({
       scope: 'settings',
-      label: '正在设置开机自启…',
+      label: startupCopy.savingLabel,
       task: async () => {
         const written = await writeAutoStart(value);
         if (written.ok) {
@@ -55,7 +56,7 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
           await onPatch({ autoStart: value });
           return;
         }
-        setMessage(`注册失败：${written.error ?? '未知原因'}`);
+        setMessage(startupCopy.registerFailed(written.error ?? null, value));
         if (value) setCanElevate(true);
       },
     });
@@ -66,12 +67,12 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
   async function elevate(): Promise<void> {
     const result = await run({
       scope: 'settings',
-      label: '正在申请管理员权限…',
+      label: startupCopy.elevatingLabel,
       task: async () => {
-        setMessage('正在申请管理员权限，请在系统提示中允许…');
+        setMessage(startupCopy.elevatingMessage);
         const requested = await elevateAutoStart();
         if (!requested) {
-          setMessage('提权失败，请手动以管理员身份运行一次');
+          setMessage(startupCopy.elevateFailed);
           return;
         }
         for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -80,12 +81,12 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
           if (status === true) {
             setRegistered(true);
             setCanElevate(false);
-            setMessage('开机自启已注册（管理员权限）');
+            setMessage(startupCopy.elevatedRegistered);
             await onPatch({ autoStart: true });
             return;
           }
         }
-        setMessage('未检测到启动项：请以管理员身份运行一次');
+        setMessage(startupCopy.elevatedNotDetected);
       },
     });
     if (!result.ok && result.error !== null) setMessage(result.error);
@@ -94,10 +95,10 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
   if (!supported) return null;
 
   return (
-    <CollapsibleCard id="startup" title="启动" icon={Power}>
+    <CollapsibleCard id="startup" title={startupCopy.title} icon={Power}>
       <SwitchField
-        label="开机自动启动"
-        description={`当前状态：${registered === null ? '未注册' : registered ? '已注册' : '未注册'}`}
+        label={startupCopy.autoStartLabel}
+        description={registered === true ? startupCopy.registered : startupCopy.unregistered}
         checked={settings.autoStart}
         disabled={busy}
         onCheckedChange={(value) => void toggleAutoStart(value)}
@@ -105,13 +106,13 @@ export function StartupSettings({ supported, settings, onPatch }: StartupSetting
 
       {canElevate && (
         <Button variant="secondary" size="sm" loading={busy} onClick={() => void elevate()}>
-          以管理员权限注册
+          {startupCopy.elevateButton}
         </Button>
       )}
 
       <SwitchField
-        label="启动时隐藏窗口"
-        description="仅开机自启生效；手动启动显示主窗口"
+        label={startupCopy.startHiddenLabel}
+        description={startupCopy.startHiddenDescription}
         checked={settings.startHidden}
         onCheckedChange={(value) => void onPatch({ startHidden: value })}
       />

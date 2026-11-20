@@ -5,6 +5,7 @@ import { Field } from '../../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../../components/ui/controls.tsx';
 import { formatTimeZoneLabel, utcOffsetLabel } from '../../lib/tz-offset.ts';
 import { isValidTimeZoneName, timeZoneCandidates } from '../../lib/timezones.ts';
+import { timeCopy } from '../../copy/settings-time.ts';
 
 export interface TimeCardProps {
   settings: AppSettings;
@@ -27,9 +28,9 @@ export function TimeCard({ settings, onPatch }: TimeCardProps) {
   return (
     <>
       <Field
-        label="时区"
-        hint="默认上海；首次启动会按系统时区对齐一次"
-        error={zoneInvalid ? '时区名无效' : undefined}
+        label={timeCopy.timeZoneLabel}
+        help={timeCopy.timeZoneHelp}
+        error={zoneInvalid ? timeCopy.timeZoneInvalid : undefined}
       >
         <div
           className="flex flex-col"
@@ -52,13 +53,13 @@ export function TimeCard({ settings, onPatch }: TimeCardProps) {
               return (
                 <span className="flex w-full min-w-0 items-center justify-between gap-2">
                   <span className="truncate">{zone}</span>
-                  {offset !== null && <span className="shrink-0 text-xs text-muted">({offset})</span>}
+                  {offset !== null && <span className="shrink-0 text-xs text-muted">{timeCopy.timeZoneOffset(offset)}</span>}
                 </span>
               );
             }}
             placeholder={formatTimeZoneLabel(settings.timeZone, zoneNow)}
-            ariaLabel="时区"
-            emptyText="没有匹配的时区，试试输入城市或地区名"
+            ariaLabel={timeCopy.timeZoneLabel}
+            emptyText={timeCopy.timeZoneEmpty}
           />
         </div>
       </Field>
@@ -69,16 +70,16 @@ export function TimeCard({ settings, onPatch }: TimeCardProps) {
           checked={settings.autoTimeZone}
           onChange={(event) => void onPatch({ autoTimeZone: event.target.checked })}
         />
-        时区跟随设备
+        {timeCopy.autoTimeZone}
       </label>
-      <Field label="待办排序">
+      <Field label={timeCopy.todoSortLabel}>
         <Select value={settings.todoSort} onValueChange={(value) => void onPatch({ todoSort: value as TodoSort })}>
-          <SelectTrigger aria-label="待办排序">
-            <span>{settings.todoSort === 'type' ? '按类型' : '按开始时间'}</span>
+          <SelectTrigger aria-label={timeCopy.todoSortLabel}>
+            <span>{timeCopy.todoSort[settings.todoSort]}</span>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="start">按开始时间</SelectItem>
-            <SelectItem value="type">按类型（作业 → 考试 → 实验 → 日程）</SelectItem>
+            <SelectItem value="start">{timeCopy.todoSort.start}</SelectItem>
+            <SelectItem value="type">{timeCopy.todoSortTypeOption}</SelectItem>
           </SelectContent>
         </Select>
       </Field>

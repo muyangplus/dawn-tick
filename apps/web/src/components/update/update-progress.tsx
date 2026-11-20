@@ -1,5 +1,6 @@
 import type { DownloadProgress } from '../../lib/update-download.ts';
 import { formatByteProgress, formatDownloadDetail } from '../../lib/update-download.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 
 export interface UpdateProgressProps {
   progress: DownloadProgress | null;
@@ -13,7 +14,8 @@ export interface UpdateProgressProps {
  */
 export function UpdateProgress({ progress, dataRole = 'update-progress' }: UpdateProgressProps) {
   const percent = progress?.percent ?? null;
-  const percentText = percent === null ? '已下载' : `${Math.round(percent * 100)}%`;
+  const percentText =
+    percent === null ? updateDialogCopy.progressNoPercent : updateDialogCopy.progressPercent(Math.round(percent * 100));
   const summary =
     progress === null ? '' : formatByteProgress(progress.received, progress.total, progress.percent);
   const detail = progress === null ? '' : formatDownloadDetail(progress);
@@ -32,7 +34,7 @@ export function UpdateProgress({ progress, dataRole = 'update-progress' }: Updat
       <div
         className="h-1.5 overflow-hidden rounded-full bg-surface-muted"
         role="progressbar"
-        aria-label="下载进度"
+        aria-label={updateDialogCopy.progressAria}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent === null ? undefined : Math.round(percent * 100)}

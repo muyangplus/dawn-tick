@@ -13,7 +13,7 @@ import { logInfo } from '../../log.ts';
 import { useAction } from '../../lib/action.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { DangerDialog, FormDialog } from '../../components/ui/dialog.tsx';
-import { COUNT, DELETE } from '../../copy/common.ts';
+import { semestersCopy } from '../../copy/settings-semesters.ts';
 import { countForSemester, type SemesterCounts } from '../../delete-counts.ts';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
@@ -36,9 +36,9 @@ export function NewSemesterForm({ storage, userId, settings, onChanged }: NewSem
     if (semesterName.trim().length === 0 || semesterStart.length === 0) return;
     await run({
       scope: 'timetable',
-      label: '正在新建学期…',
-      ok: '已新建学期并设为当前学期',
-      fail: { what: '新建学期失败', next: '请重试；仍失败请重开应用后再试。' },
+      label: semestersCopy.creatingLabel,
+      ok: semestersCopy.createdToast,
+      fail: semestersCopy.createFailed,
       task: async () => {
         await createSemester(storage, {
           userId,
@@ -62,16 +62,16 @@ export function NewSemesterForm({ storage, userId, settings, onChanged }: NewSem
     <details className="flex flex-col gap-2">
       <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm text-ink">
         <Plus className="size-4" aria-hidden />
-        新建学期
+        {semestersCopy.newSummary}
       </summary>
       <div className="flex flex-col gap-2 pt-2">
-        <Field label="学期名称">
+        <Field label={semestersCopy.nameLabel}>
           <Input value={semesterName} onChange={(event) => setSemesterName(event.target.value)} />
         </Field>
-        <Field label="开学日期">
+        <Field label={semestersCopy.startLabel}>
           <Input type="date" value={semesterStart} onChange={(event) => setSemesterStart(event.target.value)} />
         </Field>
-        <Field label="总周数">
+        <Field label={semestersCopy.weeksLabel}>
           <Input
             type="number"
             min={1}
@@ -81,7 +81,7 @@ export function NewSemesterForm({ storage, userId, settings, onChanged }: NewSem
           />
         </Field>
         <Button variant="primary" size="sm" loading={busy} onClick={() => void addSemester()}>
-          创建并切换
+          {semestersCopy.createButton}
         </Button>
       </div>
     </details>
@@ -105,14 +105,14 @@ export function EditSemesterDialog({ semester, storage, onClose, onChanged }: Ed
 
   async function saveEdit(): Promise<void> {
     if (editName.trim().length === 0 || editStart.length === 0 || !isValidTimeZone(editZone)) {
-      toast.error('请检查学期名称、开学日期与时区');
+      toast.error(semestersCopy.editInvalid);
       return;
     }
     await run({
       scope: 'timetable',
-      label: '正在保存学期设置…',
-      ok: '已保存学期设置',
-      fail: { what: '保存学期设置失败', next: '请重试；仍失败请重开应用后再改。' },
+      label: semestersCopy.savingLabel,
+      ok: semestersCopy.savedToast,
+      fail: semestersCopy.saveFailed,
       task: async () => {
         await updateSemester(storage, semester.id, {
           name: editName.trim(),
@@ -138,19 +138,19 @@ export function EditSemesterDialog({ semester, storage, onClose, onChanged }: Ed
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="编辑学期"
-      description="修改会立即影响周次与课表计算"
-      submitLabel="保存"
+      title={semestersCopy.editTitle}
+      description={semestersCopy.editDescription}
+      submitLabel={semestersCopy.saveButton}
       submitting={busy}
       onSubmit={() => void saveEdit()}
     >
-      <Field label="学期名称">
+      <Field label={semestersCopy.nameLabel}>
         <Input value={editName} onChange={(event) => setEditName(event.target.value)} />
       </Field>
-      <Field label="开学日期" hint="该周记为第 1 周">
+      <Field label={semestersCopy.startLabel} hint={semestersCopy.startHint}>
         <Input type="date" value={editStart} onChange={(event) => setEditStart(event.target.value)} />
       </Field>
-      <Field label="总周数">
+      <Field label={semestersCopy.weeksLabel}>
         <Input
           type="number"
           min={1}
@@ -159,7 +159,7 @@ export function EditSemesterDialog({ semester, storage, onClose, onChanged }: Ed
           onChange={(event) => setEditWeeks(Number(event.target.value))}
         />
       </Field>
-      <Field label="时区" error={!isValidTimeZone(editZone) ? '时区名无效' : undefined}>
+      <Field label={semestersCopy.timeZoneLabel} error={!isValidTimeZone(editZone) ? semestersCopy.timeZoneInvalid : undefined}>
         <Input value={editZone} onChange={(event) => setEditZone(event.target.value)} />
       </Field>
     </FormDialog>
@@ -193,14 +193,12 @@ export function DeleteSemesterDialog({ semester, storage, onClose, onChanged }: 
   async function confirmRemove(): Promise<void> {
     await run({
       scope: 'timetable',
-      label: '正在删除学期…',
-      fail: { what: '删除学期失败', next: '请重试；仍失败请重开应用后再删。' },
+      label: semestersCopy.deletingLabel,
+      fail: semestersCopy.deleteFailed,
       task: async () => {
         const report = await deleteSemesterDeep(storage, semester.id);
         logInfo('timetable', '学期已删除', { id: semester.id, ...report });
-        toast.success(
-          `已删除「${semester.name}」：课程 ${COUNT('course', report.courses)}、排课 ${COUNT('schedule', report.schedules)}、节次 ${COUNT('period', report.slots)}、日程 ${COUNT('event', report.events)}、提醒 ${COUNT('reminder', report.reminders)}`,
-        );
+        toast.success(semestersCopy.deletedToast(semester.name, report));
         onClose();
         onChanged();
       },
@@ -213,14 +211,15 @@ export function DeleteSemesterDialog({ semester, storage, onClose, onChanged }: 
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      title="删除学期"
-      description={DELETE(semester.name, [
-        `课程 ${COUNT('course', removeCounts?.courses ?? 0)}`,
-        `排课 ${COUNT('schedule', removeCounts?.schedules ?? 0)}`,
-        `节次 ${COUNT('period', removeCounts?.slots ?? 0)}`,
-        `日程 ${COUNT('event', removeCounts?.events ?? 0)}`,
-        `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
-      ])}
+      title={semestersCopy.deleteTitle}
+      confirmLabel={semestersCopy.deleteConfirm}
+      description={semestersCopy.deleteDescription(semester.name, {
+        courses: removeCounts?.courses ?? 0,
+        schedules: removeCounts?.schedules ?? 0,
+        slots: removeCounts?.slots ?? 0,
+        events: removeCounts?.events ?? 0,
+        reminders: removeCounts?.reminders ?? 0,
+      })}
       submitting={busy}
       onConfirm={() => void confirmRemove()}
     />

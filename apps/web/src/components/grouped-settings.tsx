@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
+import { settingsPageCopy } from '../copy/settings-page.ts';
 
 /**
  * 设置类页面的分组导航外壳：桌面左列分组、右列内容；移动端首页清单 + 点进子页。
@@ -101,12 +102,12 @@ export function GroupedSettings({
           <button
             type="button"
             data-role="settings-nav-back"
-            aria-label={`返回${pageTitle}列表`}
+            aria-label={settingsPageCopy.backToListAria(pageTitle)}
             className="dt-nav-item flex min-h-tap items-center gap-1 rounded-lg px-2 py-1 text-sm text-primary-strong"
             onClick={() => setActiveId(null)}
           >
             <ChevronLeft className="size-4" aria-hidden />
-            返回
+            {settingsPageCopy.backButton}
           </button>
           <h2 className="min-w-0 truncate text-base font-semibold text-ink">{active?.title}</h2>
         </div>

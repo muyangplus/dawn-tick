@@ -3,6 +3,7 @@ import {
   useDetectedWindowsInstallKind,
   windowsInstallKindLabel,
 } from '../../lib/update-install.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 
 export interface UpdateInstallKindLineProps {
   platform: UpdatePlatform;
@@ -19,7 +20,7 @@ export function UpdateInstallKindLine({ platform, className = 'text-xs text-mute
   if (platform !== 'windows') return null;
   return (
     <span className={className} data-role="update-install-kind">
-      版本类型：{windowsInstallKindLabel(kind)}
+      {updateDialogCopy.installKind(windowsInstallKindLabel(kind))}
     </span>
   );
 }

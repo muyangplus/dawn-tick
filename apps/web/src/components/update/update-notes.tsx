@@ -1,4 +1,5 @@
 import { Markdown } from '../ui/markdown.tsx';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 
 /**
  * 发布说明：可折叠、限高、自己滚动，不把弹窗撑长。
@@ -16,7 +17,7 @@ export function UpdateNotes({ source }: { source: string }) {
         className="cursor-pointer select-none text-xs font-medium text-muted"
         data-role="update-notes-summary"
       >
-        发布说明
+        {updateDialogCopy.notesSummary}
       </summary>
       <Markdown
         source={source}

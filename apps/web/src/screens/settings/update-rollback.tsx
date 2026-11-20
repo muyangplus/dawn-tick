@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { CHANNEL, CHANNEL_LABEL } from '../../channel.ts';
-import { fail } from '../../copy/common.ts';
+import { updateSettingsCopy } from '../../copy/update-settings.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import {
@@ -68,7 +68,7 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
       if (generation.current !== token) return;
       if (target.kind === 'none') throw new Error(target.reason);
       const plan = planUpdateDownload(target.manifest, platform);
-      if (plan.kind !== 'download') throw new Error('最新正式版没有可用于自动安装的安装包，请到发布页下载');
+      if (plan.kind !== 'download') throw new Error(updateSettingsCopy.rollbackNoPackage);
       const controller = new AbortController();
       running.current = controller;
       const final = await runUpdateDownload({
@@ -83,7 +83,7 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
       if (generation.current !== token) return;
       setDownload(final);
       if (final.phase === 'done') {
-        toast.success(`已开始安装正式版 ${target.version}，请按提示完成安装`);
+        toast.success(updateSettingsCopy.rollbackStarted(target.version));
         logInfo('update', '已开始回滚到正式版', { from: current, target: target.version, platform });
         onClose();
         return;
@@ -99,7 +99,7 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
     } catch (cause: unknown) {
       if (generation.current !== token) return;
       const reason = errorMessage(cause);
-      setError(fail('回滚到正式版', reason, '请稍后再试，或到发布页手动下载'));
+      setError(updateSettingsCopy.rollbackFailed(reason));
       logWarn('update', '回滚到正式版失败', { reason });
     } finally {
       running.current = null;
@@ -120,9 +120,13 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
       : null;
   const status =
     download.phase === 'failed'
-      ? fail('回滚到正式版', download.error, '请稍后再试')
+      ? updateSettingsCopy.rollbackDownloadFailed(download.error)
       : (download.message ?? '');
-  const label = busy ? '取消下载' : download.phase === 'failed' ? '重试' : '开始回滚';
+  const label = busy
+    ? updateSettingsCopy.rollbackCancelDownload
+    : download.phase === 'failed'
+      ? updateSettingsCopy.rollbackRetry
+      : updateSettingsCopy.rollbackStart;
 
   return (
     <Dialog
@@ -133,8 +137,8 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
     >
       <DialogContent
         data-role="rollback-dialog"
-        title="回滚到正式版？"
-        description={`将下载并安装最新的正式版（当前 ${current} · ${CHANNEL_LABEL[CHANNEL]}）。本机数据（课表、待办、提醒、设置与快照）都会保留；安装完成后应用回到正式版，不再接收测试版/开发版构建。`}
+        title={updateSettingsCopy.rollbackTitle}
+        description={updateSettingsCopy.rollbackDescription(current, CHANNEL_LABEL[CHANNEL])}
       >
         {error !== null && (
           <p className="text-xs text-danger-strong" data-role="rollback-error">
@@ -149,7 +153,7 @@ export function RollbackDialog({ open, onClose, platform, current }: RollbackDia
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={close} disabled={busy}>
-            稍后
+            {updateSettingsCopy.rollbackLater}
           </Button>
           <Button
             variant="primary"

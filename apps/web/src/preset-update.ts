@@ -23,6 +23,7 @@ import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-ke
 import { errorMessage } from './lib/errors.ts';
 import { withTimeout } from './lib/timeout.ts';
 import type { PresetIndex } from './preset-index.ts';
+import { presetUpdateCopy } from './copy/update-preset.ts';
 
 /** 哈希口径与预设仓库 scripts/snapshot.mjs 一致，实现只有一份：core 的 packages/core/src/config/preset-hash.ts。 */
 /** 这里只是转出，不重复实现。 */
@@ -143,31 +144,31 @@ export function verifySnapshot(snapshot: PresetSnapshot): boolean {
 
 /** 结构校验；返回可读的问题描述，合法时返回 null。 */
 export function describeSnapshotProblem(value: unknown): string | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '预设快照应为对象';
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return presetUpdateCopy.snapshotNotObject;
   const record = value as Record<string, unknown>;
   if (typeof record['version'] !== 'string' || record['version'].trim() === '') {
-    return '预设快照缺少 version';
+    return presetUpdateCopy.snapshotMissingVersion;
   }
   const schemaVersion = record['schemaVersion'];
   if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) {
-    return '预设快照的 schemaVersion 应为整数';
+    return presetUpdateCopy.snapshotSchemaNotInteger;
   }
   if (schemaVersion > PRESET_SCHEMA_VERSION) {
-    return `预设快照使用了更新的格式（schemaVersion ${schemaVersion}），请升级应用`;
+    return presetUpdateCopy.snapshotSchemaTooNew(schemaVersion);
   }
   const generatedAt = record['generatedAt'];
   if (generatedAt !== undefined && typeof generatedAt !== 'string') {
-    return '预设快照的 generatedAt 应为字符串';
+    return presetUpdateCopy.snapshotGeneratedAtNotString;
   }
   const sources = record['sources'];
   if (typeof sources !== 'object' || sources === null || Array.isArray(sources)) {
-    return '预设快照缺少 sources';
+    return presetUpdateCopy.snapshotMissingSources;
   }
   const sourceRecord = sources as Record<string, unknown>;
-  if (!Array.isArray(sourceRecord['timetables'])) return '预设快照的 sources.timetables 应为数组';
-  if (!Array.isArray(sourceRecord['systems'])) return '预设快照的 sources.systems 应为数组';
+  if (!Array.isArray(sourceRecord['timetables'])) return presetUpdateCopy.snapshotTimetablesNotArray;
+  if (!Array.isArray(sourceRecord['systems'])) return presetUpdateCopy.snapshotSystemsNotArray;
   if (typeof record['hash'] !== 'string' || record['hash'].trim() === '') {
-    return '预设快照缺少 hash';
+    return presetUpdateCopy.snapshotMissingHash;
   }
   return null;
 }
@@ -176,7 +177,7 @@ export function describeSnapshotProblem(value: unknown): string | null {
 function describeFetchError(cause: unknown): string {
   const message = errorMessage(cause);
   if (/fetch failed|failed to fetch|network|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|offline|load failed/i.test(message)) {
-    return `无法连接预设源（${message}）`;
+    return presetUpdateCopy.sourceUnreachable(message);
   }
   return message;
 }
@@ -245,24 +246,24 @@ function base64ToText(base64: string): string {
     const buffer = (
       globalThis as { Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } } }
     ).Buffer;
-    if (buffer === undefined) throw new Error('当前环境不支持 base64 解码');
+    if (buffer === undefined) throw new Error(presetUpdateCopy.base64Unsupported);
     return buffer.from(compact, 'base64').toString('utf8');
   } catch (cause: unknown) {
-    throw new Error(`预设源返回的 base64 内容无法解码：${errorMessage(cause)}`);
+    throw new Error(presetUpdateCopy.base64Invalid(errorMessage(cause)));
   }
 }
 
 /** contents 接口的响应体 → 内层 JSON。编码不是 base64 或缺 `content` 都算这条来源失败。 */
 function parseContentsPayload(payload: unknown): unknown {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
-    throw new Error('预设源返回的 contents 响应不是对象');
+    throw new Error(presetUpdateCopy.contentsNotObject);
   }
   const record = payload as Record<string, unknown>;
   if (record['encoding'] !== 'base64') {
-    throw new Error(`预设源返回的 contents 编码不受支持：${String(record['encoding'])}`);
+    throw new Error(presetUpdateCopy.contentsEncoding(String(record['encoding'])));
   }
   const content = record['content'];
-  if (typeof content !== 'string') throw new Error('预设源返回的 contents 缺少 content');
+  if (typeof content !== 'string') throw new Error(presetUpdateCopy.contentsMissing);
   return JSON.parse(base64ToText(content)) as unknown;
 }
 
@@ -279,13 +280,13 @@ async function readPresetJson(
           headers: { accept: source.kind === 'api' ? GITHUB_API_ACCEPT : 'application/json' },
         }),
         15_000,
-        '读取预设清单超时',
+        presetUpdateCopy.manifestTimeout,
       );
-      if (!response.ok) throw new Error(`预设源返回 ${response.status}`);
+      if (!response.ok) throw new Error(presetUpdateCopy.httpStatus(response.status));
       const payload: unknown = await withTimeout(
         response.json() as Promise<unknown>,
         15_000,
-        '读取预设清单超时',
+        presetUpdateCopy.manifestTimeout,
       );
       const value = source.kind === 'api' ? parseContentsPayload(payload) : payload;
       return { value, source: source.kind, downloadSource: source.downloadSource };
@@ -293,7 +294,7 @@ async function readPresetJson(
       lastError = describeFetchError(cause);
     }
   }
-  throw new Error(lastError ?? '无法连接预设源');
+  throw new Error(lastError ?? presetUpdateCopy.sourceUnreachableBare);
 }
 
 /** 检查有没有更新的预设版本：按下载源 raw → api，允许时再回退另一个源；失败收敛为可读 error、不向界面抛出。 */
@@ -307,7 +308,7 @@ export async function checkPresetUpdate(options: {
 }): Promise<PresetUpdateStatus> {
   const doFetch = options.fetchImpl ?? globalThis.fetch;
   if (typeof doFetch !== 'function') {
-    return { available: false, version: null, error: '当前环境无法联网检查预设更新' };
+    return { available: false, version: null, error: presetUpdateCopy.checkOffline };
   }
   const fetchOptions: PresetFetchOptions = {
     ...(options.source === undefined ? {} : { source: options.source }),
@@ -323,13 +324,13 @@ export async function checkPresetUpdate(options: {
 
   const parsed = result.value;
   const latest = requireJsonVersion(parsed);
-  if (latest === null) return { available: false, version: null, error: '预设版本清单格式不正确' };
+  if (latest === null) return { available: false, version: null, error: presetUpdateCopy.versionManifestInvalid };
   const schemaVersion = (parsed as Record<string, unknown>)['schemaVersion'];
   if (typeof schemaVersion === 'number' && Number.isInteger(schemaVersion) && schemaVersion > PRESET_SCHEMA_VERSION) {
     return {
       available: false,
       version: latest,
-      error: `预设源使用了更新的格式（schemaVersion ${schemaVersion}），请升级应用`,
+      error: presetUpdateCopy.sourceSchemaTooNew(schemaVersion),
     };
   }
   return {
@@ -348,10 +349,10 @@ export async function fetchSnapshot(
   options: PresetFetchOptions = {},
 ): Promise<PresetSnapshot> {
   if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version.trim())) {
-    throw new Error(`预设版本号不合法：${version}`);
+    throw new Error(presetUpdateCopy.invalidVersion(version));
   }
   const doFetch = fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') throw new Error('当前环境无法联网下载预设快照');
+  if (typeof doFetch !== 'function') throw new Error(presetUpdateCopy.snapshotOffline);
 
   const trimmed = version.trim();
   let parsed: unknown;
@@ -359,14 +360,14 @@ export async function fetchSnapshot(
     const result = await readPresetJson(presetSourcesFor('snapshot', options, trimmed), doFetch);
     parsed = result.value;
   } catch (cause: unknown) {
-    throw new Error(`预设快照下载失败：${errorMessage(cause)}`);
+    throw new Error(presetUpdateCopy.snapshotDownloadFailed(errorMessage(cause)));
   }
 
   const problem = describeSnapshotProblem(parsed);
-  if (problem !== null) throw new Error(`预设快照不可用：${problem}`);
+  if (problem !== null) throw new Error(presetUpdateCopy.snapshotUnusable(problem));
   const snapshot = parsed as PresetSnapshot;
   if (!verifySnapshot(snapshot)) {
-    throw new Error('预设快照哈希校验未通过');
+    throw new Error(presetUpdateCopy.snapshotHashMismatch);
   }
   return snapshot;
 }

@@ -1,6 +1,7 @@
 /** 自动更新的下载计划：渠道与平台 → 资产、文件名，以及 SHA256SUMS 校验。纯函数。 */
 import type { UpdateAsset, UpdateManifest } from '../update.ts';
 import type { UpdatePlatform } from './update-download-state.ts';
+import { updateTaskCopy } from '../copy/update-task.ts';
 
 export interface UpdateDownloadTarget {
   platform: 'windows' | 'android';
@@ -77,11 +78,11 @@ export function planUpdateDownload(
   if (platform === 'android') {
     const asset: UpdateAsset | undefined = assets?.android;
     if (asset === undefined || asset.url === '') {
-      return { kind: 'unavailable', reason: '这次发布没有提供 Android 安装包' };
+      return { kind: 'unavailable', reason: updateTaskCopy.noAndroidPackage };
     }
     const fileName = installerFileName('android', asset.url, asset.name);
     if (fileName === null) {
-      return { kind: 'unavailable', reason: '发布里的 Android 产物不是 APK' };
+      return { kind: 'unavailable', reason: updateTaskCopy.androidNotApk };
     }
     return {
       kind: 'download',
@@ -94,13 +95,13 @@ export function planUpdateDownload(
   if (asset === undefined || asset.url === '') {
     return {
       kind: 'unavailable',
-      reason: portable ? '这次发布没有提供 Windows 便携包' : '这次发布没有提供 Windows 安装包',
+      reason: portable ? updateTaskCopy.noWindowsPortable : updateTaskCopy.noWindowsInstaller,
     };
   }
   if (portable) {
     const fileName = portableFileName(asset.url, asset.name);
     if (fileName === null) {
-      return { kind: 'unavailable', reason: '发布里的 Windows 便携包不是 zip，请到发布页下载' };
+      return { kind: 'unavailable', reason: updateTaskCopy.portableNotZip };
     }
     return {
       kind: 'download',
@@ -111,7 +112,7 @@ export function planUpdateDownload(
   if (fileName === null) {
     return {
       kind: 'unavailable',
-      reason: '发布里的 Windows 产物不是安装包，请到发布页下载便携版',
+      reason: updateTaskCopy.installerNotFound,
     };
   }
   return {
@@ -183,7 +184,7 @@ export function digestMatches(actual: string, expected: string): boolean {
 /** 计算字节序列的 SHA-256（十六进制小写）；环境没有 WebCrypto 时抛可读错误。 */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const subtle = globalThis.crypto?.subtle;
-  if (subtle === undefined) throw new Error('当前环境不支持 SHA-256 校验');
+  if (subtle === undefined) throw new Error(updateTaskCopy.noSha256);
   const digest = await subtle.digest('SHA-256', bytes as unknown as BufferSource);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }

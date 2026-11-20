@@ -1,6 +1,7 @@
 import { VIEW_DAY_OPTIONS, type AppSettings } from '@dawn-tick/core';
 import { Field } from '../../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, SwitchField } from '../../components/ui/controls.tsx';
+import { timetableSettingsCopy } from '../../copy/settings-timetable.ts';
 
 export interface TimetableCardProps {
   settings: AppSettings;
@@ -15,40 +16,40 @@ export interface TimetableCardProps {
 export function TimetableCard({ settings, onPatch }: TimetableCardProps) {
   return (
     <>
-      <Field label="周视图天数" hint="1–7 天" help="列宽按屏宽等分，不横向滚动">
+      <Field label={timetableSettingsCopy.viewDaysLabel} hint={timetableSettingsCopy.viewDaysHint} help={timetableSettingsCopy.viewDaysHelp}>
         <Select value={String(settings.viewDays)} onValueChange={(value) => void onPatch({ viewDays: Number(value) })}>
-          <SelectTrigger aria-label="周视图天数">
-            <span>{settings.viewDays} 天</span>
+          <SelectTrigger aria-label={timetableSettingsCopy.viewDaysLabel}>
+            <span>{timetableSettingsCopy.days(settings.viewDays)}</span>
           </SelectTrigger>
           <SelectContent>
             {VIEW_DAY_OPTIONS.map((days) => (
               <SelectItem key={days} value={String(days)}>
-                {days} 天
+                {timetableSettingsCopy.days(days)}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </Field>
       <SwitchField
-        label="今天为第一天"
-        description="关掉从本周周一开头"
+        label={timetableSettingsCopy.weekStartsTodayLabel}
+        description={timetableSettingsCopy.weekStartsTodayDescription}
         checked={settings.weekStartsToday}
         onCheckedChange={(checked) => void onPatch({ weekStartsToday: checked })}
-        ariaLabel="今天为第一天"
+        ariaLabel={timetableSettingsCopy.weekStartsTodayLabel}
       />
       <SwitchField
-        label="始终不显示周末"
-        description="跳过周六日，列数按天数"
+        label={timetableSettingsCopy.hideWeekendsLabel}
+        description={timetableSettingsCopy.hideWeekendsDescription}
         checked={settings.hideWeekends}
         onCheckedChange={(checked) => void onPatch({ hideWeekends: checked })}
-        ariaLabel="始终不显示周末"
+        ariaLabel={timetableSettingsCopy.hideWeekendsLabel}
       />
       <SwitchField
-        label="周视图显示非本周课程"
-        description="这一周不上的课用虚线框标出"
+        label={timetableSettingsCopy.showOtherWeeksLabel}
+        description={timetableSettingsCopy.showOtherWeeksDescription}
         checked={settings.showOtherWeeks}
         onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
-        ariaLabel="周视图显示非本周课程"
+        ariaLabel={timetableSettingsCopy.showOtherWeeksLabel}
       />
     </>
   );

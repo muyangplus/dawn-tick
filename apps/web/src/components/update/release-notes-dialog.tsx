@@ -1,6 +1,7 @@
 import { Button } from '../ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../ui/dialog.tsx';
 import { Markdown } from '../ui/markdown.tsx';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 
 export interface ReleaseNotesDialogProps {
   /** 待展示的版本说明；null 表示不展示 */
@@ -20,7 +21,10 @@ export function ReleaseNotesDialog({ notes, onClose, onDisable }: ReleaseNotesDi
         if (!open) onClose();
       }}
     >
-      <DialogContent title={`已更新到 ${notes?.version ?? ''}`} description="本次更新内容">
+      <DialogContent
+        title={updateDialogCopy.releaseNotesTitle(notes?.version ?? '')}
+        description={updateDialogCopy.releaseNotesDescription}
+      >
         <Markdown
           source={notes?.source ?? ''}
           dataRole="release-notes"
@@ -28,10 +32,10 @@ export function ReleaseNotesDialog({ notes, onClose, onDisable }: ReleaseNotesDi
         />
         <DialogFooter>
           <Button variant="secondary" onClick={onDisable} data-role="release-notes-disable">
-            不再显示
+            {updateDialogCopy.releaseNotesDisable}
           </Button>
           <Button variant="primary" onClick={onClose} data-role="release-notes-close">
-            知道了
+            {updateDialogCopy.releaseNotesClose}
           </Button>
         </DialogFooter>
       </DialogContent>

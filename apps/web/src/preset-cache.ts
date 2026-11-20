@@ -18,6 +18,7 @@ import {
   describeSnapshotProblem,
   verifySnapshot,
 } from './preset-update.ts';
+import { presetUpdateCopy } from './copy/update-preset.ts';
 
 /** 读取缓存的快照（app_meta / presets_snapshot_v1）：缺失、JSON 损坏、结构不对或哈希不符一律返回 null、不抛错。 */
 export async function readCachedSnapshot(storage: Storage): Promise<PresetSnapshot | null> {
@@ -172,7 +173,7 @@ export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset
         version: BUILTIN_PRESET_VERSION,
         kind: 'builtin',
         applied: false,
-        reason: `缓存 ${source.version} 缺少可用正文，改用内置预设`,
+        reason: presetUpdateCopy.cacheMissingContent(source.version),
       };
     }
 
@@ -187,7 +188,7 @@ export async function applyCachedPreset(storage: Storage): Promise<AppliedPreset
         version: BUILTIN_PRESET_VERSION,
         kind: 'builtin',
         applied: false,
-        reason: `缓存 ${source.version} 的正文未通过校验（${result.reason ?? '未知原因'}），继续使用内置预设`,
+        reason: presetUpdateCopy.cacheInvalidContent(source.version, result.reason ?? null),
       };
     }
     return { version: effectivePresetVersion(), kind: 'cached', applied: true };

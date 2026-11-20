@@ -3,6 +3,7 @@ import {
   PRESET_SCHEMA_VERSION,
   type PresetSnapshot,
 } from './preset-update.ts';
+import { presetUpdateCopy as copy } from './copy/update-preset.ts';
 
 // —— 预设索引（快照内嵌的 index 字段）——
 // 索引随快照过哈希，无独立请求（旧 PRESET_INDEX_URL 会 404）。
@@ -70,18 +71,18 @@ function nonEmptyText(value: unknown): string | null {
 /** 路径安全检查：非空、POSIX 分隔符、相对路径、不含 .. 段、不带盘符——索引里的路径会被拿去读文件。 */
 function describePresetPathProblem(value: unknown, where: string): string | null {
   const text = nonEmptyText(value);
-  if (text === null) return `${where} 应为非空字符串`;
-  if (text.startsWith('/') || text.includes('\\')) return `${where} 应为 POSIX 风格的相对路径：${text}`;
-  if (/^[A-Za-z]:/.test(text)) return `${where} 不应带盘符：${text}`;
-  if (text.split('/').includes('..')) return `${where} 不应包含 .. 段：${text}`;
+  if (text === null) return copy.notNonEmptyText(where);
+  if (text.startsWith('/') || text.includes('\\')) return copy.pathNotRelative(where, text);
+  if (/^[A-Za-z]:/.test(text)) return copy.pathHasDrive(where, text);
+  if (text.split('/').includes('..')) return copy.pathHasDotDot(where, text);
   return null;
 }
 
 /** 字符串数组校验；元素必须是非空字符串。 */
 function describeTextArrayProblem(value: unknown, where: string): string | null {
-  if (!Array.isArray(value)) return `${where} 应为字符串数组`;
+  if (!Array.isArray(value)) return copy.notTextArray(where);
   for (const [index, item] of value.entries()) {
-    if (nonEmptyText(item) === null) return `${where}[${index}] 应为非空字符串`;
+    if (nonEmptyText(item) === null) return copy.notNonEmptyText(copy.item(where, index));
   }
   return null;
 }
@@ -90,93 +91,92 @@ function describeTextArrayProblem(value: unknown, where: string): string | null 
 function describeOptionalProblem(entry: Record<string, unknown>, key: string, where: string): string | null {
   if (entry[key] === undefined) return null;
   const value = entry[key];
-  if (key === 'aliases') return describeTextArrayProblem(value, `${where} 的 aliases`);
+  if (key === 'aliases') return describeTextArrayProblem(value, copy.field(where, 'aliases'));
   if (key === 'generic' || key === 'default' || key === 'hasParser') {
-    return typeof value === 'boolean' ? null : `${where} 的 ${key} 应为布尔值`;
+    return typeof value === 'boolean' ? null : copy.notBoolean(copy.field(where, key));
   }
   if (key === 'region' || key === 'type' || key === 'version') {
-    return nonEmptyText(value) === null ? `${where} 的 ${key} 应为非空字符串` : null;
+    return nonEmptyText(value) === null ? copy.notNonEmptyText(copy.field(where, key)) : null;
   }
   // metaPath / loginPath / parserPath：可选，但一旦出现就必须是安全的相对路径
-  return describePresetPathProblem(value, `${where} 的 ${key}`);
+  return describePresetPathProblem(value, copy.field(where, key));
 }
 
 /** 校验内嵌索引，返回问题描述、合法时 null，不抛异常。 */
 /** _generated 必须恒为 true；无绑定系统或无覆盖配置时 system / configPath 要显式写 null。 */
 export function describePresetIndexProblem(value: unknown): string | null {
-  if (!isRecord(value)) return '预设索引应为对象';
+  if (!isRecord(value)) return copy.indexNotObject;
   if (value['_generated'] !== true) {
-    return '预设索引缺少 _generated: true（它不是生成物，已拒绝）';
+    return copy.indexNotGenerated;
   }
-  if (nonEmptyText(value['version']) === null) return '预设索引缺少 version';
+  if (nonEmptyText(value['version']) === null) return copy.indexMissingVersion;
   const schemaVersion = value['schemaVersion'];
   if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion)) {
-    return '预设索引的 schemaVersion 应为整数';
+    return copy.indexSchemaNotInteger;
   }
   if (schemaVersion > PRESET_SCHEMA_VERSION) {
-    return `预设索引使用了更新的格式（schemaVersion ${schemaVersion}），请升级应用`;
+    return copy.indexSchemaTooNew(schemaVersion);
   }
-  if (!Array.isArray(value['schools'])) return '预设索引的 schools 应为数组';
-  if (!Array.isArray(value['systems'])) return '预设索引的 systems 应为数组';
+  if (!Array.isArray(value['schools'])) return copy.indexSchoolsNotArray;
+  if (!Array.isArray(value['systems'])) return copy.indexSystemsNotArray;
 
   const schoolIds = new Set<string>();
   for (const [index, raw] of value['schools'].entries()) {
-    const where = `预设索引的学校 #${index + 1}`;
-    if (!isRecord(raw)) return `${where} 应为对象`;
+    const where = copy.schoolAt(index + 1);
+    if (!isRecord(raw)) return copy.notObject(where);
     const id = nonEmptyText(raw['id']);
-    if (id === null) return `${where} 缺少 id`;
-    if (schoolIds.has(id)) return `${where} 的 id 重复：${id}`;
+    if (id === null) return copy.missing(where, 'id');
+    if (schoolIds.has(id)) return copy.duplicateId(where, id);
     schoolIds.add(id);
 
-    if (nonEmptyText(raw['name']) === null) return `预设索引的学校「${id}」缺少 name`;
+    const school = copy.school(id);
+    if (nonEmptyText(raw['name']) === null) return copy.missing(school, 'name');
     if (!('system' in raw)) {
-      return `预设索引的学校「${id}」缺少 system`;
+      return copy.missing(school, 'system');
     }
     if (raw['system'] !== null && nonEmptyText(raw['system']) === null) {
-      return `预设索引的学校「${id}」的 system 应为非空字符串或 null`;
+      return copy.notNonEmptyTextOrNull(copy.field(school, 'system'));
     }
     if (!('configPath' in raw)) {
-      return `预设索引的学校「${id}」缺少 configPath`;
+      return copy.missing(school, 'configPath');
     }
     if (raw['configPath'] !== null) {
-      const problem = describePresetPathProblem(raw['configPath'], `预设索引的学校「${id}」的 configPath`);
+      const problem = describePresetPathProblem(raw['configPath'], copy.field(school, 'configPath'));
       if (problem !== null) return problem;
     }
-    const timetableProblem = describePresetPathProblem(
-      raw['timetablePath'],
-      `预设索引的学校「${id}」的 timetablePath`,
-    );
+    const timetableProblem = describePresetPathProblem(raw['timetablePath'], copy.field(school, 'timetablePath'));
     if (timetableProblem !== null) return timetableProblem;
     for (const key of ['aliases', 'generic', 'default', 'region', 'type']) {
-      const problem = describeOptionalProblem(raw, key, `预设索引的学校「${id}」`);
+      const problem = describeOptionalProblem(raw, key, school);
       if (problem !== null) return problem;
     }
   }
 
   const systemIds = new Set<string>();
   for (const [index, raw] of value['systems'].entries()) {
-    const where = `预设索引的系统 #${index + 1}`;
-    if (!isRecord(raw)) return `${where} 应为对象`;
+    const where = copy.systemAt(index + 1);
+    if (!isRecord(raw)) return copy.notObject(where);
     const id = nonEmptyText(raw['id']);
-    if (id === null) return `${where} 缺少 id`;
-    if (systemIds.has(id)) return `${where} 的 id 重复：${id}`;
+    if (id === null) return copy.missing(where, 'id');
+    if (systemIds.has(id)) return copy.duplicateId(where, id);
     systemIds.add(id);
 
-    if (nonEmptyText(raw['name']) === null) return `预设索引的系统「${id}」缺少 name`;
+    const system = copy.system(id);
+    if (nonEmptyText(raw['name']) === null) return copy.missing(system, 'name');
     const detect = raw['detect'];
-    if (!isRecord(detect)) return `预设索引的系统「${id}」缺少 detect`;
+    if (!isRecord(detect)) return copy.missing(system, 'detect');
     for (const key of PRESET_INDEX_DETECT_KEYS) {
-      const problem = describeTextArrayProblem(detect[key], `预设索引的系统「${id}」的 detect.${key}`);
+      const problem = describeTextArrayProblem(detect[key], copy.field(system, `detect.${key}`));
       if (problem !== null) return problem;
     }
     const entryPath = nonEmptyText(raw['entryPath']);
-    if (entryPath === null) return `预设索引的系统「${id}」缺少 entryPath`;
+    if (entryPath === null) return copy.missing(system, 'entryPath');
     if (!entryPath.startsWith('/')) {
-      return `预设索引的系统「${id}」的 entryPath 应以 / 开头：${entryPath}`;
+      return copy.entryPathNotAbsolute(copy.field(system, 'entryPath'), entryPath);
     }
-    if (nonEmptyText(raw['hint']) === null) return `预设索引的系统「${id}」缺少 hint`;
+    if (nonEmptyText(raw['hint']) === null) return copy.missing(system, 'hint');
     for (const key of ['aliases', 'hasParser', 'version', 'metaPath', 'loginPath', 'parserPath']) {
-      const problem = describeOptionalProblem(raw, key, `预设索引的系统「${id}」`);
+      const problem = describeOptionalProblem(raw, key, system);
       if (problem !== null) return problem;
     }
   }
@@ -187,7 +187,7 @@ export function describePresetIndexProblem(value: unknown): string | null {
 /** 解析并校验索引内容（快照内嵌的 `index`）；不合法时抛出可读错误。 */
 export function parsePresetIndex(value: unknown): PresetIndex {
   const problem = describePresetIndexProblem(value);
-  if (problem !== null) throw new Error(`预设索引不可用：${problem}`);
+  if (problem !== null) throw new Error(copy.indexUnusable(problem));
   return value as PresetIndex;
 }
 
@@ -196,9 +196,7 @@ export function parsePresetIndex(value: unknown): PresetIndex {
 export function presetIndexFromSnapshot(snapshot: PresetSnapshot): PresetIndex {
   const index = (snapshot as { index?: unknown }).index;
   if (index === undefined || index === null) {
-    throw new Error(
-      '预设快照不可用：缺少内嵌索引 index',
-    );
+    throw new Error(copy.snapshotMissingIndex);
   }
   return parsePresetIndex(index);
 }

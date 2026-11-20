@@ -6,6 +6,7 @@ import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { CourseManager } from '../course-manager.tsx';
 import { DeleteSemesterDialog, EditSemesterDialog, NewSemesterForm } from './semester-dialogs.tsx';
+import { semestersCopy } from '../../copy/settings-semesters.ts';
 
 export interface SemestersCardProps {
   storage: Storage;
@@ -43,9 +44,9 @@ export function SemestersCard({
   async function activate(id: string): Promise<void> {
     await run({
       scope: 'timetable',
-      label: '正在切换当前学期…',
-      ok: '已切换当前学期',
-      fail: { what: '切换学期失败', next: '请重试；仍失败请重开应用后再试。' },
+      label: semestersCopy.switchingLabel,
+      ok: semestersCopy.switchedToast,
+      fail: semestersCopy.switchFailed,
       task: async () => {
         for (const semester of semesters) {
           if (semester.is_active === 1 && semester.id !== id) {
@@ -61,7 +62,7 @@ export function SemestersCard({
   return (
     <>
       {semesters.length === 0 ? (
-        <EmptyState size="sm" tone="muted" title="还没有学期，先在上面新建一个" />
+        <EmptyState size="sm" tone="muted" title={semestersCopy.empty} />
       ) : (
         <ul className="flex flex-col gap-1">
           {semesters.map((semester) => (
@@ -69,21 +70,21 @@ export function SemestersCard({
               <span className="flex min-w-0 flex-col">
                 <span className="truncate text-sm text-ink">{semester.name}</span>
                 <span className="tabular truncate text-xs text-muted">
-                  {semester.start_date} 起 · {semester.total_weeks} 周 · {semester.time_zone}
+                  {semestersCopy.meta(semester.start_date, semester.total_weeks, semester.time_zone)}
                 </span>
               </span>
               <div className="flex shrink-0 items-center gap-1">
                 {semester.id === activeSemesterId ? (
-                  <span className="text-xs text-primary-strong">当前</span>
+                  <span className="text-xs text-primary-strong">{semestersCopy.current}</span>
                 ) : (
                   <Button size="sm" variant="secondary" loading={busy} onClick={() => void activate(semester.id)}>
-                    切换
+                    {semestersCopy.switchButton}
                   </Button>
                 )}
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label={`编辑学期 ${semester.name}`}
+                  aria-label={semestersCopy.editAria(semester.name)}
                   disabled={busy}
                   onClick={() => setEditing(semester)}
                 >
@@ -92,7 +93,7 @@ export function SemestersCard({
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label={`删除学期 ${semester.name}`}
+                  aria-label={semestersCopy.deleteAria(semester.name)}
                   disabled={busy}
                   onClick={() => setRemoving(semester)}
                 >

@@ -18,6 +18,7 @@ import {
   manifestFromRelease,
   pickBetaCandidate,
 } from './lib/update-release.ts';
+import { updateTaskCopy } from './copy/update-task.ts';
 
 /** 发布解析（版本比较、资产挑选、beta 候选）在 `lib/update-release.ts`，这里转出保持调用路径不变。 */
 export {
@@ -136,9 +137,9 @@ export interface CheckUpdateOptions {
 
 /** HTTP 状态 → 可读文案。 */
 function describeApiStatus(source: UpdateSource, status: number): string {
-  if (status === 404) return '该渠道还没有发布记录';
-  if (status === 403 || status === 429) return `${DOWNLOAD_SOURCE_LABEL[source]} 接口限流，请稍后再试`;
-  return `更新源返回 ${status}`;
+  if (status === 404) return updateTaskCopy.feedEmpty;
+  if (status === 403 || status === 429) return updateTaskCopy.rateLimited(DOWNLOAD_SOURCE_LABEL[source]);
+  return updateTaskCopy.httpStatus(status);
 }
 
 function emptyStatus(feed: UpdateChannel, current: string, source: UpdateSource): UpdateStatus {
@@ -173,7 +174,7 @@ async function queryAssetsVersion(
     response = await withTimeout(
       doFetch(url, { headers: { accept: 'application/json' } }),
       15_000,
-      '读取更新清单超时',
+      updateTaskCopy.manifestTimeout,
     );
   } catch (cause: unknown) {
     return { manifest: null, error: errorMessage(cause), canFallback: true };
@@ -181,16 +182,16 @@ async function queryAssetsVersion(
   if (!response.ok) return { manifest: null, error: describeApiStatus(source, response.status), canFallback: true };
   let parsed: unknown;
   try {
-    parsed = await withTimeout(response.json() as Promise<unknown>, 15_000, '读取更新清单超时');
+    parsed = await withTimeout(response.json() as Promise<unknown>, 15_000, updateTaskCopy.manifestTimeout);
   } catch {
-    return { manifest: null, error: '更新清单格式不正确', canFallback: false };
+    return { manifest: null, error: updateTaskCopy.manifestInvalid, canFallback: false };
   }
   const result = parseAssetsVersion(parsed);
-  if (!result.ok) return { manifest: null, error: `更新清单格式不正确（${result.error}）`, canFallback: false };
+  if (!result.ok) return { manifest: null, error: updateTaskCopy.manifestInvalidDetail(result.error), canFallback: false };
   if (result.manifest.channel !== feed) {
     return {
       manifest: null,
-      error: `清单渠道 ${result.manifest.channel} 与查询渠道 ${feed} 不一致，已忽略`,
+      error: updateTaskCopy.channelMismatch(result.manifest.channel, feed),
       canFallback: false,
     };
   }
@@ -240,25 +241,25 @@ async function queryLegacyGitHub(
     const response = await withTimeout(
       doFetch(releaseApiUrl(source, feed), { headers: { accept: GITHUB_API_ACCEPT } }),
       15_000,
-      '查询更新发布超时',
+      updateTaskCopy.releaseTimeout,
     );
     if (!response.ok) return { status: null, error: describeApiStatus(source, response.status) };
     let parsed: unknown;
     try {
       parsed = await response.json();
     } catch {
-      return { status: null, error: '更新清单格式不正确' };
+      return { status: null, error: updateTaskCopy.manifestInvalid };
     }
     if (feed === 'beta') {
       const candidate = pickBetaCandidate(parsed);
-      if (candidate === null) return { status: null, error: '该渠道还没有发布记录' };
+      if (candidate === null) return { status: null, error: updateTaskCopy.feedEmpty };
       const manifest = manifestFromRelease(candidate.channel, candidate.record);
-      if (manifest === null) return { status: null, error: '更新清单格式不正确' };
+      if (manifest === null) return { status: null, error: updateTaskCopy.manifestInvalid };
       return { status: manifestStatus(base, manifest, currentVersion), error: null };
     }
     if (feed === 'release' && isPrereleaseOrDraft(parsed)) return { status: base, error: null };
     const manifest = manifestFromRelease(feed, parsed);
-    if (manifest === null) return { status: null, error: '更新清单格式不正确' };
+    if (manifest === null) return { status: null, error: updateTaskCopy.manifestInvalid };
     return { status: manifestStatus(base, manifest, currentVersion), error: null };
   } catch (cause: unknown) {
     // 网络异常：记住原始原因，下面回退；回退也失败时把它交出去（不吞掉真实原因）
@@ -271,14 +272,14 @@ async function queryLegacyGitHub(
     const response = await withTimeout(
       doFetch(fallbackUrl, { headers: { accept: 'application/json' } }),
       15_000,
-      '读取更新清单超时',
+      updateTaskCopy.manifestTimeout,
     );
     if (!response.ok) return { status: null, error: networkError };
     const parsed: unknown = await response.json();
     const manifest = manifestFromReleaseVersionJson(parsed, fallbackUrl);
     if (manifest === null) return { status: null, error: networkError };
     if (manifest.channel !== feed) {
-      return { status: null, error: `清单渠道 ${manifest.channel} 与查询渠道 ${feed} 不一致，已忽略` };
+      return { status: null, error: updateTaskCopy.channelMismatch(manifest.channel, feed) };
     }
     return { status: manifestStatus(base, manifest, currentVersion), error: null };
   } catch {
@@ -336,9 +337,12 @@ function summarizeFailure(
   other: UpdateSource,
   secondError: string | null,
 ): string {
-  return `${DOWNLOAD_SOURCE_LABEL[requested]}：${firstError ?? '查询失败'}；${DOWNLOAD_SOURCE_LABEL[other]}：${
-    secondError ?? '查询失败'
-  }`;
+  return updateTaskCopy.bothSourcesFailed(
+    DOWNLOAD_SOURCE_LABEL[requested],
+    firstError ?? updateTaskCopy.queryFailed,
+    DOWNLOAD_SOURCE_LABEL[other],
+    secondError ?? updateTaskCopy.queryFailed,
+  );
 }
 
 /**
@@ -350,7 +354,7 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
   const requested = options.source ?? 'github';
   const base = emptyStatus(feed, options.currentVersion, requested);
   const doFetch = options.fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') return { ...base, error: '当前环境无法联网检查更新' };
+  if (typeof doFetch !== 'function') return { ...base, error: updateTaskCopy.offline };
   // Android 按设备 ABI 选包：拉清单之前先探测一次（3 秒超时，失败默认 arm64，不阻塞更新）
   await ensureAndroidAbi();
 
@@ -366,7 +370,7 @@ export async function checkForUpdate(options: CheckUpdateOptions): Promise<Updat
 
 /** 各平台自带的合法性验证命令，展示给用户核对。 */
 export function verifyHint(channel: UpdateChannel, asset: 'windows' | 'android' | 'web'): string {
-  if (asset === 'android') return '安装前系统会校验 APK 签名（apksigner verify --print-certs）';
-  if (asset === 'windows') return '更新包随附签名，安装前会校验（gh attestation verify <文件> --repo muyangplus/dawn-tick）';
-  return `网页版随渠道 ${channel} 自动获取最新构建`;
+  if (asset === 'android') return updateTaskCopy.verifyAndroid;
+  if (asset === 'windows') return updateTaskCopy.verifyWindows;
+  return updateTaskCopy.verifyWeb(channel);
 }

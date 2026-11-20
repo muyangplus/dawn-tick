@@ -9,6 +9,7 @@ import {
 import { planUpdateDownload, type UpdatePlatform } from './update-download.ts';
 import { readMetaJson, writeMetaJson } from './meta.ts';
 import { IGNORED_UPDATE_VERSION_META_KEY } from './meta-keys.ts';
+import { updateSettingsCopy } from '../copy/update-settings.ts';
 
 /**
  * 更新运营的本地偏好与策略：忽略某个版本、取消忽略、回滚到正式版。
@@ -40,7 +41,7 @@ export async function readIgnoredVersion(storage: Pick<Storage, 'readMeta'>): Pr
 /** 记住忽略的版本（仅这一个版本）。 */
 export async function writeIgnoredVersion(storage: Pick<Storage, 'writeMeta'>, version: string): Promise<void> {
   const normalized = version.trim();
-  if (normalized === '') throw new Error('要忽略的版本号为空');
+  if (normalized === '') throw new Error(updateSettingsCopy.ignoreEmptyVersion);
   await writeMetaJson(storage, IGNORED_UPDATE_VERSION_META_KEY, normalized, { scope: 'update' });
 }
 
@@ -98,7 +99,7 @@ function isStableRelease(value: unknown): value is Record<string, unknown> {
  * Android 只认 APK；只有便携 zip 或没有资产时返回可读原因，让用户改走发布页。
  */
 export function pickRollbackTarget(releases: unknown, platform: UpdatePlatform): RollbackTarget {
-  if (!Array.isArray(releases)) return { kind: 'none', reason: '读不到正式版发布记录' };
+  if (!Array.isArray(releases)) return { kind: 'none', reason: updateSettingsCopy.rollbackNoReleaseList };
   let best: UpdateManifest | null = null;
   for (const raw of releases) {
     if (!isStableRelease(raw)) continue;
@@ -106,7 +107,7 @@ export function pickRollbackTarget(releases: unknown, platform: UpdatePlatform):
     if (manifest === null) continue;
     if (best === null || compareVersions(manifest.version, best.version) > 0) best = manifest;
   }
-  if (best === null) return { kind: 'none', reason: '还没有正式版发布' };
+  if (best === null) return { kind: 'none', reason: updateSettingsCopy.rollbackNoRelease };
   const plan = planUpdateDownload(best, platform);
   if (plan.kind === 'unavailable') return { kind: 'none', reason: plan.reason };
   return { kind: 'target', version: best.version, manifest: best };
@@ -140,14 +141,14 @@ export function canRollbackToStable({ current, channel, latestStable }: Rollback
  */
 export async function loadRollbackReleases(fetchImpl?: typeof fetch): Promise<unknown> {
   const doFetch = fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') throw new Error('当前环境无法联网检查更新');
+  if (typeof doFetch !== 'function') throw new Error(updateSettingsCopy.releasesOffline);
   const response = await doFetch(UPDATE_RELEASES_API, {
     headers: { accept: 'application/vnd.github+json' },
   });
   if (!response.ok) {
-    if (response.status === 404) throw new Error('该仓库还没有发布记录');
-    if (response.status === 403 || response.status === 429) throw new Error('GitHub 接口限流，请稍后再试');
-    throw new Error(`更新源返回 ${response.status}`);
+    if (response.status === 404) throw new Error(updateSettingsCopy.releasesNotFound);
+    if (response.status === 403 || response.status === 429) throw new Error(updateSettingsCopy.releasesRateLimited);
+    throw new Error(updateSettingsCopy.releasesHttpStatus(response.status));
   }
   return await response.json();
 }

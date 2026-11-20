@@ -1,4 +1,5 @@
 import { WEEKDAY_LABELS, type QuietHours, type QuietRule } from '@dawn-tick/core';
+import { quietHoursCopy } from '../../copy/settings-quiet-hours.ts';
 
 /** 新增时段的默认值：午休。 */
 export const NEW_QUIET_RULE: QuietRule = { days: [1, 2, 3, 4, 5], start: '12:00', end: '14:00' };
@@ -23,14 +24,13 @@ export function removeQuietRule(value: QuietHours, index: number): QuietHours {
 /** 星期文案：每天 / 工作日 / 周末 / 周一、周三。 */
 export function quietDaysText(days: readonly number[]): string {
   const key = [...days].sort((a, b) => a - b).join(',');
-  if (key === '1,2,3,4,5,6,7') return '每天';
-  if (key === '1,2,3,4,5') return '工作日';
-  if (key === '6,7') return '周末';
-  return days.map((day) => WEEKDAY_LABELS[day - 1]).join('、');
+  if (key === '1,2,3,4,5,6,7') return quietHoursCopy.everyDay;
+  if (key === '1,2,3,4,5') return quietHoursCopy.workdays;
+  if (key === '6,7') return quietHoursCopy.weekend;
+  return quietHoursCopy.daysJoin(days.map((day) => WEEKDAY_LABELS[day - 1] ?? ''));
 }
 
 /** 一条时段的文案：「工作日 22:00–次日 07:00」。 */
 export function quietRuleText(rule: QuietRule): string {
-  const nextDay = rule.end <= rule.start ? '次日 ' : '';
-  return `${quietDaysText(rule.days)} ${rule.start}–${nextDay}${rule.end}`;
+  return quietHoursCopy.rule(quietDaysText(rule.days), rule.start, rule.end, rule.end <= rule.start);
 }

@@ -11,13 +11,9 @@ import { isAutoStartSupported } from '../../lib/capabilities.ts';
 import { StartupSettings } from '../../components/startup-settings.tsx';
 import { Field } from '../../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../../components/ui/controls.tsx';
+import { appearanceCopy } from '../../copy/settings-appearance.ts';
 
-const THEME_LABEL: Record<ThemePreset, string> = {
-  vivid: '青春活力',
-  fresh: '清爽学院',
-  mono: '极简墨色',
-  muted: '莫兰迪柔光',
-};
+const THEME_LABEL: Record<ThemePreset, string> = appearanceCopy.themePreset;
 
 export interface AppearanceCardProps {
   settings: AppSettings;
@@ -32,12 +28,12 @@ export interface AppearanceCardProps {
 export function AppearanceCard({ settings, onPatch }: AppearanceCardProps) {
   return (
     <>
-      <Field label="主题风格">
+      <Field label={appearanceCopy.themePresetLabel}>
         <Select
           value={settings.themePreset}
           onValueChange={(value) => void onPatch({ themePreset: value as ThemePreset })}
         >
-          <SelectTrigger aria-label="主题风格">
+          <SelectTrigger aria-label={appearanceCopy.themePresetLabel}>
             <span>{THEME_LABEL[settings.themePreset]}</span>
           </SelectTrigger>
           <SelectContent>
@@ -49,26 +45,26 @@ export function AppearanceCard({ settings, onPatch }: AppearanceCardProps) {
           </SelectContent>
         </Select>
       </Field>
-      <Field label="深浅模式">
+      <Field label={appearanceCopy.themeModeLabel}>
         <Select
           value={settings.theme}
           onValueChange={(value) => void onPatch({ theme: value as AppSettings['theme'] })}
         >
-          <SelectTrigger aria-label="深浅模式">
+          <SelectTrigger aria-label={appearanceCopy.themeModeLabel}>
             <span>
-              {settings.theme === 'system' ? '跟随系统' : settings.theme === 'dark' ? '深色' : '浅色'}
+              {appearanceCopy.themeMode[settings.theme]}
             </span>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="system">跟随系统</SelectItem>
-            <SelectItem value="light">浅色</SelectItem>
-            <SelectItem value="dark">深色</SelectItem>
+            <SelectItem value="system">{appearanceCopy.themeMode.system}</SelectItem>
+            <SelectItem value="light">{appearanceCopy.themeMode.light}</SelectItem>
+            <SelectItem value="dark">{appearanceCopy.themeMode.dark}</SelectItem>
           </SelectContent>
         </Select>
       </Field>
-      <Field label="界面动效" hint="页面与弹窗过渡" help="跟随系统时遵守系统的「减少动态效果」">
+      <Field label={appearanceCopy.motionLabel} help={appearanceCopy.motionHelp}>
         <Select value={settings.motion} onValueChange={(value) => void onPatch({ motion: value as MotionMode })}>
-          <SelectTrigger aria-label="界面动效">
+          <SelectTrigger aria-label={appearanceCopy.motionLabel}>
             <span>{MOTION_LABEL[settings.motion]}</span>
           </SelectTrigger>
           <SelectContent>

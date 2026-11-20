@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { formatDateTime, type AppSettings } from '@dawn-tick/core';
 import { isAndroidApp, isDesktopApp } from '../../lib/capabilities.ts';
-import { ACTION_LABEL } from '../../lib/reminder-actions.ts';
 import {
   isIgnoringBatteryOptimizations,
   requestIgnoreBatteryOptimizations,
 } from '../../system-actions.ts';
 import { exactAlarmState, requestExactAlarm, type ExactAlarmState } from '../../permissions.ts';
 import type { ReminderView } from '../../useReminders.ts';
-import { COUNT } from '../../copy/common.ts';
+import { remindersCopy } from '../../copy/settings-reminders.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { SwitchField } from '../../components/ui/controls.tsx';
@@ -66,18 +66,18 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
             <Button
               size="sm"
               variant="secondary"
-              aria-label={notify.view.action === 'request' ? '申请通知权限' : '去系统设置'}
+              aria-label={notify.view.action === 'request' ? remindersCopy.requestNotify : remindersCopy.openSystemSettings}
               onClick={() => void notify.act(notify.view.action as 'request' | 'settings')}
             >
-              {notify.view.action === 'request' ? '申请通知权限' : '去系统设置'}
+              {notify.view.action === 'request' ? remindersCopy.requestNotify : remindersCopy.openSystemSettings}
             </Button>
           )
         }
       >
         <span className={`mr-1 inline-block size-2 rounded-full ${notifyDotClass}`} data-role="notify-status-dot" aria-hidden />
-        通知权限：{notify.view.label}
+        {remindersCopy.notifyStatus(notify.view.label)}
       </StatusLine>
-      <span className="text-xs text-muted">关闭后不再提醒</span>
+      <span className="text-xs text-muted">{remindersCopy.notifyOffHint}</span>
       {androidApp && (
         <>
           <StatusLine
@@ -87,23 +87,29 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
                 <Button
                   size="sm"
                   variant="secondary"
-                  aria-label="开启精确闹钟"
+                  aria-label={remindersCopy.exactAlarmAria}
                   onClick={() =>
                     void (async () => {
                       await requestExactAlarm();
                       const nextState = await exactAlarmState();
                       setAlarmState(nextState);
-                      if (nextState === 'granted') toast.success('已开启精确闹钟');
-                      else toast.info('精确闹钟仍未开启，请到系统设置里允许');
+                      if (nextState === 'granted') toast.success(remindersCopy.exactAlarmGranted);
+                      else toast.info(remindersCopy.exactAlarmStillDenied);
                     })()
                   }
                 >
-                  去开启
+                  {remindersCopy.exactAlarmButton}
                 </Button>
               )
             }
           >
-            精确闹钟：{alarmState === 'granted' ? '已开启' : alarmState === 'denied' ? '未开启' : '不适用'}
+            {remindersCopy.exactAlarmLine(
+              alarmState === 'granted'
+                ? remindersCopy.exactAlarmStatus.granted
+                : alarmState === 'denied'
+                  ? remindersCopy.exactAlarmStatus.denied
+                  : remindersCopy.exactAlarmStatus.unsupported,
+            )}
           </StatusLine>
           <StatusLine
             dataRole="battery-optimization-status"
@@ -112,45 +118,51 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
                 <Button
                   size="sm"
                   variant="secondary"
-                  aria-label="申请加入电池优化白名单"
+                  aria-label={remindersCopy.batteryAria}
                   onClick={() =>
                     void (async () => {
                       await requestIgnoreBatteryOptimizations();
                       const nextState = await isIgnoringBatteryOptimizations();
                       setBatteryFree(nextState);
-                      if (nextState === true) toast.success('已加入电池优化白名单');
-                      else toast.info('仍未加入白名单，提醒可能延后');
+                      if (nextState === true) toast.success(remindersCopy.batteryGranted);
+                      else toast.info(remindersCopy.batteryStillLimited);
                     })()
                   }
                 >
-                  去设置
+                  {remindersCopy.batteryButton}
                 </Button>
               )
             }
           >
-            后台运行：{batteryFree === null ? '读取中…' : batteryFree ? '已加入电池优化白名单' : '受电池优化限制，提醒可能延后'}
+            {remindersCopy.batteryLine(
+              batteryFree === null
+                ? remindersCopy.batteryStatus.loading
+                : batteryFree
+                  ? remindersCopy.batteryStatus.free
+                  : remindersCopy.batteryStatus.limited,
+            )}
           </StatusLine>
         </>
       )}
       <SwitchField
-        label="课前提醒"
-        description="所有课程默认提醒，可在课程详情里单独设置"
+        label={remindersCopy.classReminderLabel}
+        description={remindersCopy.classReminderDescription}
         checked={settings.classReminderEnabled}
         onCheckedChange={(checked) => void onPatch({ classReminderEnabled: checked })}
-        ariaLabel="课前提醒"
+        ariaLabel={remindersCopy.classReminderLabel}
       />
-      <Field label="默认提前">
+      <Field label={remindersCopy.leadLabel}>
         <div className="flex flex-wrap items-center gap-2">
           {[5, 10, 15, 20, 30].map((minutes) => (
             <Button
               key={minutes}
               size="sm"
               variant={settings.classReminderMinutes === minutes ? 'primary' : 'secondary'}
-              aria-label={`提前 ${COUNT('minute', minutes)}`}
+              aria-label={remindersCopy.leadAria(minutes)}
               disabled={!settings.classReminderEnabled}
               onClick={() => void onPatch({ classReminderMinutes: minutes })}
             >
-              {COUNT('minute', minutes)}
+              {remindersCopy.leadOption(minutes)}
             </Button>
           ))}
           <Input
@@ -158,7 +170,7 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
             min={1}
             max={180}
             className="w-24"
-            aria-label="自定义提前分钟"
+            aria-label={remindersCopy.leadCustomAria}
             disabled={!settings.classReminderEnabled}
             value={String(settings.classReminderMinutes)}
             onChange={(event) => {
@@ -172,14 +184,15 @@ export function RemindersCard({ settings, onPatch, reminders, notify }: Reminder
       </Field>
       <QuietHoursField value={settings.quietHours} onChange={(quietHours) => onPatch({ quietHours })} />
       <span className="text-xs text-muted">
-        接下来 7 天待提醒 {COUNT('reminder', reminders.upcoming.length)}
-        {next !== undefined && ` · 最近 ${formatDateTime(next.triggerAt, settings.timeZone)} ${next.title}`}
+        {remindersCopy.upcoming(
+          reminders.upcoming.length,
+          next === undefined
+            ? undefined
+            : { time: formatDateTime(next.triggerAt, settings.timeZone), title: next.title },
+        )}
       </span>
       {(androidApp || isDesktopApp()) && (
-        <span className="text-xs text-muted" data-role="reminder-actions">
-          {androidApp ? '通知动作' : '托盘提醒动作'}：{ACTION_LABEL.snooze} · {ACTION_LABEL.mute}
-          ；待办/作业/考试/实验另有「{ACTION_LABEL.done}」；课前提醒没有「{ACTION_LABEL.done}」
-        </span>
+        <HelpLink entryId="notify-actions" />
       )}
     </>
   );

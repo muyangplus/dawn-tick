@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppSettings } from '@dawn-tick/core';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { logInfo, logWarn } from '../../log.ts';
-import { fail } from '../../copy/common.ts';
+import { updateSettingsCopy } from '../../copy/update-settings.ts';
 import { useAction } from '../../lib/action.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
@@ -94,10 +94,10 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
   async function run(): Promise<void> {
     await action.run({
       scope: 'update',
-      label: '正在检查更新…',
+      label: updateSettingsCopy.checkingLabel,
       log: '更新检查失败',
       logLevel: 'warn',
-      fail: { what: '检查更新', next: '请稍后再试' },
+      fail: updateSettingsCopy.checkFailed,
       task: async () => {
         // 手动检查前先确保有源：自动模式命中缓存时不会额外发请求
         const resolved = await resolveNow(false);
@@ -111,7 +111,7 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
           fallback: true,
         });
         if (status.error !== null) {
-          const message = fail('检查更新', status.error, '请稍后再试');
+          const message = updateSettingsCopy.checkFailedText(status.error);
           setResult(said(message));
           toast.error(message);
           logWarn('update', '更新检查失败', { error: status.error, feed: status.feed, source: status.source });
@@ -120,18 +120,19 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
         const manifest = status.manifest;
         const channelLabel = CHANNEL_LABEL[releaseChannelOf(status)];
         const sourceLabel = DOWNLOAD_SOURCE_LABEL[status.source];
-        const fallbackNote =
-          status.fallbackFrom === undefined
-            ? ''
-            : `；${DOWNLOAD_SOURCE_LABEL[status.fallbackFrom]} 不可用，已回退`;
+        const sourceNote = updateSettingsCopy.checkSource(
+          channelLabel,
+          sourceLabel,
+          status.fallbackFrom === undefined ? undefined : DOWNLOAD_SOURCE_LABEL[status.fallbackFrom],
+        );
         // 查到正式版就记住它的版本号：正式版渠道据此判断是否存在「当前比正式版高」的回滚场景
         if (manifest?.channel === 'release') setLatestStable(manifest.version);
         const ignored = isIgnoredVersion(status.latest, currentIgnoredVersion());
         const message = status.available
           ? ignored
-            ? `发现新版本 ${status.latest}（${channelLabel}，来源 ${sourceLabel}${fallbackNote}）；已忽略此版本，可在更新弹窗里取消忽略`
-            : `发现新版本 ${status.latest}（${channelLabel}，来源 ${sourceLabel}${fallbackNote}），可在更新弹窗里下载安装`
-          : `已是最新版本（${channelLabel}，来源 ${sourceLabel}${fallbackNote}）`;
+            ? updateSettingsCopy.checkFoundIgnored(status.latest, sourceNote)
+            : updateSettingsCopy.checkFound(status.latest, sourceNote)
+          : updateSettingsCopy.checkLatest(sourceNote);
         setResult(said(message));
         toast.success(message);
         // 手动检查与启动自检共用同一个更新弹窗：只在本版本严格更高时打开（忽略的版本也打开）

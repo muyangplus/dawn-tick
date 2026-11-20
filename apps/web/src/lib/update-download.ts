@@ -14,6 +14,7 @@ import {
   type UpdateDownloadState,
   type UpdateEvent,
 } from './update-download-state.ts';
+import { updateTaskCopy } from '../copy/update-task.ts';
 
 /**
  * 自动更新（I-03）的下载、校验与安装流程；状态机在 `update-download-state.ts`，
@@ -137,7 +138,7 @@ async function runUpdateFlow(
   };
 
   const { plan, host, signal } = options;
-  if (plan.kind === 'refresh') return emit({ type: 'done', message: '新版本已发布，刷新页面后生效' });
+  if (plan.kind === 'refresh') return emit({ type: 'done', message: updateTaskCopy.refreshToApply });
   if (plan.kind === 'unavailable') return emit({ type: 'fail', error: plan.reason });
 
   emit({ type: 'start' });
@@ -157,10 +158,10 @@ async function runUpdateFlow(
     });
     emit({ type: 'verify' });
     const expected = await expectedDigest(plan.target, host, signal);
-    if (expected === null) throw new Error('这次发布没有提供校验文件，已停止安装');
+    if (expected === null) throw new Error(updateTaskCopy.noChecksum);
     const actual = await sha256Hex(bytes);
     if (!digestMatches(actual, expected)) {
-      throw new Error(`安装包校验失败（应为 ${shortened(expected)}，实际 ${shortened(actual)}）`);
+      throw new Error(updateTaskCopy.checksumMismatch(shortened(expected), shortened(actual)));
     }
     emit({ type: 'install' });
     const path = await host.write(plan.target.fileName, bytes);
@@ -169,44 +170,43 @@ async function runUpdateFlow(
         type: 'done',
         path,
         message:
-          plan.target.kind === 'portable'
-            ? '便携包已下载并通过校验，可以更新了'
-            : '安装包已下载并通过校验，可以安装了',
+          plan.target.kind === 'portable' ? updateTaskCopy.portableReady : updateTaskCopy.installerReady,
       });
     }
     if (plan.target.kind === 'portable') {
       if (host.installPortable === undefined) {
-        throw new Error('当前平台不支持便携版自动替换，请到发布页手动下载');
+        throw new Error(updateTaskCopy.portableUnsupported);
       }
       await host.installPortable(path);
       return emit({
         type: 'done',
         path,
-        message: '更新已准备，应用将退出并自动替换，随后重新启动',
+        message: updateTaskCopy.portableApplying,
       });
     }
     const outcome = await host.install(path);
     if (outcome.needsPermission) {
       return emit({
         type: 'fail',
-        error: '已跳转系统设置，请允许安装未知应用后重试',
+        error: updateTaskCopy.needsInstallPermission,
         needsPermission: true,
         path,
       });
     }
-    return emit({ type: 'done', path, message: '安装程序已启动，请按提示完成安装' });
+    return emit({ type: 'done', path, message: updateTaskCopy.installerLaunched });
   } catch (cause: unknown) {
     if (isCancelled(signal)) return emit({ type: 'cancel' });
-    return emit({ type: 'fail', error: errorMessage(cause, '下载更新失败') });
+    return emit({ type: 'fail', error: errorMessage(cause, updateTaskCopy.downloadFailed) });
   }
 }
 
 /** 进度文案：`已下载 12.3 MB / 45.0 MB（27%）`；总长未知时省略总量与百分比。 */
 export function formatByteProgress(received: number, total: number | null, percent: number | null): string {
-  const receivedText = formatBytes(received);
-  const totalText = total === null ? '' : ` / ${formatBytes(total)}`;
-  const percentText = percent === null ? '' : `（${Math.round(percent * 100)}%）`;
-  return `已下载 ${receivedText}${totalText}${percentText}`;
+  return updateTaskCopy.byteProgress(
+    formatBytes(received),
+    total === null ? null : formatBytes(total),
+    percent === null ? null : Math.round(percent * 100),
+  );
 }
 
 export function formatDownloadProgress(state: UpdateDownloadState): string {
@@ -216,19 +216,19 @@ export function formatDownloadProgress(state: UpdateDownloadState): string {
 
 /** 进度明细：`速度 4.2 MB/s · 剩余 12 秒`；速度/剩余都算不出来时返回空串。 */
 export function formatDownloadDetail(progress: DownloadProgress): string {
-  const parts: string[] = [];
-  if (progress.speedBytesPerSec !== null) parts.push(`速度 ${formatBytes(progress.speedBytesPerSec)}/s`);
-  if (progress.etaSeconds !== null) parts.push(`剩余 ${formatEta(progress.etaSeconds)}`);
-  return parts.join(' · ');
+  return updateTaskCopy.downloadDetail(
+    progress.speedBytesPerSec === null ? null : formatBytes(progress.speedBytesPerSec),
+    progress.etaSeconds === null ? null : formatEta(progress.etaSeconds),
+  );
 }
 
 /** 剩余时间按人读的粒度取整：不到 1 分钟说秒，超过 1 小时说小时+分钟。 */
 export function formatEta(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return '不足 1 秒';
-  if (seconds < 60) return `${Math.ceil(seconds)} 秒`;
+  if (!Number.isFinite(seconds) || seconds <= 0) return updateTaskCopy.etaUnderSecond;
+  if (seconds < 60) return updateTaskCopy.etaSeconds(Math.ceil(seconds));
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分 ${Math.round(seconds % 60)} 秒`;
-  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+  if (minutes < 60) return updateTaskCopy.etaMinutes(minutes, Math.round(seconds % 60));
+  return updateTaskCopy.etaHours(Math.floor(minutes / 60), minutes % 60);
 }
 
 function formatBytes(bytes: number): string {

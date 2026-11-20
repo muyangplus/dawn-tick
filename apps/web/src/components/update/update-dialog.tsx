@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { releaseChannelOf } from '../../update.ts';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
-import { fail } from '../../copy/common.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';
@@ -92,7 +92,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
 
   async function copyDownloadLink(): Promise<void> {
     const copied = await copyText(downloadUrl);
-    toast[copied ? 'success' : 'error'](copied ? '已复制下载链接' : '复制失败，请手动选中链接复制');
+    toast[copied ? 'success' : 'error'](copied ? updateDialogCopy.linkCopied : updateDialogCopy.copyFailed);
   }
 
   async function openReleasePage(): Promise<void> {
@@ -100,8 +100,8 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     setOpening(true);
     try {
       const opened = await openReleasePageOnce(RELEASES_URL);
-      if (opened) toast.success('已在默认浏览器打开发布页');
-      else toast.info('打开浏览器失败，请改用「更多 → 复制下载链接」');
+      if (opened) toast.success(updateDialogCopy.releaseOpened);
+      else toast.info(updateDialogCopy.browserFailed);
     } finally {
       setOpening(false);
     }
@@ -110,20 +110,20 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
   /** 结束后的提示：成功给可读结果，失败给原因，取消只提示不报错。 */
   function announce(final: UpdateTask): void {
     if (final.installed) {
-      toast.success(final.message ?? '安装程序已启动，请按提示完成安装');
+      toast.success(final.message ?? updateDialogCopy.installerLaunched);
       if (final.target?.platform === 'web') globalThis.location?.reload();
       return;
     }
     if (final.status === 'failed') {
-      if (final.needsPermission) toast.info(final.error ?? '请允许安装未知应用后重试');
-      else toast.error(fail(final.target?.kind === 'portable' ? '准备便携版更新' : '下载更新', final.error, '请稍后重试'));
+      if (final.needsPermission) toast.info(final.error ?? updateDialogCopy.allowUnknownApps);
+      else toast.error(updateDialogCopy.prepareFailed(final.target?.kind === 'portable', final.error));
       return;
     }
     if (final.status === 'cancelled') {
-      toast.info('已取消下载');
+      toast.info(updateDialogCopy.cancelled);
       return;
     }
-    if (final.status === 'ready') toast.success(final.message ?? '更新已就绪');
+    if (final.status === 'ready') toast.success(final.message ?? updateDialogCopy.updateReady);
   }
 
   /** 主操作：下载 → 校验 → 自动安装，默认路径一次点击完成。 */
@@ -138,7 +138,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
       );
       announce(final);
     } catch (cause: unknown) {
-      toast.error(fail('更新', errorMessage(cause), '请稍后重试'));
+      toast.error(updateDialogCopy.updateFailed(errorMessage(cause)));
     } finally {
       setInstalling(false);
       setStarting(false);
@@ -165,7 +165,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     }
     const opened = await openExternalUrl(webAssetUrl);
     toast[opened ? 'success' : 'error'](
-      opened ? '已开始下载 Web 版安装包' : '打开下载地址失败，请用「更多 → 复制下载链接」',
+      opened ? updateDialogCopy.webDownloadStarted : updateDialogCopy.webDownloadFailed,
     );
   }
 
@@ -207,7 +207,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     if (status !== null && matchedTask === null) {
       void startBackgroundUpdate(status.manifest, { source: status.source });
     }
-    toast.info('已转到后台下载，可在设备页查看进度');
+    toast.info(updateDialogCopy.backgrounded);
     onClose();
   }
 
@@ -217,7 +217,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
       await run();
       toast.success(ok);
     } catch (cause: unknown) {
-      toast.error(fail(what, errorMessage(cause), '请稍后再试'));
+      toast.error(updateDialogCopy.ignoreFailed(what, errorMessage(cause)));
     }
   }
 
@@ -226,7 +226,7 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     if (info === null || ignoring) return;
     setIgnoring(true);
     try {
-      await changeIgnored(info.ignore, '已忽略该版本，不再自动提示', '忽略版本');
+      await changeIgnored(info.ignore, updateDialogCopy.ignored, updateDialogCopy.ignoreWhat);
     } finally {
       setIgnoring(false);
     }
@@ -234,7 +234,9 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
 
   /** 取消忽略：弹窗保持打开，界面同步回到「可更新」状态。 */
   const unignoreVersion = (): Promise<void> =>
-    info === null ? Promise.resolve() : changeIgnored(info.unignore, '已取消忽略，下次检查会再提示', '取消忽略');
+    info === null
+      ? Promise.resolve()
+      : changeIgnored(info.unignore, updateDialogCopy.unignored, updateDialogCopy.unignoreWhat);
 
   return (
     <Dialog
@@ -245,18 +247,17 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
     >
       <DialogContent
         data-role="update-dialog"
-        title={`发现新版本 ${status?.latest ?? ''}`}
-        description={`发布渠道 ${CHANNEL_LABEL[channel]} · 当前版本 ${appVersion()}`}
+        title={updateDialogCopy.title(status?.latest ?? '')}
+        description={updateDialogCopy.description(CHANNEL_LABEL[channel], appVersion())}
       >
         <div className="flex flex-wrap items-baseline gap-2 text-xs text-muted" data-role="update-header">
           <span className="font-medium text-ink">{latest ?? ''}</span>
           <span>{CHANNEL_LABEL[channel]}</span>
           <span aria-hidden>←</span>
-          <span>当前 {appVersion()}</span>
+          <span>{updateDialogCopy.current(appVersion())}</span>
           {sourceLabel !== null && (
             <span data-role="update-source">
-              下载源 {sourceLabel}
-              {fallbackLabel === null ? '' : `（${fallbackLabel} 不可用，已回退）`}
+              {updateDialogCopy.source(sourceLabel, fallbackLabel)}
             </span>
           )}
           <UpdateInstallKindLine platform={platform} />
@@ -267,19 +268,19 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
             className="text-xs text-primary-strong underline underline-offset-2"
             onClick={() => void openReleasePage()}
           >
-            详细说明
+            {updateDialogCopy.notesLink}
           </button>
         </div>
         {view.showProgress && <UpdateProgress progress={matchedTask?.progress ?? null} />}
         <UpdateNotes source={notes} />
         {ignored && (
           <p className="text-xs text-muted" data-role="update-ignored">
-            已忽略此版本，可在这里取消忽略
+            {updateDialogCopy.ignoredNote}
           </p>
         )}
         {plan.kind === 'unavailable' && (
           <p className="text-xs text-muted" data-role="update-unavailable">
-            {fail('自动更新', plan.reason, '请到发布页下载')}
+            {updateDialogCopy.unavailable(plan.reason)}
           </p>
         )}
         {view.statusText !== '' && (
@@ -293,12 +294,12 @@ export function UpdateDialog({ info, onClose }: UpdateDialogProps) {
         <DialogFooter>
           {view.showCancel && (
             <Button variant="ghost" size="sm" data-role="update-cancel" onClick={cancelUpdateTask}>
-              取消
+              {updateDialogCopy.cancel}
             </Button>
           )}
           {view.showLater && (
             <Button variant="ghost" onClick={onClose}>
-              稍后
+              {updateDialogCopy.later}
             </Button>
           )}
           {view.showMore && (

@@ -27,6 +27,7 @@ import { TimetableCard } from './settings/timetable-card.tsx';
 import { WidgetCard } from './settings/widget-card.tsx';
 import { summarizeSettings } from './settings-group-summaries.ts';
 import { useNotifyPermission } from './settings/use-notify-permission.ts';
+import { settingsPageCopy } from '../copy/settings-page.ts';
 
 export interface SettingsViewProps {
   storage: Storage;
@@ -86,7 +87,7 @@ export function SettingsView({
   const groups: SettingsGroup[] = [
     {
       id: 'semesters',
-      title: '学期设置',
+      title: settingsPageCopy.groups.semesters,
       summary: summaries.semesters,
       icon: BadgeCheck,
       content: (
@@ -107,7 +108,7 @@ export function SettingsView({
     },
     {
       id: 'reminders',
-      title: '提醒设置',
+      title: settingsPageCopy.groups.reminders,
       summary: summaries.reminders,
       icon: Bell,
       content: (
@@ -118,7 +119,7 @@ export function SettingsView({
     },
     {
       id: 'appearance',
-      title: '外观与动效',
+      title: settingsPageCopy.groups.appearance,
       summary: summaries.appearance,
       icon: Palette,
       content: (
@@ -129,7 +130,7 @@ export function SettingsView({
     },
     {
       id: 'timetable',
-      title: '课表显示',
+      title: settingsPageCopy.groups.timetable,
       summary: summaries.timetable,
       icon: CalendarDays,
       content: (
@@ -140,7 +141,7 @@ export function SettingsView({
     },
     {
       id: 'slots',
-      title: '作息与选校',
+      title: settingsPageCopy.groups.slots,
       summary: summaries.slots,
       icon: CalendarClock,
       content: (
@@ -151,7 +152,7 @@ export function SettingsView({
     },
     {
       id: 'widget',
-      title: '悬浮窗与小组件',
+      title: settingsPageCopy.groups.widget,
       summary: summaries.widget,
       icon: MonitorSmartphone,
       content: (
@@ -162,7 +163,7 @@ export function SettingsView({
     },
     {
       id: 'time',
-      title: '时间与日程',
+      title: settingsPageCopy.groups.time,
       summary: summaries.time,
       icon: Clock,
       content: (
@@ -182,7 +183,7 @@ export function SettingsView({
           data-role="notify-banner"
           className="flex flex-wrap items-center gap-2 rounded-md border border-danger-strong/40 bg-danger-strong/10 px-3 py-2 text-xs text-danger-strong"
         >
-          <span className="min-w-0 break-words">通知未授权，课前提醒不会弹出</span>
+          <span className="min-w-0 break-words">{settingsPageCopy.notifyBanner}</span>
           <Button
             size="sm"
             variant="secondary"
@@ -196,20 +197,23 @@ export function SettingsView({
       {/* 设置页只留偏好类入口；导出 / 恢复快照 / 检查更新都归「设备与同步」 */}
       <div className="flex flex-wrap items-center gap-2" data-role="settings-actions">
         <Button size="sm" variant="primary" onClick={() => setImportDrawerOpen(true)}>
-          导入课表
+          {settingsPageCopy.importButton}
         </Button>
       </div>
 
       <GroupedSettings
-        pageTitle="设置"
-        ariaLabel="设置分组"
+        pageTitle={settingsPageCopy.pageTitle}
+        ariaLabel={settingsPageCopy.groupsAriaLabel}
         groups={groups}
         openRequest={openGroupRequest}
         extraNav={onOpenHelp === undefined ? undefined : <HelpNavItem onOpenHelp={onOpenHelp} />}
       />
 
       <Dialog open={importDrawerOpen} onOpenChange={setImportDrawerOpen}>
-        <DialogContent title="导入课表" description="网页课表 / 教务窗口 / ICS / CSV / Excel">
+        <DialogContent
+          title={settingsPageCopy.importDialogTitle}
+          description={settingsPageCopy.importDialogDescription}
+        >
           <ImportFlow
             storage={storage}
             semesterId={activeSemesterId ?? ''}
