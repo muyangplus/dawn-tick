@@ -3,6 +3,7 @@ import { Field, Input } from '../../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../../components/ui/controls.tsx';
 import type { EventFormKind } from '../todo-form-model.ts';
 import { KIND_LABEL, type TodoSectionProps } from './section-props.ts';
+import { todoFormCopy } from '../../copy/todo-form.ts';
 
 interface BasicFieldsProps extends TodoSectionProps {
   courses: ReadonlyArray<{ id: string; name: string }>;
@@ -14,17 +15,16 @@ export function TodoBasicFields({ form, update, courses, onChangeKind }: BasicFi
   const { kind: current, title, courseId } = form;
   const isExam = current === 'exam';
   const isLab = current === 'lab';
-  const isHomework = current === 'homework';
   return (
     <>
-      <Field label="类型">
+      <Field label={todoFormCopy.typeLabel}>
         <div className="flex flex-wrap gap-2">
           {(['todo', 'homework', 'exam', 'lab'] as const).map((item) => (
             <Button
               key={item}
               size="sm"
               variant={current === item ? 'primary' : 'secondary'}
-              aria-label={`待办类型：${KIND_LABEL[item]}`}
+              aria-label={todoFormCopy.typeButton(KIND_LABEL[item])}
               aria-pressed={current === item}
               onClick={() => onChangeKind(item)}
             >
@@ -33,21 +33,21 @@ export function TodoBasicFields({ form, update, courses, onChangeKind }: BasicFi
           ))}
         </div>
       </Field>
-      <Field label={isExam ? '考试名称' : isLab ? '实验名称' : isHomework ? '作业名称' : '标题'}>
+      <Field label={todoFormCopy.titleLabel[current]}>
         <Input
           value={title}
-          aria-label={isExam ? '考试名称' : isLab ? '实验名称' : isHomework ? '作业名称' : '标题'}
+          aria-label={todoFormCopy.titleLabel[current]}
           onChange={(event) => update({ title: event.target.value })}
         />
       </Field>
       {!isExam && (
-        <Field label="关联课程（可选）" hint={isLab ? '实验会挂在课的同一列里展示' : '关联后归入该课程'}>
+        <Field label={todoFormCopy.courseLabel} {...(isLab ? { hint: todoFormCopy.courseHintLab } : {})}>
           <Select value={courseId} onValueChange={(value) => update({ courseId: value })}>
-            <SelectTrigger aria-label="关联课程">
-              {courses.find((item) => item.id === courseId)?.name ?? '不关联'}
+            <SelectTrigger aria-label={todoFormCopy.courseAria}>
+              {courses.find((item) => item.id === courseId)?.name ?? todoFormCopy.noCourse}
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">不关联</SelectItem>
+              <SelectItem value="">{todoFormCopy.noCourse}</SelectItem>
               {courses.map((item) => (
                 <SelectItem key={item.id} value={item.id}>
                   {item.name}

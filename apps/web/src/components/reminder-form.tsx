@@ -7,6 +7,7 @@ import { SwitchField } from './ui/controls.tsx';
 import { Input, Label } from './ui/input.tsx';
 import { useAction } from '../lib/action.ts';
 import { cn } from '../lib/cn.ts';
+import { courseReminderCopy } from '../copy/home-reminder.ts';
 
 const PRESETS = [5, 10, 15, 20, 30];
 
@@ -58,9 +59,9 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
   async function save(): Promise<void> {
     await run({
       scope: 'reminder',
-      label: '正在保存提醒…',
-      ok: `已设置课前 ${advance} 分钟提醒`,
-      fail: { what: '保存提醒失败', next: '请重试；仍失败请重新打开课程详情。' },
+      label: courseReminderCopy.saving,
+      ok: courseReminderCopy.saved(advance),
+      fail: { what: courseReminderCopy.saveFailed, next: courseReminderCopy.retryNext },
       task: async () => {
         await setReminder(storage, {
           userId,
@@ -81,14 +82,14 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
     if (reminderId === null) return;
     await run({
       scope: 'reminder',
-      label: '正在删除提醒…',
-      ok: '已删除提醒',
-      fail: { what: '删除提醒失败', next: '请重试；仍失败请重新打开课程详情。' },
+      label: courseReminderCopy.deleting,
+      ok: courseReminderCopy.deleted,
+      fail: { what: courseReminderCopy.deleteFailed, next: courseReminderCopy.retryNext },
       confirm: () =>
         confirmAction({
-          title: '删除提醒',
-          description: '将删除这节课的课前提醒，不可撤销',
-          confirmLabel: '确认删除',
+          title: courseReminderCopy.deleteConfirmTitle,
+          description: courseReminderCopy.deleteConfirmDescription,
+          confirmLabel: courseReminderCopy.deleteConfirmButton,
         }),
       task: async () => {
         await deleteReminder(storage, reminderId);
@@ -101,18 +102,18 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
   return (
     <section className="flex flex-col gap-3" data-role="reminder-section" aria-labelledby="reminder-section-title">
       <span id="reminder-section-title" className="text-sm font-medium text-ink">
-        课前提醒
+        {courseReminderCopy.sectionTitle}
       </span>
       <SwitchField
-        label="使用全局配置"
+        label={courseReminderCopy.useGlobalLabel}
         icon={BellRing}
-        description={useGlobal ? '跟随全局设置' : '本课程单独设置'}
+        description={useGlobal ? undefined : courseReminderCopy.customDescription}
         checked={useGlobal}
         onCheckedChange={(checked) => {
           setUseGlobal(checked);
           if (checked && reminderId !== null) void remove();
         }}
-        ariaLabel="使用全局配置"
+        ariaLabel={courseReminderCopy.useGlobalLabel}
       />
       {!useGlobal && (
         <>
@@ -128,7 +129,7 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
                   setAdvance(minutes);
                 }}
               >
-                {minutes} 分钟
+                {courseReminderCopy.presetButton(minutes)}
               </Button>
             ))}
             <Button
@@ -137,13 +138,13 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
               aria-pressed={custom}
               onClick={() => setCustom(true)}
             >
-              自定义
+              {courseReminderCopy.customButton}
             </Button>
           </div>
 
           {custom && (
             <div className="flex items-center gap-2">
-              <Label htmlFor="advance-minutes">提前分钟</Label>
+              <Label htmlFor="advance-minutes">{courseReminderCopy.advanceLabel}</Label>
               <Input
                 id="advance-minutes"
                 type="number"
@@ -163,7 +164,7 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
               checked={skipHolidays}
               onChange={(event) => setSkipHolidays(event.target.checked)}
             />
-            放假当天不提醒
+            {courseReminderCopy.skipHolidays}
           </label>
           <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
             <input
@@ -172,17 +173,17 @@ export function ReminderForm({ storage, userId, courseId, onChanged }: ReminderF
               checked={snooze}
               onChange={(event) => setSnooze(event.target.checked)}
             />
-            允许贪睡 5 分钟
+            {courseReminderCopy.snooze}
           </label>
 
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="primary" loading={busy} onClick={() => void save()}>
-              保存提醒
+              {courseReminderCopy.saveButton}
             </Button>
             {reminderId !== null && (
               <Button variant="ghost" loading={busy} onClick={() => void remove()}>
                 <Trash2 className="size-4" aria-hidden />
-                删除提醒
+                {courseReminderCopy.deleteButton}
               </Button>
             )}
           </div>

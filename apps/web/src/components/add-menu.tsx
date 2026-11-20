@@ -11,6 +11,7 @@ import {
 import { Button } from './ui/button.tsx';
 import { Sheet } from './ui/sheet.tsx';
 import { cn } from '../lib/cn.ts';
+import { addMenuCopy } from '../copy/home-add-menu.ts';
 
 /** 统一「＋」菜单的四类新增动作：桌面工具栏、移动 FAB、日程页「添加」菜单共用同一份定义。 */
 export type AddActionId = 'course' | 'todo' | 'exam' | 'import';
@@ -23,10 +24,10 @@ export interface AddActionItem {
 
 /** 动作顺序即菜单顺序：课程 → 待办 → 考试 → 导入。 */
 export const ADD_ACTIONS: readonly AddActionItem[] = [
-  { id: 'course', label: '加课程', icon: BookPlus },
-  { id: 'todo', label: '加待办', icon: ListChecks },
-  { id: 'exam', label: '加考试', icon: GraduationCap },
-  { id: 'import', label: '导入课表', icon: FileInput },
+  { id: 'course', label: addMenuCopy.actions.course, icon: BookPlus },
+  { id: 'todo', label: addMenuCopy.actions.todo, icon: ListChecks },
+  { id: 'exam', label: addMenuCopy.actions.exam, icon: GraduationCap },
+  { id: 'import', label: addMenuCopy.actions.import, icon: FileInput },
 ];
 
 /** 四个动作的具体实现由 App 提供：菜单只做动作派发，不内嵌表单。 */
@@ -80,7 +81,7 @@ export function AddMenuButton({ actions }: { actions: AddActionHandlers }) {
   return (
     <details ref={root} data-role="add-menu" className="relative">
       <summary
-        aria-label="添加"
+        aria-label={addMenuCopy.menuLabel}
         className={cn(
           'dt-btn-motion inline-flex min-h-tap cursor-pointer list-none items-center justify-center gap-1 rounded-md bg-primary px-3 text-sm font-medium text-on-primary',
           'hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-2 focus-visible:ring-offset-page',
@@ -88,12 +89,12 @@ export function AddMenuButton({ actions }: { actions: AddActionHandlers }) {
         )}
       >
         <Plus className="size-4" aria-hidden />
-        添加
+        {addMenuCopy.menuLabel}
         <ChevronDown className="size-3.5" aria-hidden />
       </summary>
       <div
         role="menu"
-        aria-label="添加"
+        aria-label={addMenuCopy.menuLabel}
         className="dt-menu-in absolute right-0 z-30 mt-1 flex w-44 flex-col gap-1 rounded-md border border-line bg-surface p-1 shadow-md"
       >
         {ADD_ACTIONS.map(({ id, label, icon: Icon }) => (
@@ -124,13 +125,13 @@ export function AddFab({ actions }: { actions: AddActionHandlers }) {
     <>
       <button
         type="button"
-        aria-label="添加"
+        aria-label={addMenuCopy.menuLabel}
         onClick={() => setOpen(true)}
         className="fixed bottom-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom)+var(--spacing-2))] right-4 z-30 flex size-14 items-center justify-center rounded-full bg-primary text-on-primary shadow-lg"
       >
         <Plus className="size-6" aria-hidden />
       </button>
-      <Sheet open={open} onOpenChange={setOpen} side="bottom" title="添加" description="加课程、待办、考试或导入课表">
+      <Sheet open={open} onOpenChange={setOpen} side="bottom" title={addMenuCopy.menuLabel}>
         <div className="flex flex-col gap-2" data-role="add-actions">
           {ADD_ACTIONS.map(({ id, label, icon: Icon }) => (
             <Button

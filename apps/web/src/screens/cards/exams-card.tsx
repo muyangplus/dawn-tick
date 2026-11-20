@@ -8,12 +8,13 @@ import { cn } from '../../lib/cn.ts';
 import { formatDayCountdown } from '../../lib/format.ts';
 import { useNowTick } from '../../lib/use-now.ts';
 import { defineCard, type ScheduleCardContext } from './registry.ts';
+import { countdownCopy } from '../../copy/home-countdown.ts';
 
 /** 侧列：倒计时（上半开学/假期徽标，下半逐条作业与考试倒计时） */
 export const examsCard = defineCard({
   id: 'exams',
   scope: 'schedule',
-  title: '倒计时',
+  title: countdownCopy.cardTitle,
   defaultZone: 'side',
   defaultOrder: 2,
   defaultVisible: true,
@@ -40,7 +41,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
         key="semester"
         className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
       >
-        距开学还有 {semesterDays} 天
+        {countdownCopy.untilSemester(semesterDays)}
       </span>,
     );
   }
@@ -50,13 +51,13 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
         key="holiday"
         className="flex min-h-tap items-center rounded-md border border-line bg-surface px-3 text-xs text-ink"
       >
-        距{data.holidayLabels.get(nextHolidayDate)}还有 {daysUntil(nextHolidayDate)} 天
+        {countdownCopy.untilHoliday(data.holidayLabels.get(nextHolidayDate) ?? '', daysUntil(nextHolidayDate))}
       </span>,
     );
   }
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-sm font-semibold text-ink">倒计时</span>
+      <span className="text-sm font-semibold text-ink">{countdownCopy.cardTitle}</span>
       {/* 徽标区与条目区固定分区：徽标有没有都不影响条目区，空条目区始终给主行动 */}
       <div className="flex flex-wrap gap-2" data-role="countdown-badges">
         {badges}
@@ -65,11 +66,11 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
         {rows.length === 0 ? (
           <EmptyState
             icon={GraduationCap}
-            title="暂无倒计时条目"
-            description="打开「开启倒计时」显示剩余天数"
+            title={countdownCopy.emptyTitle}
+            description={countdownCopy.emptyDescription}
             action={
-              <Button size="sm" variant="secondary" aria-label="加考试" onClick={onAddExam}>
-                加考试
+              <Button size="sm" variant="secondary" aria-label={countdownCopy.addExamButton} onClick={onAddExam}>
+                {countdownCopy.addExamButton}
               </Button>
             }
           />
@@ -80,7 +81,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                 <button
                   type="button"
                   data-role="countdown-row"
-                  aria-label={`编辑日程：${row.title}`}
+                  aria-label={countdownCopy.editEvent(row.title)}
                   className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-md p-3 text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
                   onClick={() => onOpenEvent(row)}
                 >
@@ -90,7 +91,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                         className="shrink-0 rounded-full border border-line bg-surface-muted px-1.5 py-0.5 text-[10px] leading-none text-muted"
                         data-role="countdown-type"
                       >
-                        {COUNTDOWN_TYPE_LABEL[row.type] ?? '日程'}
+                        {COUNTDOWN_TYPE_LABEL[row.type] ?? countdownCopy.typeFallback}
                       </span>
                       <span className={cn('truncate text-sm font-medium text-ink', row.done === 1 && 'line-through opacity-60')}>
                         {row.title}
@@ -101,7 +102,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                         row.subject === null ? null : courseNameOf(data, row.subject),
                         row.on_date ?? (row.start_at === null ? null : formatDate(row.start_at, data.timeZone)),
                         row.location,
-                        row.seat_no === null ? null : `座位 ${row.seat_no}`,
+                        row.seat_no === null ? null : countdownCopy.seat(row.seat_no),
                       ]
                         .filter((item) => item !== null && item !== undefined && item !== '')
                         .join(' · ')}
@@ -120,7 +121,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
                     type="checkbox"
                     className="size-4"
                     checked={row.done === 1}
-                    aria-label={`标记完成：${row.title}`}
+                    aria-label={countdownCopy.markDone(row.title)}
                     onChange={(event) => {
                       event.stopPropagation();
                       void ctx.actions.setDone(row, event.target.checked);
@@ -137,13 +138,7 @@ function CountdownCardBody({ ctx }: { ctx: Extract<ScheduleCardContext, { scope:
 }
 
 /** 倒计时条目的类型文案。 */
-const COUNTDOWN_TYPE_LABEL: Record<string, string> = {
-  homework: '作业',
-  exam: '考试',
-  lab: '实验',
-  todo: '日程',
-  temp: '日程',
-};
+const COUNTDOWN_TYPE_LABEL: Record<string, string> = countdownCopy.type;
 
 /** 条目关联的课程名。 */
 function courseNameOf(data: ScheduleCardContext['data'], courseId: string): string | null {

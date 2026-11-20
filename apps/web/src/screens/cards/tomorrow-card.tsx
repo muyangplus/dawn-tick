@@ -3,12 +3,13 @@ import { addDays } from '@dawn-tick/core';
 import { Button } from '../../components/ui/button.tsx';
 import { defineCard } from './registry.ts';
 import { buildTimeline } from './timeline.ts';
+import { scheduleCopy } from '../../copy/home-schedule.ts';
 
 /** 侧列：明日预告 */
 export const tomorrowCard = defineCard({
   id: 'tomorrow',
   scope: 'schedule',
-  title: '明日预告',
+  title: scheduleCopy.tomorrowCardTitle,
   defaultZone: 'side',
   defaultOrder: 4,
   defaultVisible: true,
@@ -21,9 +22,9 @@ export const tomorrowCard = defineCard({
     return (
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-line bg-surface px-3 py-2">
         <CalendarClock className="size-4 text-muted" aria-hidden />
-        <span className="text-xs text-muted">明日预告：还有 {count} 项安排</span>
+        <span className="text-xs text-muted">{scheduleCopy.tomorrowPreview(count)}</span>
         <Button size="sm" variant="secondary" onClick={() => onViewDateChange(tomorrow)}>
-          看明天
+          {scheduleCopy.tomorrowButton}
         </Button>
       </div>
     );

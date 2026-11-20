@@ -28,6 +28,7 @@ import { applySchoolTimetable, loadPresetContext, type PresetContext, type Schoo
 import { readRecentSchool, writeRecentSchool } from '../school-recent.ts';
 import { useAction } from '../lib/action.ts';
 import { errorMessage } from '../lib/errors.ts';
+import { onboardingCopy } from '../copy/onboarding.ts';
 
 export interface OnboardingProps {
   storage: Storage;
@@ -37,7 +38,7 @@ export interface OnboardingProps {
 }
 
 /** 跳过引导时用的默认学期。 */
-const DEFAULT_SEMESTER_NAME = '我的学期';
+const DEFAULT_SEMESTER_NAME = onboardingCopy.defaultSemesterName;
 const DEFAULT_WEEKS = 20;
 
 export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProps) {
@@ -79,7 +80,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     setImportError(null);
     const { payload, extras, error: readError } = await readImportFile(file);
     if (payload === null) {
-      setImportError(readError ?? '读取备份文件失败');
+      setImportError(readError ?? onboardingCopy.readFailed);
       return;
     }
     setPending(payload);
@@ -109,13 +110,13 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     setImportError(null);
     const result = await run({
       scope: 'app',
-      label: '正在导入备份…',
-      fail: { what: '导入备份失败', next: '请检查备份文件后重试。' },
+      label: onboardingCopy.importing,
+      fail: { what: onboardingCopy.importFailed, next: onboardingCopy.importFailedNext },
       confirm: () =>
         confirmAction({
-          title: '覆盖现有数据',
-          description: '将覆盖设备上的现有数据，不可撤销',
-          confirmLabel: '确认覆盖',
+          title: onboardingCopy.overwriteTitle,
+          description: onboardingCopy.overwriteWarning,
+          confirmLabel: onboardingCopy.overwriteConfirmButton,
         }),
       task: async () => {
         const modules = presentModules(target);
@@ -129,7 +130,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
           modules,
           extras: pendingExtras,
         });
-        toast.success(`已导入 ${imported.imported} 条记录${imported.presets ? '，已恢复预设' : ''}`);
+        toast.success(onboardingCopy.imported(imported.imported, imported.presets));
         onDone();
       },
     });
@@ -146,7 +147,7 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
     setError(null);
     const result = await run({
       scope: 'app',
-      label: '正在创建学期…',
+      label: onboardingCopy.creating,
       task: async () => {
         const semester = await createSemester(storage, {
           userId,
@@ -160,13 +161,13 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
           await writeRecentSchool(storage, picked);
           try {
             const applied = await applySchoolTimetable(storage, String(semester['id']), picked);
-            toast.success(`已按 ${picked.name} 排好节次（${applied.periods} 节）`);
+            toast.success(onboardingCopy.schoolApplied(picked.name, applied.periods));
           } catch (cause: unknown) {
             // 套用作息失败不影响学期创建，用户可在作息设置里重来
-            setError(`学期已创建，但套用作息失败：${errorMessage(cause)}`);
+            setError(onboardingCopy.schoolApplyFailed(errorMessage(cause)));
           }
         } else {
-          toast.success('学期已创建');
+          toast.success(onboardingCopy.created);
         }
         onDone();
       },
@@ -196,20 +197,20 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
       <div className="my-auto w-full max-w-md">
         <Card className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
-            <CardTitle>欢迎使用晓刻 DawnTick</CardTitle>
-            <span className="text-xs text-muted">先创建学期；课表按周次计算</span>
+            <CardTitle>{onboardingCopy.title}</CardTitle>
+            <span className="text-xs text-muted">{onboardingCopy.subtitle}</span>
           </div>
-          <Field label="学期名称">
+          <Field label={onboardingCopy.nameLabel}>
             <Input
               value={name}
-              placeholder="2026-2027 第一学期"
+              placeholder={onboardingCopy.namePlaceholder}
               onChange={(event) => setName(event.target.value)}
             />
           </Field>
-          <Field label="开学日期" hint="该周记为第 1 周">
+          <Field label={onboardingCopy.startLabel} hint={onboardingCopy.startHint}>
             <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
           </Field>
-          <Field label="总周数">
+          <Field label={onboardingCopy.weeksLabel}>
             <Input
               type="number"
               min={1}
@@ -221,49 +222,47 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
           {error !== null && <InlineError>{error}</InlineError>}
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" loading={busy} onClick={() => void submit()}>
-              创建并开始
+              {onboardingCopy.createButton}
             </Button>
             <Button
               variant="secondary"
               onClick={() => setStartDate(addDays(weekStart(formatDate(Date.now(), timeZone)), 7))}
             >
-              下周一开学
+              {onboardingCopy.nextMondayButton}
             </Button>
             <Button
               variant="ghost"
-              aria-label="跳过引导"
+              aria-label={onboardingCopy.skipLabel}
               disabled={busy}
               onClick={() => void skip()}
             >
-              跳过，先用默认学期
+              {onboardingCopy.skipButton}
             </Button>
           </div>
           <span className="flex items-center gap-1 text-xs text-muted">
-            跳过会建一个「{DEFAULT_SEMESTER_NAME}」（本周一开学、{DEFAULT_WEEKS} 周）
-            <HelpHint label="跳过引导">使用内置默认作息，之后可在设置里修改</HelpHint>
+            {onboardingCopy.skipNote(DEFAULT_SEMESTER_NAME, DEFAULT_WEEKS)}
+            <HelpHint label={onboardingCopy.skipLabel}>{onboardingCopy.skipHelp}</HelpHint>
           </span>
 
           <details className="flex flex-col gap-2 border-t border-line pt-4" data-role="onboarding-advanced">
             <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
-              高级设置：按学校套用作息{school === null ? '' : `（已选 ${school.name}）`}
+              {onboardingCopy.advancedSummary(school?.name ?? null)}
             </summary>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <span className="text-xs text-muted" data-role="onboarding-school-picked">
-                {school === null
-                  ? '未选学校：作息可在设置里套用'
-                  : `已选：${school.name}`}
+                {school === null ? onboardingCopy.noSchool : onboardingCopy.pickedSchool(school.name)}
               </span>
               <Button
                 size="sm"
                 variant="secondary"
-                aria-label="选择学校"
+                aria-label={onboardingCopy.pickSchoolButton}
                 onClick={() => setSchoolOpen(true)}
               >
-                选择学校
+                {onboardingCopy.pickSchoolButton}
               </Button>
               {school !== null && (
-                <Button variant="ghost" size="sm" aria-label="取消选择学校" onClick={() => setSchool(null)}>
-                  取消选择
+                <Button variant="ghost" size="sm" aria-label={onboardingCopy.unpickSchoolLabel} onClick={() => setSchool(null)}>
+                  {onboardingCopy.unpickSchoolButton}
                 </Button>
               )}
             </div>
@@ -279,17 +278,16 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
           />
 
           <div className="flex flex-col gap-2 border-t border-line pt-4">
-            <span className="text-xs font-semibold text-ink">已有数据：直接导入</span>
-            <span className="text-xs text-muted">选择备份文件，或直接粘贴 JSON / Base64 文本</span>
+            <span className="text-xs font-semibold text-ink">{onboardingCopy.importTitle}</span>
             <span className="text-xs text-muted" data-role="onboarding-import-formats">
-              支持晓刻导出的 JSON、Base64 文本与整包 zip
+              {onboardingCopy.importFormats}
             </span>
             <input
               ref={fileRef}
               type="file"
               accept="application/json,text/plain,application/zip,.json,.txt,.zip"
               className="hidden"
-              aria-label="选择备份文件"
+              aria-label={onboardingCopy.pickFileButton}
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = '';
@@ -297,14 +295,14 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
               }}
             />
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" aria-label="选择备份文件" disabled={busy} onClick={() => fileRef.current?.click()}>
-                选择备份文件
+              <Button variant="secondary" aria-label={onboardingCopy.pickFileButton} disabled={busy} onClick={() => fileRef.current?.click()}>
+                {onboardingCopy.pickFileButton}
               </Button>
             </div>
             <textarea
               data-role="onboarding-import-text"
-              aria-label="备份文本"
-              placeholder="或在此粘贴 JSON / Base64 备份文本"
+              aria-label={onboardingCopy.textLabel}
+              placeholder={onboardingCopy.textPlaceholder}
               className="h-20 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
               value={importText}
               onChange={(event) => setImportText(event.target.value)}
@@ -312,33 +310,39 @@ export function Onboarding({ storage, userId, timeZone, onDone }: OnboardingProp
             <div className="flex flex-wrap items-center gap-2">
               <Button
                 variant="secondary"
-                aria-label="从文本导入"
+                aria-label={onboardingCopy.importTextButton}
                 disabled={busy || importText.trim().length === 0}
                 onClick={pickText}
               >
-                从文本导入
+                {onboardingCopy.importTextButton}
               </Button>
             </div>
             {pending !== null && (
               <>
                 <span className="text-xs text-muted">
-                  {summarizeBackup(pending)
-                    .map((item) => `${BACKUP_MODULE_LABEL[item.module]} ${item.rows}`)
-                    .join('、')}
+                  {onboardingCopy.list(
+                    summarizeBackup(pending).map((item) =>
+                      onboardingCopy.moduleRows(BACKUP_MODULE_LABEL[item.module], item.rows),
+                    ),
+                  )}
                 </span>
                 <InlineError data-role="onboarding-overwrite-hint">
-                  将覆盖设备上的现有数据，不可撤销
+                  {onboardingCopy.overwriteWarning}
                 </InlineError>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="primary" aria-label="确认导入" loading={busy} onClick={() => void applyImport()}>
-                    确认导入
+                  <Button variant="primary" aria-label={onboardingCopy.confirmImportButton} loading={busy} onClick={() => void applyImport()}>
+                    {onboardingCopy.confirmImportButton}
                   </Button>
-                  <Button variant="ghost" aria-label="取消导入" disabled={busy} onClick={clearPending}>
-                    取消
+                  <Button variant="ghost" aria-label={onboardingCopy.cancelImportLabel} disabled={busy} onClick={clearPending}>
+                    {onboardingCopy.cancel}
                   </Button>
                 </div>
                 <span className="text-xs text-muted">
-                  导入模块：{pending.modules === undefined ? '全部' : pending.modules.map((item) => BACKUP_MODULE_LABEL[item]).join('、')}
+                  {onboardingCopy.importModules(
+                    pending.modules === undefined
+                      ? null
+                      : onboardingCopy.list(pending.modules.map((item) => BACKUP_MODULE_LABEL[item])),
+                  )}
                 </span>
               </>
             )}

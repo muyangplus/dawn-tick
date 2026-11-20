@@ -2,9 +2,11 @@ import { dateWallClockToEpoch, formatDate, formatTime, LAB_COLOR, WEEKDAY_LABELS
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { formatDayCountdown, formatPeriodRange } from '../../lib/format.ts';
+import { timelineCopy } from '../../copy/home-timeline.ts';
 
-/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→日程。 */
-export type TimelineNature = '课程' | '调整' | '日程' | '作业' | '考试' | '实验';
+/** 条目性质标签：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→日程。 */
+export type TimelineNature = (typeof timelineCopy.nature)[keyof typeof timelineCopy.nature];
+const NATURE = timelineCopy.nature;
 
 export interface TimelineItem {
   key: string;
@@ -48,12 +50,12 @@ export interface TimelineItem {
 }
 
 export function dateLabel(date: string | null, timeZone: string): string {
-  if (date === null) return '未排期';
+  if (date === null) return timelineCopy.undated;
   const [year, month, day] = date.split('-').map(Number);
   const weekday =
     WEEKDAY_LABELS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7] ?? '';
   void timeZone;
-  return `${month} 月 ${day} 日 ${weekday}`;
+  return timelineCopy.dateLabel(month as number, day as number, weekday);
 }
 
 /** 待办排序用的时间键：开始时刻优先，其次截止时刻，再退到日期。 */
@@ -98,7 +100,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: minuteOf(lesson.startAt, data.timeZone),
       rank: 0,
       kind: 'lesson',
-      nature: '课程',
+      nature: NATURE.lesson,
       title: lesson.courseName,
       // 课程条目不再显示「第 X 节」：左侧时间列已经给出开始–结束时间
       detail: '',
@@ -130,16 +132,16 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     const cancelled = item.action === 'cancel';
     const newPeriod =
       item.new_period_start === null
-        ? ''
-        : ` ${formatPeriodRange(item.new_period_start, item.new_period_end ?? item.new_period_start)}`;
+        ? null
+        : formatPeriodRange(item.new_period_start, item.new_period_end ?? item.new_period_start);
     const detail =
       item.type === 'makeup'
-        ? '调休'
+        ? timelineCopy.makeup
         : cancelled
-          ? '停课'
+          ? timelineCopy.cancelled
           : item.new_date !== null
-            ? `改至 ${item.new_date}${newPeriod}`
-            : '调课';
+            ? timelineCopy.movedTo(item.new_date, newPeriod)
+            : timelineCopy.rescheduled;
     const startAt = item.start_at ?? null;
     const endEpoch = item.end_at ?? null;
     const done = item.done === 1 || cancelled;
@@ -150,7 +152,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: minuteOf(startAt, data.timeZone),
       rank: 1,
       kind: 'adjust',
-      nature: item.nature === 'lab' ? '实验' : '调整',
+      nature: item.nature === 'lab' ? NATURE.lab : NATURE.adjust,
       title: item.title,
       detail,
       location: item.location ?? item.new_room ?? null,
@@ -195,7 +197,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (endEpoch !== null && endEpoch > now) {
       parts.push(formatDayCountdown(endEpoch, now));
     }
-    if (overdue) parts.push('已过期');
+    if (overdue) parts.push(timelineCopy.overdue);
     if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
     items.push({
       key: `todo-${todo.id}`,
@@ -203,7 +205,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: data.todoSort === 'type' ? todoIndex : minuteOf(endEpoch, data.timeZone),
       rank: 2,
       kind: isExam ? 'exam' : 'todo',
-      nature: isExam ? '考试' : isHomework ? '作业' : '日程',
+      nature: isExam ? NATURE.exam : isHomework ? NATURE.homework : NATURE.todo,
       title: todo.title,
       detail: parts.join(' · '),
       location: todo.location,
@@ -236,7 +238,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: startSlot === undefined ? 0 : minuteOf(clockEpoch(lab.on_date, startSlot.start_time, data.timeZone), data.timeZone),
       rank: 0,
       kind: 'lab',
-      nature: '实验',
+      nature: NATURE.lab,
       title: lab.title,
       detail: formatPeriodRange(head, tail),
       location: lab.location,

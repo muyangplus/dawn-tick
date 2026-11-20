@@ -1,14 +1,15 @@
 import { deleteReminder, formatDate, formatTime, maskToWeeks, setReminder, type EventRow, type Storage } from '@dawn-tick/core';
+import { todoFormCopy } from '../copy/todo-form.ts';
 
 export type EventFormKind = 'todo' | 'homework' | 'exam' | 'lab';
 
 export const ADVANCE_OPTIONS: ReadonlyArray<{ id: string; label: string; minutes: number }> = [
-  { id: 'none', label: '不提醒', minutes: -1 },
-  { id: 'same', label: '当天提醒', minutes: 0 },
-  { id: 'half', label: '提前 30 分钟', minutes: 30 },
-  { id: 'day', label: '提前 1 天', minutes: 24 * 60 },
-  { id: 'three', label: '提前 3 天', minutes: 3 * 24 * 60 },
-  { id: 'week', label: '提前 1 周', minutes: 7 * 24 * 60 },
+  { id: 'none', label: todoFormCopy.advance.none, minutes: -1 },
+  { id: 'same', label: todoFormCopy.advance.same, minutes: 0 },
+  { id: 'half', label: todoFormCopy.advance.half, minutes: 30 },
+  { id: 'day', label: todoFormCopy.advance.day, minutes: 24 * 60 },
+  { id: 'three', label: todoFormCopy.advance.three, minutes: 3 * 24 * 60 },
+  { id: 'week', label: todoFormCopy.advance.week, minutes: 7 * 24 * 60 },
 ];
 
 /** 表单类型 + 是否关联课程 → 写入的条目类型；新建与编辑共用，避免两处各算一遍。 */

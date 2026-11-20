@@ -17,7 +17,7 @@ import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { confirmAction } from '../components/ui/confirm-dialog.tsx';
-import { DELETE } from '../copy/common.ts';
+import { todoFormCopy } from '../copy/todo-form.ts';
 import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { toast } from '../components/ui/toaster.tsx';
 import {
@@ -142,7 +142,7 @@ export function TodoForm({
   /** 提交入口：先过一遍空标题守卫，再进统一的 busy/蒙版保护。 */
   async function submit(): Promise<void> {
     if (title.trim().length === 0) return;
-    await run(`正在保存${KIND_LABEL[current]}…`, saveTodo);
+    await run(todoFormCopy.saving(KIND_LABEL[current]), saveTodo);
   }
 
   async function saveTodo(): Promise<void> {
@@ -202,7 +202,7 @@ export function TodoForm({
         });
         await syncEventReminder(storage, userId, editing.id, advanceMinutesOf(advance));
         logInfo('todo', '已保存待办', { id: editing.id, kind: current });
-        toast.success(`已保存${KIND_LABEL[current]}「${title.trim()}」`);
+        toast.success(todoFormCopy.saved(KIND_LABEL[current], title.trim()));
         onCreated();
         onOpenChange(false);
         return;
@@ -257,7 +257,7 @@ export function TodoForm({
         await syncEventReminder(storage, userId, String(created['id']), minutes);
       }
       logInfo('todo', '已添加待办', { id: String(created['id'] ?? ''), kind: current });
-      toast.success(`已添加${KIND_LABEL[current]}「${title.trim()}」`);
+      toast.success(todoFormCopy.added(KIND_LABEL[current], title.trim()));
       update({ title: '', note: '', location: '', seatNo: '' });
       onCreated();
       onOpenChange(false);
@@ -265,7 +265,7 @@ export function TodoForm({
       // 保存失败要看得见：写日志 + 弹提示，不再静默
       const message = errorMessage(cause);
       logError('todo', '保存失败', { message, type: current, editing: editing?.id ?? null });
-      toast.error(`保存失败：${message}`);
+      toast.error(todoFormCopy.saveFailed(message));
     }
   }
 
@@ -275,22 +275,22 @@ export function TodoForm({
     const target = editing;
     const name = target.title;
     const ok = await confirmAction({
-      title: '删除待办',
-      description: DELETE(name, ['关联提醒']),
-      confirmLabel: '确认删除',
+      title: todoFormCopy.deleteTitle,
+      description: todoFormCopy.deleteDescription(name),
+      confirmLabel: todoFormCopy.deleteConfirmButton,
     });
     if (!ok) return;
-    await run('正在删除…', async () => {
+    await run(todoFormCopy.deleting, async () => {
       try {
         await deleteEvent(storage, target.id);
         logInfo('todo', '已删除待办', { id: target.id, kind: current });
-        toast.success(`已删除「${name}」`);
+        toast.success(todoFormCopy.deleted(name));
         onCreated();
         onOpenChange(false);
       } catch (cause: unknown) {
         const message = errorMessage(cause);
         logError('todo', '删除失败', { message, id: target.id });
-        toast.error(`删除失败：${message}`);
+        toast.error(todoFormCopy.deleteFailed(message));
       }
     });
   }
@@ -299,8 +299,8 @@ export function TodoForm({
   async function copyOne(): Promise<void> {
     if (editing === null) return;
     const target = editing;
-    const copyTitle = `${target.title} 副本`;
-    await run('正在复制…', async () => {
+    const copyTitle = todoFormCopy.copyTitle(target.title);
+    await run(todoFormCopy.copying, async () => {
       try {
         await createEvent(storage, {
           userId,
@@ -326,13 +326,13 @@ export function TodoForm({
           endTime: target.end_time,
           showInTimetable: target.show_in_timetable === 1,
         });
-        toast.success(`已复制为「${copyTitle}」`);
+        toast.success(todoFormCopy.copied(copyTitle));
         onCreated();
         onOpenChange(false);
       } catch (cause: unknown) {
         const message = errorMessage(cause);
         logError('todo', '复制失败', { message, id: target.id });
-        toast.error(`复制失败：${message}`);
+        toast.error(todoFormCopy.copyFailed(message));
       }
     });
   }
@@ -344,8 +344,8 @@ export function TodoForm({
       open={open}
       onOpenChange={onOpenChange}
       container={container}
-      title={editing === null ? '添加待办' : '待办详情'}
-      description={editing === null ? '选类型后填字段' : '保存写回这一条'}
+      title={editing === null ? todoFormCopy.createTitle : todoFormCopy.editTitle}
+      description={editing === null ? todoFormCopy.createDescription : todoFormCopy.editDescription}
       contentAttrs={{ 'data-role': 'todo-form' }}
     >
       <TodoBasicFields form={form} update={update} courses={courses} onChangeKind={changeKind} />

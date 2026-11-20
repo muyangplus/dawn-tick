@@ -7,6 +7,7 @@ import { readLayout } from './cards/layout-store.ts';
 import { actionsCard, examsCard, timelineCard, tomorrowCard } from './cards/schedule-cards.tsx';
 import { semesterStatsCard } from './cards/semester-stats-card.tsx';
 import { useScheduleActions } from './cards/use-schedule-actions.ts';
+import { scheduleCopy } from '../copy/home-schedule.ts';
 
 // 显式引用这几张卡片，保证注册先于首次渲染完成。
 void [actionsCard, timelineCard, examsCard, tomorrowCard, semesterStatsCard];
@@ -87,7 +88,7 @@ export function ScheduleView({
   const sideCards = cardsInZone('schedule', layout, 'side');
 
   return (
-    <section className="flex flex-col gap-4" aria-label="日程视图">
+    <section className="flex flex-col gap-4" aria-label={scheduleCopy.regionLabel}>
       {mainCards.map((card) => (
         <div key={card.def.id} className="flex flex-col gap-4">
           {renderCard<'schedule'>(card, ctx)}
@@ -95,7 +96,7 @@ export function ScheduleView({
       ))}
 
       {sideCards.length > 0 && (
-        <aside className="flex flex-col gap-3 tablet:grid tablet:grid-cols-2" aria-label="日程侧栏">
+        <aside className="flex flex-col gap-3 tablet:grid tablet:grid-cols-2" aria-label={scheduleCopy.sideLabel}>
           {sideCards.map((card) => (
             <div key={card.def.id} className="min-w-0">
               {renderCard<'schedule'>(card, ctx)}

@@ -1,5 +1,6 @@
 import { Button } from '../../components/ui/button.tsx';
 import { DialogFooter } from '../../components/ui/dialog.tsx';
+import { todoFormCopy } from '../../copy/todo-form.ts';
 
 interface TodoFooterProps {
   /** 编辑中的条目标题；新建时为 null，不显示删除与复制 */
@@ -21,22 +22,22 @@ export function TodoFooter({ editingTitle, busy, canSave, onRemove, onCancel, on
           variant="danger"
           className="mr-auto"
           loading={busy}
-          aria-label={`删除条目 ${editingTitle}`}
+          aria-label={todoFormCopy.deleteItemAria(editingTitle)}
           onClick={onRemove}
         >
-          删除这条
+          {todoFormCopy.deleteButton}
         </Button>
       )}
       <Button variant="ghost" disabled={busy} onClick={onCancel}>
-        取消
+        {todoFormCopy.cancel}
       </Button>
       {editingTitle !== null && (
         <Button variant="secondary" loading={busy} onClick={onCopy}>
-          复制一条
+          {todoFormCopy.copyButton}
         </Button>
       )}
       <Button variant="primary" loading={busy} disabled={!canSave} onClick={onSave}>
-        保存
+        {todoFormCopy.saveButton}
       </Button>
     </DialogFooter>
   );
