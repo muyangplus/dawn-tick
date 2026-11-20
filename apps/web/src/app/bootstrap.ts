@@ -28,6 +28,7 @@ import { applyTheme } from '../theme.ts';
 import { maybeAutoBackup, takeRecoveryNotice } from '../backup.ts';
 import { maybeAutoSync } from '../webdav.ts';
 import { textForLog } from '../lib/log-redact.ts';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /** 启动失败：区分损坏（走备份恢复）与其它（重试/日志），文案统一由 fail() 生成。 */
 export interface BootFailure {
@@ -74,12 +75,12 @@ export type BootstrapResult = { ok: true } | { ok: false; error: BootFailure };
  * 顺序即启动契约：后面每一步都依赖前面已就绪的状态；失败按阶段归一成错误页文案。
  */
 export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResult> {
-  let stage: BootStage = { scope: 'storage', label: '存储初始化' };
+  let stage: BootStage = { scope: 'storage', label: appRecoveryCopy.stage.storage };
   try {
     const opened = await openStorage();
     /** 临时回退：原生库打不开，改用浏览器存储；按 Q5 只读，启动阶段也不写任何数据 */
     const readOnly = isFallbackStorage(opened);
-    stage = { scope: 'app', label: '数据载入' };
+    stage = { scope: 'app', label: appRecoveryCopy.stage.data };
     // 回退期间连日志也不写临时库：只留在内存与原生日志里
     attachLogStorage(readOnly ? readOnlyStorage(opened) : opened);
     await loadLogs();
@@ -170,7 +171,7 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
         ok: false,
         error: {
           kind: 'corrupt',
-          failure: fail('载入失败', corruptMessage(), '请从最近的备份恢复，或打开备份目录手动处理。'),
+          failure: fail(appRecoveryCopy.bootFailed.corrupt.what, corruptMessage(), appRecoveryCopy.bootFailed.corrupt.next),
         },
       };
     }
@@ -180,9 +181,9 @@ export async function runBootstrap(hooks: BootstrapHooks): Promise<BootstrapResu
       error: {
         kind: 'other',
         failure: fail(
-          '载入失败',
-          `${stage.label}没有完成`,
-          '请重启应用；仍失败请在「设置 → 同步与数据」导入备份，并附日志反馈。',
+          appRecoveryCopy.bootFailed.other.what,
+          appRecoveryCopy.bootFailed.other.reason(stage.label),
+          appRecoveryCopy.bootFailed.other.next,
         ),
       },
     };

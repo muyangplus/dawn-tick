@@ -7,6 +7,7 @@ import {
   STORAGE_FALLBACK_BANNER,
   STORAGE_READ_ONLY_MESSAGE,
 } from '../db/fallback.ts';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 /** 加载页的「仍在载入…」阈值：冷启动超过 3 秒才追加，避免正常启动闪一下。 */
 export const LOADING_SLOW_MS = 3000;
@@ -28,10 +29,10 @@ export function LoadingScreen({ slowAfterMs = LOADING_SLOW_MS }: { slowAfterMs?:
       <div className="flex size-12 items-center justify-center rounded-2xl bg-surface-muted text-primary-strong">
         <Loader2 className="dt-spinner size-6" aria-hidden />
       </div>
-      <p className="text-sm text-ink">正在载入…</p>
+      <p className="text-sm text-ink">{appShellCopy.loading.title}</p>
       {slow && (
         <p className="dt-screen-in text-xs text-muted" data-role="loading-slow">
-          仍在载入…
+          {appShellCopy.loading.slow}
         </p>
       )}
     </main>
@@ -73,19 +74,19 @@ export function ErrorScreen({
           {corrupt ? (
             <>
               <Button variant="primary" onClick={onRestore}>
-                从备份文件恢复
+                {appShellCopy.errorScreen.restoreFromFileButton}
               </Button>
               <Button variant="secondary" onClick={onOpenBackupDir}>
-                打开备份目录
+                {appShellCopy.errorScreen.openBackupDirButton}
               </Button>
             </>
           ) : (
             <>
               <Button variant="primary" onClick={onRetry}>
-                重试
+                {appShellCopy.errorScreen.retryButton}
               </Button>
               <Button variant="secondary" onClick={onOpenLogs}>
-                打开日志
+                {appShellCopy.errorScreen.openLogsButton}
               </Button>
             </>
           )}
@@ -113,10 +114,10 @@ export function StorageFallbackBanner({ onRetry, onOpenLogs }: StorageFallbackBa
       <span className="rounded-full bg-warning/10 px-2 py-0.5 font-medium">{STORAGE_FALLBACK_BADGE}</span>
       <span className="text-[11px]">{STORAGE_READ_ONLY_MESSAGE}</span>
       <Button size="sm" variant="secondary" onClick={onRetry}>
-        重试
+        {appShellCopy.errorScreen.retryButton}
       </Button>
       <Button size="sm" variant="ghost" onClick={onOpenLogs}>
-        打开日志
+        {appShellCopy.errorScreen.openLogsButton}
       </Button>
     </div>
   );

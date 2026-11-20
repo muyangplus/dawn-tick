@@ -15,6 +15,7 @@ import {
 } from '@dawn-tick/core';
 import { dayStampUtc } from './dates.ts';
 import { collectEventExtras, clockOf, scheduleExtraEvent } from './ics-export-events.ts';
+import { exportIcsCopy } from '../copy/export-ics.ts';
 
 /**
  * 课表导出 ICS 的数据组装（R-01）：纯函数，不读 storage。
@@ -238,16 +239,16 @@ export function buildIcsExport(input: IcsExportInput, options: IcsExportOptions)
       end_time: slot.end_time,
     })),
     extraEvents,
-    calendarName: `${semester.name} 课表`,
+    calendarName: exportIcsCopy.calendarName(semester.name),
     stamp: now,
   });
 
   const notes: string[] = [];
-  if (missingClock > 0) notes.push(`${missingClock} 条排课缺少作息时间，未写入 ICS`);
-  if (unsupportedAdjust > 0) notes.push(`${unsupportedAdjust} 条调课记录无法写入 ICS`);
-  if (collected.skipped > 0) notes.push(`${collected.skipped} 条日程没有可用的日期或时间，未写入 ICS`);
+  if (missingClock > 0) notes.push(exportIcsCopy.notes.missingClock(missingClock));
+  if (unsupportedAdjust > 0) notes.push(exportIcsCopy.notes.unsupportedAdjust(unsupportedAdjust));
+  if (collected.skipped > 0) notes.push(exportIcsCopy.notes.skippedEvents(collected.skipped));
   if (options.includeEvents && collected.signMarkers > 0) {
-    notes.push('节假日与调休标记不写入 ICS');
+    notes.push(exportIcsCopy.notes.signMarkers);
   }
 
   return {
@@ -272,5 +273,5 @@ export function icsFileName(semesterName: string, stamp: number): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 60);
-  return `DawnTick-${safe.length === 0 ? '课表' : safe}-${dayStampUtc(stamp)}.ics`;
+  return `DawnTick-${safe.length === 0 ? exportIcsCopy.fileNameFallback : safe}-${dayStampUtc(stamp)}.ics`;
 }

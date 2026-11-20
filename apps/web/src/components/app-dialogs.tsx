@@ -1,6 +1,7 @@
 import type { ApplyMode } from '../webdav.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 /**
  * 只读弹窗的统一出口：更新域弹窗已经拆到 `components/update/`，
@@ -36,18 +37,18 @@ export function RemoteNewerDialog({ info, onClose, onApply }: RemoteNewerDialogP
       }}
     >
       <DialogContent
-        title="远端有较新的备份"
-        description={`${info?.name ?? ''}${info?.detail == null ? '' : ` · ${info.detail}`}；恢复全部将覆盖本机数据（下载前会先备份本机），不可撤销`}
+        title={appShellCopy.remoteNewer.title}
+        description={appShellCopy.remoteNewer.description(info?.name ?? '', info?.detail ?? null)}
       >
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
-            稍后
+            {appShellCopy.remoteNewer.laterButton}
           </Button>
-          <Button variant="secondary" aria-label="下载并只应用设置与预设" onClick={() => onApply('settings')}>
-            只应用设置与预设
+          <Button variant="secondary" aria-label={appShellCopy.remoteNewer.applySettingsAria} onClick={() => onApply('settings')}>
+            {appShellCopy.remoteNewer.applySettingsButton}
           </Button>
-          <Button variant="danger" aria-label="下载并恢复整库" onClick={() => onApply('all')}>
-            恢复全部
+          <Button variant="danger" aria-label={appShellCopy.remoteNewer.restoreAllAria} onClick={() => onApply('all')}>
+            {appShellCopy.remoteNewer.restoreAllButton}
           </Button>
         </DialogFooter>
       </DialogContent>

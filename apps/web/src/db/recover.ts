@@ -6,6 +6,7 @@
  */
 import { invokeNative, nativeErrorMessage } from '../lib/native.ts';
 import { logError, logInfo, logWarn } from '../log.ts';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /** 与 Rust `recover::RecoverOutcome` 的 camelCase 序列化逐字对应。 */
 export interface RecoverDatabaseOutcome {
@@ -18,7 +19,7 @@ export interface RecoverDatabaseOutcome {
 }
 
 /** 非桌面端（浏览器/Android）没有文件级恢复入口时的可读原因。 */
-export const RECOVER_UNSUPPORTED = '当前平台不支持自动恢复，请从备份文件导入或手动处理数据目录';
+export const RECOVER_UNSUPPORTED = appRecoveryCopy.corrupt.recoverUnsupported;
 
 /** 失败结果统一构造：reason 一定非空，方便界面直接展示。 */
 function failed(reason: string): RecoverDatabaseOutcome {

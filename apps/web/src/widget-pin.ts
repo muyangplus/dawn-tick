@@ -2,6 +2,7 @@ import { hasMobileWidgets } from './lib/capabilities.ts';
 import { nativeErrorMessage } from './lib/native.ts';
 import { PLUGIN_NAMES, loadPlugin, type WidgetPinPlugin } from './lib/plugins.ts';
 import { logInfo, logWarn } from './log.ts';
+import { appSystemCopy } from './copy/app-system.ts';
 
 /** 是否有主屏小组件（仅 Android）：实现收在 lib/capabilities.ts，这里保留原导出路径。 */
 export { hasMobileWidgets };
@@ -15,17 +16,10 @@ export interface MobileWidget {
 }
 
 export const MOBILE_WIDGETS: readonly MobileWidget[] = [
-  { id: 'next', label: '下一节课', size: '2×2', description: '下一节课的课程、时间与地点' },
-  { id: 'today', label: '今日课表', size: '4×2', description: '今天所有课程与进行中的一节' },
-  { id: 'week', label: '一周概览', size: '4×4', description: '一周课程清单' },
-  { id: 'exam', label: '考试倒计时', size: '2×2', description: '最近的考试与剩余天数' },
-];
-
-/** 手动添加步骤：一键添加不可用时按这个来。 */
-export const WIDGET_PIN_STEPS: readonly string[] = [
-  '长按主屏空白处，进入「小组件」列表',
-  '在列表里找到「晓刻 DawnTick」',
-  '选尺寸后拖到桌面上',
+  { id: 'next', size: '2×2', ...appSystemCopy.widget.next },
+  { id: 'today', size: '4×2', ...appSystemCopy.widget.today },
+  { id: 'week', size: '4×4', ...appSystemCopy.widget.week },
+  { id: 'exam', size: '2×2', ...appSystemCopy.widget.exam },
 ];
 
 /** 一键添加的结果：把「系统不支持 / 被停用 / 已添加 / 取消或没弹窗 / 成功」分开。 */
@@ -80,7 +74,7 @@ function pinStatusOf(value: string | undefined): PinWidgetStatus {
 export async function pinWidget(id: MobileWidget['id']): Promise<PinWidgetResult> {
   const plugin = await loadWidgetPlugin();
   if (plugin === null) {
-    return { status: 'unsupported', reason: '当前平台没有主屏小组件' };
+    return { status: 'unsupported', reason: appSystemCopy.widget.unsupported };
   }
   try {
     const result = await plugin.requestPin({ provider: id });

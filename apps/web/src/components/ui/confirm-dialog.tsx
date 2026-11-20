@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from './button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './dialog.tsx';
+import { uiCopy } from '../../copy/ui.ts';
 
 /** 破坏性动作确认：同一时刻只保留一个待确认请求，返回是否确认执行。 */
 export interface ConfirmRequest {
@@ -64,17 +65,17 @@ export function ConfirmDialogHost() {
         if (!open) settle(false);
       }}
     >
-      <DialogContent title={request?.title ?? '确认操作'} description={request?.description ?? ''}>
+      <DialogContent title={request?.title ?? uiCopy.confirm.title} description={request?.description ?? ''}>
         <DialogFooter>
           <Button variant="ghost" onClick={() => settle(false)}>
-            {request?.cancelLabel ?? '取消'}
+            {request?.cancelLabel ?? uiCopy.confirm.cancelButton}
           </Button>
           <Button
             variant={request?.tone === 'default' ? 'primary' : 'danger'}
             data-role="confirm-action"
             onClick={() => settle(true)}
           >
-            {request?.confirmLabel ?? '确认'}
+            {request?.confirmLabel ?? uiCopy.confirm.confirmButton}
           </Button>
         </DialogFooter>
       </DialogContent>

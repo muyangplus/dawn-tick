@@ -5,6 +5,7 @@ import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from './lib/plugin
 import { writeAndroidFile } from './lib/export-files.ts';
 import { pathForLog, urlForLog } from './lib/log-redact.ts';
 import { logDebug, logError, logInfo, logWarn } from './log.ts';
+import { appSystemCopy } from './copy/app-system.ts';
 
 /** 插件接口定义已集中到 `lib/plugins.ts`，这里保留原导出路径供旧调用方使用。 */
 export type { SystemActionsPlugin } from './lib/plugins.ts';
@@ -40,7 +41,7 @@ async function openExternalWithReason(url: string): Promise<OpenExternalResult> 
     } catch (cause: unknown) {
       const error = nativeErrorMessage(cause);
       logWarn('link', '默认浏览器打开失败', { url: urlForLog(url), message: error });
-      return { ok: false, error: `系统浏览器打开失败：${error}` };
+      return { ok: false, error: appSystemCopy.link.desktopOpenFailed(error) };
     }
   }
   const plugin = await loadSystemActions();
@@ -54,13 +55,13 @@ async function openExternalWithReason(url: string): Promise<OpenExternalResult> 
       const error = nativeErrorMessage(cause);
       logWarn('link', '原生打开失败，改用新窗口', { url: urlForLog(url), message: error });
       // 原生明确失败时不再静默降级：把原因交给界面，避免「点确认没反应」
-      if (isAndroidApp()) return { ok: false, error: `调用系统浏览器失败：${error}` };
+      if (isAndroidApp()) return { ok: false, error: appSystemCopy.link.androidOpenFailed(error) };
     }
   }
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
   if (opened === null) {
     logWarn('link', '新窗口被拦截', { url: urlForLog(url) });
-    return { ok: false, error: '浏览器新窗口被拦截，请改用「复制链接」' };
+    return { ok: false, error: appSystemCopy.link.popupBlocked };
   }
   logInfo('link', '已在新窗口打开链接', { url: urlForLog(url) });
   return { ok: true, error: null };
@@ -141,7 +142,7 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
 async function openWithSystem(url: string): Promise<boolean> {
   const plugin = await loadSystemActions();
   if (plugin === null) return false;
-  const result = await withTimeout(plugin.openExternal({ url }), 8_000, '调用系统浏览器超时');
+  const result = await withTimeout(plugin.openExternal({ url }), 8_000, appSystemCopy.link.nativeTimeout);
   return result.opened === true;
 }
 
@@ -256,7 +257,7 @@ export async function saveTextFile(
       // 由原生弹「另存为」并写入：前端不再把路径交给写文件命令
       const path = await invokeNative<string | null>('save_file', {
         defaultName: name,
-        filterName: options.filterName ?? '文本文件',
+        filterName: options.filterName ?? appSystemCopy.file.textFilter,
         extension,
         text: content,
       });
@@ -264,7 +265,7 @@ export async function saveTextFile(
         logDebug('backup', '已取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      if (path === undefined) throw new Error('当前平台不支持写入文件');
+      if (path === undefined) throw new Error(appSystemCopy.file.writeUnsupported);
       logInfo('backup', '已写入文件', { path: pathForLog(path), bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
@@ -321,7 +322,7 @@ export async function saveBinaryFile(
     try {
       const path = await invokeNative<string | null>('save_file', {
         defaultName: name,
-        filterName: options.filterName ?? '文件',
+        filterName: options.filterName ?? appSystemCopy.file.binaryFilter,
         extension,
         base64: toBase64Bytes(content),
       });
@@ -329,7 +330,7 @@ export async function saveBinaryFile(
         logDebug('backup', '已取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      if (path === undefined) throw new Error('当前平台不支持写入文件');
+      if (path === undefined) throw new Error(appSystemCopy.file.writeUnsupported);
       logInfo('backup', '已写入文件', { path: pathForLog(path), bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {

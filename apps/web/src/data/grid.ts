@@ -17,15 +17,10 @@ import {
 } from '@dawn-tick/core';
 import { type HolidayContext, weeksOf } from './context.ts';
 import { type LessonCell } from './types.ts';
+import { formatCopy } from '../copy/format.ts';
 
 /** 课表里条目的角标文案。 */
-const EVENT_LABEL: Record<string, string> = {
-  lab: '实验',
-  homework: '作业',
-  exam: '考试',
-  todo: '日程',
-  temp: '日程',
-};
+const EVENT_LABEL: Record<string, string> = formatCopy.eventBadge;
 
 /** 一条调课的落点 */
 interface MoveIn {
@@ -257,7 +252,7 @@ export function buildGrid(input: GridInput): GridResult {
         movedOut: false,
         movedIn: false,
         lab: true,
-        eventLabel: EVENT_LABEL[entry.type] ?? '日程',
+        eventLabel: EVENT_LABEL[entry.type] ?? formatCopy.eventBadgeFallback,
         courseLabel: entry.subject === null ? null : courseById.get(entry.subject)?.name ?? null,
         eventId: entry.id,
         customStart: clockStart,

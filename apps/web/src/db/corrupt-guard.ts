@@ -16,13 +16,14 @@ import { errorMessage } from '../lib/errors.ts';
 import { logError, type LogScope } from '../log.ts';
 import { isFallbackStorage, markStorageFallback } from './fallback.ts';
 import { isCorruptDatabase } from './health.ts';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /** 对话框与只读提示共用的一句话：事实 + 下一步。 */
-export const DATABASE_CORRUPT_MESSAGE = '数据库文件损坏，已停止写入；可从最近快照恢复并重启';
+export const DATABASE_CORRUPT_MESSAGE = appRecoveryCopy.corrupt.message;
 /** 写入口被锁死时的统一提示。 */
-export const DATABASE_CORRUPT_WRITE_BLOCKED = '数据库文件损坏，已停止写入';
+export const DATABASE_CORRUPT_WRITE_BLOCKED = appRecoveryCopy.corrupt.writeBlocked;
 /** 导出场景的用户可见文案：保留“恢复后重试”的下一步。 */
-export const EXPORT_CORRUPT_MESSAGE = '数据库文件损坏，导出已停止：可从最近快照恢复后重试';
+export const EXPORT_CORRUPT_MESSAGE = appRecoveryCopy.corrupt.exportBlocked;
 
 /** 首次损坏事件：`message` 是原始错误，只进日志与对话框详情。 */
 export interface CorruptEvent {

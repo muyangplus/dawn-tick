@@ -34,6 +34,7 @@ import {
   readPresetExtras,
   type PackageExtras,
 } from './package.ts';
+import { appBackupCopy } from './copy/app-backup.ts';
 
 export type { PackageExtras } from './package.ts';
 
@@ -113,7 +114,7 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
     rows: 0,
   };
   if (request.modules.length === 0) {
-    return { ...base, error: '请至少勾选一个模块' };
+    return { ...base, error: appBackupCopy.export.noModule };
   }
   try {
     const payload = await exportBackup(storage, { modules: request.modules, now });
@@ -137,7 +138,7 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
       const entries = buildPackageEntries({ backupJson: json, presets, logs });
       const plain = buildPackageBytes({ backupJson: json, presets, logs, now });
       const bytes = await sealBytes(plain, password);
-      const saved = await saveBinaryFile(name, bytes, { extension: 'zip', filterName: 'ZIP 整包' });
+      const saved = await saveBinaryFile(name, bytes, { extension: 'zip', filterName: appBackupCopy.export.zipFilter });
       const outcome = {
         ...base,
         ok: saved.ok,
@@ -164,7 +165,9 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
     const saved = await saveTextFile(
       name,
       text,
-      encrypted ? { extension: 'txt', filterName: '加密备份文本' } : { extension: 'json', filterName: 'JSON 备份' },
+      encrypted
+        ? { extension: 'txt', filterName: appBackupCopy.export.encryptedTextFilter }
+        : { extension: 'json', filterName: appBackupCopy.export.jsonFilter },
     );
     const outcome = {
       ...base,
@@ -209,9 +212,9 @@ export async function exportConfig(storage: Storage, request: ExportRequest): Pr
 /** 解析粘贴或选入的明文文本：JSON 与 Base64 都接受；加密信封要走异步入口。 */
 export function parseImportText(text: string): BackupPayload {
   const trimmed = text.trim();
-  if (trimmed === '') throw new Error('内容为空');
+  if (trimmed === '') throw new Error(appBackupCopy.import.empty);
   if (isEncryptedBackup(trimmed)) {
-    throw new BackupCryptoError('password-required', '备份已加密，请输入口令后再导入');
+    throw new BackupCryptoError('password-required', appBackupCopy.import.passwordRequired);
   }
   if (trimmed.startsWith('{')) return parseBackup(trimmed);
   return parseBackup(fromBase64Utf8(trimmed));
@@ -231,7 +234,7 @@ function lockedResult(): ImportFileResult {
   return {
     payload: null,
     extras: null,
-    error: '备份已加密，需要输入口令后才能导入',
+    error: appBackupCopy.import.passwordRequired,
     locked: true,
   };
 }
@@ -294,7 +297,7 @@ export async function importPastedText(
   password?: string,
 ): Promise<ImportFileResult> {
   const trimmed = text.trim();
-  if (trimmed === '') return failedResult('内容为空');
+  if (trimmed === '') return failedResult(appBackupCopy.import.empty);
   if (!isEncryptedBackup(trimmed)) {
     try {
       return { payload: parseImportText(trimmed), extras: null, error: null, locked: false };
@@ -362,14 +365,14 @@ export function importResultText(
 ): string {
   const head =
     mode === 'skip'
-      ? '保留现有数据'
+      ? appBackupCopy.import.mode.skip
       : mode === 'overwrite'
-        ? '覆盖为备份内容'
+        ? appBackupCopy.import.mode.overwrite
         : mode === 'clear'
-          ? '先清空所选模块再导入'
-          : '按修改时间合并';
-  const removed = result.removed > 0 ? `，清空 ${result.removed} 条` : '';
-  const presets = result.presets === true ? '，已恢复预设' : '';
-  const logs = result.logsSkipped === true ? '，日志未覆盖' : '';
-  return `${head}：写入 ${result.imported} 条，跳过 ${result.skipped} 条${removed}${presets}${logs}`;
+          ? appBackupCopy.import.mode.clear
+          : appBackupCopy.import.mode.merge;
+  return appBackupCopy.import.result(head, result, {
+    presets: result.presets === true,
+    logsSkipped: result.logsSkipped === true,
+  });
 }

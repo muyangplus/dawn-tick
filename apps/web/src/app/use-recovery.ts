@@ -7,6 +7,7 @@ import { restoreLatestBackupSnapshot } from '../lib/recovery.ts';
 import { openDataDirectory, relaunchApplication } from '../storage-config.ts';
 import { saveTextFile } from '../system-actions.ts';
 import { toast } from '../components/ui/toaster.tsx';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 export interface RecoveryActions {
   /** 回退警告条「重试」：原生侧重启会重新打开数据库；浏览器侧退回整页刷新 */
@@ -34,7 +35,7 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
       globalThis.location.reload();
     } catch (cause: unknown) {
       logWarn('storage', '自动重启失败', { message: describeError(cause) });
-      toast.error(fail('重试失败', '当前环境不能自动重启', '请手动关闭并重新打开应用。').text);
+      toast.error(fail(appRecoveryCopy.recovery.retryFailed.what, appRecoveryCopy.recovery.retryFailed.reason, appRecoveryCopy.recovery.retryFailed.next).text);
     }
   }, [fallback]);
 
@@ -43,24 +44,24 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
     try {
       const entries = logsText();
       const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;
-      const saved = await saveTextFile(name, entries === '' ? '暂无日志' : entries, {
+      const saved = await saveTextFile(name, entries === '' ? appRecoveryCopy.recovery.emptyLog : entries, {
         extension: 'txt',
-        filterName: '日志文件',
+        filterName: appRecoveryCopy.recovery.logFileFilter,
       });
       if (saved.cancelled) return;
       if (!saved.ok) {
         toast.error(
-          fail('打开日志失败', saved.error ?? '日志没能写出', '请稍后重试；仍失败请在「设备与同步」里打开日志目录。').text,
+          fail(appRecoveryCopy.recovery.logSaveFailed.what, saved.error ?? appRecoveryCopy.recovery.logSaveFailed.reason, appRecoveryCopy.recovery.logSaveFailed.next).text,
         );
         return;
       }
       logInfo('log', '诊断日志已导出', { path: pathForLog(saved.path), chars: entries.length });
-      toast.success(saved.path === null ? '已下载日志' : '已导出日志');
+      toast.success(saved.path === null ? appRecoveryCopy.recovery.logDownloaded : appRecoveryCopy.recovery.logExported);
       // 回退期间不写临时存储：导出已经完成，清空留到原生库恢复后
       if (!fallback) await clearLogs();
     } catch (cause: unknown) {
       logError('log', '日志导出失败', { message: describeError(cause) });
-      toast.error(fail('打开日志失败', '日志暂时读不出来', '请稍后重试；仍失败请在「设备与同步」里查看。').text);
+      toast.error(fail(appRecoveryCopy.recovery.logReadFailed.what, appRecoveryCopy.recovery.logReadFailed.reason, appRecoveryCopy.recovery.logReadFailed.next).text);
     }
   }, [fallback]);
 
@@ -69,13 +70,13 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
     const outcome = await restoreLatestBackupSnapshot();
     if (!outcome.ok) {
       toast.error(
-        fail('恢复失败', outcome.error ?? '没有读到可用备份', '请打开备份目录手动处理，或重启应用后再试。').text,
+        fail(appRecoveryCopy.recovery.restoreFailed.what, outcome.error ?? appRecoveryCopy.recovery.restoreFailed.reason, appRecoveryCopy.recovery.restoreFailed.next).text,
       );
       return;
     }
-    toast.success(`已排队恢复 ${outcome.name ?? '最近的快照'}，正在重启…`);
+    toast.success(appRecoveryCopy.recovery.restoreQueued(outcome.name ?? null));
     if (!(await relaunchApplication())) {
-      toast.info('请手动关闭并重新打开应用，恢复才会生效');
+      toast.info(appRecoveryCopy.recovery.restartToApply);
     }
   }, []);
 
@@ -84,12 +85,12 @@ export function useRecoveryActions(input: { fallback: boolean }): RecoveryAction
     const dir = await openDataDirectory();
     if (dir === null) {
       toast.error(
-        fail('打开备份目录失败', '当前平台不支持打开数据目录', '请在「设备与同步」里导出或导入备份。').text,
+        fail(appRecoveryCopy.recovery.backupDirFailed.what, appRecoveryCopy.recovery.backupDirFailed.reason, appRecoveryCopy.recovery.backupDirFailed.next).text,
       );
       return;
     }
     logInfo('storage', '已打开数据目录', { dir: pathForLog(dir) });
-    toast.info(`已打开数据目录；备份在其中 backups 子目录：${dir}`);
+    toast.info(appRecoveryCopy.recovery.dataDirOpened(dir));
   }, []);
 
   return { retryStorage, exportDiagnosticLogs, restoreFromBackup, openBackupDirectory };

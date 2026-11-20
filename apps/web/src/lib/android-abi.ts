@@ -3,6 +3,7 @@ import { errorMessage } from './errors.ts';
 import { logWarn } from '../log.ts';
 import { loadPlugin, PLUGIN_NAMES, type SystemActionsPlugin } from './plugins.ts';
 import { withTimeout } from './timeout.ts';
+import { appUpdateCopy } from '../copy/app-update.ts';
 
 /**
  * 设备 ABI 探测：更新清单里 Android 分成 arm64-v8a 与 armeabi-v7a 两个 APK，
@@ -111,7 +112,7 @@ async function probeNativeAbi(): Promise<AndroidAbiInfo | null> {
 async function detectAndroidAbi(): Promise<AndroidAbi> {
   const probe = detectorForTests ?? probeNativeAbi;
   try {
-    const value = await withTimeout(probe(), timeoutForTests, '读取设备 ABI 超时');
+    const value = await withTimeout(probe(), timeoutForTests, appUpdateCopy.abiTimeout);
     return parseAndroidAbi(value);
   } catch (cause: unknown) {
     logWarn('update', '设备 ABI 读取失败，按 arm64-v8a 处理', { message: errorMessage(cause) });

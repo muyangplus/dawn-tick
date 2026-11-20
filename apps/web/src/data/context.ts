@@ -16,6 +16,7 @@ import {
   type SemesterRow,
 } from '@dawn-tick/core';
 import { clampWindowStart, dayRangeOf } from '../lib/day-nav.ts';
+import { formatCopy } from '../copy/format.ts';
 
 export function weekDateOf(semester: SemesterRow, week: number, dayOfWeek: number): string {
   return addDays(weekStart(semester.start_date), (week - 1) * 7 + (dayOfWeek - 1));
@@ -107,7 +108,7 @@ export interface HolidayContext {
 
 export function loadHolidays(events: readonly EventRow[]): HolidayContext {
   const holidayLabels = new Map<string, string>();
-  for (const date of builtinHolidays()) holidayLabels.set(date, builtinHolidayName(date) ?? '放假');
+  for (const date of builtinHolidays()) holidayLabels.set(date, builtinHolidayName(date) ?? formatCopy.holidayFallback);
   const workdays = new Set(builtinWorkdays().filter((date) => builtinWorkdayName(date) !== null));
   for (const row of events) {
     const date = row.on_date;

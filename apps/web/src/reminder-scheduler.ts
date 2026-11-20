@@ -33,6 +33,7 @@ import {
   type DeliveryItem,
   type SnoozedDelivery,
 } from './reminder-collect.ts';
+import { reminderCopy } from './copy/reminder.ts';
 
 const SCAN_INTERVAL_MS = 30_000;
 /** 补投上限：睡眠/休眠唤醒后只补最近这段时间内到点的提醒，避免一次弹出一早上的旧提醒。 */
@@ -208,14 +209,14 @@ export class ReminderScheduler {
         notificationId: entry?.notificationId ?? hashKey(plan.id),
         kind: plan.kind,
         targetId: plan.targetId,
-        title: entry?.title ?? '提醒',
+        title: entry?.title ?? reminderCopy.defaultTitle,
         detail: entry?.detail ?? '',
         triggerAt: plan.triggerAt,
       };
       this.snoozes = [...this.snoozes.filter((item) => item.key !== snoozed.key), snoozed];
       await this.syncTray();
     }
-    toast.success(`已贪睡 ${plan.minutes} 分钟`);
+    toast.success(reminderCopy.snoozed(plan.minutes));
     logInfo('reminder', '提醒已贪睡', { id: plan.id, nextTriggerAt: plan.triggerAt });
   }
 
@@ -236,14 +237,14 @@ export class ReminderScheduler {
     );
     if (source === 'desktop') await this.bridge.clearTray(plan.id);
     await this.syncTray();
-    toast.success(`已勿扰 ${plan.minutes} 分钟`);
+    toast.success(reminderCopy.muted(plan.minutes));
     logInfo('reminder', '提醒已勿扰', { targetId: plan.targetId, until: plan.until });
   }
 
   private async applyDone(plan: DonePlan, source: ReminderActionSource): Promise<void> {
     if (plan.write.eventId.length === 0) {
       logError('reminder', '提醒动作缺少条目 id', { id: plan.id });
-      toast.error('无法定位要完成的条目');
+      toast.error(reminderCopy.doneMissingTarget);
       return;
     }
     try {
@@ -254,7 +255,7 @@ export class ReminderScheduler {
         eventId: plan.write.eventId,
         message: errorMessage(cause),
       });
-      toast.error('标记完成失败，请到条目里重试');
+      toast.error(reminderCopy.doneFailed);
       return;
     }
     this.doneRecords = [
@@ -269,7 +270,7 @@ export class ReminderScheduler {
     }
     if (source === 'desktop') await this.bridge.clearTray(plan.id);
     await this.syncTray();
-    toast.success('已标记完成');
+    toast.success(reminderCopy.doneToast);
     logInfo('reminder', '提醒条目已标记完成', { eventId: plan.write.eventId, id: plan.id });
   }
 
@@ -307,7 +308,7 @@ export class ReminderScheduler {
         action: payload.action,
         message: errorMessage(cause),
       });
-      toast.error('处理提醒动作失败，请重试');
+      toast.error(reminderCopy.actionFailed);
     }
   }
 

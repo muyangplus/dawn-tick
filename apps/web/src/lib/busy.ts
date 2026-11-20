@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { logDebug, logError } from '../log.ts';
 import { errorMessage } from './errors.ts';
+import { errorsCopy } from '../copy/errors.ts';
 
 type Listener = (busy: BusyState | null) => void;
 
@@ -44,7 +45,7 @@ export async function runBusy<T>(
     const timeout = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
         logError('app', '操作超时，蒙版已释放', { label, timeoutMs });
-        reject(new Error(`操作超时（${label}），已取消；请重试，若仍无响应请重启应用`));
+        reject(new Error(errorsCopy.busyTimeout(label)));
       }, Math.max(1, timeoutMs));
     });
     return await Promise.race([task(), timeout]);

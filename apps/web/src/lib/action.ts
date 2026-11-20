@@ -4,6 +4,7 @@ import { useBusyAction } from './busy.ts';
 import { errorMessage } from './errors.ts';
 import { fail } from './fail.ts';
 import { toast } from './toast.ts';
+import { errorsCopy } from '../copy/errors.ts';
 
 /** 失败提示的句式：发生了什么 + 下一步；失败原因由 `errorMessage` 统一归一。 */
 export interface ActionFailure {
@@ -79,7 +80,7 @@ export function useAction(): ActionApi {
           write(spec.scope, typeof spec.log === 'string' ? spec.log : (failure ?? '操作失败'), { message });
         }
         if (spec.fail !== undefined && spec.fail !== false) {
-          toast.error(fail(spec.fail.what, message, spec.fail.next ?? '请重试').text);
+          toast.error(fail(spec.fail.what, message, spec.fail.next ?? errorsCopy.retry).text);
         }
         return { ok: false, value: undefined, error: message };
       }

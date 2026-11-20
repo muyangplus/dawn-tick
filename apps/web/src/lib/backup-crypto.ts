@@ -4,6 +4,7 @@ import {
   toBase64Bytes,
   toBase64Utf8,
 } from '@dawn-tick/core';
+import { appBackupCopy } from '../copy/app-backup.ts';
 
 /**
  * 备份导出加密：口令 + PBKDF2-SHA256 + AES-GCM 256，只用 WebCrypto。
@@ -61,7 +62,7 @@ function webCrypto(): Crypto {
   if (api === undefined || api.subtle === undefined) {
     throw new BackupCryptoError(
       'unavailable',
-      '当前环境不支持 WebCrypto，无法加密或解密备份',
+      appBackupCopy.crypto.unavailable,
     );
   }
   return api;
@@ -93,7 +94,7 @@ function assertPassword(password: string): void {
   if (password.length < BACKUP_PASSWORD_MIN_LENGTH) {
     throw new BackupCryptoError(
       'weak-password',
-      `口令至少 ${BACKUP_PASSWORD_MIN_LENGTH} 位`,
+      appBackupCopy.crypto.weakPassword(BACKUP_PASSWORD_MIN_LENGTH),
     );
   }
 }
@@ -142,27 +143,27 @@ async function seal(payload: Uint8Array<ArrayBuffer>, password: string): Promise
 function parseEnvelope(text: string): EnvelopeBody {
   const trimmed = text.trim();
   if (!trimmed.startsWith(`${MAGIC} `)) {
-    throw corrupt('这不是加密信封：缺少 DAWNTICK-ENC 标记');
+    throw corrupt(appBackupCopy.crypto.notEnvelope);
   }
   const parts = trimmed.split(/\s+/);
-  if (parts.length !== 3) throw corrupt('加密信封格式不完整');
+  if (parts.length !== 3) throw corrupt(appBackupCopy.crypto.incomplete);
   const version = parts[1];
   if (version !== String(ENVELOPE_VERSION)) {
     throw new BackupCryptoError(
       'unsupported',
-      `不支持的信封版本 ${version ?? '(缺失)'}，请升级晓刻后再试`,
+      appBackupCopy.crypto.unsupportedVersion(version),
     );
   }
   const encoded = parts[2];
-  if (encoded === undefined) throw corrupt('加密信封缺少内容');
+  if (encoded === undefined) throw corrupt(appBackupCopy.crypto.missingBody);
   let parsed: unknown;
   try {
     parsed = JSON.parse(fromBase64Utf8(encoded));
   } catch {
-    throw corrupt('加密信封内容损坏（不是有效的 Base64 JSON）');
+    throw corrupt(appBackupCopy.crypto.bodyNotBase64);
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw corrupt('加密信封内容损坏（结构不对）');
+    throw corrupt(appBackupCopy.crypto.bodyBadShape);
   }
   const record = parsed as Record<string, unknown>;
   const salt = record['salt'];
@@ -175,7 +176,7 @@ function parseEnvelope(text: string): EnvelopeBody {
     typeof ciphertext !== 'string' ||
     ciphertext === ''
   ) {
-    throw corrupt('加密信封缺少盐、IV 或密文');
+    throw corrupt(appBackupCopy.crypto.missingFields);
   }
   if (
     typeof iterations !== 'number' ||
@@ -183,7 +184,7 @@ function parseEnvelope(text: string): EnvelopeBody {
     iterations < PBKDF2_MIN_ITERATIONS ||
     iterations > ITERATIONS_MAX
   ) {
-    throw corrupt(`加密信封的迭代次数不合理（应不少于 ${PBKDF2_MIN_ITERATIONS}）`);
+    throw corrupt(appBackupCopy.crypto.weakIterations(PBKDF2_MIN_ITERATIONS));
   }
   return { salt, iv, iterations, ciphertext };
 }
@@ -199,11 +200,11 @@ async function open(text: string, password: string): Promise<Uint8Array> {
     iv = decodeBase64(body.iv);
     ciphertext = decodeBase64(body.ciphertext);
   } catch {
-    throw corrupt('加密信封的盐、IV 或密文不是有效 Base64');
+    throw corrupt(appBackupCopy.crypto.fieldsNotBase64);
   }
-  if (salt.length !== SALT_BYTES) throw corrupt('加密信封的盐长度不对');
-  if (iv.length !== IV_BYTES) throw corrupt('加密信封的 IV 长度不对');
-  if (ciphertext.length === 0) throw corrupt('加密信封没有密文');
+  if (salt.length !== SALT_BYTES) throw corrupt(appBackupCopy.crypto.badSaltLength);
+  if (iv.length !== IV_BYTES) throw corrupt(appBackupCopy.crypto.badIvLength);
+  if (ciphertext.length === 0) throw corrupt(appBackupCopy.crypto.emptyCiphertext);
   const key = await deriveKey(password, salt, body.iterations);
   try {
     const plain = await webCrypto().subtle.decrypt(
@@ -215,7 +216,7 @@ async function open(text: string, password: string): Promise<Uint8Array> {
   } catch {
     throw new BackupCryptoError(
       'password',
-      '口令错误，请重新输入（多次失败时请检查文件是否被改动）',
+      appBackupCopy.crypto.wrongPassword,
     );
   }
 }
@@ -242,7 +243,7 @@ export async function decryptBackup(text: string, password: string): Promise<str
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw corrupt('解密成功但内容不是合法 UTF-8，文件可能已损坏');
+    throw corrupt(appBackupCopy.crypto.notUtf8);
   }
 }
 

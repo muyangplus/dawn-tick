@@ -23,6 +23,7 @@ import type { RemoteBackupInfo } from '../components/app-dialogs.tsx';
 import { runBootstrap, startDailyMaintenance, type BootFailure } from './bootstrap.ts';
 import { useReminders } from '../useReminders.ts';
 import { textForLog } from '../lib/log-redact.ts';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 /** 改变课表窗口排法的设置：改完后窗口回到默认起点。 */
 const VIEW_SETTING_KEYS: readonly (keyof AppSettings)[] = ['viewDays', 'weekStartsToday', 'hideWeekends'];
@@ -305,20 +306,22 @@ export function useAppSession(): AppSession {
       await pruneSnapshots(storage, settings.backupKeep);
       const result = await downloadAndApply(storage, settings, applyMode, remoteNewer?.name);
       if (!result.ok) {
-        toast.error(fail('下载失败', result.error ?? '未知原因', '请检查同步设置后重试。').text);
+        toast.error(
+          fail(appShellCopy.session.downloadFailed.what, result.error ?? appShellCopy.session.downloadFailed.unknownReason, appShellCopy.session.downloadFailed.next).text,
+        );
         logError('sync', '同步包下载失败', { error: textForLog(result.error ?? '') });
         return;
       }
       setRemoteNewer(null);
       if (applyMode === 'settings') {
         await reloadSettings();
-        toast.success(`已应用远端设置与预设${safe === null ? '' : '（已先备份本机）'}`);
+        toast.success(appShellCopy.session.settingsApplied(safe !== null));
         return;
       }
       await reloadSettings();
       // 整库恢复要重启才完全生效：只登记，统一由主壳的待重启条提示
       registerPendingRestart('remote-restore');
-      toast.success(`已恢复整库（写入 ${result.outcome?.full?.imported ?? 0} 条）`);
+      toast.success(appShellCopy.session.restored(result.outcome?.full?.imported ?? 0));
     },
     [storage, settings, remoteNewer, guardWrite, reloadSettings],
   );

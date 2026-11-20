@@ -1,4 +1,5 @@
 import type { NotifyStatus } from './permissions.ts';
+import { reminderCopy } from './copy/reminder.ts';
 
 /**
  * 通知权限六态（P1-11）：状态查询与文案映射合一，界面只消费这个视图。
@@ -23,17 +24,7 @@ export interface NotifyStateView {
   action: 'request' | 'settings' | null;
 }
 
-export const NOTIFY_STATE_LABEL: Record<NotifyState, string> = {
-  loading: '读取中…',
-  unsupported: '当前环境不支持通知',
-  unreadable: '通知状态不可读',
-  'not-applied': '未申请',
-  granted: '已允许',
-  denied: '已拒绝',
-  'permanently-denied': '已拒绝且不再询问',
-  'app-disabled': '通知已关闭',
-  'channel-muted': '通知渠道已静音',
-};
+export const NOTIFY_STATE_LABEL: Record<NotifyState, string> = reminderCopy.notifyState;
 
 function view(state: NotifyState, action: NotifyStateView['action'] = null): NotifyStateView {
   return { state, label: NOTIFY_STATE_LABEL[state], action };
@@ -74,5 +65,5 @@ export function isNotifyAbnormal(state: NotifyStateView): boolean {
 
 /** 横幅上的下一步：还能弹系统弹窗就重新申请，否则只能去系统设置。 */
 export function notifyNextStep(state: NotifyStateView): string {
-  return state.action === 'settings' ? '去系统设置开启' : '重新申请通知权限';
+  return state.action === 'settings' ? reminderCopy.openSystemSettings : reminderCopy.requestAgain;
 }

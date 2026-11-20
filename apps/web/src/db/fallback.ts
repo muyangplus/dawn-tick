@@ -3,13 +3,14 @@
  * 回退期间按 Q5 结论只读：界面拿到的 Storage 由 readOnlyStorage 包一层，所有写入口统一拒绝。
  */
 import type { Collection, Storage, StoreName } from '@dawn-tick/core';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /** 主壳常驻警告条：事实 + 数据未丢，避免用户误以为要恢复备份覆盖真实数据。 */
-export const STORAGE_FALLBACK_BANNER = '原生数据库不可用，已临时使用浏览器存储（本机数据未删除）';
+export const STORAGE_FALLBACK_BANNER = appRecoveryCopy.fallback.banner;
 /** 存储状态行上的标记。 */
-export const STORAGE_FALLBACK_BADGE = '临时回退';
+export const STORAGE_FALLBACK_BADGE = appRecoveryCopy.fallback.badge;
 /** 回退期间任何写操作被拦截时给用户的提示。 */
-export const STORAGE_READ_ONLY_MESSAGE = '临时只读，修复存储后再改';
+export const STORAGE_READ_ONLY_MESSAGE = appRecoveryCopy.fallback.readOnly;
 
 /** 带 `fallback: true` 标记的 Storage：只多一个只读字段，不改存储实现。 */
 export type FallbackStorage = Storage & {

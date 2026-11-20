@@ -11,6 +11,7 @@ import {
 } from '@dawn-tick/core';
 import { applyBackupPackage, type ApplyBackupResult } from '../package.ts';
 import { dayStampLocal } from './dates.ts';
+import { appSystemCopy } from '../copy/app-system.ts';
 
 /** 分享文件的默认文件名：与其他导出一致，全英文加日期。 */
 export function shareFileName(now: number): string {
@@ -52,7 +53,7 @@ export async function importShareText(storage: Storage, text: string, now = Date
   const share = parseShare(text.trim());
   const users = (await storage.collection<UserRow>('users').getAll()).filter((row) => row.deleted_at === null);
   const user = users[0];
-  if (user === undefined) throw new Error('本机还没有学期，先创建一个学期再导入分享课表');
+  if (user === undefined) throw new Error(appSystemCopy.share.noSemester);
   const semesters = await storage.collection<SemesterRow>('semesters').getAll();
   const payload = shareToBackup(share, {
     userId: user.id,

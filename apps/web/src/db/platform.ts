@@ -45,7 +45,7 @@ function recoveryHint(info: StorageInfo | null): Record<string, string> {
   return {
     dataDir: pathForLog(info?.dir) ?? '',
     dbFile: pathForLog(info?.dbFile) ?? '',
-    recovery: '数据未丢失：可在「设置 → 数据管理」导入备份快照，或重启应用再试一次',
+    recovery: '数据未丢失：可在「设备与同步」恢复快照，或重启应用再试一次',
   };
 }
 

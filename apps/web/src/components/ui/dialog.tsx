@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import type { ComponentProps, FormEvent, ReactNode } from 'react';
 import { cn } from '../../lib/cn.ts';
 import { Button } from './button.tsx';
+import { uiCopy } from '../../copy/ui.ts';
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -38,7 +39,7 @@ export function DialogContent({
             )}
           </div>
           <DialogPrimitive.Close
-            aria-label="关闭"
+            aria-label={uiCopy.dialog.closeAria}
             className="inline-flex size-tap items-center justify-center rounded-md text-muted hover:bg-surface-muted"
           >
             <X className="size-4" aria-hidden />
@@ -94,8 +95,8 @@ export function FormDialog({
   description,
   children,
   onSubmit,
-  submitLabel = '保存',
-  cancelLabel = '取消',
+  submitLabel = uiCopy.dialog.submitButton,
+  cancelLabel = uiCopy.dialog.cancelButton,
   submitting = false,
   submitDisabled = false,
   submitVariant = 'primary',
@@ -147,8 +148,8 @@ export function DangerDialog({
   onOpenChange,
   title,
   description,
-  confirmLabel = '确认删除',
-  cancelLabel = '取消',
+  confirmLabel = uiCopy.dialog.dangerConfirmButton,
+  cancelLabel = uiCopy.dialog.cancelButton,
   submitting = false,
   onConfirm,
   contentAttrs,

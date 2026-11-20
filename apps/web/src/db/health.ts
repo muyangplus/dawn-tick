@@ -1,5 +1,6 @@
 import { detectPlatform, type Platform } from '../platform-detect.ts';
 import { errorMessage } from '../lib/errors.ts';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /** SQLite 的损坏报错都带这些字样。 */
 const CORRUPT_MARKERS = [
@@ -36,6 +37,6 @@ export function isMissingSqlxMigrations(cause: unknown): boolean {
 /** 损坏时的界面文案：事实 + 下一步。 */
 export function corruptMessage(platform: Platform = detectPlatform()): string {
   return platform === 'tauri'
-    ? '数据库文件损坏，重启应用会再试一次恢复'
-    : '数据库文件损坏，请从备份导入恢复';
+    ? appRecoveryCopy.corrupt.reasonDesktop
+    : appRecoveryCopy.corrupt.reasonOther;
 }

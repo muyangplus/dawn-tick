@@ -1,6 +1,8 @@
 import { formatDate } from '@dawn-tick/core';
 import { formatMonthDayRange } from '../lib/dates.ts';
 import { formatDayCountdown } from '../lib/format.ts';
+import { miniCopy } from '../copy/mini.ts';
+import { formatCopy } from '../copy/format.ts';
 
 /** 悬浮窗考试样式只需要条目里的这三个字段；用结构类型便于冒烟传桩数据。 */
 export interface ExamWidgetSource {
@@ -25,7 +27,7 @@ export interface ExamWidgetView {
 }
 
 /** 无考试时的空态文案（悬浮窗与冒烟同源）。 */
-export const EXAM_EMPTY_TEXT = '暂无考试';
+export const EXAM_EMPTY_TEXT = miniCopy.exam.empty;
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -61,5 +63,5 @@ export function examWidgetView(
 /** 倒计时文案：`还有 N 天`；考试当天 `formatDayCountdown` 给「今天」，换成「就是今天」。 */
 export function examCountdownText(startAt: number, now: number): string {
   const days = formatDayCountdown(startAt, now);
-  return days === '今天' ? '就是今天' : `还有 ${days}`;
+  return days === formatCopy.today ? miniCopy.exam.today : miniCopy.exam.countdown(days);
 }

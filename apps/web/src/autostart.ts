@@ -1,6 +1,7 @@
 import { isAutoStartSupported } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { logError, logInfo, logWarn } from './log.ts';
+import { appSystemCopy } from './copy/app-system.ts';
 
 export { isAutoStartSupported };
 
@@ -28,7 +29,7 @@ export interface AutoStartResult {
 }
 
 export async function writeAutoStart(enabled: boolean): Promise<AutoStartResult> {
-  if (!isAutoStartSupported()) return { ok: false, error: '当前平台不支持' };
+  if (!isAutoStartSupported()) return { ok: false, error: appSystemCopy.autostart.unsupported };
   try {
     const status = await invokeNative<AutoStartStatus>('set_autostart', { enabled });
     logInfo('settings', '开机自启已更新', { enabled, ...(status as unknown as Record<string, unknown>) });
@@ -87,7 +88,7 @@ export async function readElevationStatus(): Promise<boolean | null> {
 
 /** 申请管理员权限并重启（与开机自启提权同一条原生链路）；失败时带回一行原因。 */
 export async function requestElevation(): Promise<ElevationResult> {
-  if (!isAutoStartSupported()) return { ok: false, error: '当前平台不支持' };
+  if (!isAutoStartSupported()) return { ok: false, error: appSystemCopy.autostart.unsupported };
   try {
     await invokeNative('relaunch_elevated');
     logInfo('app', '已请求以管理员身份重启');

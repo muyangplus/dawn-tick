@@ -1,5 +1,6 @@
 import { isAndroidApp, isDesktopApp } from './capabilities.ts';
 import { errorMessage } from './errors.ts';
+import { errorsCopy } from '../copy/errors.ts';
 
 /**
  * 原生桥：前端调用 Tauri 命令与 Capacitor 插件的唯一出口。
@@ -123,7 +124,7 @@ export interface LanSyncRequest {
 
 /** 把 `invoke` 的拒绝值（Rust `Err(String)` / JS Error / 其他）归一成一行文本。 */
 export function nativeErrorMessage(cause: unknown): string {
-  return errorMessage(cause, '原生调用失败');
+  return errorMessage(cause, errorsCopy.nativeCallFailed);
 }
 
 /** 归一后的原生调用错误：保留命令名与原始拒绝值，`message` 可直接进日志或界面。 */

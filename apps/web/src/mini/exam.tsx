@@ -4,6 +4,7 @@ import {
   examWidgetView,
   type ExamWidgetSource,
 } from './exam.ts';
+import { miniCopy } from '../copy/mini.ts';
 
 export interface ExamWidgetBodyProps {
   exams: readonly ExamWidgetSource[];
@@ -36,7 +37,7 @@ export function ExamWidgetBody({ exams, now, timeZone }: ExamWidgetBodyProps) {
         </span>
         <span className="mini-meta" data-role="mini-exam-meta">
           {next.date}
-          {view.total > 1 ? ` · 共 ${view.total} 场` : ''}
+          {view.total > 1 ? miniCopy.exam.total(view.total) : ''}
         </span>
       </div>
     </>

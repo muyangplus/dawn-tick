@@ -4,6 +4,7 @@ import { isAndroidApp, isDesktopApp } from './capabilities.ts';
 import { errorMessage } from './errors.ts';
 import { invokeNative } from './native.ts';
 import { PLUGIN_NAMES, loadPlugin, type SecretStorePlugin } from './plugins.ts';
+import { appBackupCopy } from '../copy/app-backup.ts';
 
 /**
  * 本机机密的加密存储（当前只有 WebDAV 密码）。
@@ -26,7 +27,7 @@ export const WEBDAV_PASSWORD_META_KEY = 'webdav_password';
 export const SECRET_ENVELOPE_PREFIX = 'enc:v1:';
 
 /** 无原生加密能力时的固定说明（界面与测试共用一句）。 */
-export const ENCRYPTION_UNAVAILABLE_TEXT = '本平台不支持加密，密码以明文保存在本机';
+export const ENCRYPTION_UNAVAILABLE_TEXT = appBackupCopy.credentials.encryptionUnavailable;
 
 /** 平台密钥库：只收发 Base64 密文，不认识信封文本，也不落盘。 */
 export interface SecretStore {
@@ -61,7 +62,7 @@ export function readSecretEnvelope(raw: string | null | undefined): SecretEnvelo
 
 /** 把 Base64 密文封成信封文本；空密文是调用方的 bug，直接拒绝。 */
 export function sealSecret(ciphertext: string): string {
-  if (ciphertext === '') throw new Error('加密结果为空，拒绝写入');
+  if (ciphertext === '') throw new Error(appBackupCopy.credentials.emptyCiphertext);
   return `${SECRET_ENVELOPE_PREFIX}${ciphertext}`;
 }
 
@@ -72,12 +73,12 @@ function createTauriSecretStore(): SecretStore {
   return {
     async encrypt(plaintext: string): Promise<string> {
       const ciphertext = await invokeNative<string>('secret_encrypt', { plaintext });
-      if (ciphertext === undefined || ciphertext === '') throw new Error('桌面端没有返回密文');
+      if (ciphertext === undefined || ciphertext === '') throw new Error(appBackupCopy.credentials.desktopNoCiphertext);
       return ciphertext;
     },
     async decrypt(ciphertext: string): Promise<string> {
       const value = await invokeNative<string>('secret_decrypt', { ciphertext });
-      if (value === undefined) throw new Error('桌面端没有返回明文');
+      if (value === undefined) throw new Error(appBackupCopy.credentials.desktopNoPlaintext);
       return value;
     },
     // DPAPI 随 Windows 用户登录上下文提供，桌面壳里恒可用（失败会在加解密时暴露）
@@ -94,18 +95,18 @@ function createAndroidSecretStore(): SecretStore {
   return {
     async encrypt(plaintext: string): Promise<string> {
       const plugin = await load();
-      if (plugin === null) throw new Error('安卓密钥库插件不可用');
+      if (plugin === null) throw new Error(appBackupCopy.credentials.androidPluginMissing);
       const result = await plugin.encrypt({ value: plaintext });
       if (typeof result.ciphertext !== 'string' || result.ciphertext === '') {
-        throw new Error('安卓端没有返回密文');
+        throw new Error(appBackupCopy.credentials.androidNoCiphertext);
       }
       return result.ciphertext;
     },
     async decrypt(ciphertext: string): Promise<string> {
       const plugin = await load();
-      if (plugin === null) throw new Error('安卓密钥库插件不可用');
+      if (plugin === null) throw new Error(appBackupCopy.credentials.androidPluginMissing);
       const result = await plugin.decrypt({ ciphertext });
-      if (typeof result.value !== 'string') throw new Error('安卓端没有返回明文');
+      if (typeof result.value !== 'string') throw new Error(appBackupCopy.credentials.androidNoPlaintext);
       return result.value;
     },
     async isAvailable(): Promise<boolean> {
@@ -180,7 +181,7 @@ export async function revealSecret(raw: string | null | undefined): Promise<stri
     return await store.decrypt(envelope.ciphertext);
   } catch (cause: unknown) {
     logError('credentials', '已保存的密码解密失败', { error: errorMessage(cause) });
-    throw new Error(`已保存的密码无法解密，请重新输入（${errorMessage(cause)}）`);
+    throw new Error(appBackupCopy.credentials.revealFailed(errorMessage(cause)));
   }
 }
 
@@ -197,7 +198,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
     return {
       password: '',
       state: 'error',
-      message: `读取已保存的密码失败：${errorMessage(cause)}`,
+      message: appBackupCopy.credentials.readFailed(errorMessage(cause)),
       encryptionAvailable: available,
     };
   }
@@ -221,7 +222,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
       return {
         password: envelope.value,
         state: 'plaintext',
-        message: `密码仍以明文保存在本机（加密失败：${reason}）`,
+        message: appBackupCopy.credentials.stillPlaintext(reason),
         encryptionAvailable: true,
       };
     }
@@ -230,7 +231,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
     return {
       password: '',
       state: 'error',
-      message: '当前平台不支持解密已保存的密码，请重新输入',
+      message: appBackupCopy.credentials.decryptUnsupported,
       encryptionAvailable: false,
     };
   }
@@ -244,7 +245,7 @@ export async function readWebdavPassword(storage: PasswordStorage): Promise<Webd
     return {
       password: '',
       state: 'error',
-      message: '已保存的密码无法解密（可能更换了系统账户或设备），请重新输入 WebDAV 密码',
+      message: appBackupCopy.credentials.decryptFailed,
       encryptionAvailable: true,
     };
   }
@@ -275,7 +276,7 @@ export async function saveWebdavPassword(
       return null;
     } catch (cause: unknown) {
       logError('credentials', '密码写入失败', { error: errorMessage(cause) });
-      return `写入失败：${errorMessage(cause)}`;
+      return appBackupCopy.credentials.writeFailed(errorMessage(cause));
     }
   };
 
@@ -299,7 +300,7 @@ export async function saveWebdavPassword(
   } catch (cause: unknown) {
     const reason = errorMessage(cause);
     logError('credentials', 'WebDAV 密码加密失败', { error: reason });
-    return { state: 'failed', message: null, error: `加密失败：${reason}`, encryptionAvailable: true };
+    return { state: 'failed', message: null, error: appBackupCopy.credentials.encryptFailed(reason), encryptionAvailable: true };
   }
   let envelope: string;
   try {

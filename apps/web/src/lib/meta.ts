@@ -1,5 +1,6 @@
 import type { Storage } from '@dawn-tick/core';
 import { describeError, logWarn, type LogScope } from '../log.ts';
+import { errorsCopy } from '../copy/errors.ts';
 
 /**
  * `app_meta` 里 JSON 值的统一读写：解析、校验、失败兜底与日志只写一次，
@@ -96,7 +97,7 @@ export async function writeMetaJson(
     throw cause;
   }
   if (text === undefined) {
-    const error = new TypeError('app_meta 值无法序列化为 JSON');
+    const error = new TypeError(errorsCopy.metaNotSerializable);
     warn(error.message);
     throw error;
   }

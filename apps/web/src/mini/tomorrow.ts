@@ -1,4 +1,5 @@
 import { addDays, nextWorkday } from '@dawn-tick/core';
+import { miniCopy } from '../copy/mini.ts';
 
 /** 悬浮窗的「明日课程预告」判定：设置开启 + 预告那天有课 + 今天没课或今天的课都上完了。 */
 export interface TomorrowPreviewInput {
@@ -29,5 +30,5 @@ export function previewDateFor(today: string, hideWeekends: boolean): string {
 
 /** 悬浮窗空态文案：显示明日预告时是「明天也没有课」，否则是「今天没有课」。 */
 export function miniEmptyText(showTomorrow: boolean): string {
-  return showTomorrow ? '明天也没有课' : '今天没有课';
+  return showTomorrow ? miniCopy.noLessonsTomorrow : miniCopy.noLessonsToday;
 }

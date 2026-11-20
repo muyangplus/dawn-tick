@@ -4,6 +4,7 @@ import { ChevronDown, type LucideIcon } from 'lucide-react';
 import { Card } from './card.tsx';
 import { cn } from '../../lib/cn.ts';
 import { isCollapsed, rememberCollapsed } from '../../lib/collapse-store.ts';
+import { uiCopy } from '../../copy/ui.ts';
 
 export interface CollapsibleCardProps {
   /** 收起状态在本地按该标识记住（受控模式下只做标识，不读写旧 store） */
@@ -63,7 +64,7 @@ export function CollapsibleCard({
     <Card className="p-0">
       <CollapsiblePrimitive.Root open={open} onOpenChange={handleOpenChange}>
         <CollapsiblePrimitive.Trigger
-          aria-label={`${title}${open ? '：收起' : '：展开'}`}
+          aria-label={uiCopy.collapsible.toggleAria(title, open)}
           className="dt-nav-item flex min-h-tap w-full items-center gap-2 rounded-lg px-4 py-3 text-left hover:bg-surface-muted"
         >
           {Icon !== undefined && <Icon className="size-4 text-ink" aria-hidden />}

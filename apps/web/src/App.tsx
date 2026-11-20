@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { AddActionsProvider, AddFab } from './components/add-menu.tsx';
 import { ScheduleFocusContext } from './components/schedule-focus.ts';
+import { HelpLinkContext } from './components/help-link.tsx';
 import { AdjustDialog } from './components/adjust-dialog.tsx';
 import { AppToolbar } from './components/app-toolbar.tsx';
 import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
@@ -39,17 +40,14 @@ import { useTimetableActions } from './app/use-timetable-actions.ts';
 import { useRecoveryActions } from './app/use-recovery.ts';
 import type { HelpTarget } from './help/help-content.ts';
 import './styles.css';
+import { appShellCopy } from './copy/app-shell.ts';
 
 // 冒烟测试与外部入口沿用 App.tsx 的导出：加载页的阈值与组件仍是同一份实现
 export { LOADING_SLOW_MS, LoadingScreen, ErrorScreen, StorageFallbackBanner } from './components/app-screens.tsx';
 
 const USER_ID = 'u1';
 
-const STORAGE_LABEL: Record<Storage['kind'], string> = {
-  indexeddb: '浏览器 IndexedDB',
-  sqlite: '原生 SQLite',
-  memory: '内存（测试）',
-};
+const STORAGE_LABEL: Record<Storage['kind'], string> = appShellCopy.storageKind;
 
 /**
  * 应用壳：只做壳——启动、路由、窗口与弹窗挂载。
@@ -72,6 +70,13 @@ export function App() {
     setGroupJump({ page: target.page, id: target.group, nonce: groupJumpSeq.current });
     setView(target.page);
   };
+  /** 界面上的「查看帮助」：切到帮助页并展开对应条目（nonce 保证重复点同一条目也重新定位） */
+  const [helpFocus, setHelpFocus] = useState<{ id: string; nonce: number } | null>(null);
+  const openHelpEntry = (entryId: string): void => {
+    groupJumpSeq.current += 1;
+    setHelpFocus({ id: entryId, nonce: groupJumpSeq.current });
+    setView('help');
+  };
   const actions = useTimetableActions({ session, onNavigate: setView });
   const effects = useAppEffects({ storage, screenStorage: session.uiStorage, settings, data });
   const recovery = useRecoveryActions({ fallback: session.fallback });
@@ -93,6 +98,8 @@ export function App() {
   useEffect(() => {
     // 帮助页「去设置」只对这一次切页生效：清掉后手动回到设置/设备不会再次自动跳组
     setGroupJump(null);
+    // 离开帮助页后清掉定位：再从导航进帮助页时不自动展开
+    if (view !== 'help') setHelpFocus(null);
     // 切页时收起课程详情：桌面侧栏不跨页常驻
     actions.closeDetail();
     // 离开日程页回到今天：再进日程默认看今天（搜索命中是从别的页直接带着日期进来，不受影响）
@@ -303,7 +310,9 @@ export function App() {
           onOpenHelp={() => setView('help')}
         />
       )}
-      {view === 'help' && <HelpView onOpenGroup={openHelpTarget} />}
+      {view === 'help' && (
+        <HelpView key={helpFocus?.nonce ?? 0} onOpenGroup={openHelpTarget} focusEntryId={helpFocus?.id ?? null} />
+      )}
     </div>
   );
 
@@ -330,8 +339,8 @@ export function App() {
         <AppSidebar
           current={view}
           onSelect={setView}
-          appName="晓刻 DawnTick"
-          subtitle={`${data.semester.name} · 第 ${data.week} 周`}
+          appName={appShellCopy.appName}
+          subtitle={appShellCopy.sidebarSubtitle(data.semester.name, data.week)}
         />
       )}
 
@@ -351,7 +360,7 @@ export function App() {
             data-window-range={formatWindowRange(data)}
             data-window-week={data.viewWeek}
             data-window-spans-weeks={data.windowSpansWeeks ? 'true' : 'false'}
-            aria-label={`查看窗口 ${formatWindowRange(data)} · 第 ${data.viewWeek} 周`}
+            aria-label={appShellCopy.windowAria(formatWindowRange(data), data.viewWeek)}
           >
             <AppToolbar
               semester={data.semester}
@@ -397,12 +406,12 @@ export function App() {
             if (event.target === event.currentTarget) actions.closeDetail();
           }}
         >
-          {content}
+          <HelpLinkContext.Provider value={openHelpEntry}>{content}</HelpLinkContext.Provider>
         </main>
       </div>
 
       {isDesktop && wideEnoughForSidePanel && detail !== null && (
-        <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label="课程详情">
+        <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label={appShellCopy.courseDetailTitle}>
           {detailPanel}
         </aside>
       )}
@@ -417,7 +426,7 @@ export function App() {
           if (!open) actions.closeDetail();
         }}
         side={isDesktop || breakpoint === 'tablet' ? 'right' : 'bottom'}
-        title="课程详情"
+        title={appShellCopy.courseDetailTitle}
       >
         {detailPanel}
       </Sheet>

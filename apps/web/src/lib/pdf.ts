@@ -1,3 +1,4 @@
+import { exportImageCopy } from '../copy/export-image.ts';
 /**
  * 最小 PDF 1.4 生成（单页、横向 A4、嵌入一张 PNG 图像 XObject）。
  *
@@ -28,9 +29,9 @@ interface PngInfo {
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 function readPng(png: Uint8Array): PngInfo {
-  if (png.length < 33) throw new Error('PNG 文件不完整');
+  if (png.length < 33) throw new Error(exportImageCopy.pdf.pngTruncated);
   for (let index = 0; index < PNG_SIGNATURE.length; index += 1) {
-    if (png[index] !== PNG_SIGNATURE[index]) throw new Error('不是有效的 PNG 文件');
+    if (png[index] !== PNG_SIGNATURE[index]) throw new Error(exportImageCopy.pdf.notPng);
   }
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   let offset = 8;
@@ -48,14 +49,14 @@ function readPng(png: Uint8Array): PngInfo {
     );
     const dataStart = offset + 8;
     const dataEnd = dataStart + length;
-    if (dataEnd + 4 > png.length) throw new Error('PNG 数据块长度越界');
+    if (dataEnd + 4 > png.length) throw new Error(exportImageCopy.pdf.chunkOverflow);
     if (type === 'IHDR') {
-      if (length < 13) throw new Error('PNG 缺少有效的 IHDR');
+      if (length < 13) throw new Error(exportImageCopy.pdf.badIhdr);
       width = view.getUint32(dataStart);
       height = view.getUint32(dataStart + 4);
       const bitDepth = png[dataStart + 8] as number;
       colorType = png[dataStart + 9] as number;
-      if (bitDepth !== 8) throw new Error(`暂不支持 ${bitDepth} 位深的 PNG`);
+      if (bitDepth !== 8) throw new Error(exportImageCopy.pdf.bitDepthUnsupported(bitDepth));
     } else if (type === 'IDAT') {
       idatParts.push(png.subarray(dataStart, dataEnd));
     } else if (type === 'IEND') {
@@ -63,8 +64,8 @@ function readPng(png: Uint8Array): PngInfo {
     }
     offset = dataEnd + 4;
   }
-  if (width <= 0 || height <= 0) throw new Error('PNG 缺少图像尺寸');
-  if (idatParts.length === 0) throw new Error('PNG 缺少 IDAT 数据');
+  if (width <= 0 || height <= 0) throw new Error(exportImageCopy.pdf.missingSize);
+  if (idatParts.length === 0) throw new Error(exportImageCopy.pdf.missingIdat);
   const idat = new Uint8Array(idatParts.reduce((sum, part) => sum + part.length, 0));
   let cursor = 0;
   for (const part of idatParts) {
@@ -89,10 +90,10 @@ function number(value: number): string {
 export function buildPdfFromPng(png: Uint8Array, size: PdfImageSize): Uint8Array {
   const info = readPng(png);
   if (info.width !== size.width || info.height !== size.height) {
-    throw new Error(`PNG 尺寸与导出尺寸不一致（${info.width}×${info.height} ≠ ${size.width}×${size.height}）`);
+    throw new Error(exportImageCopy.pdf.sizeMismatch(info.width, info.height, size.width, size.height));
   }
   if (info.colorType !== 2) {
-    throw new Error('PDF 导出只支持无透明通道的 RGB PNG');
+    throw new Error(exportImageCopy.pdf.rgbOnly);
   }
 
   const scale = Math.min(

@@ -9,6 +9,7 @@ import { logDebug, logWarn } from '../log.ts';
 import { toast } from '../components/ui/toaster.tsx';
 import { lessonCellOf, type DetailState } from './lesson-cell.ts';
 import type { AppSession } from './use-app-session.ts';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 /** 事件表单的种类：待办 / 考试 */
 export type EventFormKind = 'todo' | 'exam';
@@ -221,7 +222,7 @@ export function useTimetableActions(input: {
       if (!guardWrite('编辑课程')) return;
       const managed = data?.courses.find((item) => item.id === id) ?? null;
       if (managed === null) {
-        toast.error('找不到这门课');
+        toast.error(appShellCopy.courseNotFound);
         return;
       }
       setEditingCourse(managed);

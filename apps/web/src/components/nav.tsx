@@ -12,6 +12,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 import { isCollapsed, rememberCollapsed } from '../lib/collapse-store.ts';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 export type NavId = 'timetable' | 'schedule' | 'settings' | 'devices' | 'help';
 
@@ -26,11 +27,11 @@ export interface NavItem {
  * 「帮助」在设置/设备同一导航体系内，移动端从设置/设备列表进入（底栏不占位）。
  */
 export const DESKTOP_NAV: readonly NavItem[] = [
-  { id: 'timetable', label: '课表', icon: CalendarDays },
-  { id: 'schedule', label: '日程', icon: ListChecks },
-  { id: 'settings', label: '设置', icon: Settings },
-  { id: 'devices', label: '设备与同步', icon: MonitorSmartphone },
-  { id: 'help', label: '帮助', icon: CircleHelp },
+  { id: 'timetable', label: appShellCopy.nav.timetable, icon: CalendarDays },
+  { id: 'schedule', label: appShellCopy.nav.schedule, icon: ListChecks },
+  { id: 'settings', label: appShellCopy.nav.settings, icon: Settings },
+  { id: 'devices', label: appShellCopy.nav.devices, icon: MonitorSmartphone },
+  { id: 'help', label: appShellCopy.nav.help, icon: CircleHelp },
 ];
 
 /** 移动端底栏只放四个主页面，帮助从设置/设备列表或顶部「?」进入。 */
@@ -72,7 +73,7 @@ export function AppSidebar({
         )}
         <button
           type="button"
-          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+          aria-label={collapsed ? appShellCopy.nav.expandSidebar : appShellCopy.nav.collapseSidebar}
           aria-expanded={!collapsed}
           onClick={toggle}
           className="dt-nav-item flex size-tap shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-muted"
@@ -84,7 +85,7 @@ export function AppSidebar({
           )}
         </button>
       </div>
-      <nav className={cn('flex w-full flex-col gap-1', collapsed && 'items-center')} aria-label="主导航">
+      <nav className={cn('flex w-full flex-col gap-1', collapsed && 'items-center')} aria-label={appShellCopy.nav.mainAria}>
         {DESKTOP_NAV.map((item) => {
           const Icon = item.icon;
           const active = item.id === current;
@@ -110,7 +111,7 @@ export function AppSidebar({
       {!collapsed && (
         <div className="mt-auto flex items-center gap-1 text-xs text-muted">
           <Sun className="size-3" aria-hidden />
-          快捷键：/ 搜索 · ← → 平移一屏 · T 回到今天
+          {appShellCopy.nav.shortcuts}
         </div>
       )}
     </aside>
@@ -121,7 +122,7 @@ export function BottomNav({ current, onSelect }: { current: NavId; onSelect: (id
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(var(--dt-bottom-nav)+env(safe-area-inset-bottom))] border-t border-line bg-surface pb-[env(safe-area-inset-bottom)]"
-      aria-label="主导航"
+      aria-label={appShellCopy.nav.mainAria}
       data-role="bottom-nav"
     >
       {MOBILE_NAV.map((item) => {

@@ -1,4 +1,5 @@
 import { DEFAULT_TIME_ZONE, addDays, dateWallClockToEpoch, formatDate } from '@dawn-tick/core';
+import { reminderCopy } from '../copy/reminder.ts';
 
 /**
  * 提醒动作（R-07）的纯逻辑：动作集合、动作后的计划变更、静音/完成抑制。
@@ -24,11 +25,11 @@ const HOUR_MS = 60 * MINUTE_MS;
 /** 托盘/通知保留已触发提醒的时长：动作仍可在一段时间内被点。 */
 export const ACTION_KEEP_MS = 2 * HOUR_MS;
 
-/** 动作文案：Android 通知按钮、Windows 托盘菜单与设置页说明共用。 */
+/** 动作文案：Android 通知按钮与 Windows 托盘菜单共用。 */
 export const ACTION_LABEL: Record<ReminderActionId, string> = {
-  snooze: `贪睡 ${SNOOZE_MINUTES} 分钟`,
-  done: '完成',
-  mute: `勿扰 ${MUTE_MINUTES} 分钟`,
+  snooze: reminderCopy.action.snooze(SNOOZE_MINUTES),
+  done: reminderCopy.action.done,
+  mute: reminderCopy.action.mute(MUTE_MINUTES),
 };
 
 /** 全部动作，顺序即界面顺序。 */
