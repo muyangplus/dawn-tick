@@ -106,7 +106,7 @@ export const lanSyncCopy = {
   retryInMinutes: (minutes: number) => `下次重试：${minutes} 分钟后`,
 
   // 开启配对（本机监听）
-  serverStartTimeout: '本机监听 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+  serverStartTimeout: '本机监听 10 秒内没有响应，请确认已连接 Wi-Fi 后重试',
   serverStartErrorPrefix: '开启配对失败：',
   serverStartHint: '请确认已连接 Wi-Fi/热点并关闭 VPN/代理，再确认与对方在同一网段',
   serverStartRetryLater: '请稍后重试',

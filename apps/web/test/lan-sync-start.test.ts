@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { lanSyncCopy } from '../src/copy/sync-lan.ts';
 import { setLanDeviceIdForTests } from '../src/lib/lan-device-id.ts';
 import {
   LAN_SERVER_START_ERROR_PREFIX,
@@ -24,20 +25,29 @@ function installTauriPlatform(): () => void {
   };
 }
 
-test('生产超时是 8 秒，失败文案带统一前缀', () => {
-  assert.equal(LAN_SERVER_START_TIMEOUT_MS, 8_000);
+test('生产超时是 10 秒（与 Android 启动看门狗一致），失败文案带统一前缀', () => {
+  assert.equal(LAN_SERVER_START_TIMEOUT_MS, 10_000);
   assert.equal(LAN_SERVER_START_ERROR_PREFIX, '开启配对失败：');
+  assert.equal(LAN_SERVER_START_TIMEOUT_MESSAGE, lanSyncCopy.serverStartTimeout);
   assert.equal(
     LAN_SERVER_START_TIMEOUT_MESSAGE,
-    '本机监听 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+    '本机监听 10 秒内没有响应，请确认已连接 Wi-Fi 后重试',
   );
   assert.equal(
     startLanServerError(LAN_SERVER_START_TIMEOUT_MESSAGE),
-    '开启配对失败：本机监听 8 秒内没有响应，请确认已连接 Wi-Fi 后重试',
+    '开启配对失败：本机监听 10 秒内没有响应，请确认已连接 Wi-Fi 后重试',
   );
   assert.equal(startLanServerError('开启配对失败：原因'), '开启配对失败：原因');
   assert.match(LAN_SERVER_START_HINT, /Wi-Fi/);
   assert.match(LAN_SERVER_START_HINT, /VPN/);
+});
+
+test('超时文案里的秒数跟随超时常量', () => {
+  const seconds = LAN_SERVER_START_TIMEOUT_MS / 1000;
+  assert.ok(Number.isInteger(seconds));
+  assert.ok(lanSyncCopy.serverStartTimeout.includes(`${seconds} 秒`));
+  const mentioned = [...lanSyncCopy.serverStartTimeout.matchAll(/(\d+)\s*秒/g)].map((m) => Number(m[1]));
+  assert.deepEqual(mentioned, [seconds]);
 });
 
 test('withTimeout：按时返回或抛可读超时错误', async () => {

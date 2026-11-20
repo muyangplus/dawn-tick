@@ -55,9 +55,9 @@ export interface StartLanServerResult {
 
 /**
  * 原生「开始监听」的超时：安卓绑定 socket 与启动 UDP 广播都在后台线程，
- * 个别机型会卡住不回调；超过 8 秒按失败处理，让界面回到可重试状态。
+ * 个别机型会卡住不回调；超过 10 秒按失败处理，让界面回到可重试状态。
  */
-export const LAN_SERVER_START_TIMEOUT_MS = 8_000;
+export const LAN_SERVER_START_TIMEOUT_MS = 10_000;
 
 /** 超时原因：由 `startLanServer` 统一加上「开启配对失败：」前缀后展示。 */
 export const LAN_SERVER_START_TIMEOUT_MESSAGE = lanSyncCopy.serverStartTimeout;
@@ -141,7 +141,7 @@ export interface StartLanServerOptions {
   /** 用户在「切换网络」里选中的本机地址；缺省自动选首选局域网。 */
   host?: string | undefined;
   now?: number;
-  /** 单测用：缩短超时，生产固定 8 秒。 */
+  /** 单测用：缩短超时，生产固定 10 秒。 */
   timeoutMs?: number;
 }
 

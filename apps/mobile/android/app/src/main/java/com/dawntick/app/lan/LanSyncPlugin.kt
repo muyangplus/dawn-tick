@@ -283,7 +283,7 @@ class LanSyncPlugin : Plugin() {
         /** 诊断日志范围：局域网同步。 */
         private const val SCOPE = "sync"
 
-        /** 卡住时最多等 10 秒；TS 侧另有 8 秒超时，先于这里回到可重试状态。 */
+        /** 卡住时最多等 10 秒；TS 侧同为 10 秒超时，先到的一方让界面回到可重试状态。 */
         const val START_TIMEOUT_MS = 10_000L
     }
 }
