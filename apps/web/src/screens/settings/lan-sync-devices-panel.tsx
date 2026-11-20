@@ -30,6 +30,9 @@ import {
   shouldProbePairing,
   type LanPairingStatuses,
 } from '../../lan-sync-reconnect.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
+import { HelpLink } from '../../components/help-link.tsx';
+import { lanSyncCopy } from '../../copy/sync-lan.ts';
 
 export interface LanSyncDevicesPanelProps {
   storage: Storage;
@@ -214,26 +217,26 @@ export function LanSyncDevicesPanel({
       }
       commitStatuses(reduceLanPairingStatuses(statusesRef.current, [probe]));
       if (probe.state !== 'online') {
-        onNote(`立即同步失败：${pairing.name} ${probe.error ?? '网络不可达'}`);
+        onNote(copy.syncNowOffline(pairing.name, probe.error ?? lanSyncCopy.unreachable));
         return;
       }
       const token = probe.token ?? target.token;
       refreshedRef.current(target.id, token, probe.expiresAt ?? 0);
       const session = { ...pairingSession(target), token };
       if (sessionExpired(session)) {
-        onNote('配对已过期，请移除后重新配对');
+        onNote(copy.pairingExpired);
         return;
       }
       const result = await pullFromPeer(storage, session, ALL_SCOPES);
       if (!result.ok) {
-        onNote(`立即同步失败：${result.error ?? '未知原因'}`);
+        onNote(copy.syncNowFailed(result.error ?? copy.unknownReason));
         return;
       }
       const withToken = updateLanPairingToken(pairingsRef.current, target.id, token);
       const updated = markLanPairingSynced(withToken, target.id);
       commitPairings(updated);
       await store.save(updated);
-      onNote(`已与 ${pairing.name} 同步：写入 ${result.imported} 条，跳过 ${result.skipped} 条`);
+      onNote(copy.syncedWith(pairing.name, result.imported, result.skipped));
       await onSettingsReplaced();
       if (result.imported > 0) onChanged();
     } finally {
@@ -253,8 +256,8 @@ export function LanSyncDevicesPanel({
       commitStatuses(next);
       onNote(
         revoked.ok
-          ? `已移除配对：${pairing.name}`
-          : `已在本机移除 ${pairing.name}；对方未响应，可能仍保留授权`,
+          ? copy.removed(pairing.name)
+          : copy.removedLocalOnly(pairing.name),
       );
     } finally {
       setBusyId(null);
@@ -263,10 +266,10 @@ export function LanSyncDevicesPanel({
 
   return (
     <div className="flex flex-col gap-1" data-role="lan-paired">
-      <span className="text-xs font-medium text-muted">已配对设备</span>
+      <span className="text-xs font-medium text-muted">{copy.pairedTitle}</span>
       {pairings.length === 0 ? (
         <span className="text-xs text-muted" data-role="lan-paired-empty">
-          还没有已配对设备：配对成功后会自动保存，重启或断网后自动重连，不需要重新输配对码。
+          {copy.pairedEmpty}
         </span>
       ) : (
         <div className="flex flex-col gap-2" data-role="lan-paired-list">
@@ -299,32 +302,32 @@ export function LanSyncDevicesPanel({
                   <Button
                     size="sm"
                     variant="secondary"
-                    aria-label={`立即同步 ${pairing.name}`}
+                    aria-label={copy.syncNowLabel(pairing.name)}
                     loading={busyId === pairing.id}
                     disabled={busyId !== null}
                     onClick={() => void syncNow(pairing)}
                   >
-                    立即同步
+                    {copy.syncNowButton}
                   </Button>
                   {offline && (
                     <Button
                       size="sm"
                       variant="secondary"
-                      aria-label={`重新配对 ${pairing.name}`}
+                      aria-label={copy.repairLabel(pairing.name)}
                       disabled={busyId !== null}
                       onClick={() => onRepair(pairing)}
                     >
-                      重新配对
+                      {copy.repairButton}
                     </Button>
                   )}
                   <Button
                     size="sm"
                     variant="ghost"
-                    aria-label={`移除配对 ${pairing.name}`}
+                    aria-label={copy.removeLabel(pairing.name)}
                     disabled={busyId !== null}
                     onClick={() => void remove(pairing)}
                   >
-                    移除
+                    {copy.removeButton}
                   </Button>
                 </div>
               </div>
@@ -332,9 +335,7 @@ export function LanSyncDevicesPanel({
           })}
         </div>
       )}
-      <span className="text-xs text-muted">
-        配对设备可长期访问本机同步接口（180 天），可随时在列表里移除。
-      </span>
+      <HelpLink entryId="lan-paired" />
     </div>
   );
 }

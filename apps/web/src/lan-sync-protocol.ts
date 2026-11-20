@@ -1,5 +1,6 @@
 import { sha256HexSync, type BackupModule } from '@dawn-tick/core';
 import { LAN_TRUSTED_TOKENS_META_KEY } from './lib/meta-keys.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步（I-14）的协议层：范围、地址、配对码与长期配对令牌。
@@ -37,9 +38,9 @@ export const MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
 export type LanScope = 'timetable' | 'todos' | 'settings';
 export const LAN_SCOPES: readonly LanScope[] = ['timetable', 'todos', 'settings'];
 export const LAN_SCOPE_LABEL: Record<LanScope, string> = {
-  timetable: '课表',
-  todos: '待办',
-  settings: '设置',
+  timetable: lanSyncCopy.scopeTimetable,
+  todos: lanSyncCopy.scopeTodos,
+  settings: lanSyncCopy.scopeSettings,
 };
 /** 范围到备份模块的映射：课表=学期/节次/课程/排课，待办=日程与待办，设置=设置项。 */
 export const LAN_SCOPE_MODULES: Record<LanScope, readonly BackupModule[]> = {
@@ -159,9 +160,9 @@ export function hashToken(token: string): string {
 
 /** 设备名归一：空白、超长与非字符串一律退回「未知设备」。 */
 export function normalizeTokenName(raw: unknown): string {
-  if (typeof raw !== 'string') return '未知设备';
+  if (typeof raw !== 'string') return lanSyncCopy.unknownDevice;
   const text = raw.trim();
-  if (text === '') return '未知设备';
+  if (text === '') return lanSyncCopy.unknownDevice;
   return [...text].slice(0, TRUSTED_TOKEN_NAME_MAX).join('');
 }
 
@@ -199,12 +200,12 @@ export function findTrustedToken(
   now = Date.now(),
 ): TokenCheck {
   const token = bearerToken(authorization);
-  if (token === null) return { ok: false, record: null, error: '缺少配对令牌，请重新配对' };
+  if (token === null) return { ok: false, record: null, error: lanSyncCopy.tokenMissing };
   const tokenHash = hashToken(token);
   const record = tokens.find((item) => item.tokenHash === tokenHash) ?? null;
-  if (record === null) return { ok: false, record: null, error: '配对已失效，请重新配对' };
+  if (record === null) return { ok: false, record: null, error: lanSyncCopy.pairingInvalid };
   if (tokenExpired(record, now)) {
-    return { ok: false, record: null, error: '配对已过期，请重新配对' };
+    return { ok: false, record: null, error: lanSyncCopy.pairingExpired };
   }
   return { ok: true, record, error: null };
 }
@@ -344,10 +345,10 @@ export interface PairCheck {
 
 /** 校验配对码：格式 → 过期 → 匹配；错误文案可直接展示。 */
 export function verifyPairCode(pairing: Pairing | null, code: string, now = Date.now()): PairCheck {
-  if (pairing === null) return { ok: false, error: '配对码无效或已使用，请让对方重新开启配对' };
-  if (!/^\d{6}$/.test(code.trim())) return { ok: false, error: '配对码应为 6 位数字' };
-  if (pairingExpired(pairing, now)) return { ok: false, error: '配对码已过期，请让对方重新开启配对' };
-  if (code.trim() !== pairing.code) return { ok: false, error: '配对码不正确' };
+  if (pairing === null) return { ok: false, error: lanSyncCopy.pairCodeUsed };
+  if (!/^\d{6}$/.test(code.trim())) return { ok: false, error: lanSyncCopy.pairCodeFormat };
+  if (pairingExpired(pairing, now)) return { ok: false, error: lanSyncCopy.pairCodeExpired };
+  if (code.trim() !== pairing.code) return { ok: false, error: lanSyncCopy.pairCodeWrong };
   return { ok: true, error: null };
 }
 

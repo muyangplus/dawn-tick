@@ -14,6 +14,7 @@ import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { SNAPSHOT_INDEX_META_KEY, SNAPSHOT_META_PREFIX } from './lib/meta-keys.ts';
 import { logError, logInfo, logWarn } from './log.ts';
 import { applyBackupPackage } from './package.ts';
+import { snapshotsCopy } from './copy/backup-snapshots.ts';
 
 /** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
 
@@ -161,9 +162,9 @@ async function createJsonSnapshot(storage: Storage, now: number): Promise<Snapsh
 
 async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
   const driver = activeSqlDriver();
-  if (driver === null) throw new Error('数据库尚未打开');
+  if (driver === null) throw new Error(snapshotsCopy.databaseNotOpen);
   const target = await invokeNative<{ name: string; path: string; sqlLiteral: string }>('backup_target');
-  if (target === undefined) throw new Error('当前平台不支持文件快照');
+  if (target === undefined) throw new Error(snapshotsCopy.fileSnapshotUnsupported);
   try {
     await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
   } catch (cause: unknown) {
@@ -271,7 +272,7 @@ export async function restoreSnapshot(
       return { ok: true, error: null, needsRestart: true, result: null };
     }
     const raw = await storage.readMeta(entry.id);
-    if (raw === undefined) throw new Error('快照内容不存在');
+    if (raw === undefined) throw new Error(snapshotsCopy.snapshotMissing);
     const payload = parseBackup(raw);
     const result = await applyBackupPackage(storage, payload, { mode: 'clear', modules: BACKUP_MODULES });
     logInfo('backup', '快照已恢复', {

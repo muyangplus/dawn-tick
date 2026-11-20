@@ -9,6 +9,7 @@ import { clearLogs, logsText } from '../../log.ts';
 import { openLogDirectory, revealPath, saveTextFile } from '../../system-actions.ts';
 import { fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
 
 /** 保存结果：桌面端带实际路径，浏览器下载没有本地路径。 */
 export interface SavedTextResult {
@@ -31,11 +32,11 @@ export async function saveText(
     mime === undefined ? { extension, filterName } : { extension, filterName, mime },
   );
   if (result.cancelled) {
-    toast.info('已取消保存');
+    toast.info(copy.saveCancelled);
     return { saved: false, path: null };
   }
   if (!result.ok) {
-    toast.error(fail('保存', result.error, '请换一个位置后重试'));
+    toast.error(fail(copy.saveWhat, result.error, copy.saveNext));
     return { saved: false, path: null };
   }
   return { saved: true, path: result.path };
@@ -54,16 +55,16 @@ export function toastSaved(message: string, path: string | null): void {
   const actions = savedFileActions();
   if (actions === 'android') {
     toast.success(message, {
-      description: `已保存到 ${path}`,
-      action: { label: '分享', onClick: () => void shareSavedFile(path) },
-      cancel: { label: '打开所在位置', onClick: () => void revealSavedFile(path) },
+      description: copy.savedTo(path),
+      action: { label: copy.share, onClick: () => void shareSavedFile(path) },
+      cancel: { label: copy.revealLocation, onClick: () => void revealSavedFile(path) },
     });
     return;
   }
   toast.success(message, {
-    description: `已保存到 ${path}`,
+    description: copy.savedTo(path),
     action: {
-      label: '打开所在位置',
+      label: copy.revealLocation,
       onClick: () => {
         void revealSavedPath(path);
       },
@@ -74,19 +75,19 @@ export function toastSaved(message: string, path: string | null): void {
 /** 「打开所在位置」失败时给可读提示；成功不再额外打扰。 */
 async function revealSavedPath(path: string): Promise<void> {
   if (await revealPath(path)) return;
-  toast.error(fail('打开所在位置', null, '请稍后重试，或手动到文件管理器里打开'));
+  toast.error(fail(copy.revealWhat, null, copy.revealNext));
 }
 
 /** Android「分享」失败时给可读提示；成功不再额外打扰。 */
 async function shareSavedFile(path: string): Promise<void> {
   if (await shareExportedFile(path)) return;
-  toast.error(fail('分享文件', null, '请稍后重试，或到文件管理器里发送'));
+  toast.error(fail(copy.shareWhat, null, copy.shareNext));
 }
 
 /** Android「打开所在位置」失败时给可读提示。 */
 async function revealSavedFile(path: string): Promise<void> {
   if (await revealExportedFile(path)) return;
-  toast.error(fail('打开所在位置', null, '请稍后重试，或手动到文件管理器里打开'));
+  toast.error(fail(copy.revealWhat, null, copy.revealNext));
 }
 
 /** 导出当前日志缓冲区：没有日志时也写出占位文案，成功后清空缓冲区。 */
@@ -102,10 +103,10 @@ async function androidNativeLog(): Promise<string> {
     const result = await withTimeout(
       plugin?.readNativeLog?.({ maxBytes: 256 * 1024 }) ?? Promise.resolve(undefined),
       8_000,
-      '读取原生日志超时',
+      copy.nativeLogTimeout,
     );
     const text = typeof result?.text === 'string' ? result.text.trim() : '';
-    return text === '' ? '' : `\n===== 安卓原生日志 =====\n${text}`;
+    return text === '' ? '' : `\n${copy.nativeLogHeader}\n${text}`;
   } catch {
     return '';
   }
@@ -115,20 +116,20 @@ export async function exportLogs(): Promise<void> {
   // 安卓上文件导出依赖 Filesystem/分享插件，部分机型会失败；改成复制到剪贴板，直接粘贴即可发送
   if (isAndroidApp()) {
     const collected = await collectDiagnosticsLog();
-    const done = await copyText(collected.text === '' ? '（暂无日志）' : collected.text);
+    const done = await copyText(collected.text === '' ? copy.noLogsPlaceholder : collected.text);
     if (done) {
-      toastSaved(`已复制诊断日志 ${collected.text === '' ? 0 : collected.text.split('\n').length} 行`, null);
+      toastSaved(copy.logsCopied(collected.text === '' ? 0 : collected.text.split('\n').length), null);
       return;
     }
-    toast.error('复制失败：请到「诊断与维护 → 查看日志」长按选择复制');
+    toast.error(copy.logsCopyFailed);
     return;
   }
   const native = await androidNativeLog();
   const entries = logsText() + native;
   const name = `DawnTick-log-${dayStampUtc(Date.now())}.txt`;
-  const result = await saveText(name, entries === '' ? '暂无日志' : entries, 'txt', '日志文件');
+  const result = await saveText(name, entries === '' ? copy.noLogs : entries, 'txt', copy.logFileFilter);
   if (!result.saved) return;
-  toastSaved(`已导出日志 ${entries === '' ? 0 : entries.split('\n').length} 行`, result.path);
+  toastSaved(copy.logsExported(entries === '' ? 0 : entries.split('\n').length), result.path);
   void clearLogs();
 }
 
@@ -136,8 +137,8 @@ export async function exportLogs(): Promise<void> {
 export async function showLogDirectory(): Promise<void> {
   const dir = await openLogDirectory();
   if (dir === null) {
-    toast.error(fail('打开日志目录', null, '请到「设置 → 同步与数据」查看数据目录'));
+    toast.error(fail(copy.logDirWhat, null, copy.logDirNext));
     return;
   }
-  toast.info(`日志目录：${dir}`);
+  toast.info(copy.logDir(dir));
 }

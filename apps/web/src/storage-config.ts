@@ -2,6 +2,7 @@ import { canConfigureStorage, isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { pathForLog } from './lib/log-redact.ts';
 import { logError, logInfo, logWarn } from './log.ts';
+import { storageCopy } from './copy/backup-storage.ts';
 
 export { canConfigureStorage };
 
@@ -34,7 +35,7 @@ export interface StorageInfo {
 }
 
 /** 存储状态行上的回退标记：设备页把它拼在真实存储类型后面。 */
-export const STORAGE_FALLBACK_LABEL = '临时回退';
+export const STORAGE_FALLBACK_LABEL = storageCopy.fallbackLabel;
 
 /** 设置/设备页的存储类型文案：回退时一定要让用户看出「现在不是原生库」。 */
 export function storageStatusLabel(label: string, fallback: boolean): string {
@@ -58,10 +59,10 @@ export interface StoragePathResult {
 
 /** 保存自定义存储位置；传空字符串表示恢复默认。 */
 export async function saveStoragePath(path: string): Promise<StoragePathResult> {
-  if (!canConfigureStorage()) return { info: null, error: '当前平台不支持修改存储位置' };
+  if (!canConfigureStorage()) return { info: null, error: storageCopy.unsupported };
   try {
     const info = await invokeNative<StorageInfo>('set_storage_path', { path });
-    if (info === undefined) return { info: null, error: '当前平台不支持修改存储位置' };
+    if (info === undefined) return { info: null, error: storageCopy.unsupported };
     logInfo('storage', '存储位置已保存', { dir: pathForLog(info.dir), custom: info.customPath, copied: info.copied.length });
     return { info, error: null };
   } catch (cause: unknown) {
@@ -105,10 +106,10 @@ export interface TrayStatusResult {
 }
 
 export async function readTrayStatus(): Promise<TrayStatusResult> {
-  if (!isDesktopApp()) return { status: null, error: '当前平台没有托盘' };
+  if (!isDesktopApp()) return { status: null, error: storageCopy.noTray };
   try {
     const status = await invokeNative<TrayStatus>('tray_status');
-    return { status: status ?? null, error: status === undefined ? '当前平台没有托盘' : null };
+    return { status: status ?? null, error: status === undefined ? storageCopy.noTray : null };
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
     logWarn('app', '托盘状态读取失败', { message });

@@ -4,6 +4,7 @@ import { pathForLog } from './log-redact.ts';
 import { isAndroidApp, isDesktopApp } from './capabilities.ts';
 import { nativeErrorMessage } from './native.ts';
 import { PLUGIN_NAMES, loadPlugin, type FileSharePlugin } from './plugins.ts';
+import { transferCopy } from '../copy/backup-transfer.ts';
 
 /**
  * 导出文件的平台出口（I-12）：Android 真实落盘、分享与「打开所在位置」。
@@ -59,7 +60,7 @@ export async function writeAndroidFile(name: string, content: string | Uint8Arra
     });
   }
   const { uri } = await Filesystem.getUri({ path: name, directory: Directory.Cache });
-  if (typeof uri !== 'string' || uri === '') throw new Error('文件写入后找不到路径');
+  if (typeof uri !== 'string' || uri === '') throw new Error(transferCopy.fileNoPath);
   return pathFromFileUri(uri);
 }
 

@@ -6,6 +6,7 @@ import {
   isEphemeralLanDeviceId,
   pairingSession,
 } from './lan-pairings.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步：已配对设备的**自动重连状态机**、**指数退避**与 **UDP 发现换地址**。
@@ -29,9 +30,9 @@ export const LAN_RECONNECT_MAX_MS = 5 * 60_000;
 /** 面板检查「谁该重试」的节拍：只读内存状态，不发网络请求。 */
 export const LAN_RECONNECT_TICK_MS = 15_000;
 /** 离线文案：明确告诉用户端口可能已变化，并给出下一步。 */
-export const LAN_PAIRING_OFFLINE_HINT = '离线（端口可能已变化）：请让对方重新开启配对或重新扫码';
+export const LAN_PAIRING_OFFLINE_HINT = lanSyncCopy.pairingOffline;
 /** 配对失效文案。 */
-export const LAN_PAIRING_EXPIRED_HINT = '配对已失效，可移除后重新配对';
+export const LAN_PAIRING_EXPIRED_HINT = lanSyncCopy.pairingStale;
 
 /** `unknown` 未探测；`online` 可同步；`offline` 网络不可达；`expired` 服务端拒绝令牌。 */
 export type LanPairingState = 'unknown' | 'online' | 'offline' | 'expired';
@@ -60,13 +61,13 @@ export function nextRetryDelayMs(failures: number): number {
 export function lanPairingStatusText(status: LanPairingStatus | undefined): string {
   switch (status?.state) {
     case 'online':
-      return '在线';
+      return lanSyncCopy.statusOnline;
     case 'offline':
       return LAN_PAIRING_OFFLINE_HINT;
     case 'expired':
       return LAN_PAIRING_EXPIRED_HINT;
     default:
-      return '未检测';
+      return lanSyncCopy.statusUnchecked;
   }
 }
 
@@ -78,10 +79,10 @@ export function formatLanPairingRetry(
   if (status === undefined || status.state !== 'offline') return '';
   if (!Number.isFinite(status.nextRetryAt)) return '';
   const remaining = status.nextRetryAt - now;
-  if (remaining <= 0) return '正在重试…';
+  if (remaining <= 0) return lanSyncCopy.retrying;
   const seconds = Math.max(1, Math.ceil(remaining / 1000));
-  if (seconds < 60) return `下次重试：${seconds} 秒后`;
-  return `下次重试：${Math.ceil(seconds / 60)} 分钟后`;
+  if (seconds < 60) return lanSyncCopy.retryInSeconds(seconds);
+  return lanSyncCopy.retryInMinutes(Math.ceil(seconds / 60));
 }
 
 /** 是否该探测：未探测过立即探测；失效停用；其余看退避时间。 */
@@ -262,7 +263,7 @@ export async function probeLanPairing(
 ): Promise<LanPairProbe> {
   const ping = await pingLanPeer({ host: pairing.host, port: pairing.port });
   if (!ping.ok) {
-    return { id: pairing.id, state: 'offline', error: ping.error ?? '网络不可达' };
+    return { id: pairing.id, state: 'offline', error: ping.error ?? lanSyncCopy.unreachable };
   }
   const result: RefreshPairResult = await refreshPairing(pairingSession(pairing), now);
   if (result.ok && result.token !== null) {
@@ -275,9 +276,9 @@ export async function probeLanPairing(
     };
   }
   if (result.status === 401) {
-    return { id: pairing.id, state: 'expired', error: result.error ?? '配对已失效，请重新配对' };
+    return { id: pairing.id, state: 'expired', error: result.error ?? lanSyncCopy.pairingInvalid };
   }
-  return { id: pairing.id, state: 'offline', error: result.error ?? '网络不可达' };
+  return { id: pairing.id, state: 'offline', error: result.error ?? lanSyncCopy.unreachable };
 }
 
 /** 把在线探测结果应用到配对列表：换新令牌并更新 `lastSeen`；离线/失效不动记录。 */

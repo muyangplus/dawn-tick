@@ -1,4 +1,5 @@
 import { LAN_SCOPES, parseScope, formatScope, type LanScope } from './lan-sync-protocol.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步二期：后台自动同步策略。
@@ -15,9 +16,9 @@ export type LanAutoMode = 'off' | 'startup' | 'interval30';
 
 export const LAN_AUTO_MODES: readonly LanAutoMode[] = ['off', 'startup', 'interval30'];
 export const LAN_AUTO_MODE_LABEL: Record<LanAutoMode, string> = {
-  off: '关闭',
-  startup: '每次启动',
-  interval30: '每 30 分钟',
+  off: lanSyncCopy.autoOff,
+  startup: lanSyncCopy.autoStartup,
+  interval30: lanSyncCopy.autoInterval30,
 };
 /** 30 分钟自动同步间隔。 */
 export const LAN_AUTO_INTERVAL_MS = 30 * 60_000;
@@ -133,7 +134,7 @@ export async function runAutoWithRetry<T>(
     try {
       const value = await task();
       if (isOk(value)) return { ok: true, value, attempts: attempt, error: null };
-      lastError = '自动同步没有成功';
+      lastError = lanSyncCopy.autoFailed;
     } catch (cause: unknown) {
       lastError = cause instanceof Error ? cause.message : String(cause);
     }
@@ -141,5 +142,5 @@ export async function runAutoWithRetry<T>(
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
   }
-  return { ok: false, value: null, attempts: 2, error: lastError ?? '自动同步失败' };
+  return { ok: false, value: null, attempts: 2, error: lastError ?? lanSyncCopy.autoFailed };
 }

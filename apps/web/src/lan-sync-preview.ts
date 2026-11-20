@@ -15,6 +15,7 @@ import {
 } from './lan-sync-payload.ts';
 import { lanFetch, lanResponseError, lanUtf8Length } from './lan-sync-http.ts';
 import type { LanSession, LanTransferResult } from './lan-sync.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步二期：拉取前预览。
@@ -120,14 +121,14 @@ export async function previewPullFromPeer(
   scopes: readonly LanScope[],
   now = Date.now(),
 ): Promise<LanPreviewResult> {
-  if (scopes.length === 0) return emptyPreview('请至少勾选一个同步范围');
-  if (now >= session.expiresAt) return emptyPreview('配对已过期，请重新配对');
+  if (scopes.length === 0) return emptyPreview(lanSyncCopy.scopeRequired);
+  if (now >= session.expiresAt) return emptyPreview(lanSyncCopy.pairingExpired);
   try {
     const response = await lanFetch(`${peerBaseUrl(session.peer)}/export?scope=${formatScope(scopes)}`, {
       headers: { Authorization: `Bearer ${session.token}` },
     });
     const text = await response.text();
-    if (!response.ok) return emptyPreview(lanResponseError(response.status, text, '预览'));
+    if (!response.ok) return emptyPreview(lanResponseError(response.status, text, lanSyncCopy.actionPreview));
     const envelope = parseLanEnvelope(text);
     const stats = await countLanChanges(storage, envelope, scopes);
     logDebug('sync', '同步预览已取得', { total: stats.total });
@@ -147,7 +148,7 @@ export async function applyLanPreview(
   now = Date.now(),
 ): Promise<LanTransferResult> {
   if (scopes.length === 0) {
-    return { ok: false, imported: 0, skipped: 0, warnings: [], error: '请至少勾选一个同步范围', bytes: 0 };
+    return { ok: false, imported: 0, skipped: 0, warnings: [], error: lanSyncCopy.scopeRequired, bytes: 0 };
   }
   try {
     const result = await applyLanEnvelope(storage, envelope, { scopes, mode: 'merge', now });

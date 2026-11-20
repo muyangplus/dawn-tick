@@ -20,6 +20,9 @@ import { StatusLine, type StatusMessage } from '../../components/ui/status-line.
 import { toast } from '../../components/ui/toaster.tsx';
 import { ShareExportAction, TimetableExportActions } from './export-actions.tsx';
 import { said } from './format.ts';
+import { storageCopy as copy } from '../../copy/backup-storage.ts';
+import { transferCopy } from '../../copy/backup-transfer.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 export interface StorageCardProps {
   storage: Storage;
@@ -78,19 +81,19 @@ export function StorageCard({
     setStorageMessage(null);
     const result = await storageAction.run({
       scope: 'storage',
-      label: '正在保存存储位置…',
+      label: copy.saving,
       fail: false,
       task: async () => {
         const saved = await saveStoragePath(path);
         if (saved.info === null) {
-          toast.error(fail('保存存储位置', saved.error, '请检查路径后重试'));
+          toast.error(fail(copy.saveWhat, saved.error, copy.saveNext));
           return;
         }
         setStorageInfo(saved.info);
         setStoragePathInput(saved.info.customPath);
         const copied = saved.info.copied.length;
-        setStorageMessage(said(copied > 0 ? `已保存存储位置，复制了 ${copied} 个数据文件` : '已保存存储位置'));
-        toast.success(`已写入 ${saved.info.dir}${copied > 0 ? `，复制了 ${copied} 个数据文件` : ''}`);
+        setStorageMessage(said(copy.saved(copied)));
+        toast.success(copy.savedTo(saved.info.dir, copied));
         // 存储位置要重启才生效：只登记，不在这里渲染提示与按钮
         registerPendingRestart('storage-path');
       },
@@ -101,27 +104,34 @@ export function StorageCard({
   /** 日志模式存在库里，下次打开数据库时套用。 */
   async function toggleWal(next: boolean): Promise<void> {
     await onPatch({ walMode: next ? 'on' : 'off' });
-    setStorageMessage(said('已保存 WAL 日志模式'));
-    toast.success('已保存 WAL 日志模式');
+    setStorageMessage(said(copy.walSaved));
+    toast.success(copy.walSaved);
     registerPendingRestart('wal');
   }
 
   return (
     <>
-      <span className="text-xs text-muted">本地存储：{storageKind}</span>
+      <span className="text-xs text-muted">{copy.storageKind(storageKind)}</span>
       {isWebApp() && (
         <span className="text-xs text-muted">
-          浏览器持久化：{persistent === null ? '未申请' : persistent ? '已授权' : '未授权'}
+          {copy.persistence(
+            persistent === null
+              ? copy.persistenceNotRequested
+              : persistent
+                ? copy.persistenceGranted
+                : copy.persistenceDenied,
+          )}
         </span>
       )}
       {canConfigureStorage() ? (
         <>
           <div className="flex flex-col gap-1" data-role="storage-location">
             <span className="text-xs text-muted" data-role="storage-dir">
-              存储位置：{storageInfo === null ? '读取中' : storageInfo.dir}
-              {storageInfo === null ? '' : storageInfo.portable ? '（便携版）' : '（安装版）'}
+              {storageInfo === null
+                ? copy.location(copy.locationReading, '')
+                : copy.location(storageInfo.dir, storageInfo.portable ? copy.editionPortable : copy.editionInstalled)}
             </span>
-            <Field label="自定义存储位置" hint="留空用默认" help="相对路径相对程序目录；改完重启生效">
+            <Field label={copy.customLabel} hint={copy.customHint} help={copy.customHelp}>
               <Input
                 data-role="storage-path"
                 value={storagePathInput}
@@ -133,39 +143,41 @@ export function StorageCard({
               <Button
                 size="sm"
                 variant="secondary"
-                aria-label="保存存储位置"
+                aria-label={copy.saveLabel}
                 loading={storageAction.busy}
                 onClick={() => void saveStorage(storagePathInput)}
               >
-                保存位置
+                {copy.saveButton}
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label="恢复默认存储位置"
+                aria-label={copy.resetLabel}
                 loading={storageAction.busy}
                 onClick={() => void saveStorage('')}
               >
-                恢复默认
+                {copy.resetButton}
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label="打开数据目录"
+                aria-label={copy.openDataDir}
                 onClick={() =>
                   void openDataDirectory().then((dir) => {
-                    if (dir === null) toast.error(fail('打开数据目录', null, '请手动到程序目录查看'));
+                    if (dir === null) toast.error(fail(copy.openDataDir, null, copy.openDataDirNext));
                   })
                 }
               >
-                打开数据目录
+                {copy.openDataDir}
               </Button>
             </div>
             {storageInfo !== null && (
               <span className="text-xs text-muted" data-role="storage-detail">
-                数据库文件：{storageInfo.dbFile}（
-                {storageInfo.dbExists ? `${Math.round(storageInfo.dbBytes / 1024)} KB` : '尚未创建'}）
-                {storageInfo.sidecars.length > 0 ? `，附带 ${storageInfo.sidecars.join(' / ')}` : '，无附带文件'}
+                {copy.dbDetail(
+                  storageInfo.dbFile,
+                  storageInfo.dbExists ? Math.round(storageInfo.dbBytes / 1024) : null,
+                  storageInfo.sidecars,
+                )}
               </span>
             )}
             {storageError !== null && (
@@ -181,21 +193,20 @@ export function StorageCard({
           </div>
         </>
       ) : hasMobileWidgets() ? (
-        <span className="text-xs text-muted">存储位置：应用私有目录（不可改）</span>
+        <span className="text-xs text-muted">{copy.locationAndroid}</span>
       ) : null}
       {/* 导出/导入/ICS 从页面顶部下沉到这里：本组是数据与文件的统一入口 */}
       <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="storage-transfer-actions">
-        <span className="text-sm font-medium text-ink">导出与导入</span>
-        <span className="text-xs text-muted">跨设备迁移用导出导入；课表可另存为 ICS、图片、PDF 或只读分享文件</span>
+        <span className="text-sm font-medium text-ink">{copy.transferTitle}</span>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="secondary" onClick={onOpenExport}>
-            导出备份
+            {transferCopy.exportBackup}
           </Button>
-          <Button size="sm" variant="secondary" aria-label="导入备份" onClick={onOpenImport}>
-            导入备份
+          <Button size="sm" variant="secondary" aria-label={transferCopy.importBackup} onClick={onOpenImport}>
+            {transferCopy.importBackup}
           </Button>
           <Button size="sm" variant="secondary" data-role="export-ics" onClick={onOpenIcs}>
-            导出课表（ICS）
+            {transferCopy.exportIcs}
           </Button>
           <TimetableExportActions storage={storage} settings={settings} />
           <ShareExportAction storage={storage} />
@@ -204,18 +215,18 @@ export function StorageCard({
       {!isWebApp() && (
         <div className="flex flex-col gap-1" data-role="wal-setting">
           <SwitchField
-            label="启用 WAL 日志模式"
+            label={copy.walLabel}
             checked={walOn}
             onCheckedChange={(checked) => void toggleWal(checked)}
-            ariaLabel="启用 WAL 日志模式"
+            ariaLabel={copy.walLabel}
             dataRole="wal-switch"
           />
           <span className="text-xs text-muted" data-role="wal-hint">
             {settings.walMode === 'auto'
-              ? `跟随默认：便携版关闭、安装版开启（当前${walOn ? '开启' : '关闭'}）`
+              ? copy.walAuto(walOn)
               : settings.walMode === 'on'
-                ? '已手动开启：数据库旁会有 -wal / -shm 两个文件'
-                : '已手动关闭：数据库为单个文件，不产生 -wal / -shm'}
+                ? copy.walOn
+                : copy.walOff}
           </span>
         </div>
       )}

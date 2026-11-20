@@ -1,6 +1,7 @@
 import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, thenableSafePlugin, type NativeCommand } from './lib/native.ts';
 import { logWarn } from './log.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步的 HTTP 工具：客户端 fetch 与错误体解析。
@@ -58,7 +59,7 @@ function toResponse(reply: LanHttpNativeReply): Response {
     typeof reply.status !== 'number' ||
     typeof reply.body !== 'string'
   ) {
-    throw new Error('局域网原生 HTTP 返回不完整');
+    throw new Error(lanSyncCopy.nativeHttpIncomplete);
   }
   return new Response(reply.body === '' ? null : reply.body, {
     status: reply.status,
@@ -106,7 +107,7 @@ async function loadCapacitorHttp(): Promise<LanCapacitorHttp | null> {
 
 async function androidFetch(url: string, init: RequestInit): Promise<Response> {
   const http = await loadCapacitorHttp();
-  if (http === null) throw new Error('当前平台没有 CapacitorHttp');
+  if (http === null) throw new Error(lanSyncCopy.noCapacitorHttp);
   const args = toLanNativeArgs(url, init);
   const reply = await http.request({
     url,
@@ -162,7 +163,7 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
   try {
     return await globalThis.fetch(url, { ...init, signal: controller.signal });
   } catch (cause: unknown) {
-    if (controller.signal.aborted) throw new Error(`对方 ${Math.round(LAN_HTTP_TIMEOUT_MS / 1000)} 秒内没有响应`);
+    if (controller.signal.aborted) throw new Error(lanSyncCopy.peerTimeout(Math.round(LAN_HTTP_TIMEOUT_MS / 1000)));
     throw cause;
   } finally {
     clearTimeout(timer);
@@ -178,7 +179,7 @@ export function lanResponseError(status: number, text: string, action: string): 
   } catch {
     // 非 JSON 错误体：退回状态码文案
   }
-  return `${action}失败（HTTP ${status}）`;
+  return lanSyncCopy.httpFailed(action, status);
 }
 
 export function lanUtf8Length(text: string): number {

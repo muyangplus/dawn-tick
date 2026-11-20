@@ -4,6 +4,7 @@ import {
   formatDiscoveryPeer,
   type LanDiscoveryPeer,
 } from '../../lan-sync-discovery.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
 
 export interface LanDiscoveryPanelProps {
   peers: readonly LanDiscoveryPeer[];
@@ -18,18 +19,18 @@ export function LanDiscoveryPanel({ peers, discovering, onDiscover, onChoose }: 
   return (
     <div className="flex flex-col gap-1" data-role="lan-sync-discovery">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-muted">发现设备</span>
+        <span className="text-xs font-medium text-muted">{copy.discoverTitle}</span>
         <Button
           size="sm"
           variant="secondary"
-          aria-label="发现设备"
+          aria-label={copy.discoverTitle}
           loading={discovering}
           disabled={!supported}
           onClick={onDiscover}
         >
-          扫描局域网
+          {copy.discoverButton}
         </Button>
-        {!supported && <span className="text-xs text-muted">浏览器端不支持自动发现，请手动填写地址</span>}
+        {!supported && <span className="text-xs text-muted">{copy.discoverUnsupported}</span>}
       </div>
       {peers.length > 0 && (
         <div className="flex flex-col gap-1" data-role="lan-sync-peers">
@@ -38,7 +39,7 @@ export function LanDiscoveryPanel({ peers, discovering, onDiscover, onChoose }: 
               key={`${peer.host}:${peer.port}`}
               type="button"
               className="min-h-tap w-fit rounded-md border border-line px-3 text-left text-sm text-ink hover:bg-surface-muted"
-              aria-label={`使用 ${peer.name} 的地址`}
+              aria-label={copy.usePeerLabel(peer.name)}
               onClick={() => onChoose(peer)}
             >
               {formatDiscoveryPeer(peer)}

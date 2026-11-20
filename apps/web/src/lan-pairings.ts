@@ -1,6 +1,7 @@
 import { normalizeLanDeviceId } from './lib/lan-device-id.ts';
 import { parsePeerAddress, type PeerAddress } from './lan-sync-protocol.ts';
 import type { LanSession } from './lan-sync-client.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 // 设备 id 的归一逻辑在 `lib/lan-device-id.ts`（本机生成与协议校验共用一份）；旧导入路径继续可用。
 export { normalizeLanDeviceId } from './lib/lan-device-id.ts';
@@ -353,12 +354,12 @@ function formatTime(at: number): string {
 
 /** `上次同步：2026-10-25 21:30` / `尚未同步`。 */
 export function formatLanPairingLastSync(pairing: LanPairing): string {
-  if (pairing.lastSyncAt === null) return '尚未同步';
-  return `上次同步：${formatTime(pairing.lastSyncAt)}`;
+  if (pairing.lastSyncAt === null) return lanSyncCopy.neverSynced;
+  return lanSyncCopy.lastSynced(formatTime(pairing.lastSyncAt));
 }
 
 /** `最近在线：2026-10-25 21:30` / `尚未在线`。 */
 export function formatLanPairingLastSeen(pairing: LanPairing): string {
-  if (pairing.lastSeen === null) return '尚未在线';
-  return `最近在线：${formatTime(pairing.lastSeen)}`;
+  if (pairing.lastSeen === null) return lanSyncCopy.neverSeen;
+  return lanSyncCopy.lastSeen(formatTime(pairing.lastSeen));
 }

@@ -20,10 +20,11 @@ import { SwitchField } from '../../components/ui/controls.tsx';
 import { StatusLine, type StatusMessage } from '../../components/ui/status-line.tsx';
 import { registerPendingRestart } from '../../pending-restart.ts';
 import { useAction } from '../../lib/action.ts';
-import { DELETE, fail } from '../../copy/common.ts';
+import { fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 import { formatBytes, said } from './format.ts';
 import type { SnapshotsApi } from './use-snapshots.ts';
+import { snapshotsCopy as copy } from '../../copy/backup-snapshots.ts';
 
 export interface BackupBlockProps {
   storage: Storage;
@@ -49,20 +50,18 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
     setSnapshotMessage(null);
     await snapshotAction.run({
       scope: 'backup',
-      label: '正在创建快照…',
+      label: copy.creating,
       fail: false,
       task: async () => {
         const entry = await createSnapshot(storage);
         if (entry === null) {
-          toast.error(fail('快照', null, '请查看「应用诊断日志」后重试'));
+          toast.error(fail(copy.createWhat, null, copy.checkLogNext));
           return;
         }
         const removed = await pruneSnapshots(storage, settings.backupKeep);
         await snapshots.refresh();
-        setSnapshotMessage(said('已备份'));
-        toast.success(
-          `已生成快照 ${formatDateTime(entry.createdAt, settings.timeZone)}${removed > 0 ? `，清理了 ${removed} 份旧快照` : ''}`,
-        );
+        setSnapshotMessage(said(copy.backedUp));
+        toast.success(copy.created(formatDateTime(entry.createdAt, settings.timeZone), removed));
       },
     });
   }
@@ -70,26 +69,26 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
   async function removeSnapshot(entry: SnapshotEntry): Promise<void> {
     await snapshotAction.run({
       scope: 'backup',
-      label: '正在删除快照…',
+      label: copy.deleting,
       fail: false,
       task: async () => {
         const ok = await deleteSnapshot(storage, entry);
         await snapshots.refresh();
         if (ok) {
-          toast.success('已删除该快照');
+          toast.success(copy.deleted);
           return;
         }
-        toast.error(fail('删除快照', null, '请查看「应用诊断日志」后重试'));
+        toast.error(fail(copy.deleteWhat, null, copy.checkLogNext));
       },
     });
   }
 
-  /** 恢复/删除快照都要先确认；句式统一走 copy/common.ts。 */
+  /** 恢复/删除快照都要先确认；文案在 copy/backup-snapshots.ts。 */
   async function confirmRestoreSnapshot(entry: SnapshotEntry): Promise<void> {
     const ok = await confirmAction({
-      title: '恢复快照',
-      description: '将用该快照覆盖本机数据，需要重启后生效，不可撤销',
-      confirmLabel: '确认恢复',
+      title: copy.restoreTitle,
+      description: copy.restoreDescription,
+      confirmLabel: copy.restoreConfirm,
     });
     if (!ok) return;
     await restoreSnapshotNow(entry);
@@ -97,9 +96,9 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
 
   async function confirmRemoveSnapshot(entry: SnapshotEntry): Promise<void> {
     const ok = await confirmAction({
-      title: '删除快照',
-      description: DELETE('该快照'),
-      confirmLabel: '确认删除',
+      title: copy.deleteTitle,
+      description: copy.deleteDescription,
+      confirmLabel: copy.deleteConfirm,
     });
     if (!ok) return;
     await removeSnapshot(entry);
@@ -110,29 +109,29 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
     setSnapshotMessage(null);
     await snapshotAction.run({
       scope: 'backup',
-      label: '正在恢复快照…',
+      label: copy.restoring,
       fail: false,
       task: async () => {
         const safe = await createSnapshot(storage);
         await pruneSnapshots(storage, settings.backupKeep);
         const outcome = await restoreSnapshot(storage, entry);
         if (!outcome.ok) {
-          toast.error(fail('恢复快照', outcome.error, '请查看「应用诊断日志」后重试'));
+          toast.error(fail(copy.restoreWhat, outcome.error, copy.checkLogNext));
           return;
         }
         await snapshots.refresh();
         if (outcome.needsRestart) {
           // 文件快照要重启后才套用：登记给统一待重启条
           registerPendingRestart('snapshot-restore');
-          setSnapshotMessage(said('已排好快照恢复'));
-          toast.success('已排好快照恢复');
+          setSnapshotMessage(said(copy.restoreQueued));
+          toast.success(copy.restoreQueued);
           return;
         }
         const result = outcome.result;
         const text =
           result === null
-            ? '已恢复快照'
-            : `已恢复快照：写入 ${result.imported} 条，清空 ${result.removed} 条${safe === null ? '' : '（恢复前已创建快照）'}`;
+            ? copy.restored
+            : copy.restoredWithCounts(result.imported, result.removed, safe !== null);
         setSnapshotMessage(said(text));
         toast.success(text);
         onChanged();
@@ -143,26 +142,26 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
   return (
     <div className="flex flex-col gap-1" data-role="backup-settings">
       <SwitchField
-        label="自动快照"
+        label={copy.autoSnapshot}
         checked={settings.autoBackup}
         onCheckedChange={(checked) => void onPatch({ autoBackup: checked })}
-        ariaLabel="自动快照"
+        ariaLabel={copy.autoSnapshot}
       />
       <SwitchField
-        label="启动时快照一次"
+        label={copy.snapshotOnStart}
         checked={settings.backupOnStart}
         disabled={!settings.autoBackup}
         onCheckedChange={(checked) => void onPatch({ backupOnStart: checked })}
-        ariaLabel="启动时快照"
+        ariaLabel={copy.snapshotOnStartLabel}
       />
       <SwitchField
-        label="每天快照一次"
+        label={copy.snapshotDaily}
         checked={settings.backupDaily}
         disabled={!settings.autoBackup}
         onCheckedChange={(checked) => void onPatch({ backupDaily: checked })}
-        ariaLabel="每天快照"
+        ariaLabel={copy.snapshotDailyLabel}
       />
-      <Field label="保留份数" hint="1–100 份，超出后自动删最旧的">
+      <Field label={copy.keepLabel} hint={copy.keepHint}>
         <Input
           data-role="backup-keep"
           type="number"
@@ -181,18 +180,18 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
         <Button
           size="sm"
           variant="secondary"
-          aria-label="新建快照"
+          aria-label={copy.createButton}
           loading={snapshotAction.busy}
           onClick={() => void backupNow()}
         >
-          新建快照
+          {copy.createButton}
         </Button>
         <span className="text-xs text-muted" data-role="backup-kind">
-          {snapshotKind() === 'file' ? '整库文件快照（保存在数据目录）' : '库内 JSON 快照'}
+          {snapshotKind() === 'file' ? copy.kindFile : copy.kindJson}
         </span>
       </div>
       <span className="text-xs text-muted" data-role="snapshot-plain">
-        快照不加密；口令加密只覆盖导出的文件
+        {copy.notEncrypted}
       </span>
       {snapshotMessage !== null && (
         <StatusLine dataRole="snapshot-message" at={snapshotMessage.at}>
@@ -200,7 +199,7 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
         </StatusLine>
       )}
       {entries.length === 0 ? (
-        <EmptyState size="sm" tone="muted" title="暂无快照" data-role="snapshot-empty" />
+        <EmptyState size="sm" tone="muted" title={copy.empty} data-role="snapshot-empty" />
       ) : (
         <ul className="flex flex-col gap-1" data-role="snapshot-list">
           {entries.map((entry) => (
@@ -214,20 +213,20 @@ export function BackupBlock({ storage, settings, onPatch, snapshots, onChanged }
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label={`恢复快照 ${entry.id}`}
+                aria-label={copy.restoreLabel(entry.id)}
                 disabled={snapshotAction.busy}
                 onClick={() => void confirmRestoreSnapshot(entry)}
               >
-                恢复
+                {copy.restoreButton}
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label={`删除快照 ${entry.id}`}
+                aria-label={copy.deleteLabel(entry.id)}
                 disabled={snapshotAction.busy}
                 onClick={() => void confirmRemoveSnapshot(entry)}
               >
-                删除
+                {copy.deleteButton}
               </Button>
             </li>
           ))}

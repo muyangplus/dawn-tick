@@ -29,24 +29,26 @@ import { exportLogs } from './file-export.ts';
 import { isAndroidApp } from '../../lib/capabilities.ts';
 import { DiagnosticsLogDialog } from '../../components/diagnostics-log-dialog.tsx';
 import { said } from './format.ts';
+import { maintenanceCopy as copy } from '../../copy/backup-maintenance.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 /** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
 function presetSourceLabel(source: DownloadSource): string {
-  return `预设仓库（${DOWNLOAD_SOURCE_LABEL[source]}）`;
+  return copy.presetRepoSource(DOWNLOAD_SOURCE_LABEL[source]);
 }
 
 /** 未检查前的来源文案：自动检测还没结果时说明会探测两个源。 */
 function presetSourceHint(source: AppSettings['downloadSource']): string {
-  return source === 'auto' ? '自动检测（Gitee / GitHub 择快）' : DOWNLOAD_SOURCE_LABEL[source];
+  return source === 'auto' ? copy.presetAutoSource : DOWNLOAD_SOURCE_LABEL[source];
 }
 
 /** 日志级别说明（与诊断与维护卡文案一致）。 */
 const LOG_LEVEL_HINT: Record<LogLevel, string> = {
-  error: '仅严重错误',
-  warn: '错误 + 警告信息',
-  info: '一般操作信息（默认）',
-  debug: '详细信息，包含请求/响应详情',
-  trace: '全部日志，最详细',
+  error: copy.levelError,
+  warn: copy.levelWarn,
+  info: copy.levelInfo,
+  debug: copy.levelDebug,
+  trace: copy.levelTrace,
 };
 
 export interface MaintenanceCardProps {
@@ -99,7 +101,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
   async function requestAdmin(): Promise<void> {
     const result = await requestElevation();
     if (!result.ok) {
-      toast.error(fail('提权', result.error ?? '', '请手动以管理员身份运行'));
+      toast.error(fail(copy.elevateWhat, result.error ?? '', copy.elevateNext));
     }
   }
 
@@ -107,10 +109,10 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
   async function runPresetCheck(): Promise<void> {
     const result = await presetAction.run({
       scope: 'preset',
-      label: '正在读取预设更新…',
+      label: copy.checkingPreset,
       log: '预设快照下载失败',
       logLevel: 'warn',
-      fail: { what: '检查预设更新', next: '请稍后再试' },
+      fail: { what: copy.checkPresetWhat, next: copy.retryLater },
       task: async () => {
         const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
         // 预设与更新共用同一个下载源：auto 按探测结果选，手动指定优先；跨源回退只在自动模式开启
@@ -129,7 +131,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           fallback,
         });
         if (status.error !== null) {
-          const message = fail('检查预设更新', status.error, '请稍后再试');
+          const message = fail(copy.checkPresetWhat, status.error, copy.retryLater);
           setPresetResult(said(message));
           toast.error(message);
           logWarn('preset', '预设更新检查失败', { error: status.error, current: currentVersion, source });
@@ -137,7 +139,10 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         }
         setPresetRemote(status.downloadSource ?? source);
         if (!status.available || status.version === null) {
-          const message = `预设已是最新（${currentVersion}）${status.source === undefined ? '' : `，来源 ${presetSourceLabel(status.downloadSource ?? source)}`}`;
+          const message = copy.presetLatest(
+            currentVersion,
+            status.source === undefined ? null : presetSourceLabel(status.downloadSource ?? source),
+          );
           setPresetResult(said(message));
           toast.success(message);
           logInfo('preset', '预设已是最新', {
@@ -158,13 +163,18 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
             version: snapshot.version,
             message: stored.reason ?? '未知原因',
           });
-          const failure = fail('下载预设', `预设 ${snapshot.version} 内容校验未通过`, '已保留当前预设，可稍后再试');
+          const failure = fail(copy.downloadPresetWhat, copy.presetInvalid(snapshot.version), copy.presetInvalidNext);
           setPresetResult(said(failure));
           toast.error(failure);
           return;
         }
         setPresetSource(await resolvePresetSource(storage));
-        const message = `已下载预设 ${snapshot.version}（${snapshot.sources.timetables.length} 套作息、${snapshot.sources.systems.length} 个教务系统，来源 ${presetSourceLabel(status.downloadSource ?? source)}），下次启动生效`;
+        const message = copy.presetDownloaded(
+          snapshot.version,
+          snapshot.sources.timetables.length,
+          snapshot.sources.systems.length,
+          presetSourceLabel(status.downloadSource ?? source),
+        );
         setPresetResult(said(message));
         toast.success(message);
         // 预设要下次启动才套用：与其它待重启改动共用一条提示
@@ -177,7 +187,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
       },
     });
     if (!result.ok && result.error !== null) {
-      setPresetResult(said(fail('检查预设更新', result.error, '请稍后再试')));
+      setPresetResult(said(fail(copy.checkPresetWhat, result.error, copy.retryLater)));
     }
   }
 
@@ -185,47 +195,47 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
     <>
       {/* 应用诊断日志：开关控制 dawn-tick.log，级别决定门槛 */}
       <div className="flex flex-col gap-2 rounded-md border border-line p-3" data-role="log-settings">
-        <span className="text-sm font-medium text-ink">应用诊断日志</span>
+        <span className="text-sm font-medium text-ink">{copy.logTitle}</span>
         <span className="text-xs text-muted">
-          写入文件的门槛
+          {copy.logSubtitle}
         </span>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant="secondary"
-            aria-label="查看诊断日志"
+            aria-label={copy.viewLogLabel}
             data-role="diagnostics-open"
             onClick={() => setLogDialogOpen(true)}
           >
-            查看日志
+            {copy.viewLog}
           </Button>
           {!isAndroidApp() && (
             <Button
               size="sm"
               variant="ghost"
-              aria-label="导出日志文件"
-              onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
+              aria-label={copy.exportLogLabel}
+              onClick={() => void logAction.run({ scope: 'log', label: copy.exportingLog, task: exportLogs })}
             >
-              导出文件
+              {copy.exportLog}
             </Button>
           )}
-          <span className="text-xs text-muted">查看/复制当前缓冲区（安卓导出失败时用这个）</span>
+          <HelpLink entryId="about-diagnostics" />
         </div>
         <SwitchField
-          label="启用应用诊断日志"
+          label={copy.logEnabled}
           checked={settings.logEnabled}
           onCheckedChange={(checked) => void onPatch({ logEnabled: checked })}
-          ariaLabel="启用应用诊断日志"
+          ariaLabel={copy.logEnabled}
         />
-        <Field label="日志级别" hint="设置输出的最低日志级别">
+        <Field label={copy.logLevel} help={copy.logLevelHelp}>
           <Select value={settings.logLevel} onValueChange={(value) => void onPatch({ logLevel: value as LogLevel })}>
-            <SelectTrigger aria-label="日志级别">
+            <SelectTrigger aria-label={copy.logLevel}>
               <span>{settings.logLevel}</span>
             </SelectTrigger>
             <SelectContent>
               {LOG_LEVELS.map((level) => (
                 <SelectItem key={level} value={level}>
-                  {level} · {LOG_LEVEL_HINT[level]}
+                  {copy.levelOption(level, LOG_LEVEL_HINT[level])}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -233,12 +243,12 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         </Field>
       </div>
       <span className="flex min-h-tap flex-wrap items-center gap-2 text-xs text-muted">
-        <span>预设仓库</span>
+        <span>{copy.presetRepo}</span>
         <ExternalLink
           dataRole="preset-repo-link"
           className="text-primary-strong underline"
           href={`${MIRRORS.github.site}/${MIRRORS.github.presets}`}
-          ariaLabel="打开预设仓库（GitHub）"
+          ariaLabel={copy.presetRepoGithub}
         >
           GitHub
         </ExternalLink>
@@ -246,30 +256,32 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           dataRole="preset-repo-link-gitee"
           className="text-primary-strong underline"
           href={`${MIRRORS.gitee.site}/${MIRRORS.gitee.presets}`}
-          ariaLabel="打开预设仓库（Gitee）"
+          ariaLabel={copy.presetRepoGitee}
         >
           Gitee
         </ExternalLink>
         <StatusLine dataRole="preset-version">
-          预设版本：
-          {presetSource === null
-            ? '读取中…'
-            : `${presetSource.version}（${presetSource.kind === 'cached' ? '已更新' : '内置'}）`}
+          {copy.presetVersion(
+            presetSource === null
+              ? copy.reading
+              : copy.presetVersionValue(presetSource.version, presetSource.kind === 'cached'),
+          )}
         </StatusLine>
       </span>
       <StatusLine dataRole="preset-source">
-        预设源：
-        {presetRemote !== null ? presetSourceLabel(presetRemote) : presetSourceHint(settings.downloadSource)}
+        {copy.presetSource(
+          presetRemote !== null ? presetSourceLabel(presetRemote) : presetSourceHint(settings.downloadSource),
+        )}
       </StatusLine>
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
           variant="secondary"
-          aria-label="检查预设更新"
+          aria-label={copy.checkPreset}
           loading={presetAction.busy}
           onClick={() => void runPresetCheck()}
         >
-          检查预设更新
+          {copy.checkPreset}
         </Button>
         {presetResult !== null && (
           <StatusLine dataRole="preset-result" at={presetResult.at}>
@@ -280,16 +292,16 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
       {canUseWidget() && (
         <div className="flex flex-wrap items-center gap-2">
           <StatusLine dataRole="elevation-status">
-            运行权限：{elevated === null ? '读取中…' : elevated ? '管理员' : '普通用户'}
+            {copy.elevation(elevated === null ? copy.reading : elevated ? copy.elevationAdmin : copy.elevationUser)}
           </StatusLine>
           <Button
             size="sm"
             variant="secondary"
-            aria-label="以管理员身份重新启动"
+            aria-label={copy.restartAsAdmin}
             disabled={elevated !== false}
             onClick={() => void requestAdmin()}
           >
-            以管理员身份重新启动
+            {copy.restartAsAdmin}
           </Button>
         </div>
       )}

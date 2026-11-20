@@ -28,6 +28,7 @@ import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { UnlockBackupDialog } from './backup-encryption.tsx';
 import { importShareText, looksLikeShare } from '../../lib/share-file.ts';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
 
 export interface ImportDialogProps {
   open: boolean;
@@ -77,7 +78,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
   /** 读到了可用备份：关掉入口对话框，交给下面的模块选择框。 */
   function acceptResult(result: ImportFileResult, successToast: string | null): void {
     if (result.payload === null) {
-      toast.error(fail('读取备份', result.error, '请检查备份文件或文本是否完整'));
+      toast.error(fail(copy.readWhat, result.error, copy.readNext));
       return;
     }
     setPendingImport(result.payload);
@@ -100,12 +101,11 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
   async function importShare(text: string): Promise<void> {
     await importAction.run({
       scope: 'backup',
-      label: '正在导入分享课表…',
-      fail: { what: '导入分享课表失败', next: '请确认文件是晓刻导出的课表分享文件' },
+      label: copy.importingShare,
+      fail: { what: copy.importShareFailed, next: copy.importShareNext },
       task: async () => {
         const outcome = await importShareText(storage, text);
-        const skipped = outcome.skipped > 0 ? `，${outcome.skipped} 条无法导入已跳过` : '';
-        toast.success(`已导入分享课表「${outcome.semesterName}」为新学期${skipped}；可在学期设置里切换`);
+        toast.success(copy.shareImported(outcome.semesterName, outcome.skipped));
         setImportText('');
         onOpenChange(false);
         onChanged();
@@ -117,7 +117,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
   async function parsePastedBackup(): Promise<void> {
     const text = importText.trim();
     if (text === '') {
-      toast.error('请先粘贴备份文本');
+      toast.error(copy.pasteRequired);
       return;
     }
     if (looksLikeShare(text)) {
@@ -129,7 +129,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
       startUnlock({ kind: 'text', text });
       return;
     }
-    acceptResult(result, '已解析粘贴的备份文本');
+    acceptResult(result, copy.pastedParsed);
   }
 
   async function chooseBackupFile(file: File): Promise<void> {
@@ -159,12 +159,12 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
         : await importPastedText(lockedSource.text, unlockPassword);
     setUnlocking(false);
     if (result.payload === null) {
-      setUnlockError(result.error ?? '口令错误，请重试');
+      setUnlockError(result.error ?? copy.passwordWrong);
       return;
     }
     setLockedSource(null);
     setUnlockPassword('');
-    acceptResult(result, '已解密备份');
+    acceptResult(result, copy.decrypted);
   }
 
   async function confirmImport(): Promise<void> {
@@ -172,12 +172,12 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
     const target = pendingImport;
     await importAction.run({
       scope: 'backup',
-      label: '正在导入备份…',
-      fail: { what: '导入备份失败', next: '请检查备份文件与勾选模块后重试。' },
+      label: copy.importingBackup,
+      fail: { what: copy.importFailed, next: copy.importNext },
       task: async () => {
         const modules = [...importModules];
         if (modules.length === 0) {
-          toast.error('请至少勾选一个模块');
+          toast.error(copy.moduleRequired);
           return;
         }
         const result = await importConfig(storage, target, {
@@ -202,9 +202,9 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
           if (!next) onOpenChange(false);
           else onOpenChange(next);
         }}
-        title="导入备份"
-        description="选择备份文件，或直接粘贴 JSON / Base64 文本"
-        submitLabel="从文本导入"
+        title={copy.importTitle}
+        description={copy.importDescription}
+        submitLabel={copy.importFromText}
         submitDisabled={importText.trim().length === 0}
         onSubmit={() => void parsePastedBackup()}
       >
@@ -213,20 +213,20 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
             type="button"
             size="sm"
             variant="secondary"
-            aria-label="选择备份文件"
+            aria-label={copy.chooseFile}
             disabled={importAction.busy}
             onClick={() => fileInput.current?.click()}
           >
-            选择备份文件
+            {copy.chooseFile}
           </Button>
           <span className="text-xs text-muted">
-            支持晓刻导出的 JSON、Base64 文本、整包 zip 与课表分享文件；加密备份会提示输入口令
+            {copy.importFormatsHint}
           </span>
         </div>
         <textarea
           data-role="import-text"
-          aria-label="备份文本"
-          placeholder="或在此粘贴 JSON / Base64 备份文本"
+          aria-label={copy.importTextLabel}
+          placeholder={copy.importTextPlaceholder}
           className="h-32 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-ink"
           value={importText}
           onChange={(event) => setImportText(event.target.value)}
@@ -267,9 +267,9 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
         onOpenChange={(next) => {
           if (!next) setPendingImport(null);
         }}
-        title="导入备份"
-        description="选模块与冲突处理"
-        submitLabel="导入"
+        title={copy.moduleTitle}
+        description={copy.moduleDescription}
+        submitLabel={copy.moduleSubmit}
         submitting={importAction.busy}
         submitDisabled={importModules.size === 0}
         onSubmit={() => void confirmImport()}
@@ -283,7 +283,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
                   type="checkbox"
                   className="size-4"
                   checked={importModules.has(item.module)}
-                  aria-label={`导入 ${BACKUP_MODULE_LABEL[item.module]}`}
+                  aria-label={copy.importModuleLabel(BACKUP_MODULE_LABEL[item.module])}
                   onChange={(event) =>
                     setImportModules((current) => {
                       const next = new Set(current);
@@ -294,31 +294,31 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
                   }
                 />
                 {BACKUP_MODULE_LABEL[item.module]}
-                <span className="text-xs text-muted">{item.rows} 条</span>
+                <span className="text-xs text-muted">{copy.moduleRows(item.rows)}</span>
               </label>
             ))}
         </div>
         {semesterConflict !== null && importModules.has('semesters') ? (
           <div className="flex flex-col gap-1" data-role="import-active-semester">
-            <span className="text-xs text-muted">当前学期</span>
+            <span className="text-xs text-muted">{copy.activeSemester}</span>
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 size="sm"
                 variant={activeChoice === 'keep-local' ? 'primary' : 'secondary'}
-                aria-label={`保留本机当前学期：${semesterConflict.local}`}
+                aria-label={copy.keepLocalLabel(semesterConflict.local)}
                 onClick={() => setActiveChoice('keep-local')}
               >
-                保留「{semesterConflict.local}」
+                {copy.keepLocal(semesterConflict.local)}
               </Button>
               <Button
                 type="button"
                 size="sm"
                 variant={activeChoice === 'use-incoming' ? 'primary' : 'secondary'}
-                aria-label={`切换到备份的当前学期：${semesterConflict.incoming}`}
+                aria-label={copy.useIncomingLabel(semesterConflict.incoming)}
                 onClick={() => setActiveChoice('use-incoming')}
               >
-                切换到「{semesterConflict.incoming}」
+                {copy.useIncoming(semesterConflict.incoming)}
               </Button>
             </div>
           </div>
@@ -330,7 +330,7 @@ export function ImportDialog({ open, onOpenChange, storage, onChanged }: ImportD
               type="button"
               size="sm"
               variant={importMode === mode ? 'primary' : 'secondary'}
-              aria-label={`导入方式：${IMPORT_MODE_LABEL[mode]}`}
+              aria-label={copy.importModeLabel(IMPORT_MODE_LABEL[mode])}
               onClick={() => setImportMode(mode)}
             >
               {IMPORT_MODE_LABEL[mode]}

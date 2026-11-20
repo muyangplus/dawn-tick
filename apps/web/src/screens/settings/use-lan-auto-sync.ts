@@ -10,6 +10,7 @@ import {
   type LanAutoMode,
 } from '../../lan-sync-auto.ts';
 import { pullFromPeer, sessionExpired, type LanSession } from '../../lan-sync-client.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
 
 /** 应用本次启动的时刻：「每次启动」按应用启动算，而不是按打开设置面板算 */
 const APP_LAUNCHED_AT = Date.now();
@@ -69,7 +70,7 @@ export function useLanAutoSync({
       if (!shouldAutoSync(current, Date.now(), APP_LAUNCHED_AT)) return;
       if (sessionExpired(session)) {
         onExpired();
-        onNote('自动同步已暂停：配对过期，请重新配对');
+        onNote(copy.autoPaused);
         return;
       }
       const result = await runAutoWithRetry(
@@ -84,13 +85,13 @@ export function useLanAutoSync({
       onConfig(next);
       if (!result.ok) {
         logWarn('sync', '自动同步失败，已重试一次', { error: result.error });
-        onNote('自动同步失败，已静默重试一次');
+        onNote(copy.autoFailedRetried);
         return;
       }
       const imported = result.value?.imported ?? 0;
       const skipped = result.value?.skipped ?? 0;
       logInfo('sync', '自动同步完成', { imported, skipped });
-      onNote(`自动同步完成：写入 ${imported} 条，跳过 ${skipped} 条`);
+      onNote(copy.autoDone(imported, skipped));
       if (onSynced !== undefined) await onSynced(session);
       if (current.scopes.includes('settings')) await onSettingsReplaced();
       if (imported > 0) onChanged();

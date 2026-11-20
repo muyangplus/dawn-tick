@@ -1,4 +1,5 @@
 import { qrMatrix } from '../../lan-sync-qr.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
 
 export interface LanSyncQrCodeProps {
   text: string;
@@ -17,10 +18,10 @@ export function LanSyncQrCode({ text, size = 148 }: LanSyncQrCodeProps) {
   try {
     matrix = qrMatrix(text);
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : '二维码生成失败';
+    const message = cause instanceof Error ? cause.message : copy.qrFailedFallback;
     return (
       <div className="w-fit max-w-56 rounded-md border border-line p-2 text-xs text-muted" data-role="lan-sync-qr-error">
-        {message}；请改用「复制配对信息」。
+        {copy.qrFailed(message)}
       </div>
     );
   }
@@ -34,7 +35,7 @@ export function LanSyncQrCode({ text, size = 148 }: LanSyncQrCodeProps) {
     <div className="w-fit rounded-md bg-white p-2" data-role="lan-sync-qr">
       <svg
         role="img"
-        aria-label="配对二维码"
+        aria-label={copy.qrLabel}
         width={size}
         height={size}
         viewBox={`-${margin} -${margin} ${modules + margin * 2} ${modules + margin * 2}`}

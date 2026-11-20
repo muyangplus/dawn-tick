@@ -3,7 +3,7 @@ import type { AppSettings, Storage } from '@dawn-tick/core';
 import { loadAppData } from '../../data.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import { isCorruptDatabase } from '../../db/health.ts';
-import { DATABASE_CORRUPT_MESSAGE } from '../../db/corrupt-guard.ts';
+import { EXPORT_CORRUPT_MESSAGE } from '../../db/corrupt-guard.ts';
 import { buildPdfFromPng } from '../../lib/pdf.ts';
 import {
   buildTimetableImageModel,
@@ -18,6 +18,8 @@ import { Button } from '../../components/ui/button.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { saveText, toastSaved } from './file-export.ts';
 import { exportActiveShare, shareFileName } from '../../lib/share-file.ts';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
+import { exportImageCopy } from '../../copy/export-image.ts';
 
 /**
  * 设备页顶部的课表图片 / PDF 导出（分享与呈现）。
@@ -52,12 +54,12 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
 
   async function run(kind: ExportKind): Promise<void> {
     if (busy !== null) return;
-    const what = kind === 'png' ? '导出课表图片' : '导出课表 PDF';
+    const what = kind === 'png' ? copy.exportImageWhat : copy.exportPdfWhat;
     setBusy(kind);
     try {
       const model = await loadWeekModel(storage, settings);
       if (model === null) {
-        toast.info('还没有学期，先在设置里创建学期再导出课表');
+        toast.info(copy.noSemesterExport);
         return;
       }
       const png = await renderTimetablePng(model);
@@ -65,37 +67,31 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
         kind === 'png'
           ? png
           : buildPdfFromPng(png, { width: model.pixelWidth, height: model.pixelHeight });
-      const name = timetableFileName(model.title === '课表' ? null : model.title, kind, Date.now());
+      const name = timetableFileName(model.title === exportImageCopy.fallbackTitle ? null : model.title, kind, Date.now());
       const saved = await saveBinaryFile(
         name,
         bytes,
         kind === 'png'
-          ? { extension: 'png', filterName: 'PNG 图片' }
-          : { extension: 'pdf', filterName: 'PDF 文档' },
+          ? { extension: 'png', filterName: copy.pngFilter }
+          : { extension: 'pdf', filterName: copy.pdfFilter },
       );
       if (saved.cancelled) {
-        toast.info('已取消保存');
+        toast.info(copy.saveCancelled);
         return;
       }
       if (!saved.ok) {
-        toast.error(fail(what, saved.error, '请换一个保存位置后重试'));
+        toast.error(fail(what, saved.error, copy.imageSaveNext));
         return;
       }
       toastSaved(
-        kind === 'png' ? `已导出课表图片（PNG，${model.scale}x 高清）` : '已导出课表 PDF（A4 横向）',
+        kind === 'png' ? copy.imageExported(model.scale) : copy.pdfExported,
         saved.path,
       );
     } catch (cause: unknown) {
       const message = errorMessage(cause);
       logError('backup', '导出失败', { what, message });
       const corrupt = isCorruptDatabase(cause);
-      toast.error(
-        fail(
-          what,
-          corrupt ? DATABASE_CORRUPT_MESSAGE : message,
-          corrupt ? '可从最近快照恢复并重启后重试' : '请重试；仍失败可先导出备份再反馈',
-        ),
-      );
+      toast.error(corrupt ? fail(what, EXPORT_CORRUPT_MESSAGE) : fail(what, message, copy.retryNext));
     } finally {
       setBusy(null);
     }
@@ -111,7 +107,7 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
         disabled={busy !== null && busy !== 'png'}
         onClick={() => void run('png')}
       >
-        导出课表图片（PNG）
+        {copy.exportImageButton}
       </Button>
       <Button
         size="sm"
@@ -121,7 +117,7 @@ export function TimetableExportActions({ storage, settings }: TimetableExportAct
         disabled={busy !== null && busy !== 'pdf'}
         onClick={() => void run('pdf')}
       >
-        导出课表 PDF
+        {copy.exportPdfButton}
       </Button>
     </>
   );
@@ -137,15 +133,15 @@ export function ShareExportAction({ storage }: { storage: Storage }) {
       const now = Date.now();
       const exported = await exportActiveShare(storage, now);
       if (exported === null) {
-        toast.info('还没有学期，先在设置里创建学期再分享课表');
+        toast.info(copy.noSemesterExport);
         return;
       }
-      const result = await saveText(shareFileName(now), exported.text, 'json', '课表分享文件', 'application/json');
-      if (result.saved) toastSaved(`已导出课表分享文件（${exported.semesterName}）`, result.path);
+      const result = await saveText(shareFileName(now), exported.text, 'json', copy.shareFileFilter, 'application/json');
+      if (result.saved) toastSaved(copy.shareExported(exported.semesterName), result.path);
     } catch (cause: unknown) {
       const message = errorMessage(cause);
       logError('backup', '课表分享文件导出失败', { message });
-      toast.error(fail('导出课表分享文件', message, '请重试；仍失败可先导出备份再反馈'));
+      toast.error(fail(copy.shareExportWhat, message, copy.retryNext));
     } finally {
       setBusy(false);
     }
@@ -153,7 +149,7 @@ export function ShareExportAction({ storage }: { storage: Storage }) {
 
   return (
     <Button size="sm" variant="secondary" data-role="export-share" loading={busy} onClick={() => void run()}>
-      分享课表（只读文件）
+      {copy.shareButton}
     </Button>
   );
 }

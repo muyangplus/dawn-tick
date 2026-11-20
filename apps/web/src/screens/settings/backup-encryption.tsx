@@ -1,6 +1,8 @@
 import { BACKUP_PASSWORD_MIN_LENGTH } from '../../lib/backup-crypto.ts';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 /**
  * 导出加密的界面片段：只放勾选、口令与警示，校验与加解密由调用方和
@@ -10,9 +12,9 @@ import { FormDialog } from '../../components/ui/dialog.tsx';
 /** 提交前的口令校验：返回可读问题，没问题返回 null。 */
 export function exportPasswordIssue(password: string, confirm: string): string | null {
   if (password.length < BACKUP_PASSWORD_MIN_LENGTH) {
-    return `口令至少 ${BACKUP_PASSWORD_MIN_LENGTH} 位`;
+    return copy.passwordTooShort(BACKUP_PASSWORD_MIN_LENGTH);
   }
-  if (password !== confirm) return '两次输入的口令不一致';
+  if (password !== confirm) return copy.passwordMismatch;
   return null;
 }
 
@@ -39,33 +41,33 @@ export function ExportEncryptionFields({
         <input
           type="checkbox"
           className="size-4"
-          aria-label="用口令加密"
+          aria-label={copy.encryptToggle}
           checked={enabled}
           onChange={(event) => onEnabledChange(event.target.checked)}
         />
-        用口令加密
+        {copy.encryptToggle}
       </label>
       {enabled && (
         <>
           <Field
-            label="加密口令"
-            hint={`至少 ${BACKUP_PASSWORD_MIN_LENGTH} 位；口令不会保存到本机`}
+            label={copy.passwordLabel}
+            hint={copy.passwordHint(BACKUP_PASSWORD_MIN_LENGTH)}
           >
             <Input
               data-role="export-password"
               type="password"
               autoComplete="new-password"
-              aria-label="加密口令"
+              aria-label={copy.passwordLabel}
               value={password}
               onChange={(event) => onPasswordChange(event.target.value)}
             />
           </Field>
-          <Field label="确认口令" hint="再输入一次，避免打错">
+          <Field label={copy.confirmLabel}>
             <Input
               data-role="export-password-confirm"
               type="password"
               autoComplete="new-password"
-              aria-label="确认加密口令"
+              aria-label={copy.confirmAriaLabel}
               value={confirm}
               onChange={(event) => onConfirmChange(event.target.value)}
             />
@@ -75,11 +77,9 @@ export function ExportEncryptionFields({
             data-role="export-password-warning"
             className="text-xs text-danger-strong"
           >
-            忘记口令将无法恢复备份；晓刻不会保存口令，也无法帮你找回。
+            {copy.forgetWarning}
           </span>
-          <span className="text-xs text-muted" data-role="export-encryption-scope">
-            加密只覆盖本次导出的文件；自动快照仍按原样保存，不加密。
-          </span>
+          <HelpLink entryId="backup-transfer" />
         </>
       )}
     </div>
@@ -110,26 +110,26 @@ export function UnlockBackupDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="备份已加密"
-      description="输入导出时设置的口令，解密后再选模块导入"
-      submitLabel="解密并导入"
+      title={copy.unlockTitle}
+      description={copy.unlockDescription}
+      submitLabel={copy.unlockSubmit}
       submitting={busy}
       submitDisabled={password.length === 0}
       onSubmit={onSubmit}
       contentAttrs={{ 'data-role': 'unlock-backup-dialog' }}
     >
-      <Field label="备份口令" hint="口令区分大小写；输错可以重试" error={error ?? undefined}>
+      <Field label={copy.unlockLabel} hint={copy.unlockHint} error={error ?? undefined}>
         <Input
           data-role="unlock-backup-password"
           type="password"
           autoComplete="current-password"
-          aria-label="备份口令"
+          aria-label={copy.unlockLabel}
           value={password}
           onChange={(event) => onPasswordChange(event.target.value)}
         />
       </Field>
       <span className="text-xs text-muted" data-role="unlock-backup-hint">
-        忘记口令将无法恢复这份备份；口令只在本次解密时使用。
+        {copy.unlockForgetHint}
       </span>
     </FormDialog>
   );

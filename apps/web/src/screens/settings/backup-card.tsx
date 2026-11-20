@@ -2,6 +2,7 @@ import type { AppSettings, Storage } from '@dawn-tick/core';
 import { BackupBlock } from './backup-block.tsx';
 import { TransferBlock } from './transfer-block.tsx';
 import { useSnapshots } from './use-snapshots.ts';
+import { snapshotsCopy as copy } from '../../copy/backup-snapshots.ts';
 
 export interface BackupCardProps {
   storage: Storage;
@@ -24,7 +25,7 @@ export function BackupCard({ storage, settings, onPatch, onChanged, snapshotsRev
   return (
     <>
       <BackupBlock storage={storage} settings={settings} onPatch={onPatch} snapshots={snapshots} onChanged={onChanged} />
-      <span className="text-xs text-muted">导出/导入备份与课表文件在「本地存储」分组</span>
+      <span className="text-xs text-muted">{copy.transferElsewhere}</span>
       <TransferBlock settings={settings} />
     </>
   );

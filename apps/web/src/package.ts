@@ -11,6 +11,7 @@ import {
 } from '@dawn-tick/core';
 import { PRESET_CONTENT_META_KEY, PRESET_SNAPSHOT_META_KEY } from './lib/meta-keys.ts';
 import { pickBackupText, readZipEntries } from './zip-read.ts';
+import { transferCopy } from './copy/backup-transfer.ts';
 
 /**
  * 整包格式：`backup.json` + 可选 `presets/snapshot.json`、`presets/content.json`、`logs/dawn-tick.log`。
@@ -82,7 +83,7 @@ export interface ReadPackageResult {
 export async function readPackageEntries(bytes: Uint8Array): Promise<ReadPackageResult> {
   const entries = await readZipEntries(bytes);
   const text = pickBackupText(entries);
-  if (text === null) throw new Error('整包里没有 backup.json');
+  if (text === null) throw new Error(transferCopy.packageNoBackup);
   const decoder = new TextDecoder();
   const snapshot = entries.get('presets/snapshot.json');
   const content = entries.get('presets/content.json');

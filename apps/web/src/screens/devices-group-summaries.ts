@@ -5,6 +5,8 @@
  * 而不是重复标题；因此全部由状态拼出，便于单测，也让页面层不掺文案逻辑。
  */
 
+import { devicesCopy } from '../copy/sync-devices.ts';
+
 /** 原生数据目录：默认位置 / 自定义位置；null 表示当前端读不到（浏览器、安卓）。 */
 export type StorageLocationKind = 'default' | 'custom' | null;
 
@@ -43,10 +45,13 @@ export interface DeviceGroupSummaries {
  */
 function storageSummary(input: DeviceGroupSummaryInput): string {
   if (input.storageLocation !== null) {
-    return `${input.storageKind} · ${input.storageLocation === 'custom' ? '自定义位置' : '默认位置'}`;
+    return devicesCopy.joined(
+      input.storageKind,
+      input.storageLocation === 'custom' ? devicesCopy.locationCustom : devicesCopy.locationDefault,
+    );
   }
   if (input.persistent !== null) {
-    return `${input.storageKind} · ${input.persistent ? '已持久化' : '未持久化'}`;
+    return devicesCopy.joined(input.storageKind, input.persistent ? devicesCopy.persisted : devicesCopy.notPersisted);
   }
   return input.storageKind;
 }
@@ -55,17 +60,17 @@ function storageSummary(input: DeviceGroupSummaryInput): string {
  * 局域网配对的令牌只留在组件会话里（离开页面即失效），页面层拿不到「已配对」，
  * 所以这一行给稳定的能力说明，不假装状态。
  */
-const LAN_SUMMARY = '同局域网直传';
+const LAN_SUMMARY = devicesCopy.lanSummary;
 
 export function deviceGroupSummaries(input: DeviceGroupSummaryInput): DeviceGroupSummaries {
   return {
     storage: storageSummary(input),
     backup:
-      input.snapshotCount === 0 ? '暂无快照' : `最近 ${input.snapshotCount} 份快照`,
+      input.snapshotCount === 0 ? devicesCopy.noSnapshots : devicesCopy.recentSnapshots(input.snapshotCount),
     update: `${input.version} · ${input.channelLabel}`,
-    webdav: input.webdavConfigured ? '已配置' : '未配置',
+    webdav: input.webdavConfigured ? devicesCopy.webdavConfigured : devicesCopy.webdavNotConfigured,
     lan: LAN_SUMMARY,
-    maintenance: `日志级别 ${input.logLevel}${input.logEnabled ? '' : ' · 已关闭'}`,
+    maintenance: devicesCopy.logLevel(input.logLevel, input.logEnabled),
     about: `v${input.version}`,
   };
 }

@@ -4,6 +4,7 @@ import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { logWarn } from './log.ts';
 import { isLanAddress } from './lan-sync-protocol.ts';
 import { readStoredLanHost } from './lan-sync-network.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步二期：UDP 广播自动发现。
@@ -88,10 +89,10 @@ export function encodeDiscoveryAnnounce(
   announce: Omit<LanDiscoveryAnnounce, 'kind' | 'schemaVersion'>,
 ): string {
   const name = announce.name.trim();
-  if (name === '' || name.length > 48) throw new Error('设备名应为 1–48 个字符');
-  if (!isLanAddress(announce.host)) throw new Error('广播地址必须是局域网地址');
+  if (name === '' || name.length > 48) throw new Error(lanSyncCopy.announceNameLength);
+  if (!isLanAddress(announce.host)) throw new Error(lanSyncCopy.announceHostNotLan);
   if (!Number.isInteger(announce.port) || announce.port < 1 || announce.port > 65535) {
-    throw new Error('广播端口不合法');
+    throw new Error(lanSyncCopy.announceBadPort);
   }
   const deviceId = normalizeDiscoveryDeviceId(announce.deviceId);
   return JSON.stringify({

@@ -6,16 +6,17 @@
 import type { Collection, Storage, StoreName } from '@dawn-tick/core';
 import { listSnapshots, restoreSnapshot, type SnapshotEntry } from '../backup.ts';
 import { describeError, logError, logInfo } from '../log.ts';
+import { snapshotsCopy } from '../copy/backup-snapshots.ts';
 
 /** 文件快照路径不需要 Storage；给备份函数一个占位对象，避免为恢复再造一条存储入口。 */
 const UNAVAILABLE_STORAGE = {
   kind: 'memory',
   collection: (): Collection<unknown> => {
-    throw new Error('恢复备份不使用本地存储');
+    throw new Error(snapshotsCopy.recoveryNoStorage);
   },
   readMeta: async (): Promise<undefined> => undefined,
   writeMeta: async (): Promise<void> => {
-    throw new Error('恢复备份不使用本地存储');
+    throw new Error(snapshotsCopy.recoveryNoStorage);
   },
   close: async (): Promise<void> => {},
 } as unknown as Storage;
@@ -38,15 +39,15 @@ export async function restoreLatestBackupSnapshot(): Promise<LatestBackupResult>
   } catch (cause: unknown) {
     const message = describeError(cause);
     logError('backup', '备份列表读取失败', { message });
-    return { ok: false, name: null, error: '当前平台无法读取备份目录' };
+    return { ok: false, name: null, error: snapshotsCopy.recoveryListFailed };
   }
   const latest = entries[0];
   if (latest === undefined) {
-    return { ok: false, name: null, error: '备份目录里没有可用快照' };
+    return { ok: false, name: null, error: snapshotsCopy.recoveryNoSnapshot };
   }
   const outcome = await restoreSnapshot(UNAVAILABLE_STORAGE, latest);
   if (!outcome.ok) {
-    return { ok: false, name: latest.id, error: outcome.error ?? '恢复快照失败' };
+    return { ok: false, name: latest.id, error: outcome.error ?? snapshotsCopy.recoveryFailed };
   }
   logInfo('backup', '最近快照已排队恢复', { name: latest.id, kind: latest.kind });
   return { ok: true, name: latest.id, error: null };

@@ -28,6 +28,9 @@ import { LanSyncPairPanel } from './lan-sync-pair-panel.tsx';
 import { LanPreviewPanel, lanPreviewText } from './lan-sync-preview-panel.tsx';
 import { useLanAutoSync } from './use-lan-auto-sync.ts';
 import { said } from './format.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
+import { HelpLink } from '../../components/help-link.tsx';
+import { lanSyncCopy } from '../../copy/sync-lan.ts';
 
 export interface LanSyncClientPanelProps {
   storage: Storage;
@@ -119,17 +122,17 @@ export function LanSyncClientPanel({
 
   async function discover(): Promise<void> {
     setDiscovering(true);
-    setStatus(said('正在发现同一局域网内的设备…'));
+    setStatus(said(copy.discovering));
     const found = await scanLanPeers();
     const visible = dedupeDiscoveryPeers(filterDiscoverySelf(found, self));
     setPeers(visible);
     setDiscovering(false);
-    setStatus(said(visible.length === 0 ? '未发现设备：确认对方已开启配对且在同一局域网' : `发现 ${visible.length} 台设备`));
+    setStatus(said(visible.length === 0 ? copy.discoverNone : copy.discoverFound(visible.length)));
   }
 
   function choosePeer(peer: LanDiscoveryPeer): void {
     setPeerInput(formatPeerAddress({ host: peer.host, port: peer.port }));
-    setStatus(said(`已填入 ${peer.name} 的地址，请扫码或填对方显示的配对码`));
+    setStatus(said(copy.peerFilled(peer.name)));
   }
 
   /** 离线设备的「重新配对」：把保存的（可能已由发现更新的）地址填回配对面板。 */
@@ -138,16 +141,14 @@ export function LanSyncClientPanel({
     setCodeInput('');
     setPreview(null);
     setStatus(
-      said(
-        `请让对方重新开启配对，再输入新配对码与 ${pairing.name} 配对（地址 ${pairing.host}:${pairing.port}）`,
-      ),
+      said(copy.repairPrompt(pairing.name, `${pairing.host}:${pairing.port}`)),
     );
   }
 
   async function pairPeer(peerText: string, codeText: string, name?: string, deviceId?: string): Promise<void> {
     const peer = parsePeerAddress(peerText);
     if (peer === null) {
-      note('对方地址应为局域网 IP 与端口，例如 192.168.1.5:8765');
+      note(copy.peerAddressInvalid);
       return;
     }
     // 手输地址时也能从发现列表认出同一台：deviceId 优先，其次按地址匹配
@@ -157,32 +158,32 @@ export function LanSyncClientPanel({
     setPreview(null);
     await action.run({
       scope: 'sync',
-      label: '正在配对…',
+      label: copy.pairing,
       fail: false,
       task: async () => {
         // 提交给服务端的设备名是本机名；扫码/粘贴里的 name 是「对方」的展示名，只用于本地记录
         const reachable = await checkPeerReachable(peer);
         if (!reachable.ok) {
-          const detail = reachable.hint ?? '无法连接对方';
-          const error = reachable.error === null || reachable.error === '' ? detail : `${detail}（${reachable.error}）`;
+          const detail = reachable.hint ?? copy.unreachableFallback;
+          const error = reachable.error === null || reachable.error === '' ? detail : copy.unreachableDetail(detail, reachable.error);
           dispatch({ type: 'failed', error });
-          note(`配对失败：${error}`);
-          toast.error(fail('配对', error, '请确认两端在同一 Wi-Fi 后重试'));
+          note(copy.pairFailed(error));
+          toast.error(fail(copy.pairWhat, error, copy.pairNextReachable));
           return;
         }
         const result = await pairWithPeer(peer, codeText, Date.now(), defaultDeviceName());
         if (!result.ok || result.session === null) {
-          const error = result.error ?? '配对失败';
+          const error = result.error ?? copy.pairFailedFallback;
           dispatch({ type: 'failed', error });
-          note(`配对失败：${error}`);
-          toast.error(fail('配对', error, '请核对对方地址与配对码'));
+          note(copy.pairFailed(error));
+          toast.error(fail(copy.pairWhat, error, copy.pairNextCode));
           return;
         }
         dispatch({ type: 'paired', session: result.session });
         await rememberLanPairing(pairingStore, result.session, { name, deviceId: peerDeviceId });
         setPairingsRevision((value) => value + 1);
-        note(`已与 ${formatPeerAddress(peer)} 建立配对，可以预览后拉取或推送`);
-        toast.success('已配对');
+        note(copy.paired(formatPeerAddress(peer)));
+        toast.success(copy.pairedToast);
       },
     });
   }
@@ -213,15 +214,15 @@ export function LanSyncClientPanel({
     }
     const selected = selectedScopes();
     if (selected.length === 0) {
-      note('请至少勾选一个同步范围');
+      note(lanSyncCopy.scopeRequired);
       return;
     }
     setPreviewing(true);
-    setStatus(said('正在读取对方变更…'));
+    setStatus(said(copy.previewReading));
     const result = await previewPullFromPeer(storage, session, selected);
     setPreviewing(false);
     if (!result.ok) {
-      const message = fail('预览', result.error, '请检查两端是否在同一局域网后重试');
+      const message = fail(copy.previewWhat, result.error, copy.sameLanNext);
       setStatus(said(message));
       toast.error(message);
       return;
@@ -234,22 +235,22 @@ export function LanSyncClientPanel({
     if (preview === null || preview.result.envelope === null) return;
     const envelope = preview.result.envelope;
     const selected = preview.scopes;
-    setProgress('正在合并对方变更…');
+    setProgress(copy.merging);
     await action.run({
       scope: 'sync',
-      label: '正在合并对方变更…',
+      label: copy.merging,
       fail: false,
       task: async () => {
         const result = await applyLanPreview(storage, envelope, selected);
         setProgress(null);
         setPreview(null);
         if (!result.ok) {
-          const message = fail('合并', result.error, '请重试或重新预览');
+          const message = fail(copy.mergeWhat, result.error, copy.mergeNext);
           setStatus(said(message));
           toast.error(message);
           return;
         }
-        const message = `合并完成：写入 ${result.imported} 条，跳过 ${result.skipped} 条`;
+        const message = copy.merged(result.imported, result.skipped);
         setStatus(said(message));
         toast.success(message);
         if (client.session !== null) await rememberSynced(client.session);
@@ -268,24 +269,24 @@ export function LanSyncClientPanel({
     }
     const selected = selectedScopes();
     if (selected.length === 0) {
-      note('请至少勾选一个同步范围');
+      note(lanSyncCopy.scopeRequired);
       return;
     }
-    setProgress('正在推送到对方…');
+    setProgress(copy.pushing);
     await action.run({
       scope: 'sync',
-      label: '正在推送到对方…',
+      label: copy.pushing,
       fail: false,
       task: async () => {
         const result = await pushToPeer(storage, session, selected);
         setProgress(null);
         if (!result.ok) {
-          const message = fail('推送', result.error, '请检查两端是否在同一局域网后重试');
+          const message = fail(copy.pushWhat, result.error, copy.sameLanNext);
           setStatus(said(message));
           toast.error(message);
           return;
         }
-        const message = `推送完成：写入 ${result.imported} 条，跳过 ${result.skipped} 条`;
+        const message = copy.pushed(result.imported, result.skipped);
         setStatus(said(message));
         toast.success(message);
         await rememberSynced(session);
@@ -311,7 +312,7 @@ export function LanSyncClientPanel({
       />
       {client.session !== null && (
         <span className="text-xs text-muted" data-role="lan-sync-session">
-          已连接 {formatPeerAddress(client.session.peer)}
+          {copy.connectedTo(formatPeerAddress(client.session.peer))}
         </span>
       )}
       {client.phase === 'failed' && client.error !== null && (
@@ -337,7 +338,7 @@ export function LanSyncClientPanel({
           });
         }}
       />
-      <span className="text-xs font-medium text-muted">同步范围</span>
+      <span className="text-xs font-medium text-muted">{copy.scopesTitle}</span>
       <div className="flex flex-wrap items-center gap-3" data-role="lan-sync-scopes">
         {LAN_SCOPES.map((scope) => (
           <label key={scope} className="flex min-h-tap items-center gap-2 text-sm text-ink">
@@ -345,7 +346,7 @@ export function LanSyncClientPanel({
               type="checkbox"
               className="size-4"
               checked={scopes.has(scope)}
-              aria-label={`同步 ${LAN_SCOPE_LABEL[scope]}`}
+              aria-label={copy.scopeLabel(LAN_SCOPE_LABEL[scope])}
               onChange={(event) => toggleScope(scope, event.target.checked)}
             />
             {LAN_SCOPE_LABEL[scope]}
@@ -357,27 +358,25 @@ export function LanSyncClientPanel({
         <Button
           size="sm"
           variant="secondary"
-          aria-label="从对方拉取"
+          aria-label={copy.pullButton}
           loading={previewing || action.busy}
           disabled={client.phase !== 'paired' || previewing}
           onClick={() => void previewPull()}
         >
-          从对方拉取
+          {copy.pullButton}
         </Button>
         <Button
           size="sm"
           variant="secondary"
-          aria-label="推送到对方"
+          aria-label={copy.pushButton}
           loading={action.busy}
           disabled={client.phase !== 'paired'}
           onClick={() => void push()}
         >
-          推送到对方
+          {copy.pushButton}
         </Button>
       </div>
-      <span className="text-xs text-muted" data-role="lan-sync-preview-hint">
-        同步前预览：拉取时先显示对方将带来的变更数量，确认后才合并。
-      </span>
+      <HelpLink entryId="lan-paired" />
       {preview !== null && (
         <LanPreviewPanel
           result={preview.result}
@@ -391,9 +390,6 @@ export function LanSyncClientPanel({
           {status.text}
         </StatusLine>
       )}
-      <span className="text-xs text-muted">
-        冲突按修改时间合并，较旧的一份跳过；只传业务数据，不含日志、快照与密码。
-      </span>
     </>
   );
 }

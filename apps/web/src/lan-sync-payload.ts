@@ -29,6 +29,7 @@ import {
   type TokenCheck,
   type TrustedToken,
 } from './lan-sync-protocol.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步（I-14）的载荷层：同步信封的编解码、导入应用与「服务端请求处理」。
@@ -71,19 +72,19 @@ export function parseLanEnvelope(text: string): LanEnvelope {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new Error('同步数据不是合法 JSON');
+    throw new Error(lanSyncCopy.envelopeNotJson);
   }
-  if (typeof parsed !== 'object' || parsed === null) throw new Error('同步数据结构不正确');
+  if (typeof parsed !== 'object' || parsed === null) throw new Error(lanSyncCopy.envelopeBadShape);
   const envelope = parsed as Partial<LanEnvelope> & { backup?: unknown; scope?: unknown };
-  if (envelope.kind !== LAN_SYNC_KIND) throw new Error('不是晓刻局域网同步数据');
+  if (envelope.kind !== LAN_SYNC_KIND) throw new Error(lanSyncCopy.envelopeWrongKind);
   if (envelope.schemaVersion !== LAN_SYNC_PROTOCOL_VERSION) {
-    throw new Error(`同步数据版本 ${String(envelope.schemaVersion)} 不受支持`);
+    throw new Error(lanSyncCopy.envelopeVersionUnsupported(String(envelope.schemaVersion)));
   }
   if (typeof envelope.backup !== 'object' || envelope.backup === null) {
-    throw new Error('同步数据缺少备份内容');
+    throw new Error(lanSyncCopy.envelopeMissingBackup);
   }
   const backup = parseBackup(JSON.stringify(envelope.backup));
-  if (backup.format !== BACKUP_FORMAT) throw new Error('同步数据不是晓刻备份格式');
+  if (backup.format !== BACKUP_FORMAT) throw new Error(lanSyncCopy.envelopeWrongFormat);
   const scope = parseScope(
     Array.isArray(envelope.scope) ? envelope.scope.filter((item) => typeof item === 'string').join(',') : '',
   );
@@ -184,11 +185,11 @@ export async function handleLanRequest(
   const method = request.method.toUpperCase();
 
   if (utf8Bytes(request.body) > MAX_REQUEST_BYTES) {
-    return errorReply(413, 'payload_too_large', '请求体超过 5MB 上限');
+    return errorReply(413, 'payload_too_large', lanSyncCopy.requestTooLarge);
   }
   if (method === 'OPTIONS') return { status: 204, body: '' };
   if (request.path === '/ping') {
-    if (method !== 'GET') return errorReply(405, 'method_not_allowed', '可达性检查只接受 GET');
+    if (method !== 'GET') return errorReply(405, 'method_not_allowed', lanSyncCopy.methodOnly(lanSyncCopy.routePing, 'GET'));
     // 无鉴权、无业务数据：只确认「对方端口是晓刻局域网服务」且能应答
     return jsonReply(200, {
       ok: true,
@@ -197,36 +198,36 @@ export async function handleLanRequest(
     });
   }
   if (request.path === '/pair') {
-    if (method !== 'POST') return errorReply(405, 'method_not_allowed', '配对只接受 POST');
+    if (method !== 'POST') return errorReply(405, 'method_not_allowed', lanSyncCopy.methodOnly(lanSyncCopy.routePair, 'POST'));
     return handlePair(context, request, now);
   }
   if (request.path === '/pair/refresh') {
-    if (method !== 'POST') return errorReply(405, 'method_not_allowed', '刷新令牌只接受 POST');
+    if (method !== 'POST') return errorReply(405, 'method_not_allowed', lanSyncCopy.methodOnly(lanSyncCopy.routeRefresh, 'POST'));
     return handleRefresh(context, request, now);
   }
   if (request.path === '/pair/revoke') {
-    if (method !== 'POST') return errorReply(405, 'method_not_allowed', '吊销令牌只接受 POST');
+    if (method !== 'POST') return errorReply(405, 'method_not_allowed', lanSyncCopy.methodOnly(lanSyncCopy.routeRevoke, 'POST'));
     return handleRevoke(context, request, now);
   }
   if (request.path === '/export' || request.path === '/import') {
     const auth = findTrustedToken(context.tokens, request.authorization, now);
     if (!auth.ok || auth.record === null) {
-      return errorReply(401, 'unauthorized', auth.error ?? '未配对或配对令牌已失效，请重新配对');
+      return errorReply(401, 'unauthorized', auth.error ?? lanSyncCopy.unauthorized);
     }
     if (request.path === '/export') {
       if (method !== 'GET') {
-        return errorReply(405, 'method_not_allowed', '导出只接受 GET', touched(context, auth, now));
+        return errorReply(405, 'method_not_allowed', lanSyncCopy.methodOnly(lanSyncCopy.routeExport, 'GET'), touched(context, auth, now));
       }
       const reply = await handleExport(context, request, now);
       return withTokens(reply, touched(context, auth, now));
     }
     if (method !== 'POST') {
-      return errorReply(405, 'method_not_allowed', '导入只接受 POST', touched(context, auth, now));
+      return errorReply(405, 'method_not_allowed', lanSyncCopy.methodOnly(lanSyncCopy.routeImport, 'POST'), touched(context, auth, now));
     }
     const reply = await handleImport(context, request, now);
     return withTokens(reply, touched(context, auth, now));
   }
-  return errorReply(404, 'not_found', '没有该接口');
+  return errorReply(404, 'not_found', lanSyncCopy.notFound);
 }
 
 /** 鉴权成功后的令牌快照：`lastUsedAt` 记为本次请求时间。 */
@@ -248,13 +249,13 @@ async function handlePair(
   try {
     body = JSON.parse(request.body) as { code?: unknown; name?: unknown };
   } catch {
-    return errorReply(400, 'bad_request', '配对请求不是合法 JSON');
+    return errorReply(400, 'bad_request', lanSyncCopy.pairBodyNotJson);
   }
   const code = typeof body.code === 'string' ? body.code : '';
   const check = verifyPairCode(context.pairing, code, now);
-  if (!check.ok) return errorReply(401, 'unauthorized', check.error ?? '配对码不正确');
+  if (!check.ok) return errorReply(401, 'unauthorized', check.error ?? lanSyncCopy.pairCodeWrong);
   // 长期令牌：每次成功配对都新增一条可信设备，不再限制「同时只有一台」
-  const issued = issueTrustedToken(typeof body.name === 'string' ? body.name : '未知设备', now);
+  const issued = issueTrustedToken(typeof body.name === 'string' ? body.name : lanSyncCopy.unknownDevice, now);
   const tokens = [...pruneTrustedTokens(context.tokens, now), issued.record];
   return {
     status: 200,
@@ -276,7 +277,7 @@ function handleRefresh(
 ): LanHttpReply {
   const auth = findTrustedToken(context.tokens, request.authorization, now);
   if (!auth.ok || auth.record === null) {
-    return errorReply(401, 'unauthorized', auth.error ?? '配对已失效，请重新配对');
+    return errorReply(401, 'unauthorized', auth.error ?? lanSyncCopy.pairingInvalid);
   }
   const rotated = rotateTrustedToken(context.tokens, auth.record, now);
   return {
@@ -298,7 +299,7 @@ function handleRevoke(
 ): LanHttpReply {
   const auth = findTrustedToken(context.tokens, request.authorization, now);
   if (!auth.ok || auth.record === null) {
-    return errorReply(401, 'unauthorized', auth.error ?? '配对已失效，请重新配对');
+    return errorReply(401, 'unauthorized', auth.error ?? lanSyncCopy.pairingInvalid);
   }
   return jsonReply(200, { revoked: true, schemaVersion: LAN_SYNC_PROTOCOL_VERSION }, {
     tokens: revokeTrustedToken(context.tokens, auth.record.tokenHash),
@@ -312,11 +313,11 @@ async function handleExport(
 ): Promise<LanHttpReply> {
   const query = new URLSearchParams(request.query);
   const scope = parseScope(query.get('scope'));
-  if (scope.length === 0) return errorReply(400, 'bad_request', '请至少选择一个同步范围');
+  if (scope.length === 0) return errorReply(400, 'bad_request', lanSyncCopy.scopeRequired);
   const envelope = await buildLanEnvelope(context.storage, scope, now);
   const body = JSON.stringify(envelope);
   if (utf8Bytes(body) > MAX_RESPONSE_BYTES) {
-    return errorReply(500, 'payload_too_large', '同步数据超过 20MB 上限，请缩小范围');
+    return errorReply(500, 'payload_too_large', lanSyncCopy.exportTooLarge);
   }
   return { status: 200, body };
 }
@@ -329,20 +330,20 @@ async function handleImport(
   const query = new URLSearchParams(request.query);
   const mode = query.get('mode') ?? 'merge';
   if (mode !== 'merge' && mode !== 'overwrite') {
-    return errorReply(400, 'bad_request', '导入方式只支持 merge 或 overwrite');
+    return errorReply(400, 'bad_request', lanSyncCopy.importModeUnsupported);
   }
   let envelope: LanEnvelope;
   try {
     envelope = parseLanEnvelope(request.body);
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : '同步数据不正确';
+    const message = cause instanceof Error ? cause.message : lanSyncCopy.envelopeInvalid;
     return errorReply(400, 'bad_request', message);
   }
   const requested = parseScope(query.get('scope'));
   const scope = (requested.length > 0 ? requested : envelope.scope).filter((item) =>
     envelope.scope.includes(item),
   );
-  if (scope.length === 0) return errorReply(400, 'bad_request', '没有可导入的同步范围');
+  if (scope.length === 0) return errorReply(400, 'bad_request', lanSyncCopy.importScopeEmpty);
   try {
     const result = await applyLanEnvelope(context.storage, envelope, { scopes: scope, mode, now });
     return jsonReply(200, {
@@ -352,7 +353,7 @@ async function handleImport(
       warnings: result.warnings,
     });
   } catch (cause: unknown) {
-    const message = cause instanceof Error ? cause.message : '导入失败';
+    const message = cause instanceof Error ? cause.message : lanSyncCopy.importFailed;
     return errorReply(500, 'internal', message);
   }
 }

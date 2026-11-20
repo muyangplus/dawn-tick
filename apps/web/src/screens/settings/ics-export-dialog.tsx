@@ -16,6 +16,7 @@ import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { saveText, toastSaved } from './file-export.ts';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
 
 export interface IcsExportDialogProps {
   open: boolean;
@@ -89,12 +90,12 @@ export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialog
     if (plan === null) return;
     await exportAction.run({
       scope: 'backup',
-      label: '正在导出课表…',
+      label: copy.icsExporting,
       fail: false,
       task: async () => {
-        const saved = await saveText(plan.fileName, plan.text, 'ics', 'ICS 日历', 'text/calendar');
+        const saved = await saveText(plan.fileName, plan.text, 'ics', copy.icsFilter, 'text/calendar');
         if (!saved.saved) return;
-        toastSaved(`已导出课表（ICS，${plan.counts.courses} 门课程）`, saved.path);
+        toastSaved(copy.icsExported(plan.counts.courses), saved.path);
         onOpenChange(false);
       },
     });
@@ -106,32 +107,32 @@ export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialog
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="导出课表（ICS）"
-      description="勾选要导出的模块，生成 .ics 日历文件"
-      submitLabel="导出"
+      title={copy.icsTitle}
+      description={copy.icsDescription}
+      submitLabel={copy.icsSubmit}
       submitting={exportAction.busy}
       submitDisabled={plan === null || empty || loading}
       onSubmit={() => void saveIcs()}
       contentAttrs={{ 'data-role': 'ics-export-dialog' }}
     >
-      {loading && <span className="text-sm text-muted">正在读取学期数据…</span>}
+      {loading && <span className="text-sm text-muted">{copy.icsLoading}</span>}
       {!loading && loadError !== null && (
-        <span className="text-sm text-danger">读取学期数据失败：{loadError}</span>
+        <span className="text-sm text-danger">{copy.icsLoadFailed(loadError)}</span>
       )}
       {!loading && loadError === null && built.error !== null && (
-        <span className="text-sm text-danger">生成课表数据失败：{built.error}</span>
+        <span className="text-sm text-danger">{copy.icsBuildFailed(built.error)}</span>
       )}
       {!loading && loadError === null && built.error === null && source === null && (
-        <span className="text-sm text-muted">还没有学期，先在设置里创建学期再导出。</span>
+        <span className="text-sm text-muted">{copy.icsNoSemester}</span>
       )}
       {plan !== null && source !== null && (
         <>
           <div className="flex flex-col gap-1">
             <span className="text-sm text-ink" data-role="ics-semester">
-              学期：{source.semester.name}
+              {copy.icsSemester(source.semester.name)}
             </span>
             <span className="text-xs text-muted" data-role="ics-counts">
-              课程 {plan.counts.courses} 门 · 排课 {plan.counts.schedules} 条 · 上课 {plan.counts.lessons} 次
+              {copy.icsCounts(plan.counts.courses, plan.counts.schedules, plan.counts.lessons)}
             </span>
           </div>
           <div className="flex flex-col gap-1">
@@ -141,9 +142,9 @@ export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialog
                 className="size-4"
                 checked
                 disabled
-                aria-label="导出 课表"
+                aria-label={copy.icsTimetableLabel}
               />
-              课表（必选）
+              {copy.icsTimetable}
             </label>
             <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
               <input
@@ -151,25 +152,25 @@ export function IcsExportDialog({ open, onOpenChange, storage }: IcsExportDialog
                 className="size-4"
                 checked={includeEvents}
                 disabled={plan.counts.events === 0}
-                aria-label="导出 日程"
+                aria-label={copy.icsEventsLabel}
                 onChange={(event) => setIncludeEvents(event.target.checked)}
               />
-              日程
+              {copy.icsEvents}
               <span className="text-xs text-muted">
-                {plan.counts.events === 0 ? '（没有可写入的日程）' : `（${plan.counts.events} 条）`}
+                {plan.counts.events === 0 ? copy.icsEventsNone : copy.icsEventsCount(plan.counts.events)}
               </span>
             </label>
           </div>
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted" data-role="ics-policy">
-              调课按调整后的时间和地点写入；停课不导出。
+              {copy.icsPolicy}
             </span>
             {plan.notes.length > 0 && (
               <span className="text-xs text-muted" data-role="ics-notes">
-                {plan.notes.join('；')}
+                {copy.icsNotes(plan.notes)}
               </span>
             )}
-            {empty && <span className="text-xs text-muted">当前学期没有可导出的课表条目。</span>}
+            {empty && <span className="text-xs text-muted">{copy.icsEmpty}</span>}
           </div>
         </>
       )}

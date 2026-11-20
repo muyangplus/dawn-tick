@@ -14,6 +14,7 @@ import {
 } from './lan-sync-protocol.ts';
 import { applyLanEnvelope, buildLanEnvelope, parseLanEnvelope } from './lan-sync-payload.ts';
 import { lanFetch, lanResponseError, lanUtf8Length } from './lan-sync-http.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网同步（I-14）的**客户端**：配对、刷新/吊销令牌、拉取/推送与客户端状态机。
@@ -28,9 +29,9 @@ import { lanFetch, lanResponseError, lanUtf8Length } from './lan-sync-http.ts';
 
 /** 本机平台的可读名：写进服务端可信令牌列表，也用于配对二维码的展示名。 */
 export function defaultDeviceName(): string {
-  if (isAndroidApp()) return 'Android 手机';
-  if (isDesktopApp()) return 'Windows 电脑';
-  return '浏览器';
+  if (isAndroidApp()) return lanSyncCopy.deviceAndroid;
+  if (isDesktopApp()) return lanSyncCopy.deviceDesktop;
+  return lanSyncCopy.deviceBrowser;
 }
 
 /** 已配对的对方：地址 + 长期令牌。 */
@@ -57,11 +58,10 @@ export const LAN_PAIR_TIMEOUT_MS = 8_000;
 export const LAN_PING_TIMEOUT_MS = 3_000;
 
 /** 配对超时文案：前半句是原因，后半句是可操作提示。 */
-export const LAN_PAIR_TIMEOUT_MESSAGE = '配对请求超时：请确认两端在同一 Wi-Fi';
+export const LAN_PAIR_TIMEOUT_MESSAGE = lanSyncCopy.pairTimeout;
 
 /** 连不上对方时的统一提示（AP 隔离 / VPN / 代理是局域网互连最常见的三个原因）。 */
-export const LAN_PEER_UNREACHABLE_HINT =
-  '无法连接对方：请确认两端在同一个 Wi-Fi，关闭 VPN/代理，并确认路由器没有开启 AP 隔离';
+export const LAN_PEER_UNREACHABLE_HINT = lanSyncCopy.peerUnreachable;
 
 /** 配对前预检结果：`status === 0` 表示网络层失败，非 0 是服务端 HTTP 状态。 */
 export interface PeerReachability {
@@ -86,7 +86,7 @@ export async function checkPeerReachable(
     const response = await withTimeout(
       lanFetch(`${peerBaseUrl(peer)}${path}`, { method: 'GET' }),
       timeoutMs,
-      '连接对方超时',
+      lanSyncCopy.connectTimeout,
     );
     const text = await response.text();
     if (!response.ok) {
@@ -96,7 +96,7 @@ export async function checkPeerReachable(
         logWarn('sync', '对方不支持 /ping，按可达继续配对', { peer: target, path, status: 404 });
         return { ok: true, status: 404, error: null, hint: null };
       }
-      const error = lanResponseError(response.status, text, '连接对方');
+      const error = lanResponseError(response.status, text, lanSyncCopy.actionConnect);
       logError('sync', '对方可达性预检失败', { peer: target, path, status: response.status, error });
       return { ok: false, status: response.status, error, hint: LAN_PEER_UNREACHABLE_HINT };
     }
@@ -130,14 +130,14 @@ export async function pingLanPeer(
     const response = await withTimeout(
       lanFetch(`${peerBaseUrl(peer)}/ping`, { method: 'GET' }),
       timeoutMs,
-      '连接对方超时',
+      lanSyncCopy.connectTimeout,
     );
     const text = await response.text();
     if (response.ok || response.status === 404) return { ok: true, status: response.status, error: null };
     return {
       ok: false,
       status: response.status,
-      error: lanResponseError(response.status, text, '连接对方'),
+      error: lanResponseError(response.status, text, lanSyncCopy.actionConnect),
     };
   } catch (cause: unknown) {
     const error = errorMessage(cause);
@@ -163,7 +163,7 @@ export async function pingLanPeer(
     codeLength: trimmed.length,
   });
   if (!/^\d{6}$/.test(trimmed)) {
-    return { ok: false, session: null, error: '配对码应为 6 位数字' };
+    return { ok: false, session: null, error: lanSyncCopy.pairCodeFormat };
   }
   try {
     const response = await withTimeout(
@@ -181,7 +181,7 @@ export async function pingLanPeer(
     );
     const text = await response.text();
     if (!response.ok) {
-      const error = lanResponseError(response.status, text, '配对');
+      const error = lanResponseError(response.status, text, lanSyncCopy.actionPair);
       logError('sync', '配对被对方拒绝', {
         peer: target,
         path,
@@ -194,7 +194,7 @@ export async function pingLanPeer(
     const body = JSON.parse(text) as { token?: unknown; expiresAt?: unknown };
     if (typeof body.token !== 'string' || body.token === '') {
       logError('sync', '配对响应缺少令牌', { peer: target, path, status: response.status });
-      return { ok: false, session: null, error: '配对响应缺少配对令牌' };
+      return { ok: false, session: null, error: lanSyncCopy.pairNoToken };
     }
     const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : now + LAN_PAIRING_TTL_MS;
     logInfo('sync', '配对完成', { peer: target, path });
@@ -230,12 +230,12 @@ export async function refreshPairing(session: LanSession, now = Date.now()): Pro
         status: response.status,
         token: null,
         expiresAt: null,
-        error: lanResponseError(response.status, text, '刷新配对'),
+        error: lanResponseError(response.status, text, lanSyncCopy.actionRefresh),
       };
     }
     const body = JSON.parse(text) as { token?: unknown; expiresAt?: unknown };
     if (typeof body.token !== 'string' || body.token === '') {
-      return { ok: false, status: response.status, token: null, expiresAt: null, error: '刷新响应缺少配对令牌' };
+      return { ok: false, status: response.status, token: null, expiresAt: null, error: lanSyncCopy.refreshNoToken };
     }
     const expiresAt = typeof body.expiresAt === 'number' ? body.expiresAt : now + LAN_PAIRING_TTL_MS;
     return { ok: true, status: response.status, token: body.token, expiresAt, error: null };
@@ -253,7 +253,7 @@ export async function revokePairing(session: LanSession): Promise<{ ok: boolean;
       body: JSON.stringify({ schemaVersion: LAN_SYNC_PROTOCOL_VERSION }),
     });
     const text = await response.text();
-    if (!response.ok) return { ok: false, error: lanResponseError(response.status, text, '移除配对') };
+    if (!response.ok) return { ok: false, error: lanResponseError(response.status, text, lanSyncCopy.actionUnpair) };
     return { ok: true, error: null };
   } catch (cause: unknown) {
     return { ok: false, error: errorMessage(cause) };
@@ -280,14 +280,14 @@ export async function pullFromPeer(
   scopes: readonly LanScope[],
   now = Date.now(),
 ): Promise<LanTransferResult> {
-  if (scopes.length === 0) return transferFailure('请至少勾选一个同步范围');
-  if (sessionExpired(session, now)) return transferFailure('配对已过期，请重新配对');
+  if (scopes.length === 0) return transferFailure(lanSyncCopy.scopeRequired);
+  if (sessionExpired(session, now)) return transferFailure(lanSyncCopy.pairingExpired);
   try {
     const response = await lanFetch(`${peerBaseUrl(session.peer)}/export?scope=${formatScope(scopes)}`, {
       headers: { Authorization: `Bearer ${session.token}` },
     });
     const text = await response.text();
-    if (!response.ok) return transferFailure(lanResponseError(response.status, text, '拉取'));
+    if (!response.ok) return transferFailure(lanResponseError(response.status, text, lanSyncCopy.actionPull));
     const envelope = parseLanEnvelope(text);
     const result = await applyLanEnvelope(storage, envelope, { scopes, mode: 'merge', now });
     logInfo('sync', '拉取完成', { imported: result.imported, skipped: result.skipped });
@@ -313,13 +313,13 @@ export async function pushToPeer(
   scopes: readonly LanScope[],
   now = Date.now(),
 ): Promise<LanTransferResult> {
-  if (scopes.length === 0) return transferFailure('请至少勾选一个同步范围');
-  if (sessionExpired(session, now)) return transferFailure('配对已过期，请重新配对');
+  if (scopes.length === 0) return transferFailure(lanSyncCopy.scopeRequired);
+  if (sessionExpired(session, now)) return transferFailure(lanSyncCopy.pairingExpired);
   try {
     const envelope = await buildLanEnvelope(storage, scopes, now);
     const body = JSON.stringify(envelope);
     const bytes = lanUtf8Length(body);
-    if (bytes > MAX_REQUEST_BYTES) return transferFailure('要推送的数据超过 5MB，请缩小同步范围');
+    if (bytes > MAX_REQUEST_BYTES) return transferFailure(lanSyncCopy.pushTooLarge);
     const response = await lanFetch(
       `${peerBaseUrl(session.peer)}/import?scope=${formatScope(scopes)}&mode=merge`,
       {
@@ -329,7 +329,7 @@ export async function pushToPeer(
       },
     );
     const text = await response.text();
-    if (!response.ok) return transferFailure(lanResponseError(response.status, text, '推送'));
+    if (!response.ok) return transferFailure(lanResponseError(response.status, text, lanSyncCopy.actionPush));
     const parsed = JSON.parse(text) as { imported?: unknown; skipped?: unknown; warnings?: unknown };
     const warnings = Array.isArray(parsed.warnings)
       ? parsed.warnings.filter((item): item is string => typeof item === 'string')
@@ -388,6 +388,6 @@ export function reduceLanClient(state: LanClientState, event: LanClientEvent): L
       };
     case 'expire':
       if (state.session === null || event.now < state.session.expiresAt) return state;
-      return { phase: 'idle', session: null, error: '配对已过期，请重新配对' };
+      return { phase: 'idle', session: null, error: lanSyncCopy.pairingExpired };
   }
 }
