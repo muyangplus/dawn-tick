@@ -102,6 +102,11 @@ Run-Check '界面文案集中（tsx 无中文字面量）' {
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
     ($out.Trim() -split "`n" | Select-Object -Last 1)
 }
+Run-Check '安卓失败分支日志（提醒、密钥库、安装、分享）' {
+    $out = node tools/verify/check-android-logs.mjs 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
+    ($out.Trim() -split "`n" | Select-Object -Last 1)
+}
 Run-Check '第三方许可证清单一致' {
     $out = node tools/legal/collect-licenses.mjs --check 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "exit=$LASTEXITCODE`n$out" }
