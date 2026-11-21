@@ -48,8 +48,8 @@ export interface SettingsViewProps {
   importSignal?: number;
   /** 打开导入抽屉时预填的课表原文（来自 AI 助手） */
   importText?: string | null;
-  /** 预填原文已交给导入抽屉：上层清掉，之后再开抽屉不再带上 */
-  onImportTextUsed?: () => void;
+  /** 打开请求已处理：上层清掉请求与预填原文，之后再开抽屉不再带上 */
+  onImportHandled?: () => void;
   /** 帮助页「去设置」请求：切页后直接打开对应分组 */
   openGroupRequest?: { id: string; nonce: number } | null;
   /** 移动端从设置列表进入帮助页 */
@@ -78,7 +78,7 @@ export function SettingsView({
   onChanged,
   importSignal = 0,
   importText = null,
-  onImportTextUsed,
+  onImportHandled,
   openGroupRequest = null,
   onOpenHelp,
 }: SettingsViewProps) {
@@ -91,7 +91,8 @@ export function SettingsView({
     if (importSignal <= 0) return;
     setImportDialogText(importText);
     setImportDrawerOpen(true);
-    if (importText !== null) onImportTextUsed?.();
+    // 请求用过即清：从别的页面切回设置页时不再自动弹出导入抽屉
+    onImportHandled?.();
     // 只响应打开请求；原文与回调随请求一起读
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importSignal]);

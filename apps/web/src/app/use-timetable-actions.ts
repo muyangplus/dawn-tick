@@ -48,7 +48,8 @@ export interface TimetableActions {
   /** 助手送来的课表原文：打开导入抽屉时填进粘贴框；普通打开为 null */
   settingsImportText: string | null;
   openImportWithText: (text: string) => void;
-  clearImportText: () => void;
+  /** 设置页已打开导入抽屉：清掉请求，设置页重新挂载时不再自动打开 */
+  consumeImportRequest: () => void;
   assistantOpen: boolean;
   setAssistantOpen: (open: boolean) => void;
   /** 周视图空白格拖动松手：带着预填范围打开课程表单 */
@@ -380,7 +381,10 @@ export function useTimetableActions(input: {
     openImport,
     settingsImportText,
     openImportWithText,
-    clearImportText: () => setSettingsImportText(null),
+    consumeImportRequest: () => {
+      setSettingsImportText(null);
+      setSettingsImportSignal(0);
+    },
     assistantOpen,
     setAssistantOpen,
     openQuickCreate,
