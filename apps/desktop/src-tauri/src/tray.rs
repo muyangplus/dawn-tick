@@ -80,7 +80,7 @@ pub(crate) fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             Ok(())
         }
         Err(error) => {
-            log_debug("app", format!("托盘创建失败 icon={icon_source} error={error}"));
+            log_error("app", format!("托盘创建失败 icon={icon_source} error={error}"));
             if let Ok(mut state) = TRAY_STATE.lock() {
                 *state = Some((false, format!("{icon_source} / {error}")));
             }
