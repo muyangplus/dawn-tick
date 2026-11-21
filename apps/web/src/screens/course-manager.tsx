@@ -88,6 +88,7 @@ export function CourseManager({
   const [creating, setCreating] = useState(false);
   /** 导入课表折叠区：「完成」要把它收起 */
   const importRef = useRef<HTMLDetailsElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const reload = useCallback(async () => {
     setCourses(await listManagedCourses(storage, semesterId));
@@ -221,7 +222,12 @@ export function CourseManager({
       )}
 
       {/* 导入课表是课程管理的子项：展开后走同一套导入流程 */}
-      <details ref={importRef} className="rounded-md border border-line bg-surface p-2" data-role="course-import">
+      <details
+        ref={importRef}
+        className="rounded-md border border-line bg-surface p-2"
+        data-role="course-import"
+        onToggle={(event) => setImportOpen(event.currentTarget.open)}
+      >
         <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm font-medium text-ink" aria-label={courseManagerCopy.importTitle}>
           {courseManagerCopy.importTitle}
           <span className="text-xs text-muted">{courseManagerCopy.importFormats}</span>
@@ -230,6 +236,7 @@ export function CourseManager({
           <ImportFlow
             storage={storage}
             semesterId={semesterId}
+            visible={importOpen}
             onManual={() => setCreating(true)}
             onDone={() => {
               void (async () => {
