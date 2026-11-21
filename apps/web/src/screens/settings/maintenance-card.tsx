@@ -6,6 +6,7 @@ import {
   fetchSnapshot,
   resolvePresetSource,
   storeDownloadedSnapshot,
+  type PresetSnapshot,
   type PresetSource,
 } from '../../preset-update.ts';
 import { CHANNEL } from '../../channel.ts';
@@ -32,6 +33,12 @@ import { DiagnosticsLogDialog } from '../../components/diagnostics-log-dialog.ts
 import { said } from './format.ts';
 import { maintenanceCopy as copy } from '../../copy/backup-maintenance.ts';
 import { HelpLink } from '../../components/help-link.tsx';
+
+/** 已下载、待落盘的预设快照与取到它的下载源。 */
+interface DownloadedPreset {
+  snapshot: PresetSnapshot;
+  source: DownloadSource;
+}
 
 /** 预设来源对用户只说是仓库；具体取源（raw / API）只进日志。 */
 function presetSourceLabel(source: DownloadSource): string {
@@ -108,13 +115,13 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
 
   /** 检查预设更新：快照写入缓存、下次启动由 resolvePresetSource 生效；失败时界面沿用内置预设。 */
   async function runPresetCheck(): Promise<void> {
-    const result = await presetAction.run({
+    // 检查与下载可取消；落盘另起一次不可取消的操作，取消不会落在写入中途
+    const result = await presetAction.run<DownloadedPreset | null>({
       scope: 'preset',
       label: copy.checkingPreset,
       log: '预设快照下载失败',
       logLevel: 'warn',
       fail: { what: copy.checkPresetWhat, next: copy.retryLater },
-      // 只检查与下载、校验通过才写缓存：写缓存前取消即放弃
       cancellable: true,
       task: async (signal) => {
         const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
@@ -134,13 +141,13 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           fallback,
           fetchImpl: fetchWithSignal(globalThis.fetch, signal),
         });
-        if (signal.aborted) return;
+        if (signal.aborted) return null;
         if (status.error !== null) {
           const message = fail(copy.checkPresetWhat, status.error, copy.retryLater);
           setPresetResult(said(message));
           toast.error(message);
           logWarn('preset', '预设更新检查失败', { error: status.error, current: currentVersion, source });
-          return;
+          return null;
         }
         setPresetRemote(status.downloadSource ?? source);
         if (!status.available || status.version === null) {
@@ -156,12 +163,35 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
             source: status.source,
             downloadSource: status.downloadSource ?? source,
           });
-          return;
+          return null;
         }
         // 取快照优先用实际取到版本清单的源，避免再从刚失败的源重试一遍
         const snapshotSource = status.downloadSource ?? source;
-        const snapshot = await fetchSnapshot(status.version, undefined, { source: snapshotSource, fallback });
-        if (signal.aborted) return;
+        const snapshot = await fetchSnapshot(status.version, fetchWithSignal(globalThis.fetch, signal), {
+          source: snapshotSource,
+          fallback,
+        });
+        if (signal.aborted) return null;
+        return { snapshot, source: status.downloadSource ?? source };
+      },
+    });
+    if (result.ok && result.value !== null && result.value !== undefined) {
+      await storePreset(result.value);
+      return;
+    }
+    if (!result.ok && result.error !== null) {
+      setPresetResult(said(fail(copy.checkPresetWhat, result.error, copy.retryLater)));
+    }
+  }
+
+  async function storePreset({ snapshot, source }: DownloadedPreset): Promise<void> {
+    const result = await presetAction.run({
+      scope: 'preset',
+      label: copy.checkingPreset,
+      log: '预设快照写入失败',
+      logLevel: 'warn',
+      fail: { what: copy.downloadPresetWhat, next: copy.retryLater },
+      task: async () => {
         // 正文校验通过才落盘：不合法时保留原有缓存，不提示「下次启动生效」
         const stored = await storeDownloadedSnapshot(storage, snapshot);
         if (!stored.ok) {
@@ -179,21 +209,17 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           snapshot.version,
           snapshot.sources.timetables.length,
           snapshot.sources.systems.length,
-          presetSourceLabel(status.downloadSource ?? source),
+          presetSourceLabel(source),
         );
         setPresetResult(said(message));
         toast.success(message);
         // 预设要下次启动才套用：与其它待重启改动共用一条提示
         registerPendingRestart('preset-update');
-        logInfo('preset', '预设快照已下载', {
-          version: snapshot.version,
-          hash: snapshot.hash,
-          downloadSource: status.downloadSource ?? source,
-        });
+        logInfo('preset', '预设快照已下载', { version: snapshot.version, hash: snapshot.hash, downloadSource: source });
       },
     });
     if (!result.ok && result.error !== null) {
-      setPresetResult(said(fail(copy.checkPresetWhat, result.error, copy.retryLater)));
+      setPresetResult(said(fail(copy.downloadPresetWhat, result.error, copy.retryLater)));
     }
   }
 
