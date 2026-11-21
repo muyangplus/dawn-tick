@@ -38,7 +38,8 @@ type SettingKey = keyof AppSettings;
 
 /** 不开放的设置：密码与密钥不读不写；开机自启要经系统注册 */
 export const AI_HIDDEN_SETTINGS: readonly SettingKey[] = ['webdavPassword', 'aiApiKey'];
-export const AI_LOCKED_SETTINGS: readonly SettingKey[] = [...AI_HIDDEN_SETTINGS, 'autoStart'];
+/** 改了接口或同步地址，下一次请求就会把密钥或密码发到新地址，同样只能在设置页改。 */
+export const AI_LOCKED_SETTINGS: readonly SettingKey[] = [...AI_HIDDEN_SETTINGS, 'autoStart', 'aiBaseUrl', 'webdavUrl', 'webdavUser'];
 
 interface SettingSpec {
   description: string;
@@ -84,13 +85,10 @@ const SETTING_SPECS: Partial<Record<SettingKey, SettingSpec>> = {
   backupOnStart: bool('启动时备份一次'),
   backupDaily: bool('每天备份一次'),
   backupKeep: { description: '保留快照份数（1-100）', schema: { type: 'integer', minimum: 1, maximum: 100 } },
-  webdavUrl: { description: 'WebDAV 目录地址', schema: { type: 'string' } },
-  webdavUser: { description: 'WebDAV 用户名', schema: { type: 'string' } },
   webdavAuto: bool('WebDAV 自动同步总开关'),
   webdavOnStart: bool('启动时同步一次'),
   webdavDaily: bool('每天同步一次'),
   webdavHistory: bool('远端保留历史多份'),
-  aiBaseUrl: { description: 'AI 接口地址', schema: { type: 'string' } },
   aiModel: { description: 'AI 模型名称', schema: { type: 'string' } },
 };
 
@@ -165,7 +163,7 @@ export const getSettingsAction = defineAction<AssistantContext, null>({
 
 export const updateSettingsAction = defineAction<AssistantContext, Partial<AppSettings>>({
   name: 'update_settings',
-  description: '修改设置，只传要改的项；密码、密钥与开机自启不能在这里改',
+  description: '修改设置，只传要改的项；密码、密钥、AI 接口地址、WebDAV 地址与用户名、开机自启不能在这里改',
   parameters: objectSchema(
     Object.fromEntries(SETTING_KEYS.map((key) => [key, { ...SETTING_SPECS[key]!.schema, description: SETTING_SPECS[key]!.description }])),
   ),

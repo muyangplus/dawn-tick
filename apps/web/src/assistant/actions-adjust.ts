@@ -177,14 +177,15 @@ interface CancelParams {
   last: string;
 }
 
-async function cancelledKeysOf(context: AiCoreContext, semesterId: string): Promise<Set<string>> {
+/** 已停课的「排课|日期」。按排课 id 匹配：导入或同步来的停课记录可能没有 semester_id。 */
+async function cancelledKeysOf(context: AiCoreContext): Promise<Set<string>> {
   const events = await context.storage.collection<EventRow>('events').getAll();
   return new Set(
     events
       .filter(
         (row) =>
           row.deleted_at === null &&
-          row.semester_id === semesterId &&
+          row.user_id === context.userId &&
           row.type === 'reschedule' &&
           row.action === 'cancel' &&
           row.ref_schedule_id !== null &&
@@ -238,7 +239,7 @@ export const cancelLessonsAction = defineAction<AiCoreContext, CancelParams>({
       target,
       from,
       to,
-      cancelledKeys: await cancelledKeysOf(context, semester.id),
+      cancelledKeys: await cancelledKeysOf(context),
     });
     if (!result.ok) throw new AiArgError(result.message);
     const entries = result.entries;
@@ -401,7 +402,7 @@ const ADJUSTMENT_TYPES: readonly string[] = ['reschedule', 'makeup'];
 
 export const deleteAdjustmentAction = defineAction<AiCoreContext, EventRow>({
   name: 'delete_adjustment',
-  description: '删除一条调课、停课或调休记录（get_lessons 的 adjustments 与 dayKinds 里的 id），那次课恢复原样',
+  description: '删除一条调课、停课或调休补课记录（get_lessons 的 adjustments 里的 id，或 dayKinds 里调休补课的 id），那次课恢复原样；假日与工作日用 set_day_kind 清除',
   parameters: objectSchema({ id: schema.string('调整记录 id') }, ['id']),
   risk: 'write',
   async parse(args, context) {

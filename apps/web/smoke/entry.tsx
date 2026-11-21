@@ -57,6 +57,7 @@ import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
 import { setAiClientForTests } from '../src/lib/ai.ts';
 import { assistantPanelCopy } from '../src/copy/assistant.ts';
+import { listSnapshots } from '../src/backup.ts';
 import { aiCopy } from '../src/copy/settings-ai.ts';
 import { addMenuCopy } from '../src/copy/home-add-menu.ts';
 import { ImportFlow } from '../src/screens/import/import-flow-view.tsx';
@@ -6913,11 +6914,21 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       const doomedId = String(doomed['id']);
       const todoTitle = '助手冒烟待办';
       const systemNotes: string[] = [];
+      /** 第二轮对话改为提出导入课表原文 */
+      let importRound = false;
+      const importRawText = '助手冒烟课表原文\n周一 高等数学 1-2节';
       const fakeClient: AiClient = {
         complete: async () => {
           throw new Error('冒烟假模型只走函数调用');
         },
         chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          if (importRound) {
+            if (request.messages.at(-1)?.role === 'tool') return { content: '已准备导入', toolCalls: [] };
+            return {
+              content: '',
+              toolCalls: [{ id: 'call-import', name: 'import_timetable_text', arguments: JSON.stringify({ text: importRawText }) }],
+            };
+          }
           const system = request.messages.find((message: AiChatMessage) => message.role === 'system');
           if (system !== undefined) systemNotes.push(system.content);
           if (request.messages.at(-1)?.role === 'tool') return { content: '已列出两项待确认的操作', toolCalls: [] };
@@ -7054,6 +7065,79 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         createdTodo !== undefined && createdTodo.on_date === todayText && doomedRow?.deleted_at != null,
         `待办=${createdTodo === undefined ? '无' : '有'} 学期删除=${doomedRow?.deleted_at ?? '否'}`,
       );
+
+      // 恢复快照：恢复前先多留一份当前状态，数据回到执行前
+      // （needsRestart 分支只在桌面端文件快照出现，网页 IndexedDB 快照当场恢复，冒烟走不到）
+      const snapshotsBefore = (await listSnapshots(assistantStore)).length;
+      // 冒烟时钟冻结，快照 id 按毫秒取：拨快一分钟，免得恢复前那份与执行前那份同名互相覆盖
+      const frozenNow = Date.now;
+      Date.now = () => frozenNow() + 60_000;
+      restoreButton?.click();
+      const restoreAsked = await waitFor(() => (document.body.textContent ?? '').includes(assistantPanelCopy.restoreTitle), 30);
+      if (restoreAsked && clickByText(document.body, assistantPanelCopy.restoreConfirm)) await flush(8);
+      const restoredNote = await waitFor(
+        () =>
+          [...(panel()?.querySelectorAll('[data-role="assistant-note"]') ?? [])].some((note) =>
+            (note.textContent ?? '').includes(assistantPanelCopy.restored),
+          ),
+        80,
+      );
+      Date.now = frozenNow;
+      const snapshotsAfter = (await listSnapshots(assistantStore)).length;
+      const doomedBack = await assistantStore.collection<SemesterRow>('semesters').get(doomedId);
+      const todoBack = (await assistantStore.collection<EventRow>('events').getAll()).find(
+        (row) => row.title === todoTitle && row.deleted_at === null,
+      );
+      check(
+        '恢复快照：先多做一份快照，数据回到执行前（待删学期还在，新待办没了），「恢复快照」按钮消失',
+        restoreAsked &&
+          restoredNote &&
+          snapshotsAfter === snapshotsBefore + 1 &&
+          doomedBack !== undefined &&
+          doomedBack.deleted_at === null &&
+          todoBack === undefined &&
+          panel()?.querySelector('[data-role="assistant-restore"]') === null,
+        `确认框=${restoreAsked} 记录=${restoredNote} 快照=${snapshotsBefore}→${snapshotsAfter} 学期=${doomedBack === undefined ? '无此行' : `deleted_at=${doomedBack.deleted_at}`} 待办=${todoBack === undefined ? '无' : '有'}`,
+      );
+
+      // 助手导入课表：只有助手发起的那次打开带原文；之后从设置页「导入课表」打开是普通导入
+      importRound = true;
+      const importInput = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
+      if (importInput !== null) {
+        setInputValue(importInput, '帮我导入这段课表');
+        await flush(4);
+        panel()?.querySelector<HTMLElement>('[data-role="assistant-send"]')?.click();
+      }
+      const importCardShown = await waitFor(
+        () => stepCards().some((card) => card.getAttribute('data-status') === 'pending' && (card.textContent ?? '').includes('打开导入预览')),
+        60,
+      );
+      if (importCardShown) executeButton()?.click();
+      // 课程管理里也嵌着一份导入流程：只看设置页导入对话框里的
+      const importDialog = (): HTMLElement | null =>
+        [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+          (dialog) => dialog.querySelector('[aria-label="导入步骤"]') !== null,
+        ) ?? null;
+      const prefillBox = (): HTMLTextAreaElement | null =>
+        importDialog()?.querySelector<HTMLTextAreaElement>('textarea[aria-label="粘贴课表页面内容"]') ?? null;
+      const prefilled = await waitFor(() => prefillBox()?.value === importRawText, 80);
+      check(
+        '助手执行导入：关掉助手面板、切到设置页打开导入，粘贴框带上原文',
+        importCardShown && prefilled && panel() === null && importDialog()?.querySelector('[data-role="channel-card"]') === null,
+        `卡片=${importCardShown} 粘贴框=${prefillBox()?.value.length ?? '无'} 面板=${panel() === null ? '已关' : '开着'}`,
+      );
+      importDialog()?.querySelector<HTMLElement>('button[aria-label="关闭"]')?.click();
+      const importClosed = await waitFor(() => importDialog() === null, 30);
+      const settingsImport = chatApp.container.querySelector<HTMLElement>('[data-role="settings-actions"]');
+      if (settingsImport !== null && clickByText(settingsImport, '导入课表')) await flush(12);
+      const channelShown = await waitFor(() => (importDialog()?.querySelector('[data-role="channel-card"]') ?? null) !== null, 30);
+      check(
+        '关掉后再点设置页「导入课表」：回到普通的渠道选择，不再带助手的原文',
+        importClosed && settingsImport !== null && channelShown && prefillBox() === null,
+        `已关=${importClosed} 按钮=${settingsImport !== null} 渠道卡=${channelShown} 粘贴框=${prefillBox()?.value.length ?? '无'}`,
+      );
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush(8);
       chatApp.root.unmount();
       setAiClientForTests(undefined);
       await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });

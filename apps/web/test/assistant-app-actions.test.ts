@@ -301,11 +301,26 @@ test('update_settings 去掉与当前相同的值；全部相同时报错', asyn
 
 test('update_settings 去掉文本首尾空白，去空白后与当前相同也算没改', async () => {
   const host = fakeHost({ settings: { aiModel: 'gpt-4o' } });
-  assert.deepEqual(await parse('update_settings', { webdavUrl: '  https://dav.example.com/dt/  ', aiBaseUrl: '\thttps://api.example.com/v1\n' }, host), {
-    webdavUrl: 'https://dav.example.com/dt/',
-    aiBaseUrl: 'https://api.example.com/v1',
+  assert.deepEqual(await parse('update_settings', { aiModel: '  deepseek-chat  ', timeZone: '\tAsia/Tokyo\n' }, host), {
+    aiModel: 'deepseek-chat',
+    timeZone: 'Asia/Tokyo',
   });
   await assert.rejects(parse('update_settings', { aiModel: ' gpt-4o ' }, host), argError(/没有要改的设置/));
+});
+
+test('update_settings 拒绝 AI 接口地址与 WebDAV 地址、用户名，参数清单里也没有这几项', async () => {
+  const host = fakeHost();
+  for (const key of ['aiBaseUrl', 'webdavUrl', 'webdavUser']) {
+    await assert.rejects(parse('update_settings', { [key]: 'https://evil.example.com/' }, host), argError(new RegExp(`${key} 不能由助手修改`)), key);
+    // 混在合法项里也整体拒绝
+    await assert.rejects(parse('update_settings', { theme: 'dark', [key]: 'x' }, host), argError(/不能由助手修改/), key);
+  }
+  assert.deepEqual(host.calls, []);
+  const properties = (action('update_settings').parameters as { properties: Record<string, unknown> }).properties;
+  for (const key of ['aiBaseUrl', 'webdavUrl', 'webdavUser', 'webdavPassword', 'aiApiKey', 'autoStart']) {
+    assert.equal(key in properties, false, key);
+  }
+  assert.ok('aiModel' in properties);
 });
 
 test('update_settings 先去掉首尾空白再校验时区与枚举', async () => {

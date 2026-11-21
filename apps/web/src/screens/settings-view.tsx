@@ -48,6 +48,8 @@ export interface SettingsViewProps {
   importSignal?: number;
   /** 打开导入抽屉时预填的课表原文（来自 AI 助手） */
   importText?: string | null;
+  /** 预填原文已交给导入抽屉：上层清掉，之后再开抽屉不再带上 */
+  onImportTextUsed?: () => void;
   /** 帮助页「去设置」请求：切页后直接打开对应分组 */
   openGroupRequest?: { id: string; nonce: number } | null;
   /** 移动端从设置列表进入帮助页 */
@@ -76,14 +78,22 @@ export function SettingsView({
   onChanged,
   importSignal = 0,
   importText = null,
+  onImportTextUsed,
   openGroupRequest = null,
   onOpenHelp,
 }: SettingsViewProps) {
   /** 顶部快捷动作打开的导入抽屉 */
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
+  /** 这一次打开抽屉预填的原文：只在助手发起的那次打开时带上 */
+  const [importDialogText, setImportDialogText] = useState<string | null>(null);
 
   useEffect(() => {
-    if (importSignal > 0) setImportDrawerOpen(true);
+    if (importSignal <= 0) return;
+    setImportDialogText(importText);
+    setImportDrawerOpen(true);
+    if (importText !== null) onImportTextUsed?.();
+    // 只响应打开请求；原文与回调随请求一起读
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importSignal]);
 
   /** 通知权限：顶部提示条与提醒分组共用同一份 */
@@ -217,7 +227,14 @@ export function SettingsView({
       )}
       {/* 设置页只留偏好类入口；导出 / 恢复快照 / 检查更新都归「设备与同步」 */}
       <div className="flex flex-wrap items-center gap-2" data-role="settings-actions">
-        <Button size="sm" variant="primary" onClick={() => setImportDrawerOpen(true)}>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setImportDialogText(null);
+            setImportDrawerOpen(true);
+          }}
+        >
           {settingsPageCopy.importButton}
         </Button>
       </div>
@@ -238,7 +255,7 @@ export function SettingsView({
           <ImportFlow
             storage={storage}
             semesterId={activeSemesterId ?? ''}
-            initialText={importText}
+            initialText={importDialogText}
             onManual={() => setImportDrawerOpen(false)}
             onDone={onChanged}
             onClose={() => {

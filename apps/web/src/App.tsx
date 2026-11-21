@@ -313,6 +313,7 @@ export function App() {
           onChanged={session.refresh}
           importSignal={actions.settingsImportSignal}
           importText={actions.settingsImportText}
+          onImportTextUsed={actions.clearImportText}
           openGroupRequest={groupJump?.page === 'settings' ? groupJump : null}
           onOpenHelp={() => setView('help')}
         />

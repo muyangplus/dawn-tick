@@ -947,6 +947,34 @@ test('cancel_lessons：已停的课跳过，全都停过时报错', async () => 
   );
 });
 
+test('cancel_lessons：没有 semester_id 的停课记录按排课与日期认作已停，别人的停课记录不算', async () => {
+  const seeded = await seed();
+  await call(seeded.context, 'cancel_lessons', { scheduleId: seeded.mathMon.id, from: '2026-03-09' });
+  const [template] = await reschedules(seeded.storage);
+  const events = seeded.storage.collection<EventRow>('events');
+  // 导入或同步来的停课记录可能没有学期
+  await events.put({ ...template!, semester_id: null });
+  // 别人的停课记录，即使同一排课、同一天、同一学期，也不影响本人
+  await events.put({ ...template!, id: 'other-cancel', user_id: 'u2', on_date: '2026-03-16' });
+
+  const args = { scheduleId: seeded.mathMon.id, range: 'range', from: '2026-03-09', to: '2026-03-23' };
+  const preview = (await call(seeded.context, 'cancel_lessons', args)).preview;
+  assert.equal(preview, '停课「高等数学」2026-03-09 至 2026-03-23，共 2 次课');
+  const mine = (await reschedules(seeded.storage))
+    .filter((row) => row.user_id === USER_ID && row.action === 'cancel')
+    .map((row) => [row.ref_schedule_id, row.on_date, row.semester_id])
+    .sort((left, right) => String(left[1]).localeCompare(String(right[1])));
+  assert.deepEqual(mine, [
+    [seeded.mathMon.id, '2026-03-09', null],
+    [seeded.mathMon.id, '2026-03-16', seeded.semesterId],
+    [seeded.mathMon.id, '2026-03-23', seeded.semesterId],
+  ]);
+  // 别人的那条原样保留
+  assert.equal((await reload(seeded.storage, 'other-cancel')).user_id, 'u2');
+  // 都停过了：没有 semester_id 的那条也算
+  await rejectsArg(seeded.context, 'cancel_lessons', args, adjustCopy.cancelNothing);
+});
+
 test('cancel_lessons：参数不全或没有课可停时抛 AiArgError', async () => {
   const seeded = await seed();
   await rejectsArg(seeded.context, 'cancel_lessons', { courseId: seeded.mathId, from: '2026-03-09' }, '只停一个时段时要给出 scheduleId');

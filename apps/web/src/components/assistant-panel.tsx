@@ -10,6 +10,7 @@ import {
 } from '@dawn-tick/core';
 import { AlertTriangle } from 'lucide-react';
 import { createSnapshot, pruneSnapshots, restoreSnapshot, type SnapshotEntry } from '../backup.ts';
+import { snapshotsCopy } from '../copy/backup-snapshots.ts';
 import { assistantPanelCopy as copy } from '../copy/assistant.ts';
 import { fail } from '../copy/common.ts';
 import type { AppData } from '../data.ts';
@@ -221,12 +222,23 @@ export function AssistantPanel(props: AssistantPanelProps) {
     if (!ok) return;
     setExecuting(true);
     try {
+      // 恢复前再留一份当前状态；这里不清理旧快照，免得把要恢复的那份清掉。
+      // 快照 id 按毫秒取，时间不能与要恢复的那份相同，否则会把它覆盖
+      await createSnapshot(storage, Math.max(Date.now(), snapshot.createdAt + 1)).catch((error: unknown) => {
+        logWarn('app', '助手恢复前快照失败', { error: String(error) });
+      });
       const outcome = await restoreSnapshot(storage, snapshot);
       if (!outcome.ok) {
         push('note', fail(copy.restoreWhat, outcome.error));
         return;
       }
-      if (outcome.needsRestart) registerPendingRestart('snapshot-restore');
+      if (outcome.needsRestart) {
+        // 文件快照重启后才套用，数据还没变，不刷新
+        registerPendingRestart('snapshot-restore');
+        setSnapshot(null);
+        push('note', snapshotsCopy.restoreQueued);
+        return;
+      }
       await latest.current.reloadSettings();
       latest.current.onDataChanged();
       setSnapshot(null);
