@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { GroupVisibleContext } from '../components/grouped-settings.tsx';
 import { BookOpen, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   createCourse,
@@ -89,6 +90,7 @@ export function CourseManager({
   /** 导入课表折叠区：「完成」要把它收起 */
   const importRef = useRef<HTMLDetailsElement>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const groupVisible = useContext(GroupVisibleContext);
 
   const reload = useCallback(async () => {
     setCourses(await listManagedCourses(storage, semesterId));
@@ -236,7 +238,7 @@ export function CourseManager({
           <ImportFlow
             storage={storage}
             semesterId={semesterId}
-            visible={importOpen}
+            visible={importOpen && groupVisible}
             onManual={() => setCreating(true)}
             onDone={() => {
               void (async () => {

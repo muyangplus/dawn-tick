@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { createContext, useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
 import { useBackHandler } from '../lib/use-back.ts';
@@ -16,6 +16,12 @@ import { settingsPageCopy } from '../copy/settings-page.ts';
  * - 移动端：先显示分组清单，点进子页（只渲染该组内容），顶上「返回设置列表」回到清单；
  * - 分组内容由调用方提供，组件只负责导航、标题与返回，不关心配置项本身。
  */
+/**
+ * 分组内容此刻是否在用户眼前：窄屏停在分组列表时内容仍挂载（保留表单状态）但被藏起，
+ * 这时内容里的 Esc / 返回键登记应让位给页面返回。
+ */
+export const GroupVisibleContext = createContext(true);
+
 export interface SettingsGroup {
   id: string;
   title: string;
@@ -132,7 +138,9 @@ export function GroupedSettings({
           <h2 className="min-w-0 truncate text-base font-semibold text-ink">{active?.title}</h2>
         </div>
         <h2 className="hidden pb-3 text-base font-semibold text-ink desktop:block">{active?.title}</h2>
-        <div className="flex min-w-0 flex-col gap-3">{active?.content}</div>
+        <div className="flex min-w-0 flex-col gap-3">
+          <GroupVisibleContext.Provider value={isDesktop || !navVisibleOnMobile}>{active?.content}</GroupVisibleContext.Provider>
+        </div>
       </section>
     </div>
   );
