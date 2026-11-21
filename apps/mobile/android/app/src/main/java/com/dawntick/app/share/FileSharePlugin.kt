@@ -6,6 +6,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.webkit.MimeTypeMap
+import com.dawntick.app.R
+import com.dawntick.app.diag.NativeLog
 import com.dawntick.app.files.LocalFile
 import com.dawntick.app.files.LocalFileException
 import com.getcapacitor.JSObject
@@ -33,20 +35,24 @@ class FileSharePlugin : Plugin() {
         val file = try {
             LocalFile.resolve(context, call.getString("path"))
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.shareFile 文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
+        val name = file.file.name
         val uri = try {
             file.contentUri(context)
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.shareFile 文件无法换成 content URI name=$name", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
-        val mimeType = resolveMimeType(file.file.name, call.getString("mimeType"))
+        val mimeType = resolveMimeType(name, call.getString("mimeType"))
         if (!startSend(uri, mimeType)) {
-            call.reject("没有可分享该文件的应用")
+            call.reject(context.getString(R.string.share_no_app))
             return
         }
+        NativeLog.info(context, SCOPE, "FileSharePlugin.shareFile 已弹出分享面板 name=$name")
         call.resolve(JSObject().put("shared", true))
     }
 
@@ -61,31 +67,38 @@ class FileSharePlugin : Plugin() {
         val file = try {
             LocalFile.resolve(context, call.getString("path"))
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.revealFile 文件路径无效", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
+        val name = file.file.name
         val directory = file.directoryDocumentUri()
-        if (directory != null && startView(directory, DocumentsContract.Document.MIME_TYPE_DIR)) {
-            call.resolve(revealed("documents"))
+        if (directory == null) {
+            NativeLog.debug(context, SCOPE, "FileSharePlugin.revealFile 所在目录不在共享存储下，跳过文件应用 name=$name")
+        } else if (startView(directory, DocumentsContract.Document.MIME_TYPE_DIR)) {
+            call.resolve(revealed(name, "documents"))
             return
         }
         val parent = file.parentContentUri(context)
-        if (parent != null && startView(parent, FOLDER_MIME)) {
-            call.resolve(revealed("content"))
+        if (parent == null) {
+            NativeLog.debug(context, SCOPE, "FileSharePlugin.revealFile 所在目录没有 content URI name=$name")
+        } else if (startView(parent, FOLDER_MIME)) {
+            call.resolve(revealed(name, "content"))
             return
         }
         // 目录打不开时退回分享：至少能让用户把文件发到别处再定位。
         val uri = try {
             file.contentUri(context)
         } catch (error: LocalFileException) {
-            call.reject(error.message ?: "文件路径无效", error)
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.revealFile 文件无法换成 content URI name=$name", error)
+            call.reject(error.message ?: context.getString(R.string.file_path_invalid), error)
             return
         }
-        if (!startSend(uri, resolveMimeType(file.file.name, null))) {
-            call.reject("打不开所在目录，也无法分享该文件")
+        if (!startSend(uri, resolveMimeType(name, null))) {
+            call.reject(context.getString(R.string.share_reveal_failed))
             return
         }
-        call.resolve(revealed("share"))
+        call.resolve(revealed(name, "share"))
     }
 
     /** ACTION_VIEW 打开一个 content URI；没有应用或权限被拒时返回 false，交给下一手兜底。 */
@@ -98,8 +111,10 @@ class FileSharePlugin : Plugin() {
             context.startActivity(intent)
             true
         } catch (error: ActivityNotFoundException) {
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.startView 没有能打开该目录的应用 mime=$mimeType", error)
             false
         } catch (error: SecurityException) {
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.startView 打开目录被拒 mime=$mimeType", error)
             false
         }
     }
@@ -111,12 +126,13 @@ class FileSharePlugin : Plugin() {
         send.putExtra(Intent.EXTRA_STREAM, uri)
         send.clipData = ClipData.newRawUri("export", uri)
         send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        val chooser = Intent.createChooser(send, "分享")
+        val chooser = Intent.createChooser(send, context.getString(R.string.share_chooser_title))
         chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         return try {
             context.startActivity(chooser)
             true
         } catch (error: ActivityNotFoundException) {
+            NativeLog.warn(context, SCOPE, "FileSharePlugin.startSend 没有可分享该文件的应用 mime=$mimeType", error)
             false
         }
     }
@@ -124,17 +140,25 @@ class FileSharePlugin : Plugin() {
     /** `mimeType` 没给时按扩展名推断，推不出来按二进制流处理。 */
     private fun resolveMimeType(name: String, provided: String?): String {
         val explicit = provided?.trim()
-        if (!explicit.isNullOrEmpty()) return explicit
-        val extension = name.substringAfterLast('.', "").lowercase()
-        if (extension.isNotEmpty()) {
-            MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)?.let { return it }
+        val (mimeType, source) = if (!explicit.isNullOrEmpty()) {
+            explicit to "provided"
+        } else {
+            val extension = name.substringAfterLast('.', "").lowercase()
+            val guessed = if (extension.isEmpty()) null else MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            if (guessed != null) guessed to "extension" else DEFAULT_MIME to "default"
         }
-        return DEFAULT_MIME
+        NativeLog.debug(context, SCOPE, "FileSharePlugin.resolveMimeType MIME 类型已确定 name=$name mime=$mimeType source=$source")
+        return mimeType
     }
 
-    private fun revealed(via: String): JSObject = JSObject().put("opened", true).put("via", via)
+    private fun revealed(name: String, via: String): JSObject {
+        NativeLog.info(context, SCOPE, "FileSharePlugin.revealFile 已打开所在位置 name=$name via=$via")
+        return JSObject().put("opened", true).put("via", via)
+    }
 
     companion object {
+        private const val SCOPE = "backup"
+
         /** 目录的通用 MIME：部分文件管理器用它识别 content:// 目录。 */
         private const val FOLDER_MIME = "resource/folder"
         private const val DEFAULT_MIME = "application/octet-stream"

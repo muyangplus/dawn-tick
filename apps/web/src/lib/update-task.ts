@@ -13,6 +13,7 @@ import {
   type WindowsInstallKind,
 } from './update-download.ts';
 import { createUpdateHost, detectWindowsInstallKind, updatePlatform } from './update-install.ts';
+import { updateTaskCopy } from '../copy/update-task.ts';
 
 /**
  * 后台更新任务：下载不再绑在弹窗上，关掉弹窗也不会中断，再次打开弹窗或到设备页看到的是同一份进度。
@@ -131,9 +132,9 @@ export function setUpdateHostFactoryForTests(
 
 function installerLabelOf(platform: UpdatePlatform, kind: UpdateTaskTarget['kind']): string {
   if (platform === 'windows') {
-    return kind === 'portable' ? 'Windows 便携包（退出后替换）' : 'Windows 安装程序';
+    return kind === 'portable' ? updateTaskCopy.installerWindowsPortable : updateTaskCopy.installerWindows;
   }
-  return platform === 'android' ? 'Android 安装器' : '刷新页面';
+  return platform === 'android' ? updateTaskCopy.installerAndroid : updateTaskCopy.installerWeb;
 }
 
 function buildTarget(plan: UpdatePlan, platform: UpdatePlatform, version: string | null): UpdateTaskTarget {
@@ -222,11 +223,11 @@ export async function startBackgroundUpdate(
     return task;
   }
   if (plan.kind === 'refresh') {
-    setTask({ ...base, status: 'ready', message: '新版本已发布，刷新页面后生效' });
+    setTask({ ...base, status: 'ready', message: updateTaskCopy.refreshToApply });
     return task;
   }
   if (platform === 'web') {
-    setTask({ ...base, status: 'failed', error: '当前环境没有可自动安装的安装包，请到发布页下载' });
+    setTask({ ...base, status: 'failed', error: updateTaskCopy.noAutoInstallPackage });
     return task;
   }
 
@@ -237,7 +238,7 @@ export async function startBackgroundUpdate(
     options.host ??
     hostFactoryForTests?.(nativePlatform) ??
     createUpdateHost(nativePlatform, options.fetchImpl);
-  setTask({ ...base, status: 'downloading', message: '正在下载安装包…' });
+  setTask({ ...base, status: 'downloading', message: updateTaskCopy.downloading });
 
   const final = await prepareUpdateDownload({
     plan,
@@ -290,7 +291,7 @@ export function cancelUpdateTask(): void {
     return;
   }
   if (task.status === 'downloading' || task.status === 'verifying') {
-    setTask({ ...task, status: 'cancelled', message: '已取消下载', updatedAt: Date.now() });
+    setTask({ ...task, status: 'cancelled', message: updateTaskCopy.cancelled, updatedAt: Date.now() });
   }
 }
 
@@ -317,12 +318,12 @@ export async function installUpdateTask(): Promise<void> {
   if ((current.status !== 'ready' && !authorizedRetry) || current.target === null || current.installed) return;
   if (installing) return;
   if (current.target.platform === 'web') {
-    setTask({ ...current, status: 'ready', installed: true, message: '刷新页面后生效', updatedAt: Date.now() });
+    setTask({ ...current, status: 'ready', installed: true, message: updateTaskCopy.refreshPending, updatedAt: Date.now() });
     return;
   }
   const target = current.target;
   if (target.path === null) {
-    setTask({ ...current, status: 'failed', error: '安装包路径丢失，请重新下载', updatedAt: Date.now() });
+    setTask({ ...current, status: 'failed', error: updateTaskCopy.stagedPathLost, updatedAt: Date.now() });
     return;
   }
   const installer =
@@ -333,7 +334,7 @@ export async function installUpdateTask(): Promise<void> {
   try {
     if (target.kind === 'portable') {
       if (installer.installPortable === undefined || installer.exitForUpdate === undefined) {
-        throw new Error('当前平台不支持便携版自动替换，请到发布页手动下载');
+        throw new Error(updateTaskCopy.portableUnsupported);
       }
       await installer.installPortable(target.path);
       if (task !== current) return;
@@ -342,7 +343,7 @@ export async function installUpdateTask(): Promise<void> {
         ...current,
         status: 'ready',
         installed: true,
-        message: '更新已准备，应用将退出并自动替换，随后重新启动',
+        message: updateTaskCopy.portableApplying,
         updatedAt: Date.now(),
       });
       try {
@@ -352,7 +353,7 @@ export async function installUpdateTask(): Promise<void> {
           ...updateTaskSnapshot(),
           status: 'failed',
           installed: false,
-          error: `更新已准备，但自动退出失败（${errorMessage(cause)}），请手动退出应用以完成替换`,
+          error: updateTaskCopy.portableExitFailed(errorMessage(cause)),
           updatedAt: Date.now(),
         });
       }
@@ -365,7 +366,7 @@ export async function installUpdateTask(): Promise<void> {
         ...current,
         status: 'failed',
         needsPermission: true,
-        error: '已跳转系统设置，请允许安装未知应用后重试',
+        error: updateTaskCopy.needsInstallPermission,
         updatedAt: Date.now(),
       });
       return;
@@ -374,12 +375,12 @@ export async function installUpdateTask(): Promise<void> {
       ...current,
       status: 'ready',
       installed: true,
-      message: '安装程序已启动，请按提示完成安装',
+      message: updateTaskCopy.installerLaunched,
       updatedAt: Date.now(),
     });
   } catch (cause: unknown) {
     if (task !== current) return;
-    setTask({ ...current, status: 'failed', error: errorMessage(cause, '启动安装程序失败'), updatedAt: Date.now() });
+    setTask({ ...current, status: 'failed', error: errorMessage(cause, updateTaskCopy.launchFailed), updatedAt: Date.now() });
   } finally {
     installing = false;
   }

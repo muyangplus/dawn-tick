@@ -14,6 +14,7 @@ import type { VersionFile, VersionFiles } from './assets-mirror.ts';
 import { assetsFileUrl, assetsVersionUrl, parseAssetsVersion } from './assets-mirror.ts';
 import { MIRRORS, type DownloadSource } from './download-source.ts';
 import { errorMessage } from './errors.ts';
+import { appUpdateCopy } from '../copy/app-update.ts';
 
 /** 单次探测的超时：两个源并发，界面最多等这么久。 */
 export const PROBE_TIMEOUT_MS = 2500;
@@ -81,7 +82,7 @@ export async function probeAssetChunk(
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(new Error('探测超时'));
+      reject(new Error(appUpdateCopy.probe.timeout));
     }, Math.max(1, timerMs));
   });
   try {
@@ -92,7 +93,7 @@ export async function probeAssetChunk(
       }),
       timeout,
     ]);
-    if (!response.ok) throw new Error(`返回 ${response.status}`);
+    if (!response.ok) throw new Error(appUpdateCopy.probe.httpStatus(response.status));
     let bytes = 0;
     const reader = response.body?.getReader();
     if (reader === undefined) {
@@ -109,7 +110,7 @@ export async function probeAssetChunk(
         }
       }
     }
-    if (bytes <= 0) throw new Error('没有读到数据');
+    if (bytes <= 0) throw new Error(appUpdateCopy.probe.noData);
     return { ok: true, latencyMs: Math.max(1, now() - started), bytes, error: null };
   } catch (cause: unknown) {
     const message = errorMessage(cause);
@@ -117,7 +118,7 @@ export async function probeAssetChunk(
       ok: false,
       latencyMs: Math.max(0, now() - started),
       bytes: 0,
-      error: /abort|timeout|超时/i.test(message) ? '探测超时' : describeProbeError(cause),
+      error: /abort|timeout|超时/i.test(message) ? appUpdateCopy.probe.timeout : describeProbeError(cause),
     };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -128,14 +129,14 @@ export async function probeAssetChunk(
 async function requestJson(fetchImpl: typeof fetch, url: string, timeoutMs: number): Promise<unknown> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('探测超时')), Math.max(1, timeoutMs));
+    timer = setTimeout(() => reject(new Error(appUpdateCopy.probe.timeout)), Math.max(1, timeoutMs));
   });
   try {
     const response = await Promise.race([
       fetchImpl(url, { headers: { accept: 'application/json' } }),
       timeout,
     ]);
-    if (!response.ok) throw new Error(`返回 ${response.status}`);
+    if (!response.ok) throw new Error(appUpdateCopy.probe.httpStatus(response.status));
     return await Promise.race([response.json() as Promise<unknown>, timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -144,9 +145,9 @@ async function requestJson(fetchImpl: typeof fetch, url: string, timeoutMs: numb
 
 function describeProbeError(cause: unknown): string {
   const message = errorMessage(cause);
-  if (/timeout|超时/i.test(message)) return '探测超时';
+  if (/timeout|超时/i.test(message)) return appUpdateCopy.probe.timeout;
   if (/返回 \d+/.test(message)) return message;
-  return `无法连接（${message}）`;
+  return appUpdateCopy.probe.unreachable(message);
 }
 
 function remainingOf(deadline: number, now: () => number): number {
@@ -175,7 +176,7 @@ export async function probeSource(
   const started = now();
   const deadline = started + (options.timeoutMs ?? PROBE_TIMEOUT_MS);
   let lastUrl: string | null = null;
-  let lastError = '探测失败';
+  let lastError: string = appUpdateCopy.probe.failed;
   const fail = (url: string, cause: unknown): void => {
     lastUrl = url;
     lastError = describeProbeError(cause);
@@ -206,7 +207,7 @@ export async function probeSource(
     } else {
       const file = pickProbeFile(parsed.manifest.files);
       if (file === null) {
-        fail(versionUrl, new Error('version.json 没有可探测的产物'));
+        fail(versionUrl, new Error(appUpdateCopy.probe.noProbeFile));
       } else {
         const assetUrl = assetsFileUrl(source, feed, file.name);
         const chunk = await probeAssetChunk(assetUrl, fetchImpl, {
@@ -214,7 +215,7 @@ export async function probeSource(
           now,
         });
         if (chunk.ok) return done(true, false, assetUrl, { kind: 'asset', bytes: chunk.bytes });
-        fail(assetUrl, new Error(chunk.error ?? '资产探测失败'));
+        fail(assetUrl, new Error(chunk.error ?? appUpdateCopy.probe.assetFailed));
       }
     }
   } catch (cause: unknown) {

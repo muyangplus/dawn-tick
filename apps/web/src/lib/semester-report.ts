@@ -1,3 +1,4 @@
+import { exportReportCopy } from '../copy/export-report.ts';
 import type { SemesterStats } from './semester-stats.ts';
 
 /**
@@ -6,31 +7,31 @@ import type { SemesterStats } from './semester-stats.ts';
  */
 export function semesterReportCsv(stats: SemesterStats, semesterName: string): string {
   const rows: string[][] = [];
-  rows.push(['学期', semesterName]);
+  rows.push([exportReportCopy.semester, semesterName]);
   if (stats.semester !== null) {
-    rows.push(['起止', `${stats.semester.startDate} 至 ${stats.semester.endDate}`]);
-    rows.push(['总周数', String(stats.semester.totalWeeks)]);
+    rows.push([exportReportCopy.range, exportReportCopy.rangeValue(stats.semester.startDate, stats.semester.endDate)]);
+    rows.push([exportReportCopy.totalWeeks, String(stats.semester.totalWeeks)]);
   }
-  rows.push(['已上课时', String(stats.lessons.past)]);
-  rows.push(['待上课时', String(stats.lessons.upcoming)]);
-  rows.push(['说明', '停课的课次计入已上课时']);
+  rows.push([exportReportCopy.pastLessons, String(stats.lessons.past)]);
+  rows.push([exportReportCopy.upcomingLessons, String(stats.lessons.upcoming)]);
+  rows.push([exportReportCopy.note, exportReportCopy.noteValue]);
 
   rows.push([]);
-  rows.push(['课程', '已上课时', '总课时', '剩余课时']);
+  rows.push([exportReportCopy.course, exportReportCopy.pastLessons, exportReportCopy.totalLessons, exportReportCopy.remainingLessons]);
   for (const course of stats.courses) {
     rows.push([course.name, String(course.done), String(course.total), String(course.total - course.done)]);
   }
 
   rows.push([]);
-  rows.push(['周次', '已上课时', '待上课时']);
+  rows.push([exportReportCopy.week, exportReportCopy.pastLessons, exportReportCopy.upcomingLessons]);
   for (const week of stats.weeks) {
-    rows.push([`第 ${week.week} 周`, String(week.past), String(week.upcoming)]);
+    rows.push([exportReportCopy.weekValue(week.week), String(week.past), String(week.upcoming)]);
   }
 
   rows.push([]);
-  rows.push(['考试', '日期', '状态']);
+  rows.push([exportReportCopy.exam, exportReportCopy.date, exportReportCopy.status]);
   for (const exam of stats.exams.timeline) {
-    rows.push([exam.title, exam.date ?? '日期待定', exam.taken ? '已考' : '待考']);
+    rows.push([exam.title, exam.date ?? exportReportCopy.dateUnknown, exam.taken ? exportReportCopy.examTaken : exportReportCopy.examPending]);
   }
 
   return `﻿${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n`;

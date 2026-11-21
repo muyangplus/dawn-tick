@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../../lib/cn.ts';
 import { useFieldControl, useRegisterFieldControl } from './input.tsx';
+import { uiCopy } from '../../copy/ui.ts';
 
 export interface ComboboxProps<T> {
   items: readonly T[];
@@ -25,7 +26,7 @@ export function Combobox<T>({
   renderItem,
   placeholder,
   ariaLabel,
-  emptyText = '没有匹配项',
+  emptyText = uiCopy.combobox.empty,
   className,
 }: ComboboxProps<T>) {
   const [open, setOpen] = useState(false);
@@ -100,7 +101,7 @@ export function Combobox<T>({
         <div
           id={listId}
           role="listbox"
-          aria-label={`${ariaLabel}候选`}
+          aria-label={uiCopy.combobox.listAria(ariaLabel)}
           className="absolute top-full z-50 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-line bg-surface shadow-md"
         >
           {items.length === 0 && <div className="p-3 text-sm text-muted">{emptyText}</div>}

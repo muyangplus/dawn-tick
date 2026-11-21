@@ -109,9 +109,9 @@ pub(crate) fn resolve_storage_path(text: &str) -> PathBuf {
 
 /// 建目录并写探针，确认这个位置真能写进去。
 pub(crate) fn ensure_writable_dir(dir: &std::path::Path) -> Result<(), String> {
-    create_dir_all(dir).map_err(|error| format!("创建目录失败({error})"))?;
+    create_dir_all(dir).map_err(copy::storage::create_dir_failed)?;
     let probe = dir.join("dawntick-storage-probe.tmp");
-    std::fs::write(&probe, b"probe").map_err(|error| format!("写入失败({error})"))?;
+    std::fs::write(&probe, b"probe").map_err(copy::storage::write_failed)?;
     let _ = std::fs::remove_file(&probe);
     Ok(())
 }
@@ -126,7 +126,7 @@ pub(crate) fn choose_data_dir(default: PathBuf, custom: Option<String>) -> (Path
         Ok(()) => (candidate, None),
         Err(error) => (
             default,
-            Some(format!("自定义存储位置不可用（{error}），已改用默认位置")),
+            Some(copy::storage::custom_unavailable(&error)),
         ),
     }
 }
@@ -254,7 +254,7 @@ pub(crate) fn copy_data_files(from: &std::path::Path, to: &std::path::Path) -> V
             Ok(()) => copied.push(DATABASE_FILE_NAME.to_string()),
             Err(error) => {
                 let _ = std::fs::remove_file(&target_db);
-                append_log(&format!("复制数据库失败: {error}"));
+                log_error("storage", format!("数据库复制到新位置失败 error={error}"));
             }
         }
     }
@@ -297,7 +297,7 @@ pub async fn set_storage_path(path: String) -> Result<StorageInfo, String> {
     // 要复制整个数据库：放到阻塞线程池
     tauri::async_runtime::spawn_blocking(move || set_storage_path_blocking(path))
         .await
-        .map_err(|error| format!("后台任务失败: {error}"))?
+        .map_err(copy::common::background_task_failed)?
 }
 
 pub(crate) fn set_storage_path_blocking(path: String) -> Result<StorageInfo, String> {
@@ -306,7 +306,7 @@ pub(crate) fn set_storage_path_blocking(path: String) -> Result<StorageInfo, Str
     if text.is_empty() {
         let _ = std::fs::remove_file(&config_file);
         let (dir, fallback) = resolve_data_dir();
-        append_log(&format!("存储位置已恢复默认: {}", dir.display()));
+        log_info("storage", format!("存储位置已恢复默认 dir={}", dir.display()));
         return Ok(storage_info_of(&dir, fallback, Vec::new()));
     }
     let target = resolve_storage_path(&text);
@@ -314,21 +314,20 @@ pub(crate) fn set_storage_path_blocking(path: String) -> Result<StorageInfo, Str
     // 先取旧目录：写入引导文件后 data_dir() 就指向新目录了
     let current = data_dir();
     if let Some(parent) = config_file.parent() {
-        create_dir_all(parent).map_err(|error| format!("创建引导文件目录失败: {error}"))?;
+        create_dir_all(parent).map_err(copy::storage::save_failed)?;
     }
     if !write_json(&config_file, &StorageConfig { path: text.clone() }) {
-        return Err("写入引导文件失败".to_string());
+        return Err(copy::storage::CONFIG_WRITE_FAILED.to_string());
     }
     let copied = if same_path(&current, &target) {
         Vec::new()
     } else {
         copy_data_files(&current, &target)
     };
-    append_log(&format!(
-        "存储位置已改为: {}（复制 {} 个文件）",
-        target.display(),
-        copied.len()
-    ));
+    log_info(
+        "storage",
+        format!("存储位置已更改 dir={} copied={}", target.display(), copied.len()),
+    );
     Ok(storage_info_of(&target, None, copied))
 }
 
@@ -339,8 +338,8 @@ pub fn open_data_dir() -> Result<String, String> {
     create_dir_all(&dir).map_err(|error| format!("创建数据目录失败: {error}"))?;
     #[cfg(windows)]
     {
-        shell_open(&dir.to_string_lossy(), "打开数据目录")?;
-        append_log(&format!("已打开数据目录: {}", dir.display()));
+        shell_open(&dir.to_string_lossy(), copy::shell::OPEN_DATA_DIR)?;
+        log_debug("storage", format!("已打开数据目录 dir={}", dir.display()));
     }
     Ok(dir.to_string_lossy().to_string())
 }
@@ -348,6 +347,6 @@ pub fn open_data_dir() -> Result<String, String> {
 /// 由界面调用：改完存储位置后立即重启。
 #[tauri::command]
 pub fn relaunch_app(app: tauri::AppHandle) {
-    append_log("按用户请求重启应用");
+    log_info("app", "按用户请求重启应用");
     app.restart();
 }

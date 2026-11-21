@@ -1,5 +1,5 @@
 import { weekOfDate } from '@dawn-tick/core';
-import type { AdjustMode, AdjustScope, AdjustTarget } from './move-controller.ts';
+import type { AdjustMode, AdjustScope, AdjustTarget, CancelRange, CancelTarget } from './move-controller.ts';
 
 /** 调课弹窗的全部输入：各模式共用一份，切换模式不丢已填内容。 */
 export interface AdjustForm {
@@ -9,6 +9,10 @@ export interface AdjustForm {
   courseId: string;
   scheduleId: string;
   sourceDate: string;
+  // 停课：范围、对象与「一段日期」的结束日（开始日用 sourceDate）
+  cancelRange: CancelRange;
+  cancelTarget: CancelTarget;
+  cancelTo: string;
   // 改期（考试复用日期与节次）
   newDate: string;
   targetWeek: string;
@@ -34,6 +38,9 @@ export function blankAdjustForm(today: string): AdjustForm {
     courseId: '',
     scheduleId: '',
     sourceDate: today,
+    cancelRange: 'this',
+    cancelTarget: 'schedule',
+    cancelTo: today,
     newDate: today,
     targetWeek: '1',
     newStart: '1',
@@ -72,10 +79,17 @@ export function adjustFormOnOpen(target: AdjustTarget | null, context: AdjustOpe
       courseId: target.courseId,
       scheduleId: target.scheduleId,
       sourceDate: target.date,
+      cancelRange: 'this',
+      cancelTarget: 'schedule',
+      cancelTo: target.date,
       newDate,
       newStart: String(drop?.periodStart ?? target.periodStart),
-      newEnd: String(drop === undefined ? target.periodEnd : drop.periodStart + (target.periodEnd - target.periodStart)),
-      newRoom: '',
+      newEnd: String(
+        drop === undefined
+          ? target.periodEnd
+          : (drop.periodEnd ?? drop.periodStart + (target.periodEnd - target.periodStart)),
+      ),
+      newRoom: target.room ?? '',
       examNote: '',
       targetWeek: String(weekOf(newDate)),
       scope: sameWeek ? 'this' : 'date',
@@ -85,6 +99,9 @@ export function adjustFormOnOpen(target: AdjustTarget | null, context: AdjustOpe
     mode: 'move',
     scope: 'this',
     sourceDate: context.today,
+    cancelRange: 'this',
+    cancelTarget: 'schedule',
+    cancelTo: context.today,
     newDate: context.today,
     newStart: '1',
     newEnd: '2',

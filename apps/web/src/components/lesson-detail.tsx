@@ -1,12 +1,16 @@
 import { CalendarClock, MapPin, PencilLine, Trash2, User, X } from 'lucide-react';
-import { deleteCourse, deleteSchedule, WEEKDAY_LABELS, type Storage } from '@dawn-tick/core';
+import { deleteCourse, deleteEvent, deleteSchedule, WEEKDAY_LABELS, type EventRow, type Storage } from '@dawn-tick/core';
 import type { CourseDetail, LessonCell } from '../data.ts';
 import { Button } from './ui/button.tsx';
 import { confirmAction } from './ui/confirm-dialog.tsx';
-import { COUNT, DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE, fail } from '../copy/common.ts';
+import { errorMessage } from '../lib/errors.ts';
+import { logWarn } from '../log.ts';
+import { adjustmentSummary } from '../screens/timetable/lesson-adjustment.ts';
 import { formatPeriodRange } from '../lib/format.ts';
 import { ReminderForm } from './reminder-form.tsx';
 import { toast } from './ui/toaster.tsx';
+import { lessonCopy } from '../copy/timetable-lesson.ts';
 
 export interface LessonDetailProps {
   storage: Storage;
@@ -19,6 +23,10 @@ export interface LessonDetailProps {
   onEditCourse?: (courseId: string) => void;
   /** 打开「调课」弹窗（改期／停课／调休／临时加课），目标就是当前这一课次 */
   onAdjust?: (cell: LessonCell) => void;
+  /** 这一格对应的停课 / 调课记录（课表单击已调整的课次时才有） */
+  adjustment?: EventRow | null;
+  /** 「修改调整」：带着原记录打开调课弹窗；缺省时只能删除 */
+  onEditAdjust?: (event: EventRow) => void;
 }
 
 export function LessonDetail({
@@ -30,32 +38,53 @@ export function LessonDetail({
   onClose,
   onEditCourse,
   onAdjust,
+  adjustment = null,
+  onEditAdjust,
 }: LessonDetailProps) {
+  async function removeAdjustment(event: EventRow): Promise<void> {
+    const ok = await confirmAction({
+      title: lessonCopy.deleteAdjustTitle,
+      description: lessonCopy.deleteAdjustDescription,
+      confirmLabel: lessonCopy.deleteAdjustConfirm,
+    });
+    if (!ok) return;
+    try {
+      await deleteEvent(storage, event.id);
+    } catch (cause: unknown) {
+      logWarn('timetable', '删除调整失败', { eventId: event.id, error: errorMessage(cause) });
+      toast.error(fail(lessonCopy.adjustDeleteWhat, errorMessage(cause)));
+      return;
+    }
+    toast.success(lessonCopy.adjustDeleted);
+    onChanged();
+    onClose();
+  }
+
   async function removeSchedule(id: string, label: string): Promise<void> {
     const ok = await confirmAction({
-      title: '删除排课',
-      description: `将删除${label}的排课，不可撤销`,
-      confirmLabel: '确认删除',
+      title: lessonCopy.deleteScheduleTitle,
+      description: DELETE(label),
+      confirmLabel: lessonCopy.deleteScheduleConfirm,
     });
     if (!ok) return;
     await deleteSchedule(storage, id);
-    toast.success('已删除该排课');
+    toast.success(lessonCopy.scheduleDeleted);
     onChanged();
     onClose();
   }
 
   async function removeCourse(id: string, name: string): Promise<void> {
     const ok = await confirmAction({
-      title: '删除课程',
+      title: lessonCopy.deleteCourseTitle,
       description: DELETE(name, [
-        `排课 ${COUNT('schedule', detail.schedules.length)}`,
-        `提醒 ${COUNT('reminder', detail.reminder === undefined ? 0 : 1)}`,
+        `${lessonCopy.schedulesPart} ${COUNT('schedule', detail.schedules.length)}`,
+        `${lessonCopy.remindersPart} ${COUNT('reminder', detail.reminder === undefined ? 0 : 1)}`,
       ]),
-      confirmLabel: '确认删除',
+      confirmLabel: lessonCopy.deleteCourseConfirm,
     });
     if (!ok) return;
     await deleteCourse(storage, id);
-    toast.success(`已删除「${name}」`);
+    toast.success(lessonCopy.courseDeleted(name));
     onChanged();
     onClose();
   }
@@ -79,17 +108,39 @@ export function LessonDetail({
               </span>
             )}
             {detail.course?.credits !== null && detail.course?.credits !== undefined && (
-              <span>{detail.course.credits} 学分</span>
+              <span>{lessonCopy.credits(detail.course.credits)}</span>
             )}
           </div>
         </div>
-        <Button size="icon" variant="ghost" aria-label="关闭课程详情" onClick={onClose}>
+        <Button size="icon" variant="ghost" aria-label={lessonCopy.closeAria} onClick={onClose}>
           <X className="size-4" aria-hidden />
         </Button>
       </div>
 
-      <section className="flex flex-col gap-2" aria-label="排课时段">
-        <span className="text-sm font-medium text-ink">时段</span>
+      {adjustment !== null && (
+        <section
+          className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3"
+          aria-label={lessonCopy.adjustAria}
+          data-role="lesson-adjustment"
+        >
+          <span className="text-sm text-ink">{adjustmentSummary(cell, adjustment)}</span>
+          <div className="flex flex-wrap gap-2">
+            {onEditAdjust !== undefined && (
+              <Button variant="secondary" size="sm" onClick={() => onEditAdjust(adjustment)}>
+                <PencilLine className="size-4" aria-hidden />
+                {lessonCopy.editAdjustButton}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => void removeAdjustment(adjustment)}>
+              <Trash2 className="size-4" aria-hidden />
+              {lessonCopy.deleteAdjustButton}
+            </Button>
+          </div>
+        </section>
+      )}
+
+      <section className="flex flex-col gap-2" aria-label={lessonCopy.schedulesAria}>
+        <span className="text-sm font-medium text-ink">{lessonCopy.schedulesTitle}</span>
         {detail.schedules.map((row) => (
           <div
             key={row.id}
@@ -99,14 +150,14 @@ export function LessonDetail({
               <span className="tabular text-xs text-ink">
                 {WEEKDAY_LABELS[row.day_of_week - 1] ?? ''} {formatPeriodRange(row.period_start, row.period_end)}
               </span>
-              <span className="text-xs text-muted">{row.weeks_raw ?? '未标注周次'}</span>
+              <span className="text-xs text-muted">{row.weeks_raw ?? lessonCopy.weeksUnmarked}</span>
             </div>
             <div className="flex items-center gap-1">
               {onEditCourse !== undefined && (
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label="编辑该排课"
+                  aria-label={lessonCopy.editScheduleAria}
                   onClick={() => {
                     onClose();
                     onEditCourse(detail.course?.id ?? cell.courseId);
@@ -118,7 +169,7 @@ export function LessonDetail({
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label="删除该排课"
+                aria-label={lessonCopy.deleteScheduleAria}
                 onClick={() =>
                   void removeSchedule(
                     row.id,
@@ -138,23 +189,23 @@ export function LessonDetail({
       )}
 
       {(detail.course?.note ?? '') !== '' && (
-        <section className="flex flex-col gap-1" aria-label="备注">
-          <span className="text-sm font-medium text-ink">备注</span>
+        <section className="flex flex-col gap-1" aria-label={lessonCopy.noteTitle}>
+          <span className="text-sm font-medium text-ink">{lessonCopy.noteTitle}</span>
           <p className="whitespace-pre-wrap text-xs text-muted">{detail.course?.note}</p>
         </section>
       )}
 
       <div className="mt-2 flex flex-wrap gap-2">
         {onAdjust !== undefined && (
-          <Button variant="secondary" aria-label="调课" onClick={() => onAdjust(cell)}>
+          <Button variant="secondary" aria-label={lessonCopy.adjustButton} onClick={() => onAdjust(cell)}>
             <CalendarClock className="size-4" aria-hidden />
-            调课
+            {lessonCopy.adjustButton}
           </Button>
         )}
         {onEditCourse !== undefined && (
           <Button variant="secondary" onClick={() => onEditCourse(detail.course?.id ?? cell.courseId)}>
             <PencilLine className="size-4" aria-hidden />
-            编辑课程与时段
+            {lessonCopy.editButton}
           </Button>
         )}
         <Button
@@ -167,7 +218,7 @@ export function LessonDetail({
           }
         >
           <Trash2 className="size-4" aria-hidden />
-          删除整门课
+          {lessonCopy.deleteCourseButton}
         </Button>
       </div>
     </div>

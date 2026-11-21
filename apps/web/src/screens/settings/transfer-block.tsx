@@ -5,6 +5,7 @@ import { canUseWidget } from '../../lib/capabilities.ts';
 import { useAction } from '../../lib/action.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { exportLogs, showLogDirectory } from './file-export.ts';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
 
 export interface TransferBlockProps {
   settings: AppSettings;
@@ -33,11 +34,11 @@ export function TransferBlock({ settings, onOpenExport, onOpenImport }: Transfer
       {transferVisible && (
         <>
           <Button size="sm" variant="secondary" onClick={onOpenExport}>
-            导出备份
+            {copy.exportBackup}
           </Button>
-          <Button size="sm" variant="secondary" aria-label="导入备份" onClick={onOpenImport}>
+          <Button size="sm" variant="secondary" aria-label={copy.importBackup} onClick={onOpenImport}>
             <Upload className="size-4" aria-hidden />
-            导入备份
+            {copy.importBackup}
           </Button>
         </>
       )}
@@ -45,14 +46,14 @@ export function TransferBlock({ settings, onOpenExport, onOpenImport }: Transfer
         <Button
           size="sm"
           variant="secondary"
-          onClick={() => void logAction.run({ scope: 'log', label: '正在导出日志…', task: exportLogs })}
+          onClick={() => void logAction.run({ scope: 'log', label: copy.exportingLogs, task: exportLogs })}
         >
-          导出日志
+          {copy.exportLogs}
         </Button>
       )}
       {canUseWidget() && diagnosticsVisible && (
         <Button size="sm" variant="secondary" onClick={() => void showLogDirectory()}>
-          打开日志文件所在目录
+          {copy.openLogDir}
         </Button>
       )}
     </div>

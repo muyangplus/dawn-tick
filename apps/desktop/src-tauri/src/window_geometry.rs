@@ -255,14 +255,17 @@ pub(crate) async fn write_meta_value(key: &str, value: &str) -> bool {
 #[cfg(desktop)]
 pub(crate) fn parse_window_geometry(text: &str) -> Option<WindowGeometry> {
     let Ok(geometry) = serde_json::from_str::<WindowGeometry>(text) else {
-        append_log("窗口几何不可解析，按默认值处理");
+        log_warn("app", "窗口几何不可解析，改用默认值");
         return None;
     };
     if !geometry_is_sane(&geometry) {
-        append_log(&format!(
-            "窗口几何不合理，按默认值处理: {}x{} @ ({},{})",
-            geometry.width, geometry.height, geometry.x, geometry.y
-        ));
+        log_warn(
+            "app",
+            format!(
+                "窗口几何不合理，改用默认值 size={}x{} pos=({},{})",
+                geometry.width, geometry.height, geometry.x, geometry.y
+            ),
+        );
         return None;
     }
     Some(geometry)
@@ -285,13 +288,16 @@ pub(crate) fn save_window_geometry(geometry: &WindowGeometry) -> bool {
         return false;
     };
     if !tauri::async_runtime::block_on(write_meta_value(WINDOW_GEOMETRY_KEY, &text)) {
-        append_log("窗口几何写入失败");
+        log_warn("app", "窗口几何写入失败");
         return false;
     }
-    append_log(&format!(
-        "窗口几何已保存: {}x{} @ ({},{}) 最大化={}",
-        geometry.width, geometry.height, geometry.x, geometry.y, geometry.maximized
-    ));
+    log_trace(
+        "app",
+        format!(
+            "窗口几何已保存 size={}x{} pos=({},{}) maximized={}",
+            geometry.width, geometry.height, geometry.x, geometry.y, geometry.maximized
+        ),
+    );
     true
 }
 
@@ -316,7 +322,7 @@ pub(crate) fn capture_monitor_ref(
         Ok(Some(monitor)) => Some(monitor),
         Ok(None) => None,
         Err(error) => {
-            append_log(&format!("获取窗口所在显示器失败: {error}"));
+            log_trace("app", format!("当前显示器获取失败 error={error}"));
             None
         }
     };
@@ -324,7 +330,7 @@ pub(crate) fn capture_monitor_ref(
     let monitor = match monitor.or_else(|| window.primary_monitor().ok().flatten()) {
         Some(monitor) => monitor,
         None => {
-            append_log("拿不到显示器信息，本次窗口几何不含显示器指纹");
+            log_trace("app", "显示器信息缺失，本次窗口几何不含显示器指纹");
             return None;
         }
     };
@@ -448,7 +454,7 @@ pub(crate) fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
             monitors.iter().filter_map(snapshot_of).collect::<Vec<MonitorSnapshot>>(),
         ),
         Err(error) => {
-            append_log(&format!("获取显示器信息失败: {error}"));
+            log_warn("app", format!("显示器列表获取失败 error={error}"));
             (Vec::new(), Vec::new())
         }
     };
@@ -460,31 +466,34 @@ pub(crate) fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
         Some(target) => {
             // 重映射路径：逻辑尺寸 + 逻辑坐标，交给系统按当前缩放渲染
             if let Err(error) = window.set_size(tauri::LogicalSize::new(target.width, target.height)) {
-                append_log(&format!("恢复窗口尺寸失败: {error}"));
+                log_warn("app", format!("窗口尺寸恢复失败 error={error}"));
             }
             if let Err(error) = window.set_position(tauri::LogicalPosition::new(target.x, target.y)) {
-                append_log(&format!("恢复窗口位置失败: {error}"));
+                log_warn("app", format!("窗口位置恢复失败 error={error}"));
             }
             let monitor_name = geometry
                 .monitor
                 .as_ref()
                 .and_then(|monitor| monitor.name.as_deref())
                 .unwrap_or("未知显示器");
-            append_log(&format!(
-                "窗口几何已按显示器 {monitor_name}（scale {}）重映射: {}x{} @ ({:.0},{:.0})",
-                target.scale_factor, target.width, target.height, target.x, target.y
-            ));
+            log_debug(
+                "app",
+                format!(
+                    "窗口几何已按显示器重映射 monitor={monitor_name} scale={} size={}x{} pos=({:.0},{:.0})",
+                    target.scale_factor, target.width, target.height, target.x, target.y
+                ),
+            );
             format!("({:.0},{:.0})（逻辑重映射）", target.x, target.y)
         }
         None => {
             // 回退路径：沿用旧的物理像素逻辑
             if let Err(error) = window.set_size(tauri::PhysicalSize::new(geometry.width, geometry.height)) {
-                append_log(&format!("恢复窗口尺寸失败: {error}"));
+                log_warn("app", format!("窗口尺寸恢复失败 error={error}"));
             }
-            append_log(&format!(
-                "窗口几何未重映射（{}），按物理像素恢复",
-                remap_skip_reason(&geometry, &snapshots)
-            ));
+            log_debug(
+                "app",
+                format!("窗口几何按物理像素恢复 reason={}", remap_skip_reason(&geometry, &snapshots)),
+            );
             if position_visible(
                 geometry.x,
                 geometry.y,
@@ -494,13 +503,13 @@ pub(crate) fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
                 VISIBLE_MARGIN,
             ) {
                 if let Err(error) = window.set_position(tauri::PhysicalPosition::new(geometry.x, geometry.y)) {
-                    append_log(&format!("恢复窗口位置失败: {error}"));
+                    log_warn("app", format!("窗口位置恢复失败 error={error}"));
                 }
                 format!("({},{})", geometry.x, geometry.y)
             } else {
                 // 保存的位置已不在任何显示器可见区域内：只应用大小，位置改为居中。
                 if let Err(error) = window.center() {
-                    append_log(&format!("窗口居中失败: {error}"));
+                    log_warn("app", format!("窗口居中失败 error={error}"));
                 }
                 format!("居中（原位置 ({},{}) 不在可见区域）", geometry.x, geometry.y)
             }
@@ -514,14 +523,17 @@ pub(crate) fn restore_main_window_geometry(window: &tauri::WebviewWindow) {
 
     if geometry.maximized {
         if let Err(error) = window.maximize() {
-            append_log(&format!("恢复最大化失败: {error}"));
+            log_warn("app", format!("窗口最大化恢复失败 error={error}"));
         }
     }
 
-    append_log(&format!(
-        "窗口几何已恢复: {}x{} @ {} 最大化={}",
-        geometry.width, geometry.height, position_note, geometry.maximized
-    ));
+    log_info(
+        "app",
+        format!(
+            "窗口几何已恢复 size={}x{} pos={} maximized={}",
+            geometry.width, geometry.height, position_note, geometry.maximized
+        ),
+    );
 }
 
 /// 没走重映射的原因，仅用于日志（判断口径与 `remap_to_monitor` 的提前返回一一对应）。

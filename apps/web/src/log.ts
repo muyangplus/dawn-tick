@@ -2,11 +2,14 @@ import type { Storage } from '@dawn-tick/core';
 import { errorMessage } from './lib/errors.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { LOG_META_KEY } from './lib/meta-keys.ts';
-import { supportsNativeLog } from './lib/capabilities.ts';
+import { isAndroidApp, supportsNativeLog } from './lib/capabilities.ts';
+import type { LogScope } from './lib/log-scopes.ts';
 import { invokeNative } from './lib/native.ts';
+import { loadPlugin, PLUGIN_NAMES, type SystemActionsPlugin } from './lib/plugins.ts';
 import { detectPlatform } from './platform-detect.ts';
 
 export { LOG_META_KEY };
+export type { LogScope };
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace';
 
@@ -17,6 +20,7 @@ const LEVEL_RANK: Record<LogLevel, number> = { error: 1, warn: 2, info: 3, debug
 export interface LogEntry {
   at: number;
   level: LogLevel;
+  /** 旧版本落盘的条目可能是已合并掉的范围名，读回时原样保留。 */
   scope: string;
   message: string;
   detail?: Record<string, unknown>;
@@ -38,11 +42,15 @@ export function applyLogSettings(options: { level: LogLevel; fileEnabled: boolea
   currentLevel = options.level;
   fileEnabled = options.fileEnabled;
   void (async () => {
-    if (!supportsNativeLog()) return;
     try {
-      await invokeNative('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
+      if (supportsNativeLog()) {
+        await invokeNative('set_log_settings', { level: options.level, fileEnabled: options.fileEnabled });
+      } else if (isAndroidApp()) {
+        const plugin = await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
+        await plugin?.setNativeLogLevel?.({ level: options.level });
+      }
     } catch {
-      // 原生日志不可用时只影响内存与本地存储
+      // 原生日志不可用时只影响内存与本地存储；旧安装包没有 setNativeLogLevel
     }
   })();
 }
@@ -148,8 +156,8 @@ export async function loadLogs(): Promise<void> {
   if (loaded !== null) buffer = loaded.slice(-MAX_ENTRIES);
 }
 
-function record(level: LogLevel, scope: string, message: string, detail?: Record<string, unknown>): void {
-  // release 渠道不记 debug；其余渠道四个等级全部记录，控制台、文件与导出一致
+function record(level: LogLevel, scope: LogScope, message: string, detail?: Record<string, unknown>): void {
+  // 低于当前门槛的条目不进内存、控制台、文件与导出
   if (!allowed(level)) return;
   const entry: LogEntry = { at: Date.now(), level, scope, message, ...(detail === undefined ? {} : { detail }) };
   buffer.push(entry);
@@ -172,7 +180,7 @@ export function installLogHandlers(): void {
   if (typeof target.addEventListener !== 'function') return;
   target.addEventListener('error', (event) => {
     const detail = event as { message?: string; filename?: string; lineno?: number; error?: { stack?: string } };
-    logError('runtime', detail.message ?? '脚本错误', {
+    logError('app', detail.message ?? '脚本错误', {
       file: detail.filename ?? '',
       line: detail.lineno ?? 0,
       stack: detail.error?.stack ?? '',
@@ -182,12 +190,17 @@ export function installLogHandlers(): void {
     const reason = (event as { reason?: unknown }).reason;
     const message = reason instanceof Error ? reason.message : String(reason);
     const stack = reason instanceof Error ? (reason.stack ?? '') : '';
-    logError('runtime', `未处理的失败：${message}`, { stack });
+    logError('app', `未处理的失败：${message}`, { stack });
   });
 }
 
-/** 调试日志（第 4 级）。 */
-export function logDebug(scope: string, message: string, detail?: Record<string, unknown>): void {
+/** 高频细节（第 5 级）。 */
+export function logTrace(scope: LogScope, message: string, detail?: Record<string, unknown>): void {
+  record('trace', scope, message, detail);
+}
+
+/** 排查用的中间状态（第 4 级）。 */
+export function logDebug(scope: LogScope, message: string, detail?: Record<string, unknown>): void {
   record('debug', scope, message, detail);
 }
 
@@ -195,15 +208,15 @@ export function debugEnabled(): boolean {
   return allowed('debug');
 }
 
-export function logInfo(scope: string, message: string, detail?: Record<string, unknown>): void {
+export function logInfo(scope: LogScope, message: string, detail?: Record<string, unknown>): void {
   record('info', scope, message, detail);
 }
 
-export function logWarn(scope: string, message: string, detail?: Record<string, unknown>): void {
+export function logWarn(scope: LogScope, message: string, detail?: Record<string, unknown>): void {
   record('warn', scope, message, detail);
 }
 
-export function logError(scope: string, message: string, detail?: Record<string, unknown>): void {
+export function logError(scope: LogScope, message: string, detail?: Record<string, unknown>): void {
   record('error', scope, message, detail);
 }
 

@@ -25,7 +25,7 @@ export async function readRecentSchool(storage: Storage): Promise<School | null>
   const parsed = await readMetaJson<RecentSchool | null>(storage, RECENT_SCHOOL_META_KEY, {
     parse: parseRecentSchool,
     fallback: null,
-    scope: 'school',
+    scope: 'import',
   });
   if (parsed === null) return null;
   const known = getSchool(parsed.id) ?? searchSchools(parsed.name).find((item) => item.name === parsed.name);
@@ -36,5 +36,5 @@ export async function readRecentSchool(storage: Storage): Promise<School | null>
 /** 记下这次选的学校：导入流程与作息页共用同一个键。 */
 export async function writeRecentSchool(storage: Storage, school: School): Promise<void> {
   const payload: RecentSchool = { id: school.id, name: school.name };
-  await writeMetaJson(storage, RECENT_SCHOOL_META_KEY, payload, { scope: 'school' });
+  await writeMetaJson(storage, RECENT_SCHOOL_META_KEY, payload, { scope: 'import' });
 }

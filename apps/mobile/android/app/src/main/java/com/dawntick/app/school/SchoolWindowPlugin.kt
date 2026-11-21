@@ -3,6 +3,7 @@ package com.dawntick.app.school
 import android.app.Activity
 import android.content.Intent
 import androidx.activity.result.ActivityResult
+import com.dawntick.app.R
 import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
@@ -27,10 +28,14 @@ class SchoolWindowPlugin : Plugin() {
     @PluginMethod
     fun open(call: PluginCall) {
         val url = call.getString("url")
-        NativeLog.info(context, TAG, "open 入口 url=${NativeLog.redactUrl(url)} length=${url?.length ?: 0}")
+        NativeLog.info(
+            context,
+            "import",
+            "SchoolWindow.open 打开教务窗口 url=${NativeLog.redactUrl(url)} length=${url?.length ?: 0}",
+        )
         if (url.isNullOrBlank()) {
-            NativeLog.warn(context, TAG, "open 缺少教务地址")
-            call.reject("缺少教务地址")
+            NativeLog.error(context, "import", "SchoolWindow.open 缺少教务地址")
+            call.reject(context.getString(R.string.school_missing_url))
             return
         }
 
@@ -38,18 +43,18 @@ class SchoolWindowPlugin : Plugin() {
             Intent(context, SchoolWebActivity::class.java).putExtra("url", url)
         } catch (error: Exception) {
             // 正常情况构造不会失败；真失败时把原始原因交回 Web 层，而不是静默无反应
-            NativeLog.error(context, TAG, "构造 SchoolWebActivity Intent 失败", error)
+            NativeLog.error(context, "import", "SchoolWindow.open 构造 Intent 失败 target=SchoolWebActivity", error)
             call.reject(NativeLog.describe(error))
             return
         }
-        NativeLog.info(context, TAG, "Intent 构造成功 target=SchoolWebActivity")
+        NativeLog.debug(context, "import", "SchoolWindow.open Intent 已构造 target=SchoolWebActivity")
 
         try {
             startActivityForResult(call, intent, "onSchoolWindowResult")
-            NativeLog.info(context, TAG, "startActivityForResult 已发起")
+            NativeLog.debug(context, "import", "SchoolWindow.open 已发起 startActivityForResult")
         } catch (error: Exception) {
             // 例如 Activity 被系统回收、启动器拒绝启动等：reject 原始 message，界面能显示具体原因
-            NativeLog.error(context, TAG, "startActivityForResult 失败", error)
+            NativeLog.error(context, "import", "SchoolWindow.open startActivityForResult 失败", error)
             call.reject(NativeLog.describe(error))
         }
     }
@@ -63,13 +68,9 @@ class SchoolWindowPlugin : Plugin() {
         }
         NativeLog.info(
             context,
-            TAG,
-            "窗口结束 resultCode=${result.resultCode} payloadBytes=${payload.length}",
+            "import",
+            "SchoolWindow 教务窗口已关闭 resultCode=${result.resultCode} payloadBytes=${payload.length}",
         )
         call.resolve(JSObject().put("payload", payload))
-    }
-
-    private companion object {
-        const val TAG = "SchoolWindow"
     }
 }

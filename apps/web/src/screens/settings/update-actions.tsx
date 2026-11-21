@@ -7,7 +7,6 @@ import {
   type Storage,
 } from '@dawn-tick/core';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
-import { fail } from '../../copy/zh.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import { canRollbackToStable } from '../../lib/update-preferences.ts';
 import { updatePlatform } from '../../lib/update-install.ts';
@@ -30,6 +29,7 @@ import { StatusLine } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { RollbackDialog } from './update-rollback.tsx';
 import type { UpdateCheckApi } from './use-update-check.ts';
+import { updateSettingsCopy } from '../../copy/update-settings.ts';
 
 export interface UpdateActionsProps {
   storage: Storage;
@@ -67,9 +67,9 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
   async function unignore(): Promise<void> {
     try {
       await unignoreUpdateVersion(storage);
-      toast.success('已取消忽略，下次检查会再提示');
+      toast.success(updateSettingsCopy.unignoredToast);
     } catch (cause: unknown) {
-      toast.error(fail('取消忽略', errorMessage(cause), '请稍后再试'));
+      toast.error(updateSettingsCopy.unignoreFailed(errorMessage(cause)));
     }
   }
 
@@ -81,19 +81,19 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
           <Button
             size="sm"
             variant="secondary"
-            aria-label="检查更新"
+            aria-label={updateSettingsCopy.checkButton}
             loading={update.busy}
             onClick={() => void update.run()}
           >
-            检查更新
+            {updateSettingsCopy.checkButton}
           </Button>
           <ExternalLink
             dataRole="release-page-link"
             className="text-xs text-primary-strong underline"
             href="https://github.com/muyangplus/dawn-tick/releases"
-            ariaLabel="打开发布页（GitHub）"
+            ariaLabel={updateSettingsCopy.releasePageAria}
           >
-            打开发布页
+            {updateSettingsCopy.releasePageLink}
           </ExternalLink>
           {update.result !== null && (
             <StatusLine dataRole="update-result" at={update.result.at}>
@@ -104,8 +104,12 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
         </div>
         {CHANNEL !== 'dev' ? (
           <SwitchField
-            label="接收测试版更新"
-            description={CHANNEL === 'beta' ? '默认开启；关闭后只收正式版' : '默认关闭；开启后还会收到测试版'}
+            label={updateSettingsCopy.receiveBetaLabel}
+            description={
+              CHANNEL === 'beta'
+                ? updateSettingsCopy.receiveBetaDescriptionBeta
+                : updateSettingsCopy.receiveBetaDescriptionRelease
+            }
             checked={resolveReceiveBeta(settings.receiveBeta, CHANNEL)}
             onCheckedChange={(checked) => {
               if (checked && !resolveReceiveBeta(settings.receiveBeta, CHANNEL)) {
@@ -114,29 +118,36 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
               }
               void onPatch({ receiveBeta: checked });
             }}
-            ariaLabel="接收测试版更新"
+            ariaLabel={updateSettingsCopy.receiveBetaLabel}
           />
         ) : (
-          <span className="text-xs text-muted">开发版只接收开发构建，不受此开关影响</span>
+          <span className="text-xs text-muted">{updateSettingsCopy.devChannelNote}</span>
         )}
         <SwitchField
-          label="自动检查版本更新"
-          description="启动后自动查一次，有新版本时弹出更新信息；关闭后仍可用上面的「检查更新」手动查"
+          label={updateSettingsCopy.autoCheckLabel}
+          description={updateSettingsCopy.autoCheckDescription}
           checked={settings.autoCheckUpdate}
           onCheckedChange={(checked) => void onPatch({ autoCheckUpdate: checked })}
-          ariaLabel="自动检查版本更新"
+          ariaLabel={updateSettingsCopy.autoCheckLabel}
+        />
+        <SwitchField
+          label={updateSettingsCopy.releaseNotesLabel}
+          description={updateSettingsCopy.releaseNotesDescription}
+          checked={settings.releaseNotesOnUpdate}
+          onCheckedChange={(checked) => void onPatch({ releaseNotesOnUpdate: checked })}
+          ariaLabel={updateSettingsCopy.releaseNotesLabel}
         />
         {/* 下载源：自动探测 Gitee / GitHub 的 version.json，选完成快的；也可手动指定 */}
         <div className="flex flex-col gap-2" data-role="download-source-group">
           <Field
-            label="下载源"
-            hint="自动检测会同时探测 Gitee 与 GitHub 的 version.json，选完成快的；某个源不可用或还没有发布时自动回退另一个源"
+            label={updateSettingsCopy.downloadSourceLabel}
+            help={updateSettingsCopy.downloadSourceHelp}
           >
             <Select
               value={settings.downloadSource}
               onValueChange={(value) => void onPatch({ downloadSource: value as DownloadSourceChoice })}
             >
-              <SelectTrigger aria-label="下载源" data-role="download-source-select">
+              <SelectTrigger aria-label={updateSettingsCopy.downloadSourceLabel} data-role="download-source-select">
                 <span>{DOWNLOAD_SOURCE_CHOICE_LABEL[settings.downloadSource]}</span>
               </SelectTrigger>
               <SelectContent>
@@ -153,12 +164,12 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
             <Button
               size="sm"
               variant="secondary"
-              aria-label="重新检测下载源"
+              aria-label={updateSettingsCopy.redetectAria}
               data-role="redetect-download-source"
               loading={update.sourceBusy}
               onClick={() => void update.refreshSource()}
             >
-              重新检测
+              {updateSettingsCopy.redetectButton}
             </Button>
           </div>
         </div>
@@ -168,15 +179,15 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
       {/* ③ 已忽略版本 */}
       {ignoredVersion !== null && (
         <div className="flex flex-wrap items-center gap-2" data-role="ignored-version">
-          <span className="text-xs text-muted">已忽略的版本：{ignoredVersion}</span>
+          <span className="text-xs text-muted">{updateSettingsCopy.ignoredVersion(ignoredVersion)}</span>
           <Button
             size="sm"
             variant="secondary"
-            aria-label="取消忽略版本"
+            aria-label={updateSettingsCopy.unignoreAria}
             data-role="unignore-version"
             onClick={() => void unignore()}
           >
-            取消忽略
+            {updateSettingsCopy.unignoreButton}
           </Button>
         </div>
       )}
@@ -186,24 +197,24 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
           <Button
             size="sm"
             variant="secondary"
-            aria-label="回滚到正式版"
+            aria-label={updateSettingsCopy.rollbackButton}
             data-role="rollback-stable"
             onClick={() => setRollbackOpen(true)}
           >
-            回滚到正式版
+            {updateSettingsCopy.rollbackButton}
           </Button>
-          <span className="text-xs text-muted">当前 {CHANNEL_LABEL[CHANNEL]}；回到最新正式版</span>
+          <span className="text-xs text-muted">{updateSettingsCopy.rollbackChannelNote(CHANNEL_LABEL[CHANNEL])}</span>
         </div>
       )}
       <Dialog open={betaWarningOpen} onOpenChange={setBetaWarningOpen}>
         <DialogContent
-          title="开启测试版更新？"
-          description="测试版会先于正式版收到改动，可能包含未完成或不稳定的功能；出问题时可在「应用诊断日志」里导出日志反馈。"
+          title={updateSettingsCopy.betaWarningTitle}
+          description={updateSettingsCopy.betaWarningDescription}
           data-role="beta-warning-dialog"
         >
           <DialogFooter>
             <Button variant="ghost" onClick={() => setBetaWarningOpen(false)}>
-              取消
+              {updateSettingsCopy.cancel}
             </Button>
             <Button
               variant="primary"
@@ -212,7 +223,7 @@ export function UpdateActions({ storage, settings, onPatch, update }: UpdateActi
                 void onPatch({ receiveBeta: true });
               }}
             >
-              仍要开启
+              {updateSettingsCopy.betaWarningConfirm}
             </Button>
           </DialogFooter>
         </DialogContent>

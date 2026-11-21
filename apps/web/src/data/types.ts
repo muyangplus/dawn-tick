@@ -36,6 +36,8 @@ export interface LessonCell {
   movedOut: boolean;
   /** 该格是调课后的落点：正常显示并标「调课」 */
   movedIn: boolean;
+  /** 停课 / 调走 / 调入这一格的调课记录 id；课程详情据此显示调整内容并提供修改、删除 */
+  adjustId?: string;
   /** 该格是实验条目（type = 'lab'）：标「实验」且不参与拖动 */
   lab: boolean;
   /** 条目标签（实验 / 作业 / 考试 / 日程）；课程格为空 */

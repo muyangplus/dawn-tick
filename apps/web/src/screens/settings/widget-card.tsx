@@ -28,24 +28,13 @@ import {
 } from '../../components/ui/controls.tsx';
 import { StatusLine } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
-import { fail } from '../../copy/zh.ts';
+import { widgetCopy } from '../../copy/settings-widget.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 /** 一键添加的结果文案：先给事实，再给下一步。 */
-const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = {
-  added: '已添加到主屏',
-  'already-added': '已在主屏上',
-  cancelled: '没收到系统确认，请长按主屏添加',
-  unsupported: '启动器不支持，请长按主屏添加',
-  disabled: '小组件被停用，请在系统设置启用',
-  rejected: '系统没接受请求，请长按主屏添加',
-  error: '添加失败，请长按主屏添加',
-};
+const PIN_STATUS_LABEL: Record<PinWidgetStatus, string> = widgetCopy.pinStatus;
 
-const WIDGET_LABEL: Record<WidgetBackground, string> = {
-  light: '浅色',
-  dark: '深色',
-  transparent: '透明',
-};
+const WIDGET_LABEL: Record<WidgetBackground, string> = widgetCopy.background;
 
 export interface WidgetCardProps {
   settings: AppSettings;
@@ -73,8 +62,10 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
       if (cancelled) return;
       setTrayStatus(
         result.status === null
-          ? `不可用（${result.error ?? '未知原因'}）`
-          : `${result.status.created ? '已创建' : '创建失败'}（${result.status.detail}）`,
+          ? widgetCopy.trayUnavailable(result.error ?? null)
+          : result.status.created
+            ? widgetCopy.trayCreated(result.status.detail)
+            : widgetCopy.trayCreateFailed(result.status.detail),
       );
     })();
     return () => {
@@ -112,10 +103,8 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
     <>
       {hasMobileWidgets() ? (
         <div className="flex flex-col gap-2" data-role="mobile-widget-guide">
-          <span className="text-sm text-ink">主屏小组件</span>
-          <span className="text-xs text-muted">
-            主屏长按 → 小组件 → 晓刻
-          </span>
+          <span className="text-sm text-ink">{widgetCopy.mobileTitle}</span>
+          <HelpLink entryId="widget-android-pin" />
           {MOBILE_WIDGETS.map((widget) => {
             const state = pinStates?.find((item) => item.id === widget.id) ?? null;
             return (
@@ -135,23 +124,23 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
                   <span className="flex shrink-0 items-center gap-2">
                     {state?.added === true && (
                       <span className="text-xs text-muted" data-role="widget-added">
-                        已添加
+                        {widgetCopy.added}
                       </span>
                     )}
                     {state?.disabled === true && (
                       <span className="text-xs text-danger-strong" data-role="widget-disabled">
-                        已停用
+                        {widgetCopy.disabled}
                       </span>
                     )}
                     <Button
                       size="sm"
                       variant="secondary"
-                      aria-label={`添加小组件到主屏：${widget.label}`}
+                      aria-label={widgetCopy.pinAria(widget.label)}
                       loading={pinPending === widget.id}
                       disabled={pinPending !== null && pinPending !== widget.id}
                       onClick={() => void addWidget(widget.id)}
                     >
-                      添加到主屏
+                      {widgetCopy.pinButton}
                     </Button>
                   </span>
                 </div>
@@ -163,38 +152,38 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
         <>
           <label className="flex min-h-tap items-center justify-between gap-3 text-sm text-ink">
             <span className="flex min-w-0 flex-col">
-              <span>悬浮窗</span>
-              <span className="truncate text-xs text-muted">无边框置顶小条，显示下一节课与倒计时</span>
+              <span>{widgetCopy.floatingTitle}</span>
+              <span className="truncate text-xs text-muted">{widgetCopy.floatingDescription}</span>
             </span>
             {canUseWidget() ? (
               <span className="flex shrink-0 gap-2">
                 <Button
                   size="sm"
                   variant="secondary"
-                  aria-label="显示悬浮窗"
+                  aria-label={widgetCopy.showAria}
                   onClick={() =>
                     void showWidget(settings.widgetVariant).then((ok) => {
-                      if (ok) toast.success('已显示悬浮窗');
-                      else toast.error(fail('显示悬浮窗', null, '请重试'));
+                      if (ok) toast.success(widgetCopy.shownToast);
+                      else toast.error(widgetCopy.showFailed);
                     })
                   }
                 >
-                  显示
+                  {widgetCopy.showButton}
                 </Button>
                 <Button
                   size="sm"
                   variant="ghost"
-                  aria-label="隐藏悬浮窗"
-                  onClick={() => void hideWidget().then(() => toast.success('已隐藏悬浮窗'))}
+                  aria-label={widgetCopy.hideAria}
+                  onClick={() => void hideWidget().then(() => toast.success(widgetCopy.hiddenToast))}
                 >
-                  隐藏
+                  {widgetCopy.hideButton}
                 </Button>
               </span>
             ) : (
-              <span className="text-xs text-muted">仅桌面版</span>
+              <span className="text-xs text-muted">{widgetCopy.desktopOnly}</span>
             )}
           </label>
-          <Field label="悬浮窗样式">
+          <Field label={widgetCopy.variantLabel}>
             <Select
               value={settings.widgetVariant}
               onValueChange={(value) => {
@@ -203,7 +192,7 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
                 });
               }}
             >
-              <SelectTrigger aria-label="悬浮窗样式">
+              <SelectTrigger aria-label={widgetCopy.variantLabel}>
                 <span>{WIDGET_VARIANT_LABEL[settings.widgetVariant]}</span>
               </SelectTrigger>
               <SelectContent>
@@ -218,42 +207,38 @@ export function WidgetCard({ settings, onPatch }: WidgetCardProps) {
         </>
       )}
       {canUseWidget() && (
-        <StatusLine dataRole="tray-status">托盘状态：{trayStatus === null ? '读取中…' : trayStatus}</StatusLine>
+        <StatusLine dataRole="tray-status">{widgetCopy.trayStatus(trayStatus)}</StatusLine>
       )}
       <SwitchField
-        label="明日课程预告"
-        description="当天没课或课上完时显示"
+        label={widgetCopy.tomorrowLabel}
+        description={widgetCopy.tomorrowDescription}
         checked={settings.tomorrowPreview}
         onCheckedChange={(checked) => void onPatch({ tomorrowPreview: checked })}
-        ariaLabel="明日课程预告"
+        ariaLabel={widgetCopy.tomorrowLabel}
       />
       <SwitchField
-        label="开学倒计时"
-        description="学期开始前显示距离开学还有几天"
+        label={widgetCopy.semesterCountdownLabel}
+        description={widgetCopy.semesterCountdownDescription}
         checked={settings.semesterCountdown}
         onCheckedChange={(checked) => void onPatch({ semesterCountdown: checked })}
-        ariaLabel="开学倒计时"
+        ariaLabel={widgetCopy.semesterCountdownLabel}
       />
       <SwitchField
-        label="假期倒计时"
-        description="显示距离下一个法定假日还有几天"
+        label={widgetCopy.holidayCountdownLabel}
+        description={widgetCopy.holidayCountdownDescription}
         checked={settings.holidayCountdown}
         onCheckedChange={(checked) => void onPatch({ holidayCountdown: checked })}
-        ariaLabel="假期倒计时"
+        ariaLabel={widgetCopy.holidayCountdownLabel}
       />
       <Field
-        label="小组件背景"
-        help={
-          hasMobileWidgets()
-            ? '浅色/深色固定底色，透明跟随主题'
-            : '浅色/深色固定底色，透明跟随当前主题；悬浮窗同样生效'
-        }
+        label={widgetCopy.backgroundLabel}
+        help={hasMobileWidgets() ? widgetCopy.backgroundHelpMobile : widgetCopy.backgroundHelpDesktop}
       >
         <Select
           value={settings.widgetBackground}
           onValueChange={(value) => void onPatch({ widgetBackground: value as WidgetBackground })}
         >
-          <SelectTrigger aria-label="小组件背景">
+          <SelectTrigger aria-label={widgetCopy.backgroundLabel}>
             <span>{WIDGET_LABEL[settings.widgetBackground]}</span>
           </SelectTrigger>
           <SelectContent>

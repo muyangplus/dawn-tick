@@ -31,6 +31,7 @@ import {
   deviceGroupSummaries,
   type StorageLocationKind,
 } from './devices-group-summaries.ts';
+import { devicesCopy } from '../copy/sync-devices.ts';
 
 export interface DevicesViewProps {
   storage: Storage;
@@ -54,13 +55,13 @@ export interface DevicesViewProps {
 
 /** 七个分组的固定顺序与图标：与原来的卡片顺序、图标一一对应，方便老用户找得到。 */
 const GROUP_META: ReadonlyArray<{ id: string; title: string; icon: LucideIcon }> = [
-  { id: 'storage', title: '本地存储', icon: Database },
-  { id: 'backup', title: '备份与恢复', icon: Archive },
-  { id: 'update', title: '更新', icon: RefreshCw },
-  { id: 'webdav', title: 'WebDAV 同步', icon: Cloud },
-  { id: 'lan', title: '局域网同步', icon: Wifi },
-  { id: 'maintenance', title: '诊断与维护', icon: Wrench },
-  { id: 'about', title: '关于', icon: Info },
+  { id: 'storage', title: devicesCopy.groupStorage, icon: Database },
+  { id: 'backup', title: devicesCopy.groupBackup, icon: Archive },
+  { id: 'update', title: devicesCopy.groupUpdate, icon: RefreshCw },
+  { id: 'webdav', title: devicesCopy.groupWebdav, icon: Cloud },
+  { id: 'lan', title: devicesCopy.groupLan, icon: Wifi },
+  { id: 'maintenance', title: devicesCopy.groupMaintenance, icon: Wrench },
+  { id: 'about', title: devicesCopy.groupAbout, icon: Info },
 ];
 
 /**
@@ -198,11 +199,12 @@ export function DevicesView({
   }));
 
   return (
-    <div className="flex flex-col gap-3" data-role="devices-view" aria-label="设备与同步">
+    <div className="flex flex-col gap-3" data-role="devices-view" aria-label={devicesCopy.pageTitle}>
       {/* 页面顶部不放快捷动作行：导出/导入/ICS 在「本地存储」，快照在「备份与恢复」，检查更新在「更新」 */}
       <GroupedSettings
-        pageTitle="设备与同步"
-        ariaLabel="设备与同步分组"
+        memoryKey="devices"
+        pageTitle={devicesCopy.pageTitle}
+        ariaLabel={devicesCopy.groupsLabel}
         groups={groups}
         openRequest={groupRequest}
         extraNav={onOpenHelp === undefined ? undefined : <HelpNavItem onOpenHelp={onOpenHelp} />}

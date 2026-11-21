@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.core.content.FileProvider
+import com.dawntick.app.R
 import java.io.File
 import java.io.IOException
 
@@ -27,7 +28,7 @@ internal class LocalFile private constructor(val file: File) {
         return try {
             FileProvider.getUriForFile(context, authority(context), file)
         } catch (error: IllegalArgumentException) {
-            throw LocalFileException("文件不在可分享的目录内", error)
+            throw LocalFileException(context.getString(R.string.file_not_shareable), error)
         }
     }
 
@@ -82,36 +83,36 @@ internal class LocalFile private constructor(val file: File) {
          * 目录穿越到根目录之外、文件不存在、不是普通文件。
          */
         fun resolve(context: Context, raw: String?): LocalFile {
-            val candidate = File(normalize(raw))
-            if (!candidate.isAbsolute) throw LocalFileException("只接受绝对路径")
+            val candidate = File(normalize(context, raw))
+            if (!candidate.isAbsolute) throw LocalFileException(context.getString(R.string.file_path_not_absolute))
             val canonical = try {
                 candidate.canonicalFile
             } catch (error: IOException) {
-                throw LocalFileException("无法解析文件路径", error)
+                throw LocalFileException(context.getString(R.string.file_path_unresolvable), error)
             }
-            if (!canonical.exists()) throw LocalFileException("文件不存在")
-            if (!canonical.isFile) throw LocalFileException("不是文件")
-            if (!canonical.canRead()) throw LocalFileException("文件不可读")
+            if (!canonical.exists()) throw LocalFileException(context.getString(R.string.file_missing))
+            if (!canonical.isFile) throw LocalFileException(context.getString(R.string.file_not_regular))
+            if (!canonical.canRead()) throw LocalFileException(context.getString(R.string.file_unreadable))
             if (!isInsideAllowedRoot(context, canonical)) {
-                throw LocalFileException("只允许应用缓存或下载目录内的文件")
+                throw LocalFileException(context.getString(R.string.file_outside_allowed_roots))
             }
             return LocalFile(canonical)
         }
 
         /** 把 `file://` URI 或纯路径归一成路径文本；别的 scheme 一律拒绝。 */
-        fun normalize(raw: String?): String {
-            if (raw.isNullOrBlank()) throw LocalFileException("缺少文件路径")
+        fun normalize(context: Context, raw: String?): String {
+            if (raw.isNullOrBlank()) throw LocalFileException(context.getString(R.string.file_path_missing))
             val text = raw.trim()
             if (text.startsWith("$FILE_SCHEME:", ignoreCase = true)) {
                 val uri = Uri.parse(text)
                 if (!FILE_SCHEME.equals(uri.scheme, ignoreCase = true)) {
-                    throw LocalFileException("只接受应用目录内的文件路径")
+                    throw LocalFileException(context.getString(R.string.file_path_outside_app))
                 }
                 val path = uri.path
-                if (path.isNullOrBlank()) throw LocalFileException("文件路径为空")
+                if (path.isNullOrBlank()) throw LocalFileException(context.getString(R.string.file_path_missing))
                 return path
             }
-            if (text.contains("://")) throw LocalFileException("只接受应用目录内的文件路径")
+            if (text.contains("://")) throw LocalFileException(context.getString(R.string.file_path_outside_app))
             return text
         }
 

@@ -1,5 +1,7 @@
 package com.dawntick.app.lan
 
+import android.content.Context
+import com.dawntick.app.R
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -322,28 +324,28 @@ class LanSyncServer private constructor(
          * 绑定通配地址（不指定网卡）能避开部分机型「指定地址绑定失败」的问题；
          * 安全性由逐请求的局域网来源校验保证。绑定失败抛出带原始异常信息的可读错误。
          */
-        fun start(host: String? = null): LanSyncServer {
+        fun start(context: Context, host: String? = null): LanSyncServer {
             val advertised = if (!host.isNullOrBlank()) {
                 LanNetworks.findAddress(host)
-                    ?: throw IllegalArgumentException("网络地址不在本机：${host.trim()}")
+                    ?: throw IllegalArgumentException(context.getString(R.string.lan_address_not_local, host.trim()))
             } else {
                 LanNetworks.preferredAddress()
-                    ?: throw IllegalStateException("没有找到局域网地址，请先连接 Wi-Fi")
+                    ?: throw IllegalStateException(context.getString(R.string.lan_no_address))
             }
             val socket = try {
                 ServerSocket(0, 8)
             } catch (error: Throwable) {
                 throw IllegalStateException(
-                    "监听端口失败：${error.message ?: error.javaClass.simpleName}",
+                    context.getString(R.string.lan_listen_failed, error.message ?: error.javaClass.simpleName),
                     error,
                 )
             }
             if (!socket.isBound || socket.localPort !in 1..65535) {
                 runCatching { socket.close() }
-                throw IllegalStateException("监听端口失败：socket 没有成功绑定")
+                throw IllegalStateException(context.getString(R.string.lan_listen_not_bound))
             }
             return LanSyncServer(
-                advertised.hostAddress ?: throw IllegalStateException("没有找到局域网地址，请先连接 Wi-Fi"),
+                advertised.hostAddress ?: throw IllegalStateException(context.getString(R.string.lan_no_address)),
                 socket.localPort,
                 socket,
             )

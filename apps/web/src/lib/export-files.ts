@@ -1,8 +1,10 @@
 import { toBase64Bytes } from '@dawn-tick/core';
 import { logInfo, logWarn } from '../log.ts';
+import { pathForLog } from './log-redact.ts';
 import { isAndroidApp, isDesktopApp } from './capabilities.ts';
 import { nativeErrorMessage } from './native.ts';
 import { PLUGIN_NAMES, loadPlugin, type FileSharePlugin } from './plugins.ts';
+import { transferCopy } from '../copy/backup-transfer.ts';
 
 /**
  * 导出文件的平台出口（I-12）：Android 真实落盘、分享与「打开所在位置」。
@@ -58,7 +60,7 @@ export async function writeAndroidFile(name: string, content: string | Uint8Arra
     });
   }
   const { uri } = await Filesystem.getUri({ path: name, directory: Directory.Cache });
-  if (typeof uri !== 'string' || uri === '') throw new Error('文件写入后找不到路径');
+  if (typeof uri !== 'string' || uri === '') throw new Error(transferCopy.fileNoPath);
   return pathFromFileUri(uri);
 }
 
@@ -66,7 +68,7 @@ async function loadFileShare(): Promise<FileSharePlugin | null> {
   try {
     return await loadPlugin<FileSharePlugin>(PLUGIN_NAMES.fileShare);
   } catch (cause: unknown) {
-    logWarn('export', '文件分享插件不可用', { message: nativeErrorMessage(cause) });
+    logWarn('backup', '文件分享插件不可用', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -78,10 +80,10 @@ export async function shareExportedFile(path: string): Promise<boolean> {
   try {
     const result = await plugin.shareFile({ path });
     const shared = result?.shared === true;
-    logInfo('export', '已打开系统分享面板', { path, shared });
+    logInfo('backup', '已打开系统分享面板', { path: pathForLog(path), shared });
     return shared;
   } catch (cause: unknown) {
-    logWarn('export', '打开系统分享面板失败', { path, message: nativeErrorMessage(cause) });
+    logWarn('backup', '系统分享面板打开失败', { path: pathForLog(path), message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -92,10 +94,10 @@ export async function revealExportedFile(path: string): Promise<boolean> {
   if (plugin === null) return false;
   try {
     const result = await plugin.revealFile({ path });
-    logInfo('export', '已打开文件所在位置', { path, via: result?.via ?? null });
+    logInfo('backup', '已打开文件所在位置', { path: pathForLog(path), via: result?.via ?? null });
     return result?.opened === true;
   } catch (cause: unknown) {
-    logWarn('export', '打开所在位置失败', { path, message: nativeErrorMessage(cause) });
+    logWarn('backup', '所在位置打开失败', { path: pathForLog(path), message: nativeErrorMessage(cause) });
     return false;
   }
 }

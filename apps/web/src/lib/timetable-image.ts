@@ -11,6 +11,7 @@ import {
 import { mix } from '../design/contrast.ts';
 import { formatMonthDayRange } from './dates.ts';
 import { encodePngRgb } from './png.ts';
+import { exportImageCopy } from '../copy/export-image.ts';
 
 /**
  * 课表图片导出（PNG）：先把「整周课表」算成纯数据模型，再交给 Canvas 2D 绘制。
@@ -96,10 +97,10 @@ function safeColor(color: string, fallback: string): string {
 }
 
 function statusOf(lesson: LessonCell): string {
-  if (lesson.cancelled) return '停课';
-  if (lesson.movedOut) return '已调课';
-  if (!lesson.inWeek) return '非本周';
-  if (lesson.lab) return lesson.eventLabel ?? '日程';
+  if (lesson.cancelled) return exportImageCopy.status.cancelled;
+  if (lesson.movedOut) return exportImageCopy.status.movedOut;
+  if (!lesson.inWeek) return exportImageCopy.status.outOfWeek;
+  if (lesson.lab) return lesson.eventLabel ?? exportImageCopy.status.eventFallback;
   return '';
 }
 
@@ -182,19 +183,19 @@ export function buildTimetableImageModel(input: {
   const weekLabel = firstWeek === null || lastWeek === null
     ? null
     : firstWeek === lastWeek
-      ? `第 ${firstWeek} 周`
-      : `第 ${firstWeek}–${lastWeek} 周`;
+      ? exportImageCopy.weekSingle(firstWeek)
+      : exportImageCopy.weekRange(firstWeek, lastWeek);
   return {
     width: TIMETABLE_IMAGE_WIDTH,
     height,
     scale: TIMETABLE_IMAGE_SCALE,
     pixelWidth: TIMETABLE_IMAGE_WIDTH * TIMETABLE_IMAGE_SCALE,
     pixelHeight: height * TIMETABLE_IMAGE_SCALE,
-    title: semester?.name ?? '课表',
-    subtitle: weekLabel === null ? '还没有设置学期' : `${weekLabel} · ${dateRange}`,
-    footer: `晓刻 DawnTick · 浅色主题 · ${PRESETS[settings.themePreset].label}`,
+    title: semester?.name ?? exportImageCopy.fallbackTitle,
+    subtitle: weekLabel === null ? exportImageCopy.noSemesterSubtitle : exportImageCopy.subtitle(weekLabel, dateRange),
+    footer: exportImageCopy.footer(PRESETS[settings.themePreset].label),
     empty: cards.length === 0,
-    emptyText: semester === null ? '还没有学期，先创建学期再导出课表' : '这周没有课程',
+    emptyText: semester === null ? exportImageCopy.emptyNoSemester : exportImageCopy.emptyWeek,
     columns,
     rows,
     cards,
@@ -275,7 +276,7 @@ function drawTimetable(ctx: CanvasRenderingContext2D, model: TimetableImageModel
 
   // 表头：节次列 + 每天的星期与日期（今天高亮，放假标「假」）
   rect(ctx, tokens.surfaceMuted, left, layout.tableTop, layout.axisWidth, layout.headerHeight);
-  text(ctx, '节次', left + layout.axisWidth / 2, layout.tableTop + layout.headerHeight / 2, 12, tokens.muted, 'center');
+  text(ctx, exportImageCopy.axisHeader, left + layout.axisWidth / 2, layout.tableTop + layout.headerHeight / 2, 12, tokens.muted, 'center');
   for (const column of model.columns) {
     rect(
       ctx,
@@ -287,7 +288,7 @@ function drawTimetable(ctx: CanvasRenderingContext2D, model: TimetableImageModel
     );
     const center = column.x + column.width / 2;
     text(ctx, column.weekdayLabel, center, layout.tableTop + 20, 13, column.isToday ? tokens.primaryStrong : tokens.text, 'center', true);
-    const holiday = column.holidayName === null ? '' : ' 假';
+    const holiday = column.holidayName === null ? '' : exportImageCopy.holidayMark;
     text(
       ctx,
       `${column.dateLabel}${holiday}`,
@@ -372,9 +373,9 @@ export async function renderTimetablePng(
   options: { canvasFactory?: TimetableCanvasFactory } = {},
 ): Promise<Uint8Array> {
   const canvas = (options.canvasFactory ?? defaultCanvasFactory)(model.pixelWidth, model.pixelHeight);
-  if (canvas === null) throw new Error('当前环境不支持 Canvas，无法导出图片');
+  if (canvas === null) throw new Error(exportImageCopy.canvasUnsupported);
   const ctx = canvas.getContext('2d');
-  if (ctx === null) throw new Error('当前环境不支持 Canvas 2D，无法导出图片');
+  if (ctx === null) throw new Error(exportImageCopy.canvas2dUnsupported);
   ctx.scale(model.scale, model.scale);
   drawTimetable(ctx, model);
   const image = ctx.getImageData(0, 0, model.pixelWidth, model.pixelHeight);
@@ -390,5 +391,5 @@ export function timetableFileName(semesterName: string | null, extension: 'png' 
     .trim()
     .slice(0, 60);
   const day = new Date(stamp).toISOString().slice(0, 10);
-  return `DawnTick-${safe.length === 0 ? '课表' : safe}-${day}.${extension}`;
+  return `DawnTick-${safe.length === 0 ? exportImageCopy.fileNameFallback : safe}-${day}.${extension}`;
 }

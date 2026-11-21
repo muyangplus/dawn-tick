@@ -14,6 +14,7 @@ import { isAndroidApp } from './capabilities.ts';
 import { loadPlugin, PLUGIN_NAMES, type SystemActionsPlugin } from './plugins.ts';
 import { withTimeout } from './timeout.ts';
 import { clearLogs, logWarn, logsText } from '../log.ts';
+import { appDiagnosticsCopy } from '../copy/app-diagnostics.ts';
 
 export interface DiagnosticsLog {
   /** 合并后的完整文本（原生日志跟在 Web 日志后面） */
@@ -50,10 +51,10 @@ async function androidNativeLog(): Promise<{ text: string; path: string | null; 
         error: null as string | null,
       };
     })();
-    return await withTimeout(task, 8_000, '读取原生日志超时（可能存储/原生桥异常）');
+    return await withTimeout(task, 8_000, appDiagnosticsCopy.nativeReadTimeout);
   } catch (cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    logWarn('log', '读取原生日志失败', { message });
+    logWarn('log', '原生日志读取失败', { message });
     return { text: '', path: null, error: message };
   }
 }
@@ -62,7 +63,7 @@ async function androidNativeLog(): Promise<{ text: string; path: string | null; 
 export async function collectDiagnosticsLog(): Promise<DiagnosticsLog> {
   const native = await androidNativeLog();
   const parts = [logsText().trim()];
-  if (native.text !== '') parts.push(`===== 安卓原生日志 =====\n${native.text}`);
+  if (native.text !== '') parts.push(appDiagnosticsCopy.nativeSection(native.text));
   return {
     text: parts.filter((part) => part !== '').join('\n\n'),
     nativePath: native.path,
@@ -80,7 +81,7 @@ export async function clearDiagnosticsLog(): Promise<{ web: true; native: boolea
     await withTimeout(
       plugin?.clearNativeLog?.() ?? Promise.resolve(undefined),
       8_000,
-      '清空原生日志超时',
+      appDiagnosticsCopy.nativeClearTimeout,
     );
     return { web: true, native: true, error: null };
   } catch (cause: unknown) {

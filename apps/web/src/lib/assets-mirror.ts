@@ -21,6 +21,7 @@
 import type { UpdateAsset, UpdateChannel, UpdateManifest } from '../update.ts';
 import type { DownloadSource } from './download-source.ts';
 import { preferredAndroidAbi } from './android-abi.ts';
+import { appUpdateCopy } from '../copy/app-update.ts';
 
 /** 产物仓库：与主仓库分开，避免产物把主仓库撑大，也绕开 Gitee Releases 限制。 */
 export const ASSETS_REPO = 'muyangplus/dawn-tick-assets';
@@ -77,7 +78,7 @@ export function assetsVersionUrl(source: DownloadSource, feed: UpdateChannel): s
 /** 渠道分支下某个文件的绝对地址：下载、校验文件都用它拼。 */
 export function assetsFileUrl(source: DownloadSource, feed: UpdateChannel, name: string): string {
   const file = name.trim();
-  if (file === '') throw new Error('assets 文件名为空');
+  if (file === '') throw new Error(appUpdateCopy.manifest.emptyFileName);
   return `${assetsRawBase(source)}/${ASSETS_BRANCH[feed]}/${encodeURIComponent(file)}`;
 }
 
@@ -101,16 +102,16 @@ const SHA256_HEX = /^[0-9a-f]{64}$/i;
 /** 单个文件项：名字非空、体积为非负整数、摘要为 64 位十六进制。 */
 function parseFile(value: unknown, key: string): { ok: true; file: VersionFile } | { ok: false; error: string } {
   const record = asRecord(value);
-  if (record === null) return { ok: false, error: `${key} 不是对象` };
+  if (record === null) return { ok: false, error: appUpdateCopy.manifest.fileNotObject(key) };
   const name = record['name'];
-  if (typeof name !== 'string' || name.trim() === '') return { ok: false, error: `缺少文件 ${key} 的 name` };
+  if (typeof name !== 'string' || name.trim() === '') return { ok: false, error: appUpdateCopy.manifest.fileMissingName(key) };
   const size = record['size'];
   if (typeof size !== 'number' || !Number.isFinite(size) || size < 0) {
-    return { ok: false, error: `${key} 的 size 不是有效字节数` };
+    return { ok: false, error: appUpdateCopy.manifest.fileBadSize(key) };
   }
   const sha256 = record['sha256'];
   if (typeof sha256 !== 'string' || !SHA256_HEX.test(sha256)) {
-    return { ok: false, error: `${key} 的 sha256 不是 64 位十六进制` };
+    return { ok: false, error: appUpdateCopy.manifest.fileBadSha256(key) };
   }
   return { ok: true, file: { name: name.trim(), size, sha256: sha256.toLowerCase() } };
 }
@@ -123,32 +124,32 @@ function parseFile(value: unknown, key: string): { ok: true; file: VersionFile }
  */
 export function parseAssetsVersion(value: unknown): VersionParseResult {
   const record = asRecord(value);
-  if (record === null) return { ok: false, error: 'version.json 不是对象' };
+  if (record === null) return { ok: false, error: appUpdateCopy.manifest.notObject };
   if (record['schema'] !== ASSETS_VERSION_SCHEMA) {
-    return { ok: false, error: `schema 不是 ${ASSETS_VERSION_SCHEMA}` };
+    return { ok: false, error: appUpdateCopy.manifest.badSchema(ASSETS_VERSION_SCHEMA) };
   }
   const channel = record['channel'];
-  if (!isChannel(channel)) return { ok: false, error: '渠道不是 dev / beta / release' };
+  if (!isChannel(channel)) return { ok: false, error: appUpdateCopy.manifest.badChannel };
   const version = record['version'];
-  if (typeof version !== 'string' || version.trim() === '') return { ok: false, error: '缺少版本号' };
+  if (typeof version !== 'string' || version.trim() === '') return { ok: false, error: appUpdateCopy.manifest.missingVersion };
   const releasedAt = record['releasedAt'];
   if (releasedAt !== undefined && (typeof releasedAt !== 'number' || !Number.isFinite(releasedAt))) {
-    return { ok: false, error: 'releasedAt 不是毫秒时间戳' };
+    return { ok: false, error: appUpdateCopy.manifest.badReleasedAt };
   }
   const commit = record['commit'];
-  if (commit !== undefined && typeof commit !== 'string') return { ok: false, error: 'commit 不是字符串' };
+  if (commit !== undefined && typeof commit !== 'string') return { ok: false, error: appUpdateCopy.manifest.badCommit };
   const notes = record['notes'];
-  if (notes !== undefined && typeof notes !== 'string') return { ok: false, error: 'notes 不是字符串' };
+  if (notes !== undefined && typeof notes !== 'string') return { ok: false, error: appUpdateCopy.manifest.badNotes };
   const tag = record['tag'];
   if (tag !== undefined && (typeof tag !== 'string' || tag.trim() === '')) {
-    return { ok: false, error: 'tag 不是非空字符串' };
+    return { ok: false, error: appUpdateCopy.manifest.badTag };
   }
   const checksums = record['checksums'];
   if (checksums !== undefined && (typeof checksums !== 'string' || checksums.trim() === '')) {
-    return { ok: false, error: 'checksums 不是文件名' };
+    return { ok: false, error: appUpdateCopy.manifest.badChecksums };
   }
   const filesRecord = asRecord(record['files']);
-  if (filesRecord === null) return { ok: false, error: '缺少 files' };
+  if (filesRecord === null) return { ok: false, error: appUpdateCopy.manifest.missingFiles };
   const files: VersionFiles = {};
   for (const key of VERSION_FILE_KEYS) {
     const raw = filesRecord[key];
@@ -158,7 +159,7 @@ export function parseAssetsVersion(value: unknown): VersionParseResult {
     files[key] = parsed.file;
   }
   if (Object.keys(files).length === 0) {
-    return { ok: false, error: `缺少文件（${VERSION_FILE_KEYS.join(' / ')} 至少一个）` };
+    return { ok: false, error: appUpdateCopy.manifest.noPlatformFile(VERSION_FILE_KEYS.join(' / ')) };
   }
   const manifest: AssetsVersion = {
     schema: ASSETS_VERSION_SCHEMA,
@@ -176,9 +177,12 @@ export function parseAssetsVersion(value: unknown): VersionParseResult {
 
 // —— version.json v2 → UpdateManifest ——
 
-function assetOf(manifest: AssetsVersion, source: DownloadSource, file: VersionFile): UpdateAsset {
+/** 文件名 → 下载地址：默认是 assets 仓库同源 raw，GitHub Release 兜底时换成发布附件地址。 */
+export type FileUrlOf = (name: string) => string;
+
+function assetFor(file: VersionFile, fileUrl: FileUrlOf): UpdateAsset {
   return {
-    url: assetsFileUrl(source, manifest.channel, file.name),
+    url: fileUrl(file.name),
     name: file.name,
     size: file.size,
     sha256: file.sha256,
@@ -202,17 +206,23 @@ function pickAndroidFile(files: VersionFiles): VersionFile | undefined {
  * - `windowsPortable` 单独保留便携 zip：便携版自动更新要它，不能被安装包挤掉；
  * - `android` 按设备首选 ABI 选包：arm64 用 `android`，armeabi-v7a 用 `android32`；
  *   `android32` 只用于挑选，不进入最终清单（旧逻辑只看 `assets.android`）；
- * - 所有 URL 都是同源 raw 的绝对地址，`checksumsUrl` 指向同一分支的 `SHA256SUMS.txt`。
+ * - 所有 URL 默认是同源 raw 的绝对地址，`checksumsUrl` 指向同一分支的 `SHA256SUMS.txt`；
+ *   `fileUrl` 可换成 GitHub Release 附件地址（同一份 version.json 也挂在发布上）。
  */
-export function manifestFromAssetsVersion(manifest: AssetsVersion, source: DownloadSource): UpdateManifest {
+export function manifestFromAssetsVersion(
+  manifest: AssetsVersion,
+  source: DownloadSource,
+  fileUrl: FileUrlOf = (name) => assetsFileUrl(source, manifest.channel, name),
+): UpdateManifest {
+  const assetOf = (file: VersionFile): UpdateAsset => assetFor(file, fileUrl);
   const assets: NonNullable<UpdateManifest['assets']> = {};
   const portable = manifest.files.windowsPortable;
   const windows = manifest.files.windowsSetup ?? portable;
-  if (windows !== undefined) assets.windows = assetOf(manifest, source, windows);
-  if (portable !== undefined) assets.windowsPortable = assetOf(manifest, source, portable);
+  if (windows !== undefined) assets.windows = assetOf(windows);
+  if (portable !== undefined) assets.windowsPortable = assetOf(portable);
   const android = pickAndroidFile(manifest.files);
-  if (android !== undefined) assets.android = assetOf(manifest, source, android);
-  if (manifest.files.web !== undefined) assets.web = assetOf(manifest, source, manifest.files.web);
+  if (android !== undefined) assets.android = assetOf(android);
+  if (manifest.files.web !== undefined) assets.web = assetOf(manifest.files.web);
   return {
     channel: manifest.channel,
     version: manifest.version,
@@ -220,6 +230,6 @@ export function manifestFromAssetsVersion(manifest: AssetsVersion, source: Downl
     ...(manifest.commit === undefined ? {} : { commit: manifest.commit }),
     ...(manifest.notes === undefined ? {} : { notes: manifest.notes }),
     ...(Object.keys(assets).length === 0 ? {} : { assets }),
-    checksumsUrl: assetsFileUrl(source, manifest.channel, manifest.checksums),
+    checksumsUrl: fileUrl(manifest.checksums),
   };
 }

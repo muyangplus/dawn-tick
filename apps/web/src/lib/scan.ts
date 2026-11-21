@@ -1,8 +1,9 @@
 import { isAndroidApp } from './capabilities.ts';
 import { errorMessage } from './errors.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logInfo, logWarn } from '../log.ts';
 import { parsePairPayload, type PairPayload } from '../lan-pair-payload.ts';
 import type { BarcodeFormat, BarcodeScannerPlugin } from '@capacitor-mlkit/barcode-scanning';
+import { scanCopy } from '../copy/import-scan.ts';
 
 /**
  * 通用「扫一扫」：只负责拿到一条条码文本，以及把文本归一成可处理的载荷。
@@ -41,17 +42,17 @@ export function isScanAvailable(): boolean {
 export function describeScanError(message: string): string {
   const text = message.trim();
   const lower = text.toLowerCase();
-  if (lower.includes('cancel')) return '已取消扫码';
+  if (lower.includes('cancel')) return scanCopy.cancelled;
   if (lower.includes('permission') || lower.includes('denied') || text.includes('相机权限')) {
-    return '没有相机权限：请在系统设置 → 应用 → 权限里允许相机后重试';
+    return scanCopy.noPermission;
   }
   if (lower.includes('not available') || lower.includes('not implemented')) {
-    return '当前安装包没有扫码组件，请安装最新版本后重试';
+    return scanCopy.noComponent;
   }
   if (lower.includes('camera') && (lower.includes('in use') || lower.includes('busy'))) {
-    return '相机正被其它应用占用，请关闭后重试';
+    return scanCopy.cameraBusy;
   }
-  return text === '' ? '扫码失败，请重试' : text;
+  return text === '' ? scanCopy.failed : text;
 }
 
 interface LoadedScanner {
@@ -65,7 +66,7 @@ async function loadScanner(): Promise<LoadedScanner | null> {
     const module = await import('@capacitor-mlkit/barcode-scanning');
     return { scanner: module.BarcodeScanner, qrCode: module.BarcodeFormat.QrCode };
   } catch (cause: unknown) {
-    logWarn('scan', '加载扫码组件失败', { message: errorMessage(cause) });
+    logWarn('import', '扫码组件加载失败', { message: errorMessage(cause) });
     return null;
   }
 }
@@ -83,20 +84,20 @@ export async function scanCodeOnce(): Promise<string | null> {
     }
   }
   if (!isAndroidApp()) {
-    throw new Error('扫一扫只在安卓版可用；可以改用「粘贴配对信息」');
+    throw new Error(scanCopy.androidOnly);
   }
   const loaded = await loadScanner();
   if (loaded === null) {
-    throw new Error('当前安装包没有扫码组件，请安装最新版本后重试');
+    throw new Error(scanCopy.noComponent);
   }
   const { scanner, qrCode } = loaded;
   let supported = false;
   try {
     supported = (await scanner.isSupported()).supported === true;
   } catch (cause: unknown) {
-    logWarn('scan', '查询扫码支持失败', { message: errorMessage(cause) });
+    logWarn('import', '扫码支持查询失败', { message: errorMessage(cause) });
   }
-  if (!supported) throw new Error('当前设备不支持扫码；可以改用「粘贴配对信息」');
+  if (!supported) throw new Error(scanCopy.unsupportedDevice);
 
   return new Promise<string | null>((resolve, reject) => {
     let settled = false;
@@ -126,10 +127,10 @@ export async function scanCodeOnce(): Promise<string | null> {
       settled = true;
       void cleanup().then(() => {
         if (text === null) {
-          logInfo('scan', '扫码已取消');
+          logDebug('import', '扫码已取消');
           resolve(null);
         } else {
-          logInfo('scan', '扫码已读取', { length: text.length });
+          logInfo('import', '扫码已读取', { length: text.length });
           resolve(text);
         }
       });
@@ -145,7 +146,7 @@ export async function scanCodeOnce(): Promise<string | null> {
       try {
         const permission = await scanner.requestPermissions();
         if (permission.camera !== 'granted') {
-          fail('相机权限未授予');
+          fail(scanCopy.permissionDenied);
           return;
         }
         scannedHandle = await scanner.addListener('barcodesScanned', (event) => {
@@ -225,7 +226,7 @@ export function scannedScheme(text: string): string | null {
 export function parseScannedPayload(input: string): ScannedPayload {
   const text = typeof input === 'string' ? input.trim() : '';
   const scheme = scannedScheme(text);
-  if (text === '') return { kind: 'text', text, scheme: null, note: '扫码结果为空' };
+  if (text === '') return { kind: 'text', text, scheme: null, note: scanCopy.emptyResult };
 
   if (scheme === 'dawn-tick' || scheme === 'http' || scheme === 'https' || scheme === null) {
     const parsed = parsePairPayload(text);
@@ -235,7 +236,7 @@ export function parseScannedPayload(input: string): ScannedPayload {
         kind: 'text',
         text,
         scheme,
-        note: `这是晓刻链接，但不能作为配对信息：${parsed.error}`,
+        note: scanCopy.notPairLink(parsed.error),
       };
     }
   }
@@ -246,6 +247,6 @@ export function parseScannedPayload(input: string): ScannedPayload {
     kind: 'text',
     text,
     scheme,
-    note: `暂不支持 ${scheme}:// 链接；内容已保留，可以复制或后续扩展处理`,
+    note: scanCopy.unsupportedScheme(scheme),
   };
 }

@@ -1,5 +1,6 @@
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import type { ReactNode } from 'react';
+import { uiCopy } from '../../copy/ui.ts';
 
 /**
  * 「?」说明入口：用 Popover 而非 title，触摸端可点开且读屏可读。
@@ -12,7 +13,7 @@ export function HelpHint({ label, children }: { label: string; children: ReactNo
   return (
     <PopoverPrimitive.Root>
       <PopoverPrimitive.Trigger
-        aria-label={`说明：${label}`}
+        aria-label={uiCopy.helpHint.triggerAria(label)}
         data-role="help-hint"
         className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-line text-[11px] leading-none text-muted hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
       >

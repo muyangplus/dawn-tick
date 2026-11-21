@@ -3,6 +3,7 @@ import { CHANNEL } from '../../channel.ts';
 import { SwitchField } from '../../components/ui/controls.tsx';
 import { UpdateActions } from './update-actions.tsx';
 import type { UpdateCheckApi } from './use-update-check.ts';
+import { updateSettingsCopy } from '../../copy/update-settings.ts';
 
 export interface UpdateCardProps {
   storage: Storage;
@@ -24,14 +25,14 @@ export function UpdateCard({ storage, settings, onPatch, update }: UpdateCardPro
       <UpdateActions storage={storage} settings={settings} onPatch={onPatch} update={update} />
       {CHANNEL === 'dev' && (
         <SwitchField
-          label="开发者特性"
-          description="关闭后按正式版运行"
+          label={updateSettingsCopy.devFeaturesLabel}
+          description={updateSettingsCopy.devFeaturesDescription}
           checked={settings.devFeatures}
           onCheckedChange={(checked) => void onPatch({ devFeatures: checked })}
-          ariaLabel="开发者特性"
+          ariaLabel={updateSettingsCopy.devFeaturesLabel}
         />
       )}
-      <span className="text-xs text-muted">只在应用内检查版本</span>
+      <span className="text-xs text-muted">{updateSettingsCopy.inAppOnly}</span>
     </>
   );
 }

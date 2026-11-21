@@ -11,7 +11,7 @@ import { parsePairPayload } from '../src/lan-pair-payload.ts';
 
 test('Web / 桌面不可用，安卓桩可用', async () => {
   assert.equal(isScanAvailable(), false);
-  await assert.rejects(scanPairPayload(), /只在安卓版可用/);
+  await assert.rejects(scanPairPayload(), /仅限安卓版/);
   await stopScan();
 
   setPairScannerForTests({ scan: async () => null });
@@ -78,7 +78,7 @@ test('describeScanError：取消 / 权限 / 组件缺失 / 相机占用 / 原文
   assert.equal(describeScanError('scan canceled.'), '已取消扫码');
   assert.match(describeScanError('User denied access to camera.'), /没有相机权限/);
   assert.match(describeScanError('The Google Barcode Scanner Module is not available.'), /没有扫码组件/);
-  assert.equal(describeScanError('Camera is in use by another app'), '相机正被其它应用占用，请关闭后重试');
+  assert.equal(describeScanError('Camera is in use by another app'), '相机正被其他应用占用，请关闭后重试');
   assert.equal(describeScanError('未知错误'), '未知错误');
   assert.match(describeScanError(''), /扫码失败/);
 });

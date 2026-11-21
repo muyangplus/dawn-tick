@@ -1,4 +1,5 @@
 import { crc32 } from '@dawn-tick/core';
+import { appBackupCopy } from './copy/app-backup.ts';
 
 /** ZIP 读取：store 直接取，deflate 用 DecompressionStream 解压；ZIP64 不支持。 */
 
@@ -30,7 +31,7 @@ function findEndOfCentralDirectory(bytes: Uint8Array): number {
   for (let at = bytes.length - 22; at >= lowest; at -= 1) {
     if (u32(bytes, at) === EOCD_SIGNATURE) return at;
   }
-  throw new Error('不是 ZIP 文件（找不到结尾记录）');
+  throw new Error(appBackupCopy.zip.notZip);
 }
 
 function readCentralDirectory(bytes: Uint8Array): EntryMeta[] {
@@ -39,7 +40,7 @@ function readCentralDirectory(bytes: Uint8Array): EntryMeta[] {
   let at = u32(bytes, eocd + 16);
   const entries: EntryMeta[] = [];
   for (let index = 0; index < count; index += 1) {
-    if (u32(bytes, at) !== CENTRAL_SIGNATURE) throw new Error('ZIP 中央目录损坏');
+    if (u32(bytes, at) !== CENTRAL_SIGNATURE) throw new Error(appBackupCopy.zip.centralDirectoryCorrupt);
     const method = u16(bytes, at + 10);
     const crc = u32(bytes, at + 16);
     const compressedSize = u32(bytes, at + 20);
@@ -50,7 +51,7 @@ function readCentralDirectory(bytes: Uint8Array): EntryMeta[] {
     const localOffset = u32(bytes, at + 42);
     const name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLength));
     if (compressedSize === 0xffffffff || localOffset === 0xffffffff) {
-      throw new Error('暂不支持 ZIP64 格式');
+      throw new Error(appBackupCopy.zip.zip64Unsupported);
     }
     entries.push({ name, method, crc, compressedSize, uncompressedSize, localOffset });
     at += 46 + nameLength + extraLength + commentLength;
@@ -60,7 +61,7 @@ function readCentralDirectory(bytes: Uint8Array): EntryMeta[] {
 
 async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
   if (typeof DecompressionStream !== 'function') {
-    throw new Error('当前环境不支持解压 deflate 条目');
+    throw new Error(appBackupCopy.zip.deflateUnsupported);
   }
   const stream = new DecompressionStream('deflate-raw');
   const writer = stream.writable.getWriter();
@@ -71,7 +72,7 @@ async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
 }
 
 function readEntry(bytes: Uint8Array, entry: EntryMeta): Uint8Array {
-  if (u32(bytes, entry.localOffset) !== LOCAL_SIGNATURE) throw new Error(`条目 ${entry.name} 的本地头损坏`);
+  if (u32(bytes, entry.localOffset) !== LOCAL_SIGNATURE) throw new Error(appBackupCopy.zip.localHeaderCorrupt(entry.name));
   const nameLength = u16(bytes, entry.localOffset + 26);
   const extraLength = u16(bytes, entry.localOffset + 28);
   const start = entry.localOffset + 30 + nameLength + extraLength;
@@ -87,8 +88,8 @@ export async function readZipEntries(bytes: Uint8Array): Promise<Map<string, Uin
     let data: Uint8Array;
     if (entry.method === 0) data = raw;
     else if (entry.method === 8) data = await inflateRaw(raw);
-    else throw new Error(`条目 ${entry.name} 用了不支持的压缩方式（${entry.method}）`);
-    if (crc32(data) !== entry.crc) throw new Error(`条目 ${entry.name} 校验和不一致`);
+    else throw new Error(appBackupCopy.zip.methodUnsupported(entry.name, entry.method));
+    if (crc32(data) !== entry.crc) throw new Error(appBackupCopy.zip.crcMismatch(entry.name));
     out.set(entry.name, data);
   }
   return out;

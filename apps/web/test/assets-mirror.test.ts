@@ -29,12 +29,12 @@ function versionJson(overrides: Record<string, unknown> = {}): Record<string, un
       windowsSetup: { name: 'DawnTick-0.6.6-beta-windows-x64-setup.exe', size: 7_300_000, sha256: SHA },
       windowsPortable: { name: 'DawnTick-0.6.6-beta-windows-x64-portable.zip', size: 7_500_000, sha256: 'b'.repeat(64) },
       android: {
-        name: 'DawnTick-0.6.6-beta-android-arm64-v8a.apk',
+        name: 'DawnTick-0.6.6-beta-android-arm64.apk',
         size: 12_800_000,
         sha256: 'c'.repeat(64),
       },
       android32: {
-        name: 'DawnTick-0.6.6-beta-android-armeabi-v7a.apk',
+        name: 'DawnTick-0.6.6-beta-android-arm32.apk',
         size: 11_900_000,
         sha256: 'e'.repeat(64),
       },
@@ -149,7 +149,7 @@ test('manifestFromAssetsVersion：版本 / 渠道 / 说明来自清单，URL 指
   );
   assert.equal(
     manifest.assets?.android?.url,
-    'https://gitee.com/muyangplus/dawn-tick-assets/raw/beta/DawnTick-0.6.6-beta-android-arm64-v8a.apk',
+    'https://gitee.com/muyangplus/dawn-tick-assets/raw/beta/DawnTick-0.6.6-beta-android-arm64.apk',
     '默认（arm64）拿 android 键',
   );
   assert.equal(
@@ -165,12 +165,12 @@ test('manifestFromAssetsVersion：Android 按设备 ABI 选包，android32 不�
   try {
     setAndroidAbiForTests('arm64-v8a');
     const arm64 = manifestFromAssetsVersion(parseOk(versionJson()), 'github');
-    assert.match(String(arm64.assets?.android?.url), /-android-arm64-v8a\.apk$/);
+    assert.match(String(arm64.assets?.android?.url), /-android-arm64\.apk$/);
     assert.equal(arm64.assets?.android?.size, 12_800_000);
 
     setAndroidAbiForTests('armeabi-v7a');
     const v7 = manifestFromAssetsVersion(parseOk(versionJson()), 'github');
-    assert.match(String(v7.assets?.android?.url), /-android-armeabi-v7a\.apk$/);
+    assert.match(String(v7.assets?.android?.url), /-android-arm32\.apk$/);
     assert.equal(v7.assets?.android?.size, 11_900_000);
     assert.equal(
       Object.prototype.hasOwnProperty.call(v7.assets, 'android32'),
@@ -180,8 +180,8 @@ test('manifestFromAssetsVersion：Android 按设备 ABI 选包，android32 不�
     const plan = planUpdateDownload(v7, 'android');
     assert.equal(plan.kind, 'download');
     if (plan.kind === 'download') {
-      assert.equal(plan.target.assetName, 'DawnTick-0.6.6-beta-android-armeabi-v7a.apk');
-      assert.match(plan.target.url, /-android-armeabi-v7a\.apk$/);
+      assert.equal(plan.target.assetName, 'DawnTick-0.6.6-beta-android-arm32.apk');
+      assert.match(plan.target.url, /-android-arm32\.apk$/);
     }
   } finally {
     setAndroidAbiForTests(null);
@@ -195,7 +195,7 @@ test('manifestFromAssetsVersion：老清单只有 android 时 v7 设备也退回
   try {
     setAndroidAbiForTests('armeabi-v7a');
     const manifest = manifestFromAssetsVersion(parseOk(versionJson({ files: withoutAndroid32 })), 'github');
-    assert.match(String(manifest.assets?.android?.url), /-android-arm64-v8a\.apk$/);
+    assert.match(String(manifest.assets?.android?.url), /-android-arm64\.apk$/);
   } finally {
     setAndroidAbiForTests(null);
   }
@@ -233,6 +233,6 @@ test('便携版选择：installKind 决定下 zip 还是 exe，两者互不串�
   // Android 取 APK，Web 只提示刷新
   const android = planUpdateDownload(manifest, 'android');
   assert.equal(android.kind, 'download');
-  if (android.kind === 'download') assert.match(android.target.url, /-android-arm64-v8a\.apk$/);
+  if (android.kind === 'download') assert.match(android.target.url, /-android-arm64\.apk$/);
   assert.deepEqual(planUpdateDownload(manifest, 'web'), { kind: 'refresh' });
 });

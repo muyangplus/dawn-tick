@@ -1,4 +1,4 @@
-import { fail } from '../../copy/zh.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
   dismissUpdateTask,
@@ -17,24 +17,12 @@ import { toast } from '../ui/toaster.tsx';
 import { UpdateProgress } from './update-progress.tsx';
 
 /** 状态 → 一句说明；失败原因另行拼 `fail()`，不再堆条件。 */
-const TASK_LABEL: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = {
-  downloading: '正在后台下载',
-  verifying: '正在校验并写入安装包',
-  ready: '安装包已就绪',
-  failed: '后台下载失败',
-  cancelled: '已取消下载',
-};
+const TASK_LABEL: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = updateDialogCopy.taskStatus;
 
-const TASK_HINT: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = {
-  downloading: '下载会自动继续；完成后点「安装」或重新打开更新弹窗点「立即更新」',
-  verifying: '校验通过后才会给出「安装」',
-  ready: '点「安装」交给系统安装器；Web 渠道刷新页面即可',
-  failed: '点「继续下载」重试；反复失败请到发布页手动下载',
-  cancelled: '已下载的部分作废，继续会从头开始',
-};
+const TASK_HINT: Record<Exclude<UpdateTaskStatus, 'idle'>, string> = updateDialogCopy.taskHint;
 
 /** 便携版没有安装向导：按钮文案与提示都要说明「退出后替换」。 */
-const PORTABLE_HINT_READY = '点「更新并退出」后会先解压并准备替换脚本，应用退出时覆盖 exe 并自动重启';
+const PORTABLE_HINT_READY: string = updateDialogCopy.taskHintPortableReady;
 
 /** 状态提示：便携版就绪时换成「退出后替换」的说法。 */
 function taskHint(task: UpdateTask): string {
@@ -47,23 +35,20 @@ async function installTask(): Promise<void> {
   await installUpdateTask();
   const final = updateTaskSnapshot();
   if (final.installed) {
-    toast.success(final.message ?? '安装程序已启动，请按提示完成安装');
+    toast.success(final.message ?? updateDialogCopy.installerLaunched);
     if (final.target?.platform === 'web') globalThis.location?.reload();
     return;
   }
   if (final.status === 'failed') {
-    if (final.needsPermission) toast.info(final.error ?? '请允许安装未知应用后重试');
-    else
-      toast.error(
-        fail(final.target?.kind === 'portable' ? '准备便携版更新' : '启动安装程序', final.error, '请稍后重试'),
-      );
+    if (final.needsPermission) toast.info(final.error ?? updateDialogCopy.allowUnknownApps);
+    else toast.error(updateDialogCopy.taskInstallFailed(final.target?.kind === 'portable', final.error));
   }
 }
 
 /** ready 时主按钮的文案：与弹窗口径一致，明确装的是什么。 */
 function primaryLabel(task: UpdateTask): string {
-  if (task.target?.platform === 'web') return '刷新页面';
-  return task.target?.kind === 'portable' ? '更新并退出' : '安装';
+  if (task.target?.platform === 'web') return updateDialogCopy.taskPrimaryWeb;
+  return task.target?.kind === 'portable' ? updateDialogCopy.taskPrimaryPortable : updateDialogCopy.taskPrimaryInstall;
 }
 
 /**
@@ -81,20 +66,20 @@ export function UpdateTaskPanel() {
   const text =
     status === 'failed'
       ? task.needsPermission
-        ? (task.error ?? '请允许安装未知应用后重试')
-        : fail('下载更新', task.error, '请稍后重试')
+        ? (task.error ?? updateDialogCopy.allowUnknownApps)
+        : updateDialogCopy.downloadFailed(task.error)
       : (task.message ?? TASK_LABEL[status]);
   const showProgress = task.progress !== null;
   const canInstall = status === 'ready' && !task.installed;
   const canContinue = status === 'failed' || status === 'cancelled';
   return (
-    <Field label="后台下载" hint={taskHint(task)}>
+    <Field label={updateDialogCopy.taskLabel} hint={taskHint(task)}>
       <div className="flex flex-col gap-2" data-role="update-task">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-xs font-medium text-ink">版本 {task.version ?? '—'}</span>
+          <span className="text-xs font-medium text-ink">{updateDialogCopy.taskVersion(task.version)}</span>
           {task.source !== null && (
             <span className="text-xs text-muted" data-role="update-task-source">
-              来源 {DOWNLOAD_SOURCE_LABEL[task.source]}
+              {updateDialogCopy.taskSource(DOWNLOAD_SOURCE_LABEL[task.source])}
             </span>
           )}
           {task.target !== null && <span className="text-xs text-muted">{task.target.installerLabel}</span>}
@@ -114,12 +99,12 @@ export function UpdateTaskPanel() {
           )}
           {canContinue && (
             <Button size="sm" variant="primary" data-role="update-task-install" onClick={() => void retryUpdateTask()}>
-              继续下载
+              {updateDialogCopy.taskContinue}
             </Button>
           )}
           {!busy && (
             <Button size="sm" variant="ghost" data-role="update-task-dismiss" onClick={dismissUpdateTask}>
-              关闭
+              {updateDialogCopy.taskDismiss}
             </Button>
           )}
         </div>

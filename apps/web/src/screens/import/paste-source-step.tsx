@@ -9,6 +9,9 @@ import { ImportDiagnosticsPanel } from './import-diagnostics-panel.tsx';
 import { ManualMappingSheet } from './manual-mapping-sheet.tsx';
 import { FILE_ACCEPT, type PasteSource } from './import-flow-model.ts';
 import type { PasteSourceApi } from './use-paste-source.ts';
+import { importPasteCopy } from '../../copy/import-paste.ts';
+import { aiCopy } from '../../copy/settings-ai.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 export interface PasteSourceStepProps {
   paste: PasteSourceApi;
@@ -22,14 +25,14 @@ export function PasteSourceStep({ paste, source, onPickSource }: PasteSourceStep
     <ImportSurface data-role="paste-source">
       <div
         role="group"
-        aria-label="取材方式"
+        aria-label={importPasteCopy.tabsAria}
         data-role="paste-source-tabs"
         className="grid grid-cols-2 gap-1 rounded-full bg-surface-muted p-1"
       >
         {(
           [
-            { id: 'page', label: '粘贴网页课表' },
-            { id: 'file', label: '选择文件' },
+            { id: 'page', label: importPasteCopy.tabs.page },
+            { id: 'file', label: importPasteCopy.tabs.file },
           ] as const
         ).map((tab) => (
           <button
@@ -57,42 +60,39 @@ export function PasteSourceStep({ paste, source, onPickSource }: PasteSourceStep
 function PagePane({ paste }: { paste: PasteSourceApi }) {
   return (
     <div className="flex flex-col gap-3" data-role="paste-source-page">
-      <p className="text-xs text-muted">
-        自己登录教务系统后，把课表页内容原样粘贴进来；表格越完整，识别越准。
-      </p>
+      <HelpLink entryId="import-paste-page" />
 
       <details className="rounded-md border border-line bg-surface-muted p-3" data-role="bookmarklet">
         <summary className="flex min-h-tap cursor-pointer items-center text-sm text-ink">
-          1. 安装书签（可选）
+          {importPasteCopy.bookmarkStep}
         </summary>
         <div className="flex flex-col gap-2 pt-2">
-          <span className="text-xs text-muted">把下面的代码存为浏览器书签，在课表页点一下即可复制页面。</span>
           <textarea
             readOnly
             value={PAGE_BOOKMARKLET}
-            aria-label="书签小工具代码"
+            aria-label={importPasteCopy.bookmarkAria}
             className="h-20 w-full rounded-md border border-line bg-surface p-2 text-[11px] text-muted"
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => void paste.copyBookmarklet()}>
-              复制书签代码
+              {importPasteCopy.copyBookmark}
             </Button>
-            {paste.bookmarkCopied && <span className="text-xs text-muted">已复制</span>}
+            {paste.bookmarkCopied && <span className="text-xs text-muted">{importPasteCopy.copied}</span>}
           </div>
           {paste.clipboardFailure !== null && <InlineError>{paste.clipboardFailure.reason}</InlineError>}
         </div>
       </details>
 
       <ol className="flex flex-col gap-1 text-sm text-ink">
-        <li>2. 在课表页执行书签，页面内容进剪贴板</li>
-        <li>3. 回到这里粘贴，自动识别课表</li>
+        <li>{importPasteCopy.runBookmarkStep}</li>
+        <li>{importPasteCopy.pasteStep}</li>
       </ol>
 
       <textarea
         value={paste.text}
-        aria-label="粘贴课表页面内容"
+        aria-label={importPasteCopy.pasteAria}
         data-role="import-paste"
-        placeholder="将课表页面内容（或书签复制的内容）粘贴到这里"
+        placeholder={importPasteCopy.pastePlaceholder}
         onChange={(event) => paste.setText(event.target.value)}
         className="min-h-28 w-full resize-y rounded-md border border-line bg-surface p-2 text-xs text-ink tablet:min-h-32"
       />
@@ -105,16 +105,34 @@ function PagePane({ paste }: { paste: PasteSourceApi }) {
           disabled={paste.text.trim().length === 0}
           onClick={paste.runPage}
         >
-          识别并预览
+          {importPasteCopy.recognize}
         </Button>
         <Button
           variant="secondary"
           className="w-full tablet:w-auto"
           onClick={paste.openMapping}
         >
-          手动指定表格
+          {importPasteCopy.openMapping}
         </Button>
+        {paste.aiVisible && (
+          <Button
+            variant="secondary"
+            className="w-full tablet:w-auto"
+            data-role="import-ai"
+            loading={paste.busy}
+            disabled={paste.text.trim().length === 0}
+            onClick={() => void paste.runAi()}
+          >
+            {aiCopy.importButton}
+          </Button>
+        )}
       </div>
+
+      {paste.aiFailure !== null && (
+        <div role="alert" data-role="import-ai-error">
+          <InlineError>{fail(aiCopy.importWhat, paste.aiFailure.reason, aiCopy.importNext).text}</InlineError>
+        </div>
+      )}
 
       {paste.pageFailure?.source === 'page' && (
         <div
@@ -123,10 +141,10 @@ function PagePane({ paste }: { paste: PasteSourceApi }) {
           className="flex flex-col gap-2 rounded-md border border-danger/40 bg-danger/10 p-3"
         >
           <InlineError>
-            {fail('识别失败', paste.pageFailure.reason, '请换一种导入方式，或手动添加课程。').text}
+            {fail(importPasteCopy.recognizeFailWhat, paste.pageFailure.reason, importPasteCopy.pageFailNext).text}
           </InlineError>
           <Button size="sm" variant="secondary" className="w-full tablet:w-auto" onClick={paste.openMapping}>
-            改用手动指定表格
+            {importPasteCopy.useMapping}
           </Button>
         </div>
       )}
@@ -163,15 +181,13 @@ function PagePane({ paste }: { paste: PasteSourceApi }) {
 function FilePane({ paste }: { paste: PasteSourceApi }) {
   return (
     <div className="flex flex-col gap-3" data-role="paste-source-file">
-      <p className="text-xs text-muted">
-        选择课表文件：CSV / Excel 按二维矩阵解析，ICS 按日历事件解析，导入前都会先给预览。
-      </p>
+      <HelpLink entryId="import-file-formats" />
       <input
         ref={paste.fileInput}
         type="file"
         accept={FILE_ACCEPT}
         hidden
-        aria-label="选择课表文件"
+        aria-label={importPasteCopy.fileAria}
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file !== undefined) void paste.selectFile(file);
@@ -187,16 +203,16 @@ function FilePane({ paste }: { paste: PasteSourceApi }) {
           onClick={() => paste.fileInput.current?.click()}
         >
           <Upload className="size-4" aria-hidden />
-          选择文件
+          {importPasteCopy.pickFile}
         </Button>
         <span className="text-center text-[11px] text-muted tablet:text-left">
-          支持 .csv / .xlsx / .ics / .txt
+          {importPasteCopy.fileFormats}
         </span>
       </div>
       {paste.fileFailure?.source === 'file' && (
         <div role="alert" data-role="import-file-error">
           <InlineError>
-            {fail('识别失败', paste.fileFailure.reason, '请检查文件格式，或改用其他导入方式。').text}
+            {fail(importPasteCopy.recognizeFailWhat, paste.fileFailure.reason, importPasteCopy.fileFailNext).text}
           </InlineError>
         </div>
       )}

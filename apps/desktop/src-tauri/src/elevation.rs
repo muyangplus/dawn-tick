@@ -29,13 +29,13 @@ pub(crate) fn is_elevated() -> bool {
 #[cfg(windows)]
 pub(crate) fn request_elevation_restart() -> Result<(), String> {
     if is_elevated() {
-        return Err("已具备管理员权限，无需提权".to_string());
+        return Err(copy::elevation::ALREADY_ELEVATED.to_string());
     }
 
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
-    let exe = std::env::current_exe().map_err(|error| format!("取程序路径失败: {error}"))?;
+    let exe = std::env::current_exe().map_err(copy::common::program_path_failed)?;
     let mut params: Vec<String> = std::env::args().skip(1).filter(|arg| arg != ELEVATE_MARKER).collect();
     params.push(ELEVATE_MARKER.to_string());
     let wide = |text: &str| -> Vec<u16> { text.encode_utf16().chain(std::iter::once(0)).collect() };
@@ -53,9 +53,9 @@ pub(crate) fn request_elevation_restart() -> Result<(), String> {
         )
     };
     if (result as isize) <= 32 {
-        return Err(format!("申请管理员权限被取消或失败（代码 {}）", result as isize));
+        return Err(copy::elevation::request_failed(result as isize));
     }
-    append_log("用户请求提权，已启动管理员实例");
+    log_info("permission", "管理员实例已启动");
     Ok(())
 }
 
@@ -74,7 +74,7 @@ pub async fn relaunch_elevated() -> Result<(), String> {
     }
     #[cfg(not(windows))]
     {
-        Err("当前平台不支持".to_string())
+        Err(copy::common::UNSUPPORTED_PLATFORM.to_string())
     }
 }
 
@@ -128,7 +128,7 @@ pub(crate) static ACCESS_DENIED_SEEN: std::sync::atomic::AtomicBool = std::sync:
 pub(crate) fn note_access_denied(context: &str, detail: &str) {
     if looks_like_access_denied(detail) {
         ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
-        append_log(&format!("{context}: 拒绝访问（已记录，稍后按需提权）"));
+        log_warn("permission", format!("访问被拒绝，稍后按需提权 context={context}"));
     }
 }
 
@@ -137,16 +137,16 @@ pub(crate) fn note_access_denied(context: &str, detail: &str) {
 #[cfg(windows)]
 pub(crate) fn elevate_on_access_denied(reason: &str) -> bool {
     if is_elevated() {
-        append_log(&format!("{reason}：已具备管理员权限，仍被拒绝访问"));
+        log_error("permission", format!("已是管理员权限仍被拒绝访问 reason={reason}"));
         return false;
     }
     if std::env::args().any(|arg| arg == ELEVATE_MARKER) {
-        append_log(&format!("{reason}：提权后仍被拒绝访问，继续以普通权限运行"));
+        log_error("permission", format!("提权后仍被拒绝访问，继续运行 reason={reason}"));
         return false;
     }
     match request_elevation_restart() {
         Ok(()) => {
-            append_log(&format!("{reason}：已申请管理员权限，等待提权实例接管"));
+            log_info("permission", format!("已申请管理员权限，等待提权实例接管 reason={reason}"));
             std::thread::spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(800));
                 std::process::exit(0);
@@ -154,7 +154,7 @@ pub(crate) fn elevate_on_access_denied(reason: &str) -> bool {
             true
         }
         Err(error) => {
-            append_log(&format!("{reason}：申请管理员权限失败，继续以普通权限运行: {error}"));
+            log_warn("permission", format!("申请管理员权限失败，以普通权限继续运行 reason={reason} error={error}"));
             false
         }
     }

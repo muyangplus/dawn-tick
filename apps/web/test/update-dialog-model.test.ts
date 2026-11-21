@@ -46,7 +46,7 @@ test('空闲 + 可下载：主操作固定「立即更新」，下载后会自�
 test('便携版空闲：仍是一个「立即更新」，但说明会退出替换', () => {
   const view = describeUpdateDialog({ plan: PORTABLE_PLAN, task: null });
   assert.equal(view.primaryLabel, '立即更新');
-  assert.match(view.statusText, /退出应用完成替换/);
+  assert.match(view.statusText, /自动退出、替换并重启/);
 });
 
 test('下载中：不显示主按钮，只留小的取消与更多菜单', () => {

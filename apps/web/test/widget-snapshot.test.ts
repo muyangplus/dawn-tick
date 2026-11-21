@@ -100,6 +100,49 @@ test('考试写入快照', () => {
   assert.equal(snapshot.exams.length, 1);
   assert.equal(snapshot.exams[0]?.title, '高等数学期末');
   assert.equal(snapshot.exams[0]?.date, '2027-01-05');
+  assert.deepEqual(Object.keys(snapshot.exams[0] ?? {}).sort(), ['date', 'hideAt', 'startAt', 'title']);
+  // 无结束时间：开考即消失
+  assert.equal(snapshot.exams[0]?.hideAt, 1790000000000);
+});
+
+test('考试快照 hideAt：有结束时间按结束时间', () => {
+  const data = appData({
+    exams: [eventRowOf({ id: 'e-1', type: 'exam', title: '期末', on_date: '2027-01-05', start_at: 1790000000000, end_at: 1790007200000 })],
+  });
+  assert.equal(buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1).exams[0]?.hideAt, 1790007200000);
+});
+
+test('考试快照 hideAt：只有日期的按快照时区过完当天', () => {
+  const data = appData({
+    exams: [eventRowOf({ id: 'e-1', type: 'exam', title: '期末', on_date: '2027-01-05' })],
+  });
+  const exam = buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1).exams[0];
+  assert.equal(exam?.startAt, 0);
+  assert.equal(exam?.hideAt, Date.parse('2027-01-06T00:00:00+08:00'));
+});
+
+test('考试快照 hideAt：勾选完成取完成次日与结束时刻中较早者', () => {
+  const data = appData({
+    exams: [
+      eventRowOf({
+        id: 'e-1',
+        type: 'exam',
+        title: '期末',
+        on_date: '2027-01-05',
+        start_at: Date.parse('2027-01-05T09:00:00+08:00'),
+        done: 1,
+        updated_at: Date.parse('2026-12-20T15:00:00+08:00'),
+      }),
+    ],
+  });
+  assert.equal(buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1).exams[0]?.hideAt, Date.parse('2026-12-21T00:00:00+08:00'));
+});
+
+test('考试快照 hideAt：没有任何时间且未完成时为 0（一直显示）', () => {
+  const data = appData({
+    exams: [eventRowOf({ id: 'e-1', type: 'exam', title: '待定' })],
+  });
+  assert.equal(buildWidgetSnapshot(data, DEFAULT_SETTINGS, 1).exams[0]?.hideAt, 0);
 });
 
 test('快照可被 JSON 序列化并原样还原', () => {

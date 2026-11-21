@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { GroupVisibleContext } from '../components/grouped-settings.tsx';
 import { BookOpen, Copy, Pencil, Trash2 } from 'lucide-react';
 import {
   createCourse,
@@ -15,15 +16,16 @@ import { Button } from '../components/ui/button.tsx';
 import { SectionCard } from '../components/ui/collapsible-card.tsx';
 import { DangerDialog, Dialog, DialogContent, DialogFooter } from '../components/ui/dialog.tsx';
 import { EmptyState } from '../components/ui/empty-state.tsx';
-import { COUNT, DELETE } from '../copy/zh.ts';
+import { COUNT, DELETE } from '../copy/common.ts';
 import { countForCourse, type CourseCounts } from '../delete-counts.ts';
 import { useAction } from '../lib/action.ts';
 import { CourseForm } from './course-form.tsx';
 import { ImportFlow } from './import-flow.tsx';
 import { logInfo } from '../log.ts';
+import { courseManagerCopy } from '../copy/timetable-course-manager.ts';
 
 export function weeksLabel(weeks: readonly number[]): string {
-  if (weeks.length === 0) return '未标注周次';
+  if (weeks.length === 0) return courseManagerCopy.weeksUnmarked;
   const sorted = [...weeks].sort((left, right) => left - right);
   const ranges: string[] = [];
   let start = sorted[0] ?? 1;
@@ -38,11 +40,11 @@ export function weeksLabel(weeks: readonly number[]): string {
     previous = week;
   }
   ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
-  return `${ranges.join(',')}周`;
+  return courseManagerCopy.weeks(ranges.join(','));
 }
 
 function summarize(course: ManagedCourse): string {
-  if (course.schedules.length === 0) return '未排课';
+  if (course.schedules.length === 0) return courseManagerCopy.unscheduled;
   return course.schedules
     .slice(0, 3)
     .map((schedule) => {
@@ -51,9 +53,9 @@ function summarize(course: ManagedCourse): string {
           ? `${schedule.periodStart}`
           : `${schedule.periodStart}-${schedule.periodEnd}`;
       const room = schedule.room === null ? '' : ` ${schedule.room}`;
-      return `${WEEKDAY_LABELS[schedule.dayOfWeek - 1] ?? ''} ${periods}节${room} ${weeksLabel(schedule.weeks)}`;
+      return courseManagerCopy.scheduleSummary(WEEKDAY_LABELS[schedule.dayOfWeek - 1] ?? '', periods, room, weeksLabel(schedule.weeks));
     })
-    .join(' ｜ ');
+    .join(courseManagerCopy.summarySeparator);
 }
 
 export interface CourseManagerProps {
@@ -87,6 +89,8 @@ export function CourseManager({
   const [creating, setCreating] = useState(false);
   /** 导入课表折叠区：「完成」要把它收起 */
   const importRef = useRef<HTMLDetailsElement>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const groupVisible = useContext(GroupVisibleContext);
 
   const reload = useCallback(async () => {
     setCourses(await listManagedCourses(storage, semesterId));
@@ -107,16 +111,16 @@ export function CourseManager({
     if (copying === null) return;
     const source = copying;
     await run({
-      scope: 'course',
-      label: '正在复制课程…',
+      scope: 'timetable',
+      label: courseManagerCopy.copying,
       ok: withSchedules
-        ? `已复制「${source.name}」及 ${source.schedules.length} 段排课`
-        : `已复制「${source.name}」`,
-      fail: { what: '复制课程失败', next: '请重试；仍失败请重新打开课程管理。' },
+        ? courseManagerCopy.copiedWithSchedules(source.name, source.schedules.length)
+        : courseManagerCopy.copied(source.name),
+      fail: courseManagerCopy.copyFail,
       task: async () => {
         const created = await createCourse(storage, {
           semesterId,
-          name: `${source.name} 副本`,
+          name: courseManagerCopy.copyName(source.name),
           shortName: source.shortName,
           teacher: source.teacher,
           location: source.location,
@@ -138,7 +142,7 @@ export function CourseManager({
             });
           }
         }
-        logInfo('course', '复制课程', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
+        logInfo('timetable', '课程已复制', { id: source.id, schedules: withSchedules ? source.schedules.length : 0 });
         setCopying(null);
         await reload();
         onChanged();
@@ -150,13 +154,13 @@ export function CourseManager({
     if (removing === null) return;
     const target = removing;
     await run({
-      scope: 'course',
-      label: '正在删除课程…',
-      ok: `已删除课程「${target.name}」`,
-      fail: { what: '删除课程失败', next: '请重试；仍失败请重开应用后再删。' },
+      scope: 'timetable',
+      label: courseManagerCopy.removing,
+      ok: courseManagerCopy.removed(target.name),
+      fail: courseManagerCopy.removeFail,
       task: async () => {
         await deleteCourse(storage, target.id);
-        logInfo('course', '删除课程', { id: target.id, schedules: target.schedules.length });
+        logInfo('timetable', '课程已删除', { id: target.id, schedules: target.schedules.length });
         setRemoving(null);
         await reload();
         onChanged();
@@ -165,9 +169,9 @@ export function CourseManager({
   }
 
   return (
-    <SectionCard title="课程管理" icon={BookOpen} badge={`${courses.length} 门`}>
+    <SectionCard title={courseManagerCopy.title} icon={BookOpen} badge={courseManagerCopy.badge(courses.length)}>
       {courses.length === 0 ? (
-        <EmptyState size="sm" tone="muted" title="当前学期没有课程，可在下方导入课表" />
+        <EmptyState size="sm" tone="muted" title={courseManagerCopy.empty} />
       ) : (
         <ul className="flex flex-col gap-2">
           {courses.map((course) => (
@@ -183,14 +187,14 @@ export function CourseManager({
                   {course.shortName !== null && <span className="ml-1 text-xs text-muted">{course.shortName}</span>}
                 </span>
                 <span className="truncate text-xs text-muted">
-                  {[course.teacher, course.location].filter((item) => item !== null).join(' · ') || '未填写教师与地点'}
+                  {[course.teacher, course.location].filter((item) => item !== null).join(' · ') || courseManagerCopy.noTeacherOrLocation}
                 </span>
                 <span className="truncate text-xs text-muted">{summarize(course)}</span>
               </span>
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={`复制课程 ${course.name}`}
+                aria-label={courseManagerCopy.copyAria(course.name)}
                 disabled={busy}
                 onClick={() => setCopying(course)}
               >
@@ -199,7 +203,7 @@ export function CourseManager({
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={`编辑课程 ${course.name}`}
+                aria-label={courseManagerCopy.editAria(course.name)}
                 disabled={busy}
                 onClick={() => setEditing(course)}
               >
@@ -208,7 +212,7 @@ export function CourseManager({
               <Button
                 size="icon"
                 variant="ghost"
-                aria-label={`删除课程 ${course.name}`}
+                aria-label={courseManagerCopy.removeAria(course.name)}
                 disabled={busy}
                 onClick={() => void requestRemove(course)}
               >
@@ -220,15 +224,21 @@ export function CourseManager({
       )}
 
       {/* 导入课表是课程管理的子项：展开后走同一套导入流程 */}
-      <details ref={importRef} className="rounded-md border border-line bg-surface p-2" data-role="course-import">
-        <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm font-medium text-ink" aria-label="导入课表">
-          导入课表
-          <span className="text-xs text-muted">网页课表 / 教务窗口 / ICS / CSV / Excel</span>
+      <details
+        ref={importRef}
+        className="rounded-md border border-line bg-surface p-2"
+        data-role="course-import"
+        onToggle={(event) => setImportOpen(event.currentTarget.open)}
+      >
+        <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm font-medium text-ink" aria-label={courseManagerCopy.importTitle}>
+          {courseManagerCopy.importTitle}
+          <span className="text-xs text-muted">{courseManagerCopy.importFormats}</span>
         </summary>
         <div className="pt-3">
           <ImportFlow
             storage={storage}
             semesterId={semesterId}
+            visible={importOpen && groupVisible}
             onManual={() => setCreating(true)}
             onDone={() => {
               void (async () => {
@@ -278,24 +288,24 @@ export function CourseManager({
         }}
       >
         <DialogContent
-          title="复制课程"
+          title={courseManagerCopy.copyTitle}
           description={
             copying === null
               ? ''
-              : `「${copying.name}」有 ${copying.schedules.length} 段排课，选择复制范围`
+              : courseManagerCopy.copyDescription(copying.name, copying.schedules.length)
           }
         >
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" loading={busy} onClick={() => void confirmCopy(false)}>
-              只复制课程信息
+              {courseManagerCopy.copyInfoOnly}
             </Button>
             <Button variant="primary" loading={busy} onClick={() => void confirmCopy(true)}>
-              连排课一起复制
+              {courseManagerCopy.copyWithSchedules}
             </Button>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCopying(null)}>
-              取消
+              {courseManagerCopy.cancel}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -306,13 +316,13 @@ export function CourseManager({
         onOpenChange={(open) => {
           if (!open) setRemoving(null);
         }}
-        title="删除课程"
+        title={courseManagerCopy.removeTitle}
         description={
           removing === null
             ? ''
             : DELETE(removing.name, [
-                `排课 ${COUNT('schedule', removeCounts?.schedules ?? removing.schedules.length)}`,
-                `提醒 ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
+                `${courseManagerCopy.schedulesPart} ${COUNT('schedule', removeCounts?.schedules ?? removing.schedules.length)}`,
+                `${courseManagerCopy.remindersPart} ${COUNT('reminder', removeCounts?.reminders ?? 0)}`,
               ])
         }
         submitting={busy}

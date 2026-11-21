@@ -2,6 +2,7 @@ import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { SchoolPicker } from './school-picker.tsx';
 import type { PresetContext, School } from '../screens/school-picker-model.ts';
+import { schoolCopy } from '../copy/timetable-school.ts';
 
 export interface SchoolPickerDialogProps {
   open: boolean;
@@ -24,7 +25,7 @@ export function SchoolPickerDialog({
 }: SchoolPickerDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="选择学校" description="选中一所学校：创建学期时按该校作息排好节次">
+      <DialogContent title={schoolCopy.dialogTitle} description={schoolCopy.dialogDescription}>
         <SchoolPicker
           context={context}
           selectedId={selectedId}
@@ -36,8 +37,8 @@ export function SchoolPickerDialog({
           listClassName="max-h-[50vh]"
         />
         <DialogFooter>
-          <Button variant="ghost" aria-label="关闭选校" onClick={() => onOpenChange(false)}>
-            取消
+          <Button variant="ghost" aria-label={schoolCopy.closeAria} onClick={() => onOpenChange(false)}>
+            {schoolCopy.cancel}
           </Button>
         </DialogFooter>
       </DialogContent>

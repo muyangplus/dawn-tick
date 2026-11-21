@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { updateTaskCopy } from '../src/copy/update-task.ts';
 import { createHash } from 'node:crypto';
 import type { UpdateManifest } from '../src/update.ts';
 import type { UpdateDownloadHost } from '../src/lib/update-download.ts';
@@ -135,7 +136,7 @@ test('后台任务：下载 → 校验 → ready，安装留给用户点击', as
     assert.equal(final.target?.fileName, 'DawnTick-update.exe');
     assert.equal(final.target?.path, 'C:\\data\\DawnTick-update.exe');
     assert.equal(final.target?.installerLabel, 'Windows 安装程序');
-    assert.equal(final.message, '安装包已下载并通过校验，可以安装了');
+    assert.equal(final.message, updateTaskCopy.installerReady);
     assert.deepEqual(calls.writes, ['DawnTick-update.exe']);
     assert.deepEqual(calls.installs, [], 'ready 阶段不自动安装');
     assert.ok(statuses.includes('downloading'));
@@ -154,7 +155,7 @@ test('ready 后安装：交给平台安装器，重复点击不再触发', async
   assert.deepEqual(calls.installs, ['C:\\data\\DawnTick-update.exe']);
   assert.equal(updateTaskSnapshot().installed, true);
   assert.equal(updateTaskSnapshot().status, 'ready');
-  assert.equal(updateTaskSnapshot().message, '安装程序已启动，请按提示完成安装');
+  assert.equal(updateTaskSnapshot().message, updateTaskCopy.installerLaunched);
   await installUpdateTask();
   assert.equal(calls.installs.length, 1, '已安装过就不再重复启动安装器');
 });
@@ -169,7 +170,7 @@ test('便携版后台任务：下 zip，目标与文案标出「退出后替换�
   assert.equal(final.target?.fileName, 'DawnTick-update.zip');
   assert.equal(final.target?.path, 'C:\\data\\DawnTick-update.zip');
   assert.equal(final.target?.installerLabel, 'Windows 便携包（退出后替换）');
-  assert.equal(final.message, '便携包已下载并通过校验，可以更新了');
+  assert.equal(final.message, updateTaskCopy.portableReady);
   assert.deepEqual(calls.writes, ['DawnTick-update.zip']);
   assert.deepEqual(calls.installs, [], '便携版下载完不交给系统安装器');
 });
@@ -184,7 +185,7 @@ test('便携版 ready 后安装：准备替换脚本并退出应用', async () =
   assert.equal(calls.installs.length, 0, '不启动系统安装器');
   assert.equal(updateTaskSnapshot().installed, true);
   assert.equal(updateTaskSnapshot().status, 'ready');
-  assert.equal(updateTaskSnapshot().message, '更新已准备，应用将退出并自动替换，随后重新启动');
+  assert.equal(updateTaskSnapshot().message, updateTaskCopy.portableApplying);
   await installUpdateTask();
   assert.equal(calls.exits, 1, '已准备过就不再重复退出');
 });

@@ -12,9 +12,9 @@ import {
 const SETTINGS_GROUPS = new Set(['semesters', 'reminders', 'appearance', 'timetable', 'slots', 'widget', 'time']);
 const DEVICES_GROUPS = new Set(['storage', 'backup', 'update', 'webdav', 'lan', 'maintenance', 'about']);
 
-test('帮助分类覆盖八类常见问题，分类与条目 id 都唯一', () => {
-  assert.equal(HELP_CATEGORIES.length, 8);
-  assert.equal(new Set(HELP_CATEGORIES.map((category) => category.id)).size, 8);
+test('帮助分类覆盖九类常见问题，分类与条目 id 都唯一', () => {
+  assert.equal(HELP_CATEGORIES.length, 9);
+  assert.equal(new Set(HELP_CATEGORIES.map((category) => category.id)).size, 9);
   const entryIds = HELP_CATEGORIES.flatMap((category) => category.entries.map((entry) => entry.id));
   assert.equal(new Set(entryIds).size, entryIds.length);
   assert.equal(HELP_ENTRY_COUNT, entryIds.length);

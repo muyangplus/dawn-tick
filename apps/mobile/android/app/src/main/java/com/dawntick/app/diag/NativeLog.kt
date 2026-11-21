@@ -16,7 +16,8 @@ import java.util.Locale
  * 用途：安卓真机上的插件调用失败（教务窗口、外部链接、小组件读不到快照）没有 logcat 时，
  * 用户可以在应用里导出这段文本定位问题。写入永远不抛异常：失败只降级到 logcat。
  *
- * 格式：`2026-11-07 14:20:10.123 I [WidgetStore] 消息`；消息里的换行折成空格，一条事件一行。
+ * 格式：`2026-11-07 14:20:10.123 [info] widget: 消息`，与 Web、桌面同一口径；消息里的换行折成空格，一条事件一行。
+ * 范围只用 [SCOPES] 里登记的值（三端同一份清单），级别门槛由 Web 设置经 [setLevel] 同步并持久化。
  * 线程安全：所有文件读写都在同一把锁里；[read] 返回最近 [MAX_LINES] 行。
  */
 object NativeLog {
@@ -34,6 +35,23 @@ object NativeLog {
     private const val FILE_NAME = "native.log"
     private const val LOGCAT_TAG = "DawnTickNativeLog"
 
+    private const val PREFS = "dawn_tick_diag"
+    private const val PREF_LEVEL = "log_level"
+
+    /** 三端共用的日志范围；与 `apps/web/src/lib/log-scopes.ts`、桌面 `LOG_SCOPES` 保持一致。 */
+    @JvmField
+    val SCOPES: Set<String> = setOf(
+        "app", "storage", "backup", "sync", "reminder", "permission", "widget", "update", "preset", "import",
+        "timetable", "todo", "settings", "credentials", "link", "log",
+    )
+
+    /** 级别从严到详：error < warn < info < debug < trace。 */
+    private val LEVELS = listOf("error", "warn", "info", "debug", "trace")
+
+    /** 当前门槛；首次读取前按持久化值初始化，未设置过时为 info。 */
+    @Volatile
+    private var threshold: Int = -1
+
     private val lock = Any()
     private val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
 
@@ -41,18 +59,48 @@ object NativeLog {
     @JvmStatic
     fun logFile(context: Context): File = File(File(context.filesDir, DIR_NAME), FILE_NAME)
 
+    /** 设置级别门槛（Web 端「应用诊断日志」的级别），持久化后后台任务也按它过滤。 */
     @JvmStatic
-    fun info(context: Context, tag: String, message: String) = append(context, "I", tag, message)
+    fun setLevel(context: Context, level: String) {
+        val rank = LEVELS.indexOf(level)
+        if (rank < 0) return
+        threshold = rank
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(PREF_LEVEL, level).apply()
+    }
 
-    @JvmStatic
-    fun warn(context: Context, tag: String, message: String) = append(context, "W", tag, message)
+    private fun enabled(context: Context, level: String): Boolean {
+        if (threshold < 0) {
+            val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(PREF_LEVEL, "info")
+            threshold = LEVELS.indexOf(saved).takeIf { it >= 0 } ?: LEVELS.indexOf("info")
+        }
+        return LEVELS.indexOf(level) <= threshold
+    }
 
     /** 记录错误；[cause] 不为空时把 `类名: message` 附在消息后面。 */
     @JvmStatic
     @JvmOverloads
-    fun error(context: Context, tag: String, message: String, cause: Throwable? = null) {
-        append(context, "E", tag, if (cause == null) message else "$message (${describe(cause)})")
+    fun error(context: Context, scope: String, message: String, cause: Throwable? = null) {
+        append(context, "error", scope, withCause(message, cause))
     }
+
+    /** 已降级或自动恢复的异常。 */
+    @JvmStatic
+    @JvmOverloads
+    fun warn(context: Context, scope: String, message: String, cause: Throwable? = null) {
+        append(context, "warn", scope, withCause(message, cause))
+    }
+
+    @JvmStatic
+    fun info(context: Context, scope: String, message: String) = append(context, "info", scope, message)
+
+    @JvmStatic
+    fun debug(context: Context, scope: String, message: String) = append(context, "debug", scope, message)
+
+    @JvmStatic
+    fun trace(context: Context, scope: String, message: String) = append(context, "trace", scope, message)
+
+    private fun withCause(message: String, cause: Throwable?): String =
+        if (cause == null) message else "$message (${describe(cause)})"
 
     /** 异常转一行：`类名: message`；message 为空时只有类名。外部链接失败提示直接用这段文本。 */
     @JvmStatic
@@ -120,17 +168,19 @@ object NativeLog {
         }
     }
 
-    private fun append(context: Context, level: String, tag: String, message: String) {
+    private fun append(context: Context, level: String, scope: String, message: String) {
+        if (!SCOPES.contains(scope)) Log.w(LOGCAT_TAG, "未登记的日志范围：$scope")
+        if (!enabled(context, level)) return
         synchronized(lock) {
             try {
                 val file = logFile(context)
                 file.parentFile?.mkdirs()
                 if (file.length() > MAX_BYTES) rotate(file)
-                val text = "${timeFormat.format(Date())} $level [$tag] ${oneLine(message)}\n"
+                val text = "${timeFormat.format(Date())} [$level] $scope: ${oneLine(message)}\n"
                 FileOutputStream(file, true).use { output -> output.write(text.toByteArray(Charsets.UTF_8)) }
             } catch (error: Exception) {
                 // 诊断日志本身不能再抛错：只降级到 logcat
-                Log.w(LOGCAT_TAG, "写诊断日志失败 tag=$tag", error)
+                Log.w(LOGCAT_TAG, "写诊断日志失败 scope=$scope", error)
             }
         }
     }

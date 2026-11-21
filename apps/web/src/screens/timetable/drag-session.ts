@@ -1,6 +1,7 @@
 import { rangesOverlap } from '@dawn-tick/core';
 import type { AppData, LessonCell } from '../../data.ts';
 import { formatPeriodRange } from '../../lib/format.ts';
+import { weekCopy } from '../../copy/timetable-week.ts';
 
 /** 长按多久才进入拖动（毫秒），未达时长按单击处理。 */
 export const LONG_PRESS_MS = 350;
@@ -136,11 +137,15 @@ export function lessonDraggable(
 }
 
 /**
- * 卡片占用的触摸手势：只有可拖动的卡片才独占手势（none），
- * 停课/已调课/非本周等不参与拖动的卡片一律留纵向滚动（pan-y），页面照常滚。
+ * 卡片的触摸手势：一律留纵向滚动（pan-y），手指按在课程上也能滚页面；
+ * 长按进入拖动后改由 `lessonBlocksScroll` 拦下 touchmove，不再滚动。
+ * 手势中途改 touch-action 不生效，所以不能按「可拖」把卡片设成 none。
  */
-export function lessonTouchAction(lesson: Parameters<typeof lessonDraggable>[0]): 'none' | 'pan-y' {
-  return lessonDraggable(lesson) ? 'none' : 'pan-y';
+export const LESSON_TOUCH_ACTION = 'pan-y';
+
+/** 这次按压是否要拦下页面滚动：只有长按生效、真正拖起来之后才拦。 */
+export function lessonBlocksScroll(press: Pick<LessonPress, 'active'> | null): boolean {
+  return press?.active === true;
 }
 
 /**
@@ -233,5 +238,5 @@ export function firstClash(data: AppData, date: string, start: number, end: numb
 
 /** 重叠提示：与「高等数学」第 1–2 节重叠。 */
 export function clashLabel(clash: Clash): string {
-  return `与「${clash.name}」${formatPeriodRange(clash.start, clash.end)}重叠`;
+  return weekCopy.clash(clash.name, formatPeriodRange(clash.start, clash.end));
 }

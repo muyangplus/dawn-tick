@@ -16,10 +16,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import com.dawntick.app.R
 import com.dawntick.app.diag.NativeLog
-
-/** 诊断日志标签：原生侧按标签区分教务窗口事件。 */
-private const val LOG_TAG = "SchoolWeb"
+import org.json.JSONObject
 
 /** 应用内教务窗口：用户自行登录并打开课表页，页面右下角的「导入到晓刻」把内容交回 Web 层。 */
 class SchoolWebActivity : AppCompatActivity() {
@@ -32,11 +31,15 @@ class SchoolWebActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        title = "登录教务并打开课表页"
+        title = getString(R.string.school_window_title)
         val url = intent.getStringExtra("url").orEmpty()
-        NativeLog.info(this, LOG_TAG, "onCreate url=${NativeLog.redactUrl(url)} length=${url.length}")
+        NativeLog.debug(
+            this,
+            "import",
+            "SchoolWebActivity.onCreate 创建教务窗口 url=${NativeLog.redactUrl(url)} length=${url.length}",
+        )
         if (url.isEmpty()) {
-            NativeLog.warn(this, LOG_TAG, "onCreate 缺少 url，直接关闭窗口")
+            NativeLog.error(this, "import", "SchoolWebActivity.onCreate 缺少 url，窗口已关闭")
             finish()
             return
         }
@@ -63,8 +66,9 @@ class SchoolWebActivity : AppCompatActivity() {
                 if (scheme != "http" && scheme != "https") {
                     NativeLog.warn(
                         this@SchoolWebActivity,
-                        LOG_TAG,
-                        "拦截非 http(s) 跳转 scheme=${scheme ?: "(无)"} url=${NativeLog.redactUrl(target.toString())}",
+                        "import",
+                        "SchoolWebActivity 已拦截非 http(s) 跳转 scheme=${scheme ?: "(无)"} " +
+                            "url=${NativeLog.redactUrl(target.toString())}",
                     )
                     return true
                 }
@@ -72,32 +76,45 @@ class SchoolWebActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                NativeLog.info(this@SchoolWebActivity, LOG_TAG, "onPageStarted url=${NativeLog.redactUrl(url)}")
+                NativeLog.debug(
+                    this@SchoolWebActivity,
+                    "import",
+                    "SchoolWebActivity.onPageStarted 开始加载 url=${NativeLog.redactUrl(url)}",
+                )
             }
 
             override fun onPageFinished(view: WebView, loadedUrl: String?) {
-                NativeLog.info(this@SchoolWebActivity, LOG_TAG, "onPageFinished url=${NativeLog.redactUrl(loadedUrl)}")
+                NativeLog.debug(
+                    this@SchoolWebActivity,
+                    "import",
+                    "SchoolWebActivity.onPageFinished 加载完成 url=${NativeLog.redactUrl(loadedUrl)}",
+                )
                 // 注入脚本自带 window.__dtImportReady 守卫，重复注入不会叠加按钮。
-                view.evaluateJavascript(INJECTION, null)
+                view.evaluateJavascript(injection(), null)
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                NativeLog.error(
-                    this@SchoolWebActivity,
-                    LOG_TAG,
-                    "onReceivedError code=${error.errorCode} desc=${error.description} " +
-                        "mainFrame=${request.isForMainFrame} url=${NativeLog.redactUrl(request.url?.toString())}",
-                )
+                // 主框架加载失败用户看到的是错误页；子资源失败多半不影响课表页，只记 warn
+                val message = "SchoolWebActivity.onReceivedError 加载失败 code=${error.errorCode} " +
+                    "desc=${error.description} mainFrame=${request.isForMainFrame} " +
+                    "url=${NativeLog.redactUrl(request.url?.toString())}"
+                if (request.isForMainFrame) {
+                    NativeLog.error(this@SchoolWebActivity, "import", message)
+                } else {
+                    NativeLog.warn(this@SchoolWebActivity, "import", message)
+                }
             }
         }
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                // 页面脚本报错是「按钮没反应」的常见原因；只记 ERROR，避免日志被埋点刷满
+                // 页面脚本报错是「按钮没反应」的常见原因；只记 ERROR，避免日志被埋点刷满。
+                // 教务页自己的脚本错误不等于晓刻失败，记 warn。
                 if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                    NativeLog.error(
+                    NativeLog.warn(
                         this@SchoolWebActivity,
-                        LOG_TAG,
-                        "控制台错误 ${message.message()} (${message.sourceId()}:${message.lineNumber()})",
+                        "import",
+                        "SchoolWebActivity 教务页控制台报错 message=${message.message()} " +
+                            "source=${NativeLog.redactUrl(message.sourceId())} line=${message.lineNumber()}",
                     )
                 }
                 return false
@@ -113,12 +130,20 @@ class SchoolWebActivity : AppCompatActivity() {
                 // 改为在当前 WebView 内跳转，登录会话与「导入到晓刻」按钮都保留。
                 val transport = resultMsg.obj as? WebView.WebViewTransport
                 if (transport == null) {
-                    NativeLog.warn(this@SchoolWebActivity, LOG_TAG, "onCreateWindow 没有拿到 WebViewTransport")
+                    NativeLog.warn(
+                        this@SchoolWebActivity,
+                        "import",
+                        "SchoolWebActivity.onCreateWindow 缺少 WebViewTransport，新窗口已忽略",
+                    )
                     return false
                 }
                 val child = transport.webView
                 if (child == null) {
-                    NativeLog.warn(this@SchoolWebActivity, LOG_TAG, "onCreateWindow 没有拿到子 WebView")
+                    NativeLog.warn(
+                        this@SchoolWebActivity,
+                        "import",
+                        "SchoolWebActivity.onCreateWindow 缺少子 WebView，新窗口已忽略",
+                    )
                     return false
                 }
                 child.webViewClient = object : WebViewClient() {
@@ -130,8 +155,9 @@ class SchoolWebActivity : AppCompatActivity() {
                         if (scheme != "http" && scheme != "https") {
                             NativeLog.warn(
                                 this@SchoolWebActivity,
-                                LOG_TAG,
-                                "拦截新窗口非 http(s) 跳转 url=${NativeLog.redactUrl(request.url.toString())}",
+                                "import",
+                                "SchoolWebActivity 已拦截新窗口非 http(s) 跳转 " +
+                                    "url=${NativeLog.redactUrl(request.url.toString())}",
                             )
                             return true
                         }
@@ -174,6 +200,19 @@ class SchoolWebActivity : AppCompatActivity() {
         finish()
     }
 
+    /** 把 strings.xml 里的按钮与面板文案以 JSON 对象填进注入脚本，JSONObject 负责转义。 */
+    private fun injection(): String {
+        val copy = JSONObject()
+            .put("button", getString(R.string.school_import_button))
+            .put("reading", getString(R.string.school_import_reading))
+            .put("readFailed", getString(R.string.school_import_read_failed))
+            .put("copyManually", getString(R.string.school_import_copy_manually))
+            .put("submitted", getString(R.string.school_import_submitted))
+            .put("fallbackTitle", getString(R.string.school_import_fallback_title))
+            .put("close", getString(R.string.school_import_close))
+        return INJECTION.replace(COPY_PLACEHOLDER, copy.toString())
+    }
+
     override fun onDestroy() {
         if (::webView.isInitialized) {
             webView.removeJavascriptInterface("DawnTickImport")
@@ -189,8 +228,10 @@ class SchoolWebActivity : AppCompatActivity() {
          * 采集规则与桌面端 apps/desktop/src-tauri/src/import-injection.js 的 collect() 保持一致
          * （documentElement.outerHTML、同源 iframe 递归到深度 2、去重、最大 1.5 MB）。
          * 内容通过 DawnTickImport.submit() 交回；接口不存在或内容过大时显示手动复制面板。
-         * 原样拼接成 JavaScript 源码，不做任何转义。
+         * 界面文案由 injection() 替换 COPY_PLACEHOLDER 填入，其余部分原样作为 JavaScript 源码。
          */
+        private const val COPY_PLACEHOLDER = "__DT_IMPORT_COPY__"
+
         private const val INJECTION: String = """(function () {
   if (window.__dtImportReady) {
     return;
@@ -198,6 +239,7 @@ class SchoolWebActivity : AppCompatActivity() {
   window.__dtImportReady = true;
 
   var MAX_PAYLOAD = 1500000;
+  var COPY = __DT_IMPORT_COPY__;
 
   var collect = function () {
     var parts = [];
@@ -235,7 +277,7 @@ class SchoolWebActivity : AppCompatActivity() {
     panel.style.cssText =
       'position:fixed;right:18px;bottom:78px;z-index:2147483647;width:320px;max-width:80vw;padding:12px;border-radius:12px;background:#fff;color:#141414;box-shadow:0 6px 24px rgba(0,0,0,.35);font-size:13px;line-height:1.5';
     var title = document.createElement('div');
-    title.textContent = '页面太大或带不过来，请全选下面的内容复制，回到晓刻粘贴导入';
+    title.textContent = COPY.fallbackTitle;
     var box = document.createElement('textarea');
     box.value = payload;
     box.style.cssText = 'width:100%;height:120px;margin-top:8px;font-size:11px';
@@ -244,7 +286,7 @@ class SchoolWebActivity : AppCompatActivity() {
     };
     var close = document.createElement('button');
     close.type = 'button';
-    close.textContent = '关闭';
+    close.textContent = COPY.close;
     close.style.cssText = 'margin-top:8px;padding:6px 12px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;cursor:pointer';
     close.onclick = function () {
       panel.remove();
@@ -262,30 +304,30 @@ class SchoolWebActivity : AppCompatActivity() {
     var button = document.createElement('button');
     button.id = 'dt-import-button';
     button.type = 'button';
-    button.textContent = '导入到晓刻';
+    button.textContent = COPY.button;
     button.style.cssText =
       'position:fixed;right:18px;bottom:18px;z-index:2147483647;padding:12px 20px;border:0;border-radius:999px;background:#ff6b4a;color:#141414;font-size:15px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.35);cursor:pointer';
     button.onclick = function () {
-      button.textContent = '正在读取课表…';
+      button.textContent = COPY.reading;
       var payload;
       try {
         payload = collect();
       } catch (error) {
-        button.textContent = '读取失败，请重试';
+        button.textContent = COPY.readFailed;
         return;
       }
       var bridge = window.DawnTickImport;
       if (!bridge || typeof bridge.submit !== 'function' || payload.length > MAX_PAYLOAD) {
         showFallback(payload);
-        button.textContent = '请手动复制';
+        button.textContent = COPY.copyManually;
         return;
       }
       try {
         bridge.submit(payload);
-        button.textContent = '已交给晓刻';
+        button.textContent = COPY.submitted;
       } catch (error) {
         showFallback(payload);
-        button.textContent = '请手动复制';
+        button.textContent = COPY.copyManually;
       }
     };
     document.body.appendChild(button);

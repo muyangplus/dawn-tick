@@ -1,5 +1,6 @@
 import { ScanLine } from 'lucide-react';
 import { Button } from '../ui/button.tsx';
+import { scanCopy } from '../../copy/import-scan.ts';
 
 /**
  * 顶部工具区的通用「扫一扫」图标按钮（仅 Android 原生渲染，由调用方判断）。
@@ -10,7 +11,7 @@ export function ScanEntryButton({ onScan }: { onScan: () => void }) {
     <Button
       variant="ghost"
       size="icon"
-      aria-label="扫一扫"
+      aria-label={scanCopy.entryAria}
       data-role="scan-entry"
       onClick={onScan}
     >

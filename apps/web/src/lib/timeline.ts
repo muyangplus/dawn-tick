@@ -1,3 +1,5 @@
+import { errorsCopy } from '../copy/errors.ts';
+
 export interface TimelineSlot {
   periodNo: number;
   startTime: string;
@@ -6,7 +8,7 @@ export interface TimelineSlot {
 
 export function minutesOfDay(hhmm: string): number {
   const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
-  if (match === null) throw new Error(`非法时间: ${hhmm}`);
+  if (match === null) throw new Error(errorsCopy.invalidTime(hhmm));
   return Number(match[1]) * 60 + Number(match[2]);
 }
 

@@ -8,6 +8,7 @@
 import type { DownloadSourceChoice } from '@dawn-tick/core';
 import { DOWNLOAD_SOURCE_LABEL, type DownloadSource } from './download-source.ts';
 import { probeAllSources, type ProbeOptions, type SourceProbe } from './download-probe.ts';
+import { appUpdateCopy } from '../copy/app-update.ts';
 
 /** 自动探测结果按会话缓存 10 分钟；「重新检测」用 fresh 强制刷新。 */
 export const DOWNLOAD_SOURCE_CACHE_TTL_MS = 10 * 60_000;
@@ -98,23 +99,22 @@ export function manualResolution(source: DownloadSource, probes: SourceProbe[]):
 /** 单源探测结果：`Gitee（120ms / 256KB）` / `GitHub（不可用）`。 */
 export function describeProbe(probe: SourceProbe): string {
   const label = DOWNLOAD_SOURCE_LABEL[probe.source];
-  if (!probe.ok) return `${label}（不可用）`;
+  if (!probe.ok) return appUpdateCopy.source.unavailable(label);
   const latency = Math.max(1, Math.round(probe.latencyMs));
   const bytes = probe.kind === 'asset' && probe.bytes !== undefined ? ` / ${Math.round(probe.bytes / 1024)}KB` : '';
-  return `${label}（${latency}ms${bytes}${probe.degraded ? '，镜像未同步' : ''}）`;
+  return appUpdateCopy.source.probed(label, latency, bytes, probe.degraded);
 }
 
 /** 状态行：自动显示两个源与耗时；手动显示当前源（重新检测后追加探测结果）。 */
 export function describeSourceLine(resolution: DownloadSourceResolution | null): string {
-  if (resolution === null) return '正在探测下载源…';
+  if (resolution === null) return appUpdateCopy.source.probing;
   const label = DOWNLOAD_SOURCE_LABEL[resolution.source];
   if (resolution.preference !== 'auto') {
-    if (resolution.probes.length === 0) return `手动：${label}`;
-    return `手动：${label}（探测：${resolution.probes.map(describeProbe).join(' · ')}）`;
+    if (resolution.probes.length === 0) return appUpdateCopy.source.manual(label);
+    return appUpdateCopy.source.manualProbed(label, resolution.probes.map(describeProbe).join(' · '));
   }
   const picked = resolution.probes.find((probe) => probe.source === resolution.source);
   const others = resolution.probes.filter((probe) => probe.source !== resolution.source);
   const parts = [...(picked === undefined ? [] : [picked]), ...others].map(describeProbe);
-  const degraded = picked?.degraded === true ? '；该源镜像未同步，下载时自动回退另一个源' : '';
-  return `自动：${parts.join(' · ')}${degraded}`;
+  return appUpdateCopy.source.auto(parts.join(' · '), picked?.degraded === true);
 }

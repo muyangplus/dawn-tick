@@ -8,6 +8,7 @@ import { parseScannedPayload, scanCodeOnce, stopScanCode, type ScannedPairReques
 import { formatPeerAddress } from '../../lan-sync-protocol.ts';
 import { parsePairPayload, type PairPayload } from '../../lan-pair-payload.ts';
 import { describeScanError, isScanAvailable, stopScan } from '../../lan-pair-scan.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
 
 export interface LanSyncPairPanelProps {
   busy: boolean;
@@ -62,14 +63,14 @@ export function LanSyncPairPanel({
     const peerText = formatPeerAddress({ host: payload.host, port: payload.port });
     onPeerChange(peerText);
     onCodeChange(payload.code);
-    onNote(`已从${source}填入 ${peerText} 与配对码 ${payload.code}`);
+    onNote(copy.filledFrom(source, peerText, payload.code));
     if (autoPair) onPair(peerText, payload.code, payload.name, payload.deviceId);
   }
 
   // 通用扫一扫把配对信息交进来：填入并自动配对，然后通知父组件已消费
   useEffect(() => {
     if (pendingPair === null) return;
-    applyPayload(pendingPair.payload, true, '扫码结果');
+    applyPayload(pendingPair.payload, true, copy.sourceScan);
     onPendingPairHandled?.();
     // 只在请求 id 变化时消费一次；applyPayload 随渲染重建，不放进依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,17 +82,17 @@ export function LanSyncPairPanel({
       onNote(parsed.error);
       return;
     }
-    applyPayload(parsed.payload, false, '粘贴内容');
+    applyPayload(parsed.payload, false, copy.sourcePaste);
   }
 
   async function runScan(): Promise<void> {
     setScanState('scanning');
-    onNote('正在打开相机…请在取景框内对准对方屏幕上的二维码');
+    onNote(copy.cameraOpening);
     try {
       const text = await scanCodeOnce();
       if (text === null) {
         setScanState('idle');
-        onNote('已取消扫码');
+        onNote(copy.scanCancelled);
         return;
       }
       const parsed = parseScannedPayload(text);
@@ -99,13 +100,13 @@ export function LanSyncPairPanel({
         setScanState('idle');
         onNote(
           parsed.note === undefined
-            ? '扫码结果不是配对信息；可以在主界面「扫一扫」里查看或复制'
-            : `扫码结果不是配对信息：${parsed.note}`,
+            ? copy.scanNotPairing
+            : copy.scanNotPairingWith(parsed.note),
         );
         return;
       }
       setScanState('idle');
-      applyPayload(parsed.payload, true, '扫码结果');
+      applyPayload(parsed.payload, true, copy.sourceScan);
     } catch (cause: unknown) {
       setScanState('failed');
       onNote(describeScanError(errorMessage(cause)));
@@ -115,24 +116,24 @@ export function LanSyncPairPanel({
   async function cancelScan(): Promise<void> {
     setScanState('idle');
     await stopScanCode();
-    onNote('已取消扫码');
+    onNote(copy.scanCancelled);
   }
 
   return (
     <div className="flex flex-col gap-2" data-role="lan-sync-pair">
-      <Field label="对方地址" hint="与本机在同一局域网" help="填对方的局域网 IP 与端口，例如 192.168.1.5:8765">
+      <Field label={copy.peerLabel} help={copy.peerHelp}>
         <Input
           data-role="lan-sync-peer"
-          aria-label="对方地址"
+          aria-label={copy.peerLabel}
           value={peer}
           placeholder="192.168.1.5:8765"
           onChange={(event) => onPeerChange(event.target.value)}
         />
       </Field>
-      <Field label="配对码" hint="对方「开启配对」后显示的 6 位数字">
+      <Field label={copy.codeLabel} hint={copy.codeHint}>
         <Input
           data-role="lan-sync-pair-code"
-          aria-label="配对码"
+          aria-label={copy.codeLabel}
           inputMode="numeric"
           maxLength={6}
           value={code}
@@ -143,26 +144,26 @@ export function LanSyncPairPanel({
         <Button
           size="sm"
           variant="secondary"
-          aria-label="配对"
+          aria-label={copy.pairButton}
           loading={busy}
           onClick={() => onPair(peer, code)}
         >
-          {paired ? '重新配对' : '配对'}
+          {paired ? copy.repairButton : copy.pairButton}
         </Button>
         {scanAvailable && (
           <Button
             size="sm"
             variant="secondary"
-            aria-label="扫码配对"
+            aria-label={copy.scanLabel}
             data-role="lan-sync-scan"
             onClick={() => void runScan()}
           >
-            扫码配对
+            {copy.scanLabel}
           </Button>
         )}
         {scanState === 'failed' && (
-          <Button size="sm" variant="ghost" aria-label="重新扫码" onClick={() => void runScan()}>
-            重新扫码
+          <Button size="sm" variant="ghost" aria-label={copy.rescanButton} onClick={() => void runScan()}>
+            {copy.rescanButton}
           </Button>
         )}
       </div>
@@ -171,33 +172,33 @@ export function LanSyncPairPanel({
           {error}
         </StatusLine>
       )}
-      <Field label="粘贴配对信息" hint="链接或 IP:端口 配对码 都行">
+      <Field label={copy.pasteLabel} hint={copy.pasteHint}>
         <Input
           data-role="lan-sync-paste"
-          aria-label="粘贴配对信息"
+          aria-label={copy.pasteLabel}
           value={pasteInput}
           placeholder="dawn-tick://pair?schema=1&host=192.168.1.5&port=8765&code=123456"
           onChange={(event) => setPasteInput(event.target.value)}
         />
       </Field>
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" aria-label="解析配对信息" onClick={parsePasted}>
-          解析并填入
+        <Button size="sm" variant="ghost" aria-label={copy.parseLabel} onClick={parsePasted}>
+          {copy.parseButton}
         </Button>
         {!scanAvailable && (
-          <span className="text-xs text-muted">扫码配对仅安卓版可用；可以粘贴对方复制的配对信息</span>
+          <span className="text-xs text-muted">{copy.scanAndroidOnly}</span>
         )}
       </div>
       {scanState === 'failed' && (
         <StatusLine dataRole="lan-sync-scan-error" tone="danger">
-          扫码没有成功，可以点「重新扫码」再试，或改用粘贴配对信息。
+          {copy.scanFailed}
         </StatusLine>
       )}
       {scanState === 'scanning' && (
         <ScanOverlay
           onCancel={() => void cancelScan()}
-          title="扫码配对"
-          hint="将对方屏幕上的二维码放入取景框"
+          title={copy.scanLabel}
+          hint={copy.scanOverlayHint}
         />
       )}
     </div>

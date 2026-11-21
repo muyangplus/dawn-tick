@@ -16,7 +16,8 @@ import timetableEntriesSql from '@dawn-tick/core/schema/004_timetable_entries.sq
 import dueAtAnySql from '@dawn-tick/core/schema/005_due_at_any.sql?raw';
 import schemaVersionSql from '@dawn-tick/core/schema/006_schema_version.sql?raw';
 import { detectPlatform, type Platform } from '../platform-detect.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { pathForLog } from '../lib/log-redact.ts';
+import { logDebug, logError, logInfo, logWarn } from '../log.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { readStorageInfo, type StorageInfo } from '../storage-config.ts';
 import { applyStoredJournalMode } from './journal.ts';
@@ -42,9 +43,9 @@ export const MIGRATIONS: Migration[] = [
 /** 数据目录与恢复入口：旧库提示要告诉用户去哪儿找数据、怎么恢复。 */
 function recoveryHint(info: StorageInfo | null): Record<string, string> {
   return {
-    dataDir: info?.dir ?? '',
-    dbFile: info?.dbFile ?? '',
-    recovery: '数据未丢失：可在「设置 → 数据管理」导入备份快照，或重启应用再试一次',
+    dataDir: pathForLog(info?.dir) ?? '',
+    dbFile: pathForLog(info?.dbFile) ?? '',
+    recovery: '数据未丢失：可在「设备与同步」恢复快照，或重启应用再试一次',
   };
 }
 
@@ -56,12 +57,12 @@ async function reportLegacySqlxBaseline(driver: SqlDriver, info: StorageInfo | n
   try {
     const state = await inspectSqlxBaseline(driver);
     if (!state.legacy) return;
-    logWarn('storage', '数据库缺少迁移记录（_sqlx_migrations），按旧库兼容处理', {
+    logWarn('storage', '数据库缺少 _sqlx_migrations，按旧库兼容处理', {
       ...recoveryHint(info),
       schemaVersion: state.schemaVersion || '未知',
     });
     if (await writeLegacySqlxBaseline(driver, state.schemaVersion)) {
-      logInfo('storage', '已按 app_meta.schema_version 补写旧库基线', {
+      logInfo('storage', '旧库迁移基线已补写', {
         schemaVersion: state.schemaVersion,
       });
     }
@@ -119,9 +120,9 @@ export async function openStorage(options: { secondary?: boolean } = {}): Promis
   // 历史手工排课只写了 weeks_mask：开库时补一次 weeks_raw，之后再开库直接跳过
   try {
     const backfilled = await backfillWeeksRaw(storage);
-    if (backfilled > 0) logInfo('storage', '回填排课周次文本', { rows: backfilled });
+    if (backfilled > 0) logDebug('storage', '排课周次文本已回填', { rows: backfilled });
   } catch (error) {
-    logWarn('storage', '回填排课周次文本失败', {
+    logWarn('storage', '排课周次文本回填失败', {
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -142,7 +143,7 @@ async function openStorageInner(secondary: boolean): Promise<Storage> {
       if (platform === 'tauri' && isMissingSqlxMigrations(error)) {
         // 迁移记账在插件 load 内先跑：旧库会从 001 重跑、撞上已有 users 而失败
         const info = await readStorageInfo();
-        logWarn('storage', '数据库缺少迁移记录（_sqlx_migrations），原生 SQLite 无法打开，已回退到 IndexedDB', {
+        logError('storage', '数据库缺少 _sqlx_migrations，已回退到只读 IndexedDB', {
           platform,
           ...recoveryHint(info),
           message: fallbackReason,
@@ -150,7 +151,7 @@ async function openStorageInner(secondary: boolean): Promise<Storage> {
           readOnly: true,
         });
       } else {
-        logWarn('storage', '原生 SQLite 不可用，回退到 IndexedDB', {
+        logError('storage', '原生 SQLite 不可用，已回退到只读 IndexedDB', {
           platform,
           message: fallbackReason,
           fallback: true,

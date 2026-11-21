@@ -5,6 +5,7 @@ import { invokeNative } from './native.ts';
 import { PLUGIN_NAMES, loadPlugin, type ApkInstallerPlugin } from './plugins.ts';
 import type { UpdateDownloadHost, UpdatePlatform, WindowsInstallKind } from './update-download.ts';
 import { desktopHttpFetch } from './update-fetch.ts';
+import { updateTaskCopy } from '../copy/update-task.ts';
 
 /**
  * 自动更新（I-03）的平台出口：按渠道把下载好的安装包写盘并交给系统安装器/便携替换脚本。
@@ -95,8 +96,8 @@ export function useDetectedWindowsInstallKind(platform: UpdatePlatform): Windows
 
 /** 「便携版 / 安装版」的中文说明：检测中单独给一句，避免闪成错误结论。 */
 export function windowsInstallKindLabel(kind: WindowsInstallKind | null): string {
-  if (kind === null) return '检测中';
-  return kind === 'portable' ? '便携版' : '安装版';
+  if (kind === null) return updateTaskCopy.installKindDetecting;
+  return kind === 'portable' ? updateTaskCopy.installKindPortable : updateTaskCopy.installKindInstaller;
 }
 
 /** 拼接目录与文件名：Windows 路径用反斜杠，其它平台用正斜杠。 */
@@ -112,9 +113,9 @@ async function fetchChecksumText(
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
   const doFetch = fetchImpl ?? globalThis.fetch;
-  if (typeof doFetch !== 'function') throw new Error('当前环境无法联网读取校验文件');
+  if (typeof doFetch !== 'function') throw new Error(updateTaskCopy.checksumOffline);
   const response = await doFetch(url, signal === undefined ? {} : { signal });
-  if (!response.ok) throw new Error(`读取校验文件失败：更新源返回 ${response.status}`);
+  if (!response.ok) throw new Error(updateTaskCopy.checksumHttp(response.status));
   return await response.text();
 }
 
@@ -139,26 +140,26 @@ async function writeDesktopInstaller(fileName: string, bytes: Uint8Array): Promi
     name: fileName,
     base64: toBase64Bytes(bytes),
   });
-  if (staged === undefined) throw new Error('当前平台不支持写入安装包');
+  if (staged === undefined) throw new Error(updateTaskCopy.writeUnsupported);
   return stagedHandle(staged.name, staged.sha256);
 }
 
 function requireStaged(handle: string): { name: string; sha256: string } {
   const staged = parseStagedHandle(handle);
-  if (staged === null) throw new Error('安装包不在更新暂存目录，请重新下载');
+  if (staged === null) throw new Error(updateTaskCopy.stagedOutside);
   return staged;
 }
 
 async function installOnWindows(handle: string): Promise<{ needsPermission: boolean }> {
   const launched = await invokeNative<string>('run_installer', requireStaged(handle));
-  if (launched === undefined) throw new Error('当前平台不支持启动安装程序');
+  if (launched === undefined) throw new Error(updateTaskCopy.launchUnsupported);
   return { needsPermission: false };
 }
 
 /** 便携版：解压 zip 并生成替换脚本，返回脚本路径（应用退出后才真正覆盖 exe）。 */
 async function preparePortableOnWindows(handle: string): Promise<string> {
   const script = await invokeNative<string>('prepare_portable_update', requireStaged(handle));
-  if (script === undefined) throw new Error('当前平台不支持便携版自动替换，请到发布页手动下载');
+  if (script === undefined) throw new Error(updateTaskCopy.portableUnsupported);
   return script;
 }
 
@@ -177,16 +178,16 @@ async function writeAndroidPackage(fileName: string, bytes: Uint8Array): Promise
     recursive: true,
   });
   const { uri } = await Filesystem.getUri({ path: fileName, directory: Directory.Cache });
-  if (typeof uri !== 'string' || uri === '') throw new Error('安装包写入后找不到路径');
+  if (typeof uri !== 'string' || uri === '') throw new Error(updateTaskCopy.writtenPathMissing);
   return uri;
 }
 
 async function installOnAndroid(path: string): Promise<{ needsPermission: boolean }> {
   const plugin = await loadPlugin<ApkInstallerPlugin>(PLUGIN_NAMES.apkInstaller);
-  if (plugin === null) throw new Error('当前平台不支持自动安装，请到发布页手动下载');
+  if (plugin === null) throw new Error(updateTaskCopy.autoInstallUnsupported);
   const result = await plugin.installApk({ path });
   if (result?.needsPermission === true) return { needsPermission: true };
-  if (result?.opened !== true) throw new Error('系统安装器没有启动');
+  if (result?.opened !== true) throw new Error(updateTaskCopy.installerNotOpened);
   return { needsPermission: false };
 }
 

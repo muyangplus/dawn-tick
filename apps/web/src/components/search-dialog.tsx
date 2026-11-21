@@ -5,12 +5,9 @@ import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent } from './ui/dialog.tsx';
 import { Input } from './ui/input.tsx';
 import { EmptyState } from './ui/empty-state.tsx';
+import { searchCopy } from '../copy/home-search.ts';
 
-const KIND_LABEL: Record<SearchHit['kind'], string> = {
-  course: '课程',
-  schedule: '排课',
-  event: '日程',
-};
+const KIND_LABEL: Record<SearchHit['kind'], string> = searchCopy.kind;
 
 const KIND_ICON = {
   course: BookOpen,
@@ -51,12 +48,12 @@ export function SearchDialog({ open, onOpenChange, storage, semesterId, onPick }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="搜索" description="课程、教师、地点、周次与日程">
+      <DialogContent title={searchCopy.title} description={searchCopy.description}>
         <Input
           autoFocus
           value={keyword}
-          placeholder="输入关键词"
-          aria-label="搜索关键词"
+          placeholder={searchCopy.placeholder}
+          aria-label={searchCopy.inputLabel}
           onChange={(event) => setKeyword(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && hits[0] !== undefined) {
@@ -69,11 +66,11 @@ export function SearchDialog({ open, onOpenChange, storage, semesterId, onPick }
           <div data-role="search-empty">
             <EmptyState
               icon={Search}
-              title={keyword.trim().length === 0 ? '输入关键词开始搜索' : '没有匹配结果，换个关键词试试'}
+              title={keyword.trim().length === 0 ? searchCopy.idleTitle : searchCopy.noResultTitle}
               action={
                 keyword.trim().length === 0 ? undefined : (
-                  <Button size="sm" variant="secondary" aria-label="清空关键词" onClick={() => setKeyword('')}>
-                    清空关键词
+                  <Button size="sm" variant="secondary" aria-label={searchCopy.clearButton} onClick={() => setKeyword('')}>
+                    {searchCopy.clearButton}
                   </Button>
                 )
               }
@@ -97,8 +94,7 @@ export function SearchDialog({ open, onOpenChange, storage, semesterId, onPick }
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate text-sm text-ink">{hit.title}</span>
                       <span className="truncate text-xs text-muted">
-                        {KIND_LABEL[hit.kind]}
-                        {hit.subtitle.length > 0 && ` · ${hit.subtitle}`}
+                        {searchCopy.hitMeta(KIND_LABEL[hit.kind], hit.subtitle)}
                       </span>
                     </span>
                   </button>

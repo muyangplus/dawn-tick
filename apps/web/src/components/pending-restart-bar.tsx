@@ -5,7 +5,7 @@ import { StatusLine } from './ui/status-line.tsx';
 import { toast } from './ui/toaster.tsx';
 import { relaunchApplication } from '../storage-config.ts';
 import { clearPendingRestart, usePendingRestartSources } from '../pending-restart.ts';
-import { fail } from '../copy/zh.ts';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 export interface PendingRestartBarProps {
   /** 主壳里离内容更近，留白略小；设置页顶部用默认值 */
@@ -30,7 +30,7 @@ export function PendingRestartBar({ compact = false }: PendingRestartBarProps) {
   async function restart(): Promise<void> {
     const ok = await relaunchApplication();
     if (!ok) {
-      toast.error(fail('重启', null, '请手动重新打开应用'));
+      toast.error(appShellCopy.restartBar.restartFailed);
       return;
     }
     clearPendingRestart();
@@ -45,20 +45,20 @@ export function PendingRestartBar({ compact = false }: PendingRestartBarProps) {
       }`}
     >
       <StatusLine dataRole="pending-restart-status" className="text-ink">
-        <span className="font-medium">{sources.length} 项改动待重启</span>
+        <span className="font-medium">{appShellCopy.restartBar.pending(sources.length)}</span>
       </StatusLine>
       <span className="ml-auto flex shrink-0 items-center gap-1">
-        <Button size="sm" variant="primary" aria-label="立即重启" onClick={() => void restart()}>
+        <Button size="sm" variant="primary" aria-label={appShellCopy.restartBar.restartButton} onClick={() => void restart()}>
           <RotateCw className="size-3.5" aria-hidden />
-          立即重启
+          {appShellCopy.restartBar.restartButton}
         </Button>
         {collapsed ? (
-          <Button size="sm" variant="ghost" aria-label="展开待重启提示" onClick={() => setCollapsed(false)}>
-            展开
+          <Button size="sm" variant="ghost" aria-label={appShellCopy.restartBar.expandAria} onClick={() => setCollapsed(false)}>
+            {appShellCopy.restartBar.expandButton}
           </Button>
         ) : (
           <Button size="sm" variant="ghost" onClick={() => setCollapsed(true)}>
-            稍后
+            {appShellCopy.restartBar.laterButton}
           </Button>
         )}
       </span>

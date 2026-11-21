@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { lanSyncCopy } from '../src/copy/sync-lan.ts';
 import {
   LAN_HOST_STORAGE_KEY,
   LAN_KIND_LABEL,
@@ -260,16 +261,16 @@ test('原生结果归一：兼容桌面数组与 Android {networks, status}', ()
 
 test('空态文案：按 Wi-Fi / 有线 / 移动数据 / 未知状态分支', () => {
   assert.equal(lanNetworkEmptyHint(WIFI_NO_IPV4), LAN_NETWORK_WIFI_IPV6_HINT);
-  assert.match(LAN_NETWORK_WIFI_IPV6_HINT, /已连接 Wi-Fi，但没有拿到 IPv4 地址/);
+  assert.match(LAN_NETWORK_WIFI_IPV6_HINT, /Wi-Fi 未分配 IPv4 地址/);
   assert.equal(
     lanNetworkEmptyHint({ ...WIFI_NO_IPV4, wifi: false, ethernet: true }),
-    '已连接有线网络，但没有拿到 IPv4 地址（可能是仅 IPv6 网络），请检查网线或路由器的 DHCP',
+    lanSyncCopy.networkEthernetNoIpv4,
   );
   assert.equal(
     lanNetworkEmptyHint({ ...WIFI_NO_IPV4, wifi: false, mobile: true }),
     LAN_NETWORK_MOBILE_HINT,
   );
-  assert.match(LAN_NETWORK_MOBILE_HINT, /当前没有 Wi-Fi\/有线连接/);
+  assert.match(LAN_NETWORK_MOBILE_HINT, /未连接 Wi-Fi 或有线网络/);
   // 什么传输都没有 / 未知状态：保留原文案
   assert.equal(
     lanNetworkEmptyHint({ ...WIFI_NO_IPV4, wifi: false, mobile: false }),

@@ -9,6 +9,7 @@ import {
 } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { dayRangeOf } from './day-nav.ts';
+import { exportReportCopy } from '../copy/export-report.ts';
 
 /** 学期所处阶段：开学前 / 学期中 / 最后一周之后。 */
 export type SemesterPhase = 'before' | 'during' | 'after';
@@ -269,7 +270,7 @@ function tallyExams(data: Readonly<AppData>, now: number): ExamStats {
 /** 供卡片显示周次：今天在学期外时给出阶段文案，学期中给「第 N 周 / 共 M 周」。 */
 export function semesterWeekText(info: SemesterInfoStats | null): string {
   if (info === null) return '';
-  if (info.phase === 'before') return `未开学 · 共 ${info.totalWeeks} 周`;
-  if (info.phase === 'after') return `学期已结束 · 共 ${info.totalWeeks} 周`;
-  return `第 ${info.currentWeek} 周 / 共 ${info.totalWeeks} 周`;
+  if (info.phase === 'before') return exportReportCopy.weekText.before(info.totalWeeks);
+  if (info.phase === 'after') return exportReportCopy.weekText.after(info.totalWeeks);
+  return exportReportCopy.weekText.during(info.currentWeek, info.totalWeeks);
 }

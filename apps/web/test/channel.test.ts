@@ -13,8 +13,14 @@ test('诊断入口在正式版隐藏', () => {
   assert.equal(featureVisible('diagnostics', 'release'), false);
 });
 
-test('功能表只保留诊断入口', () => {
-  assert.deepEqual(Object.keys(FEATURES), ['diagnostics']);
+test('功能表含诊断与 AI 两项', () => {
+  assert.deepEqual(Object.keys(FEATURES), ['diagnostics', 'ai']);
+});
+
+test('AI 只在开发版可见', () => {
+  assert.equal(featureVisible('ai', 'dev'), true);
+  assert.equal(featureVisible('ai', 'beta'), false);
+  assert.equal(featureVisible('ai', 'release'), false);
 });
 
 test('功能表的渠道取值都在渠道集合内', () => {

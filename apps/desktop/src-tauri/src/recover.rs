@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    append_log, database_healthy_async, local_stamp, move_corrupt_aside, now_ms,
+    database_healthy_async, local_stamp, log_error, log_info, log_warn, move_corrupt_aside, now_ms,
     DATABASE_FILE_NAME,
 };
 
@@ -72,7 +72,7 @@ pub async fn newest_healthy_snapshot(backups: &Path) -> Option<(String, PathBuf)
         if database_healthy_async(&path).await {
             return Some((name, path));
         }
-        append_log(&format!("快照未通过自检，已跳过: {name}"));
+        log_warn("storage", format!("快照未通过自检，已跳过 name={name}"));
     }
     None
 }
@@ -83,14 +83,17 @@ pub async fn newest_healthy_snapshot(backups: &Path) -> Option<(String, PathBuf)
 pub async fn recover(dir: &Path, dry_run: bool) -> RecoverOutcome {
     let db = dir.join(DATABASE_FILE_NAME);
     if !db.is_file() {
-        return RecoverOutcome::failed("数据库文件不存在，无需恢复");
+        log_warn("storage", "数据库文件不存在，跳过运行中恢复");
+        return RecoverOutcome::failed(crate::copy::recover::NO_DATABASE);
     }
     if database_healthy_async(&db).await {
-        return RecoverOutcome::failed("数据库自检通过，无需恢复");
+        log_info("storage", "数据库自检通过，跳过运行中恢复");
+        return RecoverOutcome::failed(crate::copy::recover::HEALTHY);
     }
 
     let Some((name, path)) = newest_healthy_snapshot(&dir.join("backups")).await else {
-        return RecoverOutcome::failed("没有找到通过自检的备份快照，请打开数据目录手动处理");
+        log_error("storage", "运行中数据库恢复失败，没有通过自检的快照");
+        return RecoverOutcome::failed(crate::copy::recover::NO_SNAPSHOT);
     };
     if dry_run {
         return RecoverOutcome {
@@ -104,19 +107,22 @@ pub async fn recover(dir: &Path, dry_run: bool) -> RecoverOutcome {
     let saved = match move_corrupt_aside(dir, &stamp) {
         Ok(saved) => saved,
         Err(error) => {
-            return RecoverOutcome::failed(format!(
-                "暂时无法留存损坏文件（{error}），请关闭占用数据库的程序后重试"
-            ))
+            log_error("storage", format!("运行中数据库恢复失败，损坏库留存失败 error={error}"));
+            return RecoverOutcome::failed(crate::copy::recover::keep_failed(&error))
         }
     };
     if let Err(error) = std::fs::copy(&path, &db) {
+        log_error(
+            "storage",
+            format!("运行中数据库恢复失败，快照复制失败 kept={saved} snapshot={name} error={error}"),
+        );
         return RecoverOutcome {
             recovered: false,
             snapshot: Some(name),
-            reason: Some(format!("损坏库已留存为 {saved}，但复制快照失败（{error}）")),
+            reason: Some(crate::copy::recover::copy_failed(&error, &saved)),
         };
     }
-    append_log(&format!("运行中恢复数据库：损坏库留存为 {saved}，已用快照 {name} 覆盖主库"));
+    log_warn("storage", format!("运行中数据库已用快照恢复 kept={saved} snapshot={name}"));
     RecoverOutcome::recovered(name)
 }
 

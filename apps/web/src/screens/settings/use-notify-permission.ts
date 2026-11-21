@@ -3,7 +3,7 @@ import type { Storage } from '@dawn-tick/core';
 import { openNotifySettings } from '../../system-actions.ts';
 import { readNotifyStatus, type NotifyStatus } from '../../permissions.ts';
 import { isNotifyAbnormal, notifyStateOf, type NotifyStateView } from '../../notify-state.ts';
-import { fail } from '../../copy/zh.ts';
+import { remindersCopy } from '../../copy/settings-reminders.ts';
 import { toast } from '../../components/ui/toaster.tsx';
 
 export interface NotifyPermissionApi {
@@ -47,12 +47,12 @@ export function useNotifyPermission(storage: Storage, request: () => Promise<voi
         await request();
         const next = await readNotifyStatus(storage);
         setStatus(next);
-        toast.info(`通知权限：${notifyStateOf(next).label}`);
+        toast.info(remindersCopy.notifyStatus(notifyStateOf(next).label));
         return;
       }
       const opened = await openNotifySettings(status?.channelMuted === true ? status.channelId : null);
       if (!opened) {
-        toast.error(fail('打开系统设置', null, '请手动到系统设置里开启通知'));
+        toast.error(remindersCopy.openNotifySettingsFailed);
       }
       setStatus(await readNotifyStatus(storage));
     },

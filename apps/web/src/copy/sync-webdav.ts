@@ -1,0 +1,72 @@
+/** 设置 → WebDAV 云同步，以及 `webdav.ts` 返回给界面的错误与状态。 */
+export const webdavCopy = {
+  title: 'WebDAV 云同步',
+  urlLabel: 'WebDAV 地址',
+  urlHelp: '填完整目录地址，例如 https://dav.example.com/remote.php/dav/files/me/DawnTick',
+  userLabel: '用户名',
+  passwordLabel: '密码',
+  passwordHint: '只存在本机，不参与导出',
+
+  passwordSaving: '正在保存密码…',
+  passwordReading: '正在读取密码…',
+  passwordDecryptFailed: '密码无法解密：请重新输入',
+  passwordEncrypted: '已加密保存',
+  passwordEmpty: '未保存密码',
+  passwordNoEncryption: '本平台不支持加密：保存后密码以明文留在本机',
+  passwordPlaceholderEncrypted: '已加密保存，输入新密码可覆盖',
+  passwordPlaceholderReenter: '重新输入 WebDAV 密码',
+  passwordPlaceholderPlaintext: '输入 WebDAV 密码（本平台不加密）',
+  passwordPlaceholder: '输入 WebDAV 密码',
+  passwordSaveWhat: '保存 WebDAV 密码',
+  retryLater: '请稍后重试',
+
+  autoSync: '自动同步',
+  syncOnStart: '启动时同步一次',
+  syncOnStartLabel: '启动时同步',
+  syncDaily: '每天同步一次',
+  syncDailyLabel: '每天同步',
+  keepHistory: '远端保留历史多份',
+
+  testLabel: '测试 WebDAV 连接',
+  testButton: '测试连接',
+  testing: '正在测试连接…',
+  connectWhat: '连接 WebDAV',
+  connectNext: '请检查地址、账号与网络',
+  remoteHasBackup: '远端已有备份',
+  remoteNoBackup: '远端暂无备份',
+  remoteBackupAt: (time: string) => `远端备份时间 ${time}`,
+  connected: (remote: string) => `连接正常，${remote}`,
+
+  uploadLabel: '上传到 WebDAV',
+  uploadButton: '立即上传',
+  uploading: '正在上传到 WebDAV…',
+  uploadWhat: '上传',
+  networkNext: '请检查网络后重试',
+  uploaded: (name: string, size: string) => `已上传 ${name}（${size}）`,
+
+  downloadLabel: '从 WebDAV 下载',
+  downloadButton: '立即下载',
+  downloading: '正在下载并应用…',
+  downloadWhat: '下载',
+  appliedSettings: (count: number, withPresets: boolean, snapshotTaken: boolean) =>
+    `已应用设置与预设：写入 ${count} 条${withPresets ? '，含预设' : ''}${snapshotTaken ? '。下载前已创建快照' : ''}`,
+  restoredAll: (imported: number, removed: number, snapshotTaken: boolean) =>
+    `已恢复整库：写入 ${imported} 条，清空 ${removed} 条${snapshotTaken ? '。下载前已创建快照' : ''}`,
+
+  downloadDialogTitle: '从 WebDAV 下载',
+  downloadDialogDescription: '「恢复全部」将用远端备份覆盖本机数据，需重启生效',
+  cancel: '取消',
+  applySettingsLabel: '下载并只应用设置与预设',
+  applySettingsButton: '只应用设置与预设',
+  restoreAllLabel: '下载并恢复整库',
+  restoreAllButton: '恢复全部',
+
+  // webdav.ts
+  serverTimeout: (seconds: number) => `WebDAV 服务器 ${seconds} 秒内没有响应`,
+  urlRequired: '请先填写 WebDAV 地址',
+  authFailed: '鉴权失败：请检查用户名与密码',
+  serverStatus: (status: number) => `服务器返回 ${status}`,
+  downloadFailed: '下载失败',
+  storedPasswordUnreadable: '无法读取已保存的 WebDAV 密码：请在设置里重新输入',
+  remoteNewer: '远端备份比本机上传的新',
+} as const;

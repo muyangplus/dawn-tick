@@ -1,4 +1,5 @@
 import { CircleHelp } from 'lucide-react';
+import { helpCopy } from '../copy/help.ts';
 
 /**
  * 设置 / 设备分组清单末尾的「帮助」入口。
@@ -16,8 +17,8 @@ export function HelpNavItem({ onOpenHelp }: { onOpenHelp: () => void }) {
     >
       <CircleHelp className="size-4 shrink-0 text-ink" aria-hidden />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-ink">帮助与使用指引</span>
-        <span className="block truncate text-[11px] leading-tight text-muted">常见问题与操作步骤</span>
+        <span className="block truncate text-sm text-ink">{helpCopy.navTitle}</span>
+        <span className="block truncate text-[11px] leading-tight text-muted">{helpCopy.navSubtitle}</span>
       </span>
     </button>
   );

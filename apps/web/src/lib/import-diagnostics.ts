@@ -7,6 +7,7 @@ import {
   type PageShape,
 } from '@dawn-tick/core';
 import { formatLogTimestamp } from '../log.ts';
+import { importDiagnosticsCopy } from '../copy/import-diagnostics.ts';
 
 /**
  * 导入识别诊断：把「为什么没识别出来」整理成用户能看懂、也不会泄露页面隐私的摘要。
@@ -25,7 +26,7 @@ export const SAMPLE_ROW_MAX_CHARS = 120;
 /** 页面标题上限（含省略号）。 */
 export const PAGE_TITLE_MAX_CHARS = 40;
 /** 复制/导出文本里的导入来源：诊断面板只出现在网页粘贴渠道。 */
-export const IMPORT_SOURCE_LABEL = '粘贴网页课表';
+export const IMPORT_SOURCE_LABEL = importDiagnosticsCopy.sourcePaste;
 
 export type ImportShape = PageShape | 'none';
 
@@ -245,21 +246,16 @@ export function buildImportDiagnostics(input: ImportDiagnosticsInput): ImportDia
 
 /** 字段映射的可读文案：页面里没有星期表头时明确说「按通用启发式」。 */
 export function mappingText(mapping: ImportFieldMapping | null): string {
-  if (mapping === null) return '未匹配到星期表头（按通用启发式解析）';
-  const period = mapping.periodColumn === null ? '按行号' : String(mapping.periodColumn);
+  if (mapping === null) return importDiagnosticsCopy.mappingNone;
+  const period = mapping.periodColumn === null ? importDiagnosticsCopy.mappingByRow : String(mapping.periodColumn);
   const lastDay = mapping.dayStartColumn + mapping.dayCount - 1;
-  const labels = mapping.dayLabels.length === 0 ? '' : `（${mapping.dayLabels.join(' ')}）`;
-  return `表头行 ${mapping.headerRow} · 星期列 ${mapping.dayStartColumn}–${lastDay}${labels} · 节次列 ${period}`;
+  return importDiagnosticsCopy.mapping(mapping.headerRow, mapping.dayStartColumn, lastDay, mapping.dayLabels.join(' '), period);
 }
 
-const SHAPE_LABEL: Record<ImportShape, string> = {
-  grid: '「日-节」网格',
-  'weekday-table': '星期表头表格',
-  none: '未识别',
-};
+const SHAPE_LABEL: Record<ImportShape, string> = importDiagnosticsCopy.shapes;
 
 function shapeLabel(shape: ImportShape | null): string {
-  return shape === null ? '未执行识别' : SHAPE_LABEL[shape];
+  return shape === null ? importDiagnosticsCopy.shapeNotRun : SHAPE_LABEL[shape];
 }
 
 /**
@@ -272,40 +268,40 @@ export function renderImportDiagnosticsText(
   options: RenderImportDiagnosticsOptions = {},
 ): string {
   const lines: string[] = [
-    'DawnTick 导入识别诊断',
-    `生成时间：${formatLogTimestamp(meta.generatedAt)}`,
-    `应用版本：${meta.version}（${meta.channel}）`,
-    `导入来源：${meta.source}`,
+    importDiagnosticsCopy.reportTitle,
+    importDiagnosticsCopy.generatedAt(formatLogTimestamp(meta.generatedAt)),
+    importDiagnosticsCopy.appVersion(meta.version, meta.channel),
+    importDiagnosticsCopy.source(meta.source),
     '',
-    '— 诊断摘要 —',
-    `帧数：${summary.frames}`,
-    `表格数：${summary.tables}${summary.fromPage ? '' : '（按粘贴内容估算）'}`,
-    `疑似课表数：${summary.kbTables}`,
-    `网格单元数：${summary.gridCells}`,
-    `是否仍在加载：${summary.loading ? '是' : '否'}`,
+    importDiagnosticsCopy.summaryHeading,
+    importDiagnosticsCopy.frames(summary.frames),
+    importDiagnosticsCopy.tables(summary.tables, summary.fromPage),
+    importDiagnosticsCopy.kbTables(summary.kbTables),
+    importDiagnosticsCopy.gridCells(summary.gridCells),
+    importDiagnosticsCopy.loading(summary.loading),
   ];
-  if (summary.ready !== null) lines.push(`文档状态：${summary.ready}`);
-  if (summary.url !== null) lines.push(`页面地址：${summary.url}`);
-  if (summary.title !== null) lines.push(`页面标题：${summary.title}`);
-  if (summary.system !== null) lines.push(`命中系统：${summary.system}`);
-  lines.push(`识别形态：${shapeLabel(summary.shape)}`);
-  if (summary.schedules !== null) lines.push(`识别结果：${summary.schedules} 条排课`);
-  lines.push(`字段映射：${mappingText(summary.mapping)}`);
+  if (summary.ready !== null) lines.push(importDiagnosticsCopy.ready(summary.ready));
+  if (summary.url !== null) lines.push(importDiagnosticsCopy.url(summary.url));
+  if (summary.title !== null) lines.push(importDiagnosticsCopy.title(summary.title));
+  if (summary.system !== null) lines.push(importDiagnosticsCopy.system(summary.system));
+  lines.push(importDiagnosticsCopy.shape(shapeLabel(summary.shape)));
+  if (summary.schedules !== null) lines.push(importDiagnosticsCopy.schedules(summary.schedules));
+  lines.push(importDiagnosticsCopy.fieldMapping(mappingText(summary.mapping)));
 
-  lines.push('', '— 页面诊断 JSON —');
+  lines.push('', importDiagnosticsCopy.pageJsonHeading);
   lines.push(
     summary.pageDiagnostics === null
-      ? '无（内容没有携带书签或窗口诊断）'
+      ? importDiagnosticsCopy.pageJsonNone
       : JSON.stringify(summary.pageDiagnostics, null, 2),
   );
 
-  lines.push('', `— 前 ${SAMPLE_ROW_LIMIT} 行样例（每行 ≤${SAMPLE_ROW_MAX_CHARS} 字符）—`);
-  if (summary.sampleRows.length === 0) lines.push('（没有可用的表格样例）');
+  lines.push('', importDiagnosticsCopy.samplesHeading(SAMPLE_ROW_LIMIT, SAMPLE_ROW_MAX_CHARS));
+  if (summary.sampleRows.length === 0) lines.push(importDiagnosticsCopy.samplesNone);
   else summary.sampleRows.forEach((row, index) => lines.push(`${index + 1}. ${row}`));
 
   if (options.logLines !== undefined) {
-    lines.push('', '— 相关日志 —');
-    if (options.logLines.length === 0) lines.push('（暂无）');
+    lines.push('', importDiagnosticsCopy.logsHeading);
+    if (options.logLines.length === 0) lines.push(importDiagnosticsCopy.logsNone);
     else lines.push(...options.logLines);
   }
 

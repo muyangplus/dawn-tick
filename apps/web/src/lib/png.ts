@@ -1,3 +1,4 @@
+import { exportImageCopy } from '../copy/export-image.ts';
 /**
  * 最小 PNG 编码器（RGB 8bit、filter 0、zlib/Flate）。
  *
@@ -90,9 +91,9 @@ export async function encodePngRgb(
   height: number,
 ): Promise<Uint8Array> {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
-    throw new Error(`PNG 尺寸无效：${width}×${height}`);
+    throw new Error(exportImageCopy.png.badSize(width, height));
   }
-  if (rgba.length < width * height * 4) throw new Error('PNG 像素数据长度不足');
+  if (rgba.length < width * height * 4) throw new Error(exportImageCopy.png.shortPixels);
   const rowLength = width * 3;
   const raw = new Uint8Array((rowLength + 1) * height);
   for (let y = 0; y < height; y += 1) {

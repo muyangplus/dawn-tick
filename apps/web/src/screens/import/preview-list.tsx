@@ -1,6 +1,7 @@
 import type { ImportedSchedule } from '@dawn-tick/core';
 import { cn } from '../../lib/cn.ts';
 import { scheduleMeta } from './import-flow-model.ts';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 export interface PreviewListProps {
   schedules: readonly ImportedSchedule[];
@@ -29,12 +30,12 @@ export function PreviewList({
         aria-hidden
         className="hidden grid-cols-[auto_minmax(8rem,2fr)_repeat(4,minmax(0,1fr))] gap-2 px-2 pb-1 text-[11px] text-muted tablet:grid"
       >
-        <span>选</span>
-        <span>课程</span>
-        <span>星期</span>
-        <span>节次</span>
-        <span>周次</span>
-        <span>地点</span>
+        <span>{importFlowCopy.columns.pick}</span>
+        <span>{importFlowCopy.columns.course}</span>
+        <span>{importFlowCopy.columns.weekday}</span>
+        <span>{importFlowCopy.columns.periods}</span>
+        <span>{importFlowCopy.columns.weeks}</span>
+        <span>{importFlowCopy.columns.room}</span>
       </div>
       <ul className="flex flex-col gap-2" data-role="import-rows">
         {visibleIndexes.map((index) => {
@@ -56,7 +57,7 @@ export function PreviewList({
                 type="checkbox"
                 className="row-span-2 mt-0.5 size-4 tablet:row-span-1 tablet:mt-0"
                 checked={selected.has(index)}
-                aria-label={`选择 ${item.courseName}`}
+                aria-label={importFlowCopy.pickAria(item.courseName)}
                 onChange={() => onToggle(index)}
               />
               <div className="flex min-w-0 flex-col gap-0.5">
@@ -66,7 +67,7 @@ export function PreviewList({
                     data-role="import-duplicate"
                     className="w-fit rounded-full bg-danger/10 px-2 py-0.5 text-[11px] text-danger-strong"
                   >
-                    重复，将被跳过
+                    {importFlowCopy.duplicate}
                   </span>
                 )}
               </div>

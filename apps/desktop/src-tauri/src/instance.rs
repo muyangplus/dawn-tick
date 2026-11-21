@@ -52,10 +52,10 @@ pub(crate) fn focus_main_window() -> bool {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE,
     };
-    let title: Vec<u16> = "晓刻 DawnTick".encode_utf16().chain(std::iter::once(0)).collect();
+    let title: Vec<u16> = copy::app::NAME.encode_utf16().chain(std::iter::once(0)).collect();
     let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
     if hwnd == 0 {
-        append_log("未找到已有主窗口，无法唤到前台");
+        log_warn("app", "已有实例的主窗口不存在，无法唤回");
         return false;
     }
     unsafe {
@@ -87,85 +87,69 @@ pub(crate) fn decide_instance() -> InstanceRole {
     let elevated = launch_has_elevate_marker();
     match instance_lock::acquire(&dir) {
         instance_lock::Gate::Owner(lock) => {
-            append_log(&format!("已取得实例锁: {}", lock.path().display()));
+            log_info("app", format!("已取得实例锁 lock={}", lock.path().display()));
             InstanceRole::Owner(lock)
         }
         instance_lock::Gate::Unavailable { lock, reason } => {
-            append_log(&format!(
-                "创建实例锁失败（{reason}），未按独占继续写库: {}",
-                lock.display()
-            ));
+            log_error("app", format!("实例锁创建失败 lock={} reason={reason}", lock.display()));
             if looks_like_access_denied(&reason) {
                 ACCESS_DENIED_SEEN.store(true, std::sync::atomic::Ordering::SeqCst);
                 if !elevated {
-                    return InstanceRole::NeedsElevation(format!(
-                        "数据目录不可写，无法建立实例锁（{reason}）"
-                    ));
+                    return InstanceRole::NeedsElevation(copy::instance::data_dir_not_writable(&reason));
                 }
             }
-            InstanceRole::Blocked(format!(
-                "无法在数据目录建立实例锁：{reason}\n\n\
-                 为避免两个实例同时写坏数据库，本次启动已停止，不会打开数据库。\n\
-                 请把程序移到可写目录，或以管理员身份运行后重试。\n\n\
-                 锁文件：{}",
-                lock.display()
-            ))
+            InstanceRole::Blocked(copy::instance::lock_unavailable(&reason, lock.display()))
         }
         instance_lock::Gate::Busy { lock, reason } => {
-            append_log(&format!("实例锁被占用（{reason}）: {}", lock.display()));
+            log_info("app", format!("实例锁被占用 lock={} reason={reason}", lock.display()));
             if elevated {
-                append_log("提权实例等待旧实例退出并释放实例锁…");
+                log_info("app", "提权实例等待旧实例释放实例锁");
                 return match instance_lock::acquire_waiting(&dir, INSTANCE_HANDOFF_TIMEOUT) {
                     instance_lock::Gate::Owner(lock) => {
-                        append_log("提权实例已取得实例锁，开始打开数据库");
+                        log_info("app", "提权实例已取得实例锁");
                         InstanceRole::Owner(lock)
                     }
-                    instance_lock::Gate::Busy { .. } => InstanceRole::Blocked(format!(
-                        "等待旧实例退出超时（{} 秒），本次未打开数据库。\n\
-                         请关闭所有晓刻窗口（可在任务管理器结束 DawnTick.exe）后重试。\n\n\
-                         锁文件：{}",
+                    instance_lock::Gate::Busy { .. } => InstanceRole::Blocked(copy::instance::handoff_timeout(
                         INSTANCE_HANDOFF_TIMEOUT.as_secs(),
-                        lock.display()
+                        lock.display(),
                     )),
-                    instance_lock::Gate::Unavailable { reason, .. } => InstanceRole::Blocked(format!(
-                        "等待旧实例退出后仍无法建立实例锁（{reason}），本次未打开数据库。"
-                    )),
+                    instance_lock::Gate::Unavailable { reason, .. } => InstanceRole::Blocked(copy::instance::handoff_lock_failed(&reason)),
                 };
             }
 
             let running: Option<InstanceStateFile> = instance_state_path().and_then(|path| read_json(&path));
             let Some(state) = running else {
-                append_log("已有实例占用数据目录，但缺少状态文件，按同版本处理");
+                log_warn("app", "实例状态文件缺失，按同版本处理");
                 return InstanceRole::FocusExisting;
             };
             if !process_alive(state.pid) {
-                append_log(&format!("状态文件中的进程 {} 已退出，尝试接管实例锁", state.pid));
+                log_warn("app", format!("记录的实例进程已退出，尝试接管实例锁 pid={}", state.pid));
                 return match instance_lock::acquire_waiting(&dir, std::time::Duration::from_secs(2)) {
                     instance_lock::Gate::Owner(lock) => {
-                        append_log("已接管实例锁");
+                        log_info("app", "已接管实例锁");
                         InstanceRole::Owner(lock)
                     }
                     instance_lock::Gate::Busy { .. } => {
-                        append_log("状态文件中的进程已退出，但实例锁仍被占用，按已有实例处理");
+                        log_warn("app", "实例锁仍被占用，按已有实例处理");
                         InstanceRole::FocusExisting
                     }
                     instance_lock::Gate::Unavailable { reason, .. } => {
-                        InstanceRole::Blocked(format!("接管实例锁失败（{reason}），本次未打开数据库。"))
+                        InstanceRole::Blocked(copy::instance::takeover_failed(&reason))
                     }
                 };
             }
             if !version_is_newer(APP_VERSION, &state.version) {
-                append_log(&format!(
-                    "已有实例 v{}（本进程 v{APP_VERSION}），唤回主窗口",
-                    state.version
-                ));
+                log_info(
+                    "app",
+                    format!("唤回已有实例 running={} self={APP_VERSION}", state.version),
+                );
                 return InstanceRole::FocusExisting;
             }
 
-            append_log(&format!(
-                "本进程 v{APP_VERSION} 新于运行中的 v{}，请求老版本退出",
-                state.version
-            ));
+            log_info(
+                "app",
+                format!("请求旧版本实例退出 running={} self={APP_VERSION}", state.version),
+            );
             if let Some(path) = quit_request_path() {
                 write_json(
                     &path,
@@ -178,15 +162,15 @@ pub(crate) fn decide_instance() -> InstanceRole {
             }
             match instance_lock::acquire_waiting(&dir, INSTANCE_TAKEOVER_TIMEOUT) {
                 instance_lock::Gate::Owner(lock) => {
-                    append_log("老版本已释放实例锁，本次接管");
+                    log_info("app", "旧版本已释放实例锁，本次接管");
                     InstanceRole::Owner(lock)
                 }
                 instance_lock::Gate::Busy { .. } => {
-                    append_log("老版本未在 8 秒内释放实例锁，改为唤回已有窗口，不并发写库");
+                    log_warn("app", format!("旧版本未按时释放实例锁，改为唤回已有窗口 timeout_s={}", INSTANCE_TAKEOVER_TIMEOUT.as_secs()));
                     InstanceRole::FocusExisting
                 }
                 instance_lock::Gate::Unavailable { reason, .. } => {
-                    InstanceRole::Blocked(format!("接管实例锁失败（{reason}），本次未打开数据库。"))
+                    InstanceRole::Blocked(copy::instance::takeover_failed(&reason))
                 }
             }
         }
@@ -206,7 +190,7 @@ pub(crate) fn spawn_takeover_watcher(app: tauri::AppHandle) {
     // 启动时清掉上一次运行遗留的请求：那是发给上一个实例的
     if let Some(path) = quit_request_path() {
         if std::fs::remove_file(&path).is_ok() {
-            append_log("清理遗留的接管请求文件");
+            log_debug("app", "已删除遗留的接管请求文件");
         }
     }
 
@@ -223,11 +207,11 @@ pub(crate) fn spawn_takeover_watcher(app: tauri::AppHandle) {
             continue;
         }
         if now_seconds().saturating_sub(request.at) > QUIT_REQUEST_MAX_AGE {
-            append_log("忽略过期的接管请求");
+            log_debug("app", "接管请求已过期，忽略");
             continue;
         }
         if version_is_newer(&request.version, APP_VERSION) {
-            append_log(&format!("新版本 v{} 请求接管，退出当前实例", request.version));
+            log_info("app", format!("新版本请求接管，退出当前实例 version={}", request.version));
             app.exit(0);
             return;
         }

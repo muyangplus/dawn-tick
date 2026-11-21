@@ -63,3 +63,27 @@ test('空白表单日期全取今天', () => {
   const form = blankAdjustForm('2026-09-21');
   assert.deepEqual([form.sourceDate, form.newDate, form.restFrom, form.restTo, form.extraDate], Array(5).fill('2026-09-21'));
 });
+
+test('修改已有调课：落点带结束节时按原结束节预填，教室取原记录', () => {
+  const patch = adjustFormOnOpen(
+    { ...target, drop: { date: '2026-09-23', periodStart: 5, periodEnd: 8 }, room: '教一-101', replaceEventId: 'e-old' },
+    context,
+  );
+  assert.deepEqual([patch.newDate, patch.newStart, patch.newEnd, patch.newRoom], ['2026-09-23', '5', '8', '教一-101']);
+});
+
+test('落点不带结束节时仍按原课长平移，没给教室时留空', () => {
+  const patch = adjustFormOnOpen({ ...target, drop: { date: '2026-09-23', periodStart: 5, periodEnd: undefined } }, context);
+  assert.equal(patch.newEnd, '6');
+  assert.equal(patch.newRoom, '');
+  assert.equal(adjustFormOnOpen({ ...target, room: null }, context).newRoom, '');
+});
+
+test('打开弹窗时停课范围回到只这一次、这个时段，结束日取原日期', () => {
+  const patch = adjustFormOnOpen(target, context);
+  assert.deepEqual([patch.cancelRange, patch.cancelTarget, patch.cancelTo], ['this', 'schedule', '2026-09-21']);
+  const empty = adjustFormOnOpen(null, context);
+  assert.deepEqual([empty.cancelRange, empty.cancelTarget, empty.cancelTo], ['this', 'schedule', '2026-09-21']);
+  const blank = blankAdjustForm('2026-09-21');
+  assert.deepEqual([blank.cancelRange, blank.cancelTarget, blank.cancelTo], ['this', 'schedule', '2026-09-21']);
+});

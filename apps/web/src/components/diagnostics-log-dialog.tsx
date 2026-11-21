@@ -4,6 +4,7 @@ import { copyText } from '../system-actions.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { toast } from './ui/toaster.tsx';
+import { appDiagnosticsCopy } from '../copy/app-diagnostics.ts';
 
 export interface DiagnosticsLogDialogProps {
   open: boolean;
@@ -43,19 +44,19 @@ export function DiagnosticsLogDialog({ open, onClose }: DiagnosticsLogDialogProp
 
   async function copyAll(): Promise<void> {
     if (data === null) return;
-    const ok = await copyText(data.text === '' ? '（暂无日志）' : data.text);
+    const ok = await copyText(data.text === '' ? appDiagnosticsCopy.emptyClipboard : data.text);
     if (!ok) {
-      toast.error('复制失败，请长按日志内容手动选择复制');
+      toast.error(appDiagnosticsCopy.copyFailed);
       return;
     }
     setCopied(true);
-    toast.success('已复制全部诊断日志');
+    toast.success(appDiagnosticsCopy.copiedToast);
   }
 
   async function clearAll(): Promise<void> {
     const result = await clearDiagnosticsLog();
-    if (result.error !== null) toast.error(`Web 日志已清空，原生日志清空失败：${result.error}`);
-    else toast.success('已清空诊断日志');
+    if (result.error !== null) toast.error(appDiagnosticsCopy.clearPartialFailed(result.error));
+    else toast.success(appDiagnosticsCopy.clearedToast);
     await reload();
   }
 
@@ -68,33 +69,33 @@ export function DiagnosticsLogDialog({ open, onClose }: DiagnosticsLogDialogProp
     >
       <DialogContent
         data-role="diagnostics-log-dialog"
-        title="诊断日志"
+        title={appDiagnosticsCopy.title}
         description={
           nativeLoading
-            ? '正在读取原生日志…'
+            ? appDiagnosticsCopy.loadingNative
             : data === null
-              ? '正在读取…'
-              : `共 ${data.text.split('\n').length} 行，可直接复制发给开发者`
+              ? appDiagnosticsCopy.loading
+              : appDiagnosticsCopy.lineCount(data.text.split('\n').length)
         }
         className="max-w-3xl"
       >
         <div className="flex flex-col gap-2">
           {data?.nativeError !== null && data?.nativeError !== undefined && (
             <p data-role="diagnostics-log-error" className="text-xs text-danger-strong" role="alert">
-              原生日志读取失败：{data.nativeError}（Web 日志仍可用）
+              {appDiagnosticsCopy.nativeReadFailed(data.nativeError)}
             </p>
           )}
           {data?.nativePath !== null && data?.nativePath !== undefined && (
             <p className="text-xs text-muted" data-role="diagnostics-log-path">
-              原生日志：{data.nativePath}
+              {appDiagnosticsCopy.nativePath(data.nativePath)}
             </p>
           )}
           <pre
             data-role="diagnostics-log-text"
-            aria-label="诊断日志内容"
+            aria-label={appDiagnosticsCopy.contentAria}
             className="max-h-[52vh] min-h-[160px] overflow-auto whitespace-pre-wrap break-all rounded-md border border-line bg-surface-2 p-3 text-[11px] leading-relaxed text-ink"
           >
-            {data === null || data.text === '' ? '（暂无日志：复现问题后再打开这里）' : data.text}
+            {data === null || data.text === '' ? appDiagnosticsCopy.empty : data.text}
           </pre>
         </div>
         <DialogFooter>
@@ -105,16 +106,16 @@ export function DiagnosticsLogDialog({ open, onClose }: DiagnosticsLogDialogProp
             onClick={() => void copyAll()}
             disabled={data === null}
           >
-            {copied ? '已复制' : '复制全部'}
+            {copied ? appDiagnosticsCopy.copiedButton : appDiagnosticsCopy.copyButton}
           </Button>
           <Button size="sm" variant="ghost" data-role="diagnostics-log-refresh" loading={busy} onClick={() => void reload()}>
-            刷新
+            {appDiagnosticsCopy.refreshButton}
           </Button>
           <Button size="sm" variant="ghost" data-role="diagnostics-log-clear" onClick={() => void clearAll()}>
-            清空
+            {appDiagnosticsCopy.clearButton}
           </Button>
           <Button size="sm" variant="ghost" onClick={onClose}>
-            关闭
+            {appDiagnosticsCopy.closeButton}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -28,11 +28,14 @@ internal object SecretVault {
     private const val KEY_BITS = 256
 
     /** 密钥库是否可用；不可用时 Web 层回退明文并显式提示。只读检查，不生成密钥。 */
-    fun isAvailable(): Boolean = try {
+    fun isAvailable(): Boolean = unavailableCause() == null
+
+    /** 密钥库打不开时的异常；可用时为 null。给调用方记日志用。 */
+    fun unavailableCause(): Exception? = try {
         KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        true
-    } catch (_: Exception) {
-        false
+        null
+    } catch (error: Exception) {
+        error
     }
 
     /** 加密 UTF-8 文本，返回 Base64(IV + 密文)。 */
@@ -50,7 +53,8 @@ internal object SecretVault {
     /** 解密 Base64(IV + 密文)；密钥丢失或内容被改动时抛异常。 */
     fun decrypt(encoded: String): String {
         val combined = Base64.decode(encoded, Base64.NO_WRAP)
-        require(combined.size > IV_BYTES) { "密文长度不对" }
+        // 插件把 IllegalArgumentException 换成 strings.xml 里的提示，这里的 message 不外露
+        require(combined.size > IV_BYTES) { "ciphertext shorter than IV" }
         val iv = combined.copyOfRange(0, IV_BYTES)
         val sealed = combined.copyOfRange(IV_BYTES, combined.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)

@@ -21,6 +21,7 @@ import {
   type PresetIndexSchool,
   type PresetSnapshot,
 } from '../preset-update.ts';
+import { schoolCopy } from '../copy/timetable-school.ts';
 
 export type { School };
 
@@ -30,18 +31,18 @@ export const PRESET_ISSUE_NEW_URL = 'https://github.com/muyangplus/dawn-tick-pre
 /** 「请求学校适配」Issue 表单的模板文件名 */
 export const REQUEST_SCHOOL_TEMPLATE = 'request-school.yml';
 /** 底部固定入口的默认标题 */
-export const REQUEST_SCHOOL_DEFAULT_TITLE = '[学校适配] 提交学校信息';
+export const REQUEST_SCHOOL_DEFAULT_TITLE = schoolCopy.issueDefaultTitle;
 
 /** 生成「提交学校信息 / 请求适配」的 Issue 地址；传校名则写进 `title`，不传用默认标题。 */
 export function requestSchoolUrl(schoolName?: string): string {
-  const title = schoolName === undefined || schoolName.trim() === '' ? REQUEST_SCHOOL_DEFAULT_TITLE : `[学校适配] ${schoolName.trim()}`;
+  const title = schoolName === undefined || schoolName.trim() === '' ? REQUEST_SCHOOL_DEFAULT_TITLE : schoolCopy.issueTitle(schoolName.trim());
   return `${PRESET_ISSUE_NEW_URL}?template=${REQUEST_SCHOOL_TEMPLATE}&title=${encodeURIComponent(title)}`;
 }
 
 // —— 筛选 ——
 
 /** 没有省份的学校归到这一组（目录里目前有 2 所） */
-export const OTHER_PROVINCE = '其他';
+export const OTHER_PROVINCE = schoolCopy.otherProvince;
 
 /** 筛选行上固定露出的常用标签（顺序即展示顺序）；缺了就用最高频的标签补齐。 */
 export const PREFERRED_SCHOOL_TAGS: readonly string[] = ['985', '211', '双一流'];
@@ -203,27 +204,27 @@ export function adapterInfo(context: PresetContext | null, school: School): Adap
     reason,
   });
 
-  if (context === null) return miss('预设还在读取中');
+  if (context === null) return miss(schoolCopy.presetReading);
   const index = context.index;
-  if (index === null) return miss(context.problem ?? '预设索引不可用');
+  if (index === null) return miss(context.problem ?? schoolCopy.indexUnavailable);
 
   const entry = findIndexSchool(index, school);
   const entrySystem = entry === undefined ? null : textOf(entry.system);
   const systemId = textOf(school.system) ?? entrySystem;
-  if (systemId === null) return miss('预设索引里没有该校教务系统');
+  if (systemId === null) return miss(schoolCopy.noSystemForSchool);
 
   const system = index.systems.find((item) => item.id.toLowerCase() === systemId.toLowerCase());
-  if (system === undefined) return miss(`预设索引里没有教务系统 ${systemId}`, systemId);
+  if (system === undefined) return miss(schoolCopy.systemMissing(systemId), systemId);
 
   const parserPath = textOf(system.parserPath);
   const systemName = textOf(system.name) ?? systemId;
-  if (parserPath === null) return miss(`教务系统 ${systemName} 还没有解析脚本`, systemId, systemName);
+  if (parserPath === null) return miss(schoolCopy.noParser(systemName), systemId, systemName);
   return { adapted: true, systemId, systemName, reason: '' };
 }
 
 /** 适配徽标的文案：已适配时带预设版本，未适配时就是「暂未适配」。 */
 export function adapterBadgeText(info: AdapterInfo, presetVersion: string): string {
-  return info.adapted ? `已适配 ${presetVersion}` : '暂未适配';
+  return info.adapted ? schoolCopy.adapted(presetVersion) : schoolCopy.notAdapted;
 }
 
 // —— 学校作息定位 ——
@@ -289,19 +290,19 @@ export function resolveSchoolTimetable(context: PresetContext | null, school: Sc
     reason,
   });
 
-  if (context === null) return miss('预设还在读取中');
+  if (context === null) return miss(schoolCopy.presetReading);
   const index = context.index;
-  if (index === null) return miss(context.problem ?? '预设索引不可用');
+  if (index === null) return miss(context.problem ?? schoolCopy.indexUnavailable);
 
   const entry = findIndexSchool(index, school);
-  if (entry === undefined) return miss('预设索引里没有这所学校');
-  if (textOf(entry.timetablePath) === null) return miss('预设索引里该校没有作息路径');
+  if (entry === undefined) return miss(schoolCopy.schoolMissing);
+  if (textOf(entry.timetablePath) === null) return miss(schoolCopy.noTimetablePath);
 
   const source = locateTimetableSource(context, entry);
-  if (source === null) return miss('快照里没有该校作息');
+  if (source === null) return miss(schoolCopy.noTimetableInSnapshot);
 
   const preset = findTimetable(entry.id);
-  if (preset === undefined || preset.periods.length === 0) return miss(`生效的预设里没有作息 ${entry.id}`);
+  if (preset === undefined || preset.periods.length === 0) return miss(schoolCopy.timetableMissing(entry.id));
   return {
     found: true,
     timetableId: preset.id,
@@ -334,7 +335,7 @@ export async function applySchoolTimetable(
   const resolution = resolveSchoolTimetable(context, school);
   const exclusive = resolution.found ? findTimetable(resolution.timetableId ?? '') : undefined;
   const chosen = exclusive ?? findTimetable(DEFAULT_TIMETABLE_ID);
-  if (chosen === undefined) throw new Error('内置通用作息不可用');
+  if (chosen === undefined) throw new Error(schoolCopy.fallbackUnavailable);
   await replaceTimeSlots(storage, semesterId, presetToTimeSlots(chosen));
   const found = exclusive !== undefined;
   return {
@@ -344,8 +345,8 @@ export async function applySchoolTimetable(
     exclusive: found,
     source: found ? (resolution.sourcePath ?? chosen.source ?? null) : (chosen.source ?? null),
     message: found
-      ? `已套用 ${school.name} 的作息（${chosen.periods.length} 节）`
-      : '该校暂无专属作息，已套用通用作息',
+      ? schoolCopy.appliedMessageExclusive(school.name, chosen.periods.length)
+      : schoolCopy.appliedMessageFallback,
   };
 }
 

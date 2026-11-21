@@ -1,6 +1,6 @@
 import { WAL_META_KEY, type SqlDriver, type Storage } from '@dawn-tick/core';
 import type { Platform } from '../platform-detect.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logWarn } from '../log.ts';
 import { errorMessage } from '../lib/errors.ts';
 
 /** WAL 的默认口径：便携版关（单文件），安装版与 Android 开。 */
@@ -37,10 +37,10 @@ export async function applyJournalMode(driver: SqlDriver, enabled: boolean): Pro
       logWarn('storage', '数据库日志模式未生效', { want, applied: applied || '未知' });
       return null;
     }
-    logInfo('storage', '数据库日志模式', { mode: want });
+    logDebug('storage', '数据库日志模式已设置', { mode: want });
     return applied;
   } catch (cause: unknown) {
-    logWarn('storage', '设置数据库日志模式失败', {
+    logWarn('storage', '数据库日志模式设置失败', {
       mode: want,
       message: errorMessage(cause),
     });

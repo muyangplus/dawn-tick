@@ -24,7 +24,7 @@ const WAIT_ROUNDS: u32 = 300;
 pub fn entry_relative_path(name: &str) -> Result<PathBuf, String> {
     let text = name.trim();
     if text.is_empty() {
-        return Err("便携包里有空文件名".to_string());
+        return Err(crate::copy::update::PORTABLE_EMPTY_NAME.to_string());
     }
     // 统一分隔符后再拆组件：Windows 上 `/` 与 `\` 混用也必须全部识别
     let normalized = text.replace('\\', "/");
@@ -32,7 +32,7 @@ pub fn entry_relative_path(name: &str) -> Result<PathBuf, String> {
     if normalized.starts_with('/')
         || (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
     {
-        return Err(format!("便携包含有非法路径: {name}"));
+        return Err(crate::copy::update::portable_bad_path(name));
     }
     let mut safe = PathBuf::new();
     for component in Path::new(&normalized).components() {
@@ -40,12 +40,12 @@ pub fn entry_relative_path(name: &str) -> Result<PathBuf, String> {
             Component::Normal(part) => safe.push(part),
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(format!("便携包含有非法路径: {name}"));
+                return Err(crate::copy::update::portable_bad_path(name));
             }
         }
     }
     if safe.as_os_str().is_empty() {
-        return Err(format!("便携包含有非法路径: {name}"));
+        return Err(crate::copy::update::portable_bad_path(name));
     }
     Ok(safe)
 }
@@ -55,20 +55,20 @@ pub fn entry_relative_path(name: &str) -> Result<PathBuf, String> {
 /// 先整体校验条目再落盘：缺 exe 或存在穿越条目时不在磁盘上留下半成品。
 pub fn extract_portable_zip(zip_path: &Path, staging: &Path) -> Result<PathBuf, String> {
     if staging.exists() {
-        std::fs::remove_dir_all(staging).map_err(|error| format!("清空更新暂存目录失败: {error}"))?;
+        std::fs::remove_dir_all(staging).map_err(crate::copy::update::clear_staging_failed)?;
     }
-    std::fs::create_dir_all(staging).map_err(|error| format!("创建更新暂存目录失败: {error}"))?;
+    std::fs::create_dir_all(staging).map_err(crate::copy::update::create_staging_failed)?;
 
-    let file = File::open(zip_path).map_err(|error| format!("打开便携包失败: {error}"))?;
+    let file = File::open(zip_path).map_err(crate::copy::update::portable_open_failed)?;
     let mut archive =
-        zip::ZipArchive::new(file).map_err(|error| format!("便携包不是有效的 zip: {error}"))?;
+        zip::ZipArchive::new(file).map_err(crate::copy::update::portable_not_zip)?;
 
     let mut planned: Vec<(usize, PathBuf, bool)> = Vec::new();
     let mut exe_entry: Option<PathBuf> = None;
     for index in 0..archive.len() {
         let entry = archive
             .by_index(index)
-            .map_err(|error| format!("读取便携包条目失败: {error}"))?;
+            .map_err(crate::copy::update::portable_entry_failed)?;
         let relative = entry_relative_path(entry.name())?;
         let is_dir = entry.is_dir();
         if !is_dir {
@@ -82,28 +82,28 @@ pub fn extract_portable_zip(zip_path: &Path, staging: &Path) -> Result<PathBuf, 
         }
         planned.push((index, relative, is_dir));
     }
-    let exe_entry = exe_entry.ok_or_else(|| format!("便携包里缺少 {PORTABLE_EXE_NAME}"))?;
+    let exe_entry = exe_entry.ok_or_else(|| crate::copy::update::portable_missing_exe(PORTABLE_EXE_NAME))?;
 
     for (index, relative, is_dir) in planned {
         let mut entry = archive
             .by_index(index)
-            .map_err(|error| format!("读取便携包条目失败: {error}"))?;
+            .map_err(crate::copy::update::portable_entry_failed)?;
         let target = staging.join(&relative);
         if is_dir {
-            std::fs::create_dir_all(&target).map_err(|error| format!("创建目录失败: {error}"))?;
+            std::fs::create_dir_all(&target).map_err(crate::copy::update::create_dir_failed)?;
             continue;
         }
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| format!("创建目录失败: {error}"))?;
+            std::fs::create_dir_all(parent).map_err(crate::copy::update::create_dir_failed)?;
         }
-        let mut output = File::create(&target).map_err(|error| format!("写入暂存文件失败: {error}"))?;
+        let mut output = File::create(&target).map_err(crate::copy::update::write_staged_failed)?;
         std::io::copy(&mut entry, &mut output)
-            .map_err(|error| format!("解压暂存文件失败: {error}"))?;
+            .map_err(crate::copy::update::extract_failed)?;
     }
 
     let exe = staging.join(&exe_entry);
     if !exe.is_file() {
-        return Err(format!("便携包解压后找不到 {PORTABLE_EXE_NAME}"));
+        return Err(crate::copy::update::extracted_exe_missing(PORTABLE_EXE_NAME));
     }
     Ok(exe)
 }
@@ -177,12 +177,12 @@ fn launch_script(script: &Path) -> Result<(), String> {
     command
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("启动更新脚本失败: {error}（脚本已保存在 {}，可手动运行）", script.to_string_lossy()))
+        .map_err(|error| crate::copy::update::script_launch_failed(error, script.to_string_lossy()))
 }
 
 #[cfg(not(windows))]
 fn launch_script(_script: &Path) -> Result<(), String> {
-    Err("当前平台不支持便携版自动替换，请到发布页手动下载".to_string())
+    Err(crate::copy::update::PORTABLE_UNSUPPORTED.to_string())
 }
 
 /// 准备便携版更新：校验 zip 来源 → 解压到暂存目录 → 生成并启动替换脚本。
@@ -194,32 +194,35 @@ pub async fn prepare_portable_update(name: String, sha256: String) -> Result<Str
     // 解压整个便携包：放到阻塞线程池，界面不卡
     tauri::async_runtime::spawn_blocking(move || prepare_portable_update_blocking(name, sha256))
         .await
-        .map_err(|error| format!("后台任务失败: {error}"))?
+        .map_err(crate::copy::common::background_task_failed)?
 }
 
 fn prepare_portable_update_blocking(name: String, sha256: String) -> Result<String, String> {
     // 只接受暂存目录里、哈希一致的 zip（见 fs_commands）
     let zip_path = crate::fs_commands::resolve_staged(&crate::fs_commands::updates_dir(), &name, &sha256, &["zip"])?;
-    let exe = std::env::current_exe().map_err(|error| format!("拿不到当前程序路径: {error}"))?;
+    let exe = std::env::current_exe().map_err(crate::copy::common::program_path_failed)?;
     let staging = staging_dir(&crate::data_dir());
     let staged_exe = extract_portable_zip(&zip_path, &staging)?;
     let script = std::env::temp_dir().join(format!("dawn-tick-update-{}.cmd", random_suffix()));
     std::fs::write(&script, update_script(&exe, &staged_exe, &staging))
-        .map_err(|error| format!("写入更新脚本失败: {error}"))?;
+        .map_err(crate::copy::update::script_write_failed)?;
     launch_script(&script)?;
-    crate::append_log(&format!(
-        "便携版更新已准备: 脚本 {}，暂存 {}，新程序 {}",
-        script.to_string_lossy(),
-        staging.to_string_lossy(),
-        staged_exe.to_string_lossy()
-    ));
+    crate::log_info(
+        "update",
+        format!(
+            "便携版更新已就绪 script={} staging={} exe={}",
+            script.to_string_lossy(),
+            staging.to_string_lossy(),
+            staged_exe.to_string_lossy()
+        ),
+    );
     Ok(script.to_string_lossy().to_string())
 }
 
 /// 退出应用让替换脚本接手：脚本已经在等 exe 释放，这里只负责尽快退出。
 #[tauri::command]
 pub fn exit_for_update(app: tauri::AppHandle) -> Result<(), String> {
-    crate::append_log("退出应用以完成便携版更新");
+    crate::log_info("update", "退出应用以完成便携版更新");
     app.exit(0);
     Ok(())
 }

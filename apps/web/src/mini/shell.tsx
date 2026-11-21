@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { WidgetBackground, WidgetVariant } from '@dawn-tick/core';
 import { isDesktopApp } from '../lib/capabilities.ts';
 import { miniShellClassName } from './background.ts';
+import { miniCopy } from '../copy/mini.ts';
 
 export interface MiniShellProps {
   variant: WidgetVariant;
@@ -25,7 +26,7 @@ export function MiniShell({
   variant,
   onHide,
   onOpen,
-  label = '晓刻 DawnTick',
+  label = miniCopy.defaultLabel,
   background = 'light',
   children,
 }: MiniShellProps) {
@@ -46,12 +47,12 @@ export function MiniShell({
               className="mini-open"
               data-role="mini-open"
               onClick={onOpen}
-              aria-label="打开主窗口"
+              aria-label={miniCopy.openAria}
             >
-              打开
+              {miniCopy.openButton}
             </button>
           )}
-          <button type="button" className="mini-close" onClick={onHide} aria-label="隐藏悬浮窗">
+          <button type="button" className="mini-close" onClick={onHide} aria-label={miniCopy.hideAria}>
             ×
           </button>
         </div>
@@ -62,7 +63,7 @@ export function MiniShell({
           className="mini-resize"
           data-role="mini-resize"
           role="separator"
-          aria-label="调整悬浮窗大小"
+          aria-label={miniCopy.resizeAria}
           onPointerDown={(event) => {
             event.preventDefault();
             void resizeWidgetWindow();

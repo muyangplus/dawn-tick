@@ -8,6 +8,7 @@ import { Sheet } from '../../components/ui/sheet.tsx';
 import { useBreakpoint } from '../../lib/use-media.ts';
 import { fail } from '../../lib/fail.ts';
 import type { ImportFailure } from './import-flow-model.ts';
+import { importMappingCopy } from '../../copy/import-mapping.ts';
 
 export interface ManualMappingSheetProps {
   open: boolean;
@@ -64,14 +65,14 @@ export function ManualMappingSheet({
       open={open}
       onOpenChange={onOpenChange}
       side={breakpoint === 'desktop' ? 'right' : 'bottom'}
-      title="手动指定表格"
-      description="识别不准时逐列指定；不会改动已粘贴的页面内容"
+      title={importMappingCopy.title}
+      description={importMappingCopy.description}
       contentAttrs={{ 'data-role': 'manual-mapping' }}
       bodyClassName="flex flex-col gap-3 overscroll-contain"
     >
       <div className="flex items-center gap-2 text-sm text-ink">
         <SlidersHorizontal className="size-4" aria-hidden />
-        读取页面里的表格，再指定行列
+        {importMappingCopy.intro}
       </div>
       <Button
         size="sm"
@@ -79,13 +80,13 @@ export function ManualMappingSheet({
         className="w-full tablet:w-auto"
         onClick={onReadTables}
       >
-        读取页面表格
+        {importMappingCopy.readTables}
       </Button>
 
       {inspection !== null && (
         <>
           <span className="text-xs text-muted">
-            形态推测：{inspection.system.label} · 预览 {inspection.tables.length} 个表格（行号从 0 起）
+            {importMappingCopy.inspection(inspection.system.label, inspection.tables.length)}
           </span>
           <div className="max-h-56 overflow-auto rounded-md border border-line">
             <table className="w-full text-left text-[11px]">
@@ -95,7 +96,7 @@ export function ManualMappingSheet({
                     <th className="w-6 p-1 text-muted">{rowIndex}</th>
                     {row.map((cell, cellIndex) => (
                       <td key={cellIndex} className="max-w-24 break-words p-1 align-top">
-                        {cell === '' ? '—' : cell}
+                        {cell === '' ? importMappingCopy.emptyCell : cell}
                       </td>
                     ))}
                   </tr>
@@ -104,40 +105,40 @@ export function ManualMappingSheet({
             </table>
           </div>
           <div className="grid grid-cols-2 gap-2 tablet:flex tablet:flex-wrap tablet:items-end">
-            <Field label="表头行">
+            <Field label={importMappingCopy.headerRowLabel}>
               <Input
                 ref={headerRowInput}
                 type="number"
                 min={0}
-                aria-label="表头行"
+                aria-label={importMappingCopy.headerRowLabel}
                 value={mapHeaderRow}
                 onChange={(event) => onMapHeaderRow(Number(event.target.value))}
               />
             </Field>
-            <Field label="星期起始列">
+            <Field label={importMappingCopy.dayStartLabel}>
               <Input
                 type="number"
                 min={0}
-                aria-label="星期起始列"
+                aria-label={importMappingCopy.dayStartLabel}
                 value={mapDayStart}
                 onChange={(event) => onMapDayStart(Number(event.target.value))}
               />
             </Field>
-            <Field label="星期列数">
+            <Field label={importMappingCopy.dayCountLabel}>
               <Input
                 type="number"
                 min={1}
                 max={7}
-                aria-label="星期列数"
+                aria-label={importMappingCopy.dayCountLabel}
                 value={mapDayCount}
                 onChange={(event) => onMapDayCount(Number(event.target.value))}
               />
             </Field>
-            <Field label="节次列（-1 用行号）">
+            <Field label={importMappingCopy.periodColumnLabel} help={importMappingCopy.periodColumnHelp}>
               <Input
                 type="number"
                 min={-1}
-                aria-label="节次列"
+                aria-label={importMappingCopy.periodColumnLabel}
                 value={mapPeriodColumn}
                 onChange={(event) => onMapPeriodColumn(Number(event.target.value))}
               />
@@ -145,7 +146,7 @@ export function ManualMappingSheet({
           </div>
           {failure?.source === 'mapping' && (
             <InlineError>
-              {fail('识别失败', failure.reason, '请调整表头行、星期列或节次列后重试。').text}
+              {fail(importMappingCopy.failWhat, failure.reason, importMappingCopy.failNext).text}
             </InlineError>
           )}
         </>
@@ -157,15 +158,15 @@ export function ManualMappingSheet({
           disabled={inspection === null}
           onClick={onApply}
         >
-          按此映射识别
+          {importMappingCopy.apply}
         </Button>
         <Button
           variant="ghost"
           className="w-full tablet:w-auto"
-          aria-label="关闭手动映射"
+          aria-label={importMappingCopy.closeAria}
           onClick={() => onOpenChange(false)}
         >
-          关闭
+          {importMappingCopy.close}
         </Button>
       </div>
     </Sheet>

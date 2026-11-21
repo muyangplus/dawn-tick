@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppSettings } from '@dawn-tick/core';
 import { CHANNEL, CHANNEL_LABEL, appVersion } from '../../channel.ts';
 import { logInfo, logWarn } from '../../log.ts';
-import { fail } from '../../copy/zh.ts';
+import { updateSettingsCopy } from '../../copy/update-settings.ts';
 import { useAction } from '../../lib/action.ts';
 import { DOWNLOAD_SOURCE_LABEL } from '../../lib/download-source.ts';
 import {
@@ -12,6 +12,7 @@ import {
   type DownloadSourceResolution,
 } from '../../lib/download-selection.ts';
 import { probeAllSources } from '../../lib/download-probe.ts';
+import { fetchWithSignal } from '../../lib/abortable-fetch.ts';
 import { updateFetch } from '../../lib/update-fetch.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';
 import { checkForUpdate, releaseChannelOf, resolveFeed, resolveReceiveBeta, verifyHint } from '../../update.ts';
@@ -94,48 +95,55 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
   async function run(): Promise<void> {
     await action.run({
       scope: 'update',
-      label: '正在检查更新…',
-      log: '检查更新失败',
-      fail: { what: '检查更新', next: '请稍后再试' },
-      task: async () => {
+      label: updateSettingsCopy.checkingLabel,
+      log: '更新检查失败',
+      logLevel: 'warn',
+      fail: updateSettingsCopy.checkFailed,
+      // 只读：Esc / 返回键可取消
+      cancellable: true,
+      task: async (signal) => {
         // 手动检查前先确保有源：自动模式命中缓存时不会额外发请求
         const resolved = await resolveNow(false);
+        if (signal.aborted) return;
         const status = await checkForUpdate({
           channel: CHANNEL,
           receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
           currentVersion: appVersion(),
-          fetchImpl: updateFetch(),
+          fetchImpl: fetchWithSignal(updateFetch(), signal),
           ...(resolved === null ? {} : { source: resolved.source }),
           // 选中的源失败时自动回退另一个源：Gitee 镜像还没同步时也能更新
           fallback: true,
         });
+        // 已取消：底层没认 signal 时请求仍会跑完，结果丢掉
+        if (signal.aborted) return;
         if (status.error !== null) {
-          const message = fail('检查更新', status.error, '请稍后再试');
+          const message = updateSettingsCopy.checkFailedText(status.error);
           setResult(said(message));
           toast.error(message);
-          logWarn('update', '检查更新失败', { error: status.error, feed: status.feed, source: status.source });
+          logWarn('update', '更新检查失败', { error: status.error, feed: status.feed, source: status.source });
           return;
         }
         const manifest = status.manifest;
         const channelLabel = CHANNEL_LABEL[releaseChannelOf(status)];
         const sourceLabel = DOWNLOAD_SOURCE_LABEL[status.source];
-        const fallbackNote =
-          status.fallbackFrom === undefined
-            ? ''
-            : `；${DOWNLOAD_SOURCE_LABEL[status.fallbackFrom]} 不可用，已回退`;
+        const sourceNote = updateSettingsCopy.checkSource(
+          channelLabel,
+          sourceLabel,
+          status.fallbackFrom === undefined ? undefined : DOWNLOAD_SOURCE_LABEL[status.fallbackFrom],
+        );
         // 查到正式版就记住它的版本号：正式版渠道据此判断是否存在「当前比正式版高」的回滚场景
         if (manifest?.channel === 'release') setLatestStable(manifest.version);
         const ignored = isIgnoredVersion(status.latest, currentIgnoredVersion());
         const message = status.available
           ? ignored
-            ? `发现新版本 ${status.latest}（${channelLabel}，来源 ${sourceLabel}${fallbackNote}）；已忽略此版本，可在更新弹窗里取消忽略`
-            : `发现新版本 ${status.latest}（${channelLabel}，来源 ${sourceLabel}${fallbackNote}），可在更新弹窗里下载安装`
-          : `已是最新版本（${channelLabel}，来源 ${sourceLabel}${fallbackNote}）`;
+            ? updateSettingsCopy.checkFoundIgnored(status.latest, sourceNote)
+            : updateSettingsCopy.checkFound(status.latest, sourceNote)
+          : updateSettingsCopy.checkLatest(sourceNote);
         setResult(said(message));
         toast.success(message);
         // 手动检查与启动自检共用同一个更新弹窗：只在本版本严格更高时打开（忽略的版本也打开）
         if (status.available) requestUpdatePrompt(status);
-        logInfo('update', '检查更新', {
+        logInfo('update', '更新检查完成', {
           feed: status.feed,
           source: status.source,
           ...(status.fallbackFrom === undefined ? {} : { fallbackFrom: status.fallbackFrom }),

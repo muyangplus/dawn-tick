@@ -75,7 +75,7 @@ pub fn acquire(dir: &Path) -> Gate {
     if let Err(error) = std::fs::create_dir_all(dir) {
         return Gate::Unavailable {
             lock,
-            reason: format!("创建数据目录失败（{error}）"),
+            reason: crate::copy::instance::create_dir_failed(&error),
         };
     }
     let file = match open_lock_file(&lock) {
@@ -83,7 +83,7 @@ pub fn acquire(dir: &Path) -> Gate {
         Err(error) => {
             return Gate::Unavailable {
                 lock,
-                reason: format!("打开锁文件失败（{error}）"),
+                reason: crate::copy::instance::open_lock_failed(&error),
             }
         }
     };
@@ -91,11 +91,11 @@ pub fn acquire(dir: &Path) -> Gate {
         Ok(()) => Gate::Owner(InstanceLock { path: lock, file }),
         Err(std::fs::TryLockError::WouldBlock) => Gate::Busy {
             lock,
-            reason: "数据目录已被另一个实例占用".to_string(),
+            reason: crate::copy::instance::OCCUPIED.to_string(),
         },
         Err(std::fs::TryLockError::Error(error)) => Gate::Unavailable {
             lock,
-            reason: format!("加锁失败（{error}）"),
+            reason: crate::copy::instance::lock_failed(&error),
         },
     }
 }
@@ -109,7 +109,7 @@ pub fn acquire_waiting(dir: &Path, timeout: Duration) -> Gate {
     let start = Instant::now();
     let last = Gate::Busy {
         lock: lock_path(dir),
-        reason: "数据目录已被另一个实例占用".to_string(),
+        reason: crate::copy::instance::OCCUPIED.to_string(),
     };
     loop {
         match acquire(dir) {

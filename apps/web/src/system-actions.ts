@@ -3,7 +3,9 @@ import { isAndroidApp, isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
 import { PLUGIN_NAMES, loadPlugin, type SystemActionsPlugin } from './lib/plugins.ts';
 import { writeAndroidFile } from './lib/export-files.ts';
-import { logInfo, logWarn } from './log.ts';
+import { pathForLog, urlForLog } from './lib/log-redact.ts';
+import { logDebug, logError, logInfo, logWarn } from './log.ts';
+import { appSystemCopy } from './copy/app-system.ts';
 
 /** 插件接口定义已集中到 `lib/plugins.ts`，这里保留原导出路径供旧调用方使用。 */
 export type { SystemActionsPlugin } from './lib/plugins.ts';
@@ -34,34 +36,34 @@ async function openExternalWithReason(url: string): Promise<OpenExternalResult> 
   if (isDesktopApp()) {
     try {
       await invokeNative('open_external_url', { url });
-      logInfo('link', '用默认浏览器打开', { url });
+      logInfo('link', '已用默认浏览器打开链接', { url: urlForLog(url) });
       return { ok: true, error: null };
     } catch (cause: unknown) {
       const error = nativeErrorMessage(cause);
-      logWarn('link', '打开默认浏览器失败', { url, message: error });
-      return { ok: false, error: `系统浏览器打开失败：${error}` };
+      logWarn('link', '默认浏览器打开失败', { url: urlForLog(url), message: error });
+      return { ok: false, error: appSystemCopy.link.desktopOpenFailed(error) };
     }
   }
   const plugin = await loadSystemActions();
   if (plugin !== null) {
     try {
       if (await openWithSystem(url)) {
-        logInfo('link', '交给系统浏览器打开', { url });
+        logInfo('link', '已交给系统浏览器打开链接', { url: urlForLog(url) });
         return { ok: true, error: null };
       }
     } catch (cause: unknown) {
       const error = nativeErrorMessage(cause);
-      logWarn('link', '原生打开失败，改用新窗口', { url, message: error });
+      logWarn('link', '原生打开失败，改用新窗口', { url: urlForLog(url), message: error });
       // 原生明确失败时不再静默降级：把原因交给界面，避免「点确认没反应」
-      if (isAndroidApp()) return { ok: false, error: `调用系统浏览器失败：${error}` };
+      if (isAndroidApp()) return { ok: false, error: appSystemCopy.link.androidOpenFailed(error) };
     }
   }
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
   if (opened === null) {
-    logWarn('link', '新窗口被拦截', { url });
-    return { ok: false, error: '浏览器新窗口被拦截，请改用「复制链接」' };
+    logWarn('link', '新窗口被拦截', { url: urlForLog(url) });
+    return { ok: false, error: appSystemCopy.link.popupBlocked };
   }
-  logInfo('link', '在新窗口打开', { url });
+  logInfo('link', '已在新窗口打开链接', { url: urlForLog(url) });
   return { ok: true, error: null };
 }
 
@@ -94,7 +96,7 @@ export async function readNativeNotifyStatus(asked: boolean): Promise<NotifyStat
       channelMuted: result?.channelMuted === true,
     };
   } catch (cause: unknown) {
-    logWarn('permission', '读取通知状态失败', { message: nativeErrorMessage(cause) });
+    logWarn('permission', '通知状态读取失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -108,7 +110,7 @@ export async function openNotifySettings(channelId?: string | null): Promise<boo
     logInfo('permission', '已跳转通知设置页', { channelId: channelId ?? null, opened: result?.opened === true });
     return true;
   } catch (cause: unknown) {
-    logWarn('permission', '跳转通知设置页失败', { message: nativeErrorMessage(cause) });
+    logWarn('permission', '通知设置页跳转失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -117,7 +119,7 @@ async function loadSystemActions(): Promise<SystemActionsPlugin | null> {
   try {
     return await loadPlugin<SystemActionsPlugin>(PLUGIN_NAMES.systemActions);
   } catch (cause: unknown) {
-    logWarn('link', '系统动作插件不可用', { message: nativeErrorMessage(cause) });
+    logWarn('app', '系统动作插件不可用', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -140,7 +142,7 @@ async function withTimeout<T>(task: Promise<T>, ms: number, message: string): Pr
 async function openWithSystem(url: string): Promise<boolean> {
   const plugin = await loadSystemActions();
   if (plugin === null) return false;
-  const result = await withTimeout(plugin.openExternal({ url }), 8_000, '调用系统浏览器超时');
+  const result = await withTimeout(plugin.openExternal({ url }), 8_000, appSystemCopy.link.nativeTimeout);
   return result.opened === true;
 }
 
@@ -151,7 +153,7 @@ export async function isIgnoringBatteryOptimizations(): Promise<boolean | null> 
   try {
     return (await plugin.isIgnoringBatteryOptimizations()).ignoring === true;
   } catch (cause: unknown) {
-    logWarn('link', '读取电池优化状态失败', { message: nativeErrorMessage(cause) });
+    logWarn('permission', '电池优化状态读取失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -162,13 +164,13 @@ export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
   if (plugin === null) return false;
   try {
     const result = await plugin.requestIgnoreBatteryOptimizations();
-    logInfo('link', '已跳转电池优化设置页', {
+    logInfo('permission', '已跳转电池优化设置页', {
       requested: result.requested === true,
       ignoring: result.ignoring === true,
     });
     return true;
   } catch (cause: unknown) {
-    logWarn('link', '跳转电池优化设置页失败', { message: nativeErrorMessage(cause) });
+    logWarn('permission', '电池优化设置页跳转失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -194,10 +196,10 @@ export async function copyText(text: string): Promise<boolean> {
     area.select();
     const copied = typeof document.execCommand === 'function' ? document.execCommand('copy') : false;
     document.body.removeChild(area);
-    if (!copied) logWarn('link', '复制链接失败', { length: text.length });
+    if (!copied) logWarn('link', '选区复制失败', { length: text.length });
     return copied;
   } catch (cause: unknown) {
-    logWarn('link', '复制链接异常', { message: nativeErrorMessage(cause) });
+    logWarn('link', '复制失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -208,10 +210,10 @@ export async function openLogDirectory(): Promise<string | null> {
   try {
     const dir = await invokeNative<string>('open_log_dir');
     if (dir === undefined) return null;
-    logInfo('log', '打开日志目录', { dir });
+    logInfo('log', '已打开日志目录', { dir: pathForLog(dir) });
     return dir;
   } catch (cause: unknown) {
-    logWarn('log', '打开日志目录失败', { message: nativeErrorMessage(cause) });
+    logWarn('log', '日志目录打开失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -226,10 +228,10 @@ export async function revealPath(path: string): Promise<boolean> {
   try {
     const shown = await invokeNative<string>('reveal_path', { path });
     if (shown === undefined) return false;
-    logInfo('export', '已在资源管理器中定位', { path: shown });
+    logInfo('backup', '已在资源管理器中定位', { path: pathForLog(shown) });
     return true;
   } catch (cause: unknown) {
-    logWarn('export', '打开所在位置失败', { path, message: nativeErrorMessage(cause) });
+    logWarn('backup', '所在位置打开失败', { path: pathForLog(path), message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -255,41 +257,41 @@ export async function saveTextFile(
       // 由原生弹「另存为」并写入：前端不再把路径交给写文件命令
       const path = await invokeNative<string | null>('save_file', {
         defaultName: name,
-        filterName: options.filterName ?? '文本文件',
+        filterName: options.filterName ?? appSystemCopy.file.textFilter,
         extension,
         text: content,
       });
       if (path === null) {
-        logInfo('export', '用户取消保存', { name });
+        logDebug('backup', '已取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      if (path === undefined) throw new Error('当前平台不支持写入文件');
-      logInfo('export', '已写入文件', { path, bytes: content.length });
+      if (path === undefined) throw new Error(appSystemCopy.file.writeUnsupported);
+      logInfo('backup', '已写入文件', { path: pathForLog(path), bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
       const message = nativeErrorMessage(cause);
-      logWarn('export', '写入文件失败', { name, message });
+      logError('backup', '文件写入失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
   }
   if (isAndroidApp()) {
     try {
       const path = await writeAndroidFile(name, content);
-      logInfo('export', '已写入文件', { path, bytes: content.length });
+      logInfo('backup', '已写入文件', { path: pathForLog(path), bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
       const message = nativeErrorMessage(cause);
-      logWarn('export', '写入文件失败', { name, message });
+      logError('backup', '文件写入失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
   }
   try {
     downloadInBrowser(name, content, options.mime);
-    logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
+    logInfo('backup', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logWarn('export', '浏览器下载失败', { name, message });
+    logError('backup', '浏览器下载失败', { name, message });
     return { ok: false, cancelled: false, path: null, error: message };
   }
 }
@@ -320,41 +322,41 @@ export async function saveBinaryFile(
     try {
       const path = await invokeNative<string | null>('save_file', {
         defaultName: name,
-        filterName: options.filterName ?? '文件',
+        filterName: options.filterName ?? appSystemCopy.file.binaryFilter,
         extension,
         base64: toBase64Bytes(content),
       });
       if (path === null) {
-        logInfo('export', '用户取消保存', { name });
+        logDebug('backup', '已取消保存', { name });
         return { ok: false, cancelled: true, path: null, error: null };
       }
-      if (path === undefined) throw new Error('当前平台不支持写入文件');
-      logInfo('export', '已写入二进制文件', { path, bytes: content.length });
+      if (path === undefined) throw new Error(appSystemCopy.file.writeUnsupported);
+      logInfo('backup', '已写入文件', { path: pathForLog(path), bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
       const message = nativeErrorMessage(cause);
-      logWarn('export', '写入二进制文件失败', { name, message });
+      logError('backup', '文件写入失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
   }
   if (isAndroidApp()) {
     try {
       const path = await writeAndroidFile(name, content);
-      logInfo('export', '已写入二进制文件', { path, bytes: content.length });
+      logInfo('backup', '已写入文件', { path: pathForLog(path), bytes: content.length });
       return { ok: true, cancelled: false, path, error: null };
     } catch (cause: unknown) {
       const message = nativeErrorMessage(cause);
-      logWarn('export', '写入二进制文件失败', { name, message });
+      logError('backup', '文件写入失败', { name, message });
       return { ok: false, cancelled: false, path: null, error: message };
     }
   }
   try {
     downloadInBrowser(name, content, 'application/octet-stream');
-    logInfo('export', '已交给浏览器下载', { name, bytes: content.length });
+    logInfo('backup', '已交给浏览器下载', { name, bytes: content.length });
     return { ok: true, cancelled: false, path: null, error: null };
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logWarn('export', '浏览器下载失败', { name, message });
+    logError('backup', '浏览器下载失败', { name, message });
     return { ok: false, cancelled: false, path: null, error: message };
   }
 }

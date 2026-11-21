@@ -5,6 +5,7 @@ import { ScanEntryButton } from './scan/scan-entry-button.tsx';
 import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs.tsx';
+import { appShellCopy } from '../copy/app-shell.ts';
 
 /** 周模式的翻页信息：第几周、本周是第几周、首/末周时翻不动。 */
 export interface WeekNavProps {
@@ -70,7 +71,7 @@ export function AppToolbar({
   return (
     <header className="flex flex-wrap items-center gap-2 border-b border-line bg-surface px-3 py-2 tablet:px-4">
       <Select value={semester.id} onValueChange={onSelectSemester}>
-        <SelectTrigger aria-label="选择学期" className="w-44">
+        <SelectTrigger aria-label={appShellCopy.toolbar.semesterAria} className="w-44">
           <span className="truncate">{semester.name}</span>
         </SelectTrigger>
         <SelectContent>
@@ -84,49 +85,49 @@ export function AppToolbar({
 
       {mode === 'week' ? (
         <div className="flex items-center gap-1" data-role="week-nav">
-          <Button variant="ghost" size="icon" aria-label="上一屏" disabled={!week.canPrev} onClick={week.onPrev}>
+          <Button variant="ghost" size="icon" aria-label={appShellCopy.toolbar.prevWindowAria} disabled={!week.canPrev} onClick={week.onPrev}>
             <ChevronLeft className="size-4" aria-hidden />
           </Button>
           <span className="tabular min-w-16 text-center text-sm text-ink">
-            第 {week.viewWeek} 周
-            {week.viewWeek === week.currentWeek && <span className="text-xs text-muted"> · 本周</span>}
+            {appShellCopy.toolbar.weekLabel(week.viewWeek)}
+            {week.viewWeek === week.currentWeek && <span className="text-xs text-muted">{appShellCopy.toolbar.currentWeekSuffix}</span>}
           </span>
-          <Button variant="ghost" size="icon" aria-label="下一屏" disabled={!week.canNext} onClick={week.onNext}>
+          <Button variant="ghost" size="icon" aria-label={appShellCopy.toolbar.nextWindowAria} disabled={!week.canNext} onClick={week.onNext}>
             <ChevronRight className="size-4" aria-hidden />
           </Button>
         </div>
       ) : (
         <div className="flex items-center gap-1" data-role="day-nav">
-          <Button variant="ghost" size="icon" aria-label="前一天" disabled={!day.canPrev} onClick={day.onPrev}>
+          <Button variant="ghost" size="icon" aria-label={appShellCopy.toolbar.prevDayAria} disabled={!day.canPrev} onClick={day.onPrev}>
             <ChevronLeft className="size-4" aria-hidden />
           </Button>
           <span className="tabular min-w-24 text-center text-sm text-ink" data-role="day-date">
             {dayLabel(day.date)}
           </span>
-          <Button variant="ghost" size="icon" aria-label="后一天" disabled={!day.canNext} onClick={day.onNext}>
+          <Button variant="ghost" size="icon" aria-label={appShellCopy.toolbar.nextDayAria} disabled={!day.canNext} onClick={day.onNext}>
             <ChevronRight className="size-4" aria-hidden />
           </Button>
         </div>
       )}
 
-      <Button variant="secondary" size="sm" aria-label="回到今天" onClick={onToday}>
+      <Button variant="secondary" size="sm" aria-label={appShellCopy.toolbar.todayAria} onClick={onToday}>
         <CalendarRange className="size-4" aria-hidden />
-        今天
+        {appShellCopy.toolbar.todayButton}
       </Button>
 
       <Tabs value={mode} onValueChange={(value) => onModeChange(value as 'week' | 'today')}>
         <TabsList>
-          <TabsTrigger value="week">周</TabsTrigger>
-          <TabsTrigger value="today">日</TabsTrigger>
+          <TabsTrigger value="week">{appShellCopy.toolbar.weekTab}</TabsTrigger>
+          <TabsTrigger value="today">{appShellCopy.toolbar.dayTab}</TabsTrigger>
         </TabsList>
       </Tabs>
 
       <div className="ml-auto flex items-center gap-2">
         {onScan !== null && <ScanEntryButton onScan={onScan} />}
-        <Button variant="ghost" size="icon" aria-label="帮助" data-role="open-help" onClick={onHelp}>
+        <Button variant="ghost" size="icon" aria-label={appShellCopy.toolbar.helpAria} data-role="open-help" onClick={onHelp}>
           <CircleHelp className="size-4" aria-hidden />
         </Button>
-        <Button variant="ghost" size="icon" aria-label="搜索" aria-keyshortcuts="/" onClick={onSearch}>
+        <Button variant="ghost" size="icon" aria-label={appShellCopy.toolbar.searchAria} aria-keyshortcuts="/" onClick={onSearch}>
           <Search className="size-4" aria-hidden />
         </Button>
         {!compact && <AddMenuButton actions={addActions} />}

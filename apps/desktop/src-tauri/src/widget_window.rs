@@ -279,7 +279,7 @@ async fn load_store() -> WidgetGeometryStore {
 /// 写记忆表；失败只记日志，不影响本次尺寸生效。
 async fn save_store(store: &WidgetGeometryStore) -> bool {
     let Some(text) = store_json(store) else {
-        crate::append_log("悬浮窗尺寸序列化失败，本次不记忆");
+        crate::log_warn("widget", "悬浮窗尺寸序列化失败，本次不记忆");
         return false;
     };
     crate::write_meta_value(WIDGET_GEOMETRY_KEY, &text).await
@@ -327,7 +327,7 @@ pub(crate) fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow
     }
     let (width, height) = widget_size(DEFAULT_VARIANT);
     let built = WebviewWindowBuilder::new(app, "mini", WebviewUrl::App("mini.html".into()))
-        .title("晓刻 DawnTick · 悬浮窗")
+        .title(crate::copy::window::WIDGET_TITLE)
         .inner_size(width, height)
         // 允许用户拉伸手柄（Web 侧调 startResizeDragging），但尺寸被夹在上下限之间
         .min_inner_size(MIN_WIDGET_WIDTH, MIN_WIDGET_HEIGHT)
@@ -354,7 +354,7 @@ pub(crate) fn ensure_mini(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow
             Some(window)
         }
         Err(error) => {
-            crate::append_log(&format!("创建悬浮窗失败: {error}"));
+            crate::log_error("widget", format!("悬浮窗创建失败 error={error}"));
             None
         }
     }
@@ -385,15 +385,18 @@ pub async fn widget_measure(
     let current_width = window_logical_width(&window);
     let layout = content_layout(&key, content_rows, current_width, remembered, screen_height);
     apply_size(&window, &layout)?;
-    crate::append_log(&format!(
-        "悬浮窗尺寸按内容调整: {}x{}（样式 {key}，行数 {}，来源 {}）",
-        layout.width,
-        layout.height,
-        content_rows
-            .map(|rows| rows.to_string())
-            .unwrap_or_else(|| "缺省".to_string()),
-        layout.source
-    ));
+    crate::log_trace(
+        "widget",
+        format!(
+            "悬浮窗尺寸按内容调整 size={}x{} style={key} rows={} source={}",
+            layout.width,
+            layout.height,
+            content_rows
+                .map(|rows| rows.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            layout.source
+        ),
+    );
     Ok(layout)
 }
 
@@ -420,12 +423,12 @@ pub async fn widget_resize(
     let layout = manual_layout(&key, requested, Some(size), screen_height);
     apply_size(&window, &layout)?;
     if saved {
-        crate::append_log(&format!(
-            "悬浮窗尺寸已记忆: {}x{}（样式 {key}）",
-            layout.width, layout.height
-        ));
+        crate::log_debug(
+            "widget",
+            format!("悬浮窗尺寸已记忆 size={}x{} style={key}", layout.width, layout.height),
+        );
     } else {
-        crate::append_log("悬浮窗尺寸写入 app_meta 失败，本次仅生效不记忆");
+        crate::log_warn("widget", "悬浮窗尺寸写入 app_meta 失败，本次不记忆");
     }
     Ok(layout)
 }
@@ -444,10 +447,13 @@ pub async fn show_widget(app: tauri::AppHandle, variant: Option<String>) -> Resu
         .show()
         .map_err(|error| format!("显示悬浮窗失败: {error}"))?;
     let _ = window.set_focus();
-    crate::append_log(&format!(
-        "已显示悬浮窗（{key}，{}x{}，来源 {}）",
-        layout.width, layout.height, layout.source
-    ));
+    crate::log_info(
+        "widget",
+        format!(
+            "悬浮窗已显示 style={key} size={}x{} source={}",
+            layout.width, layout.height, layout.source
+        ),
+    );
     Ok(())
 }
 
@@ -458,7 +464,7 @@ pub async fn hide_widget(app: tauri::AppHandle) -> Result<(), String> {
         window
             .hide()
             .map_err(|error| format!("隐藏悬浮窗失败: {error}"))?;
-        crate::append_log("已隐藏悬浮窗");
+        crate::log_info("widget", "悬浮窗已隐藏");
     }
     Ok(())
 }
@@ -476,7 +482,7 @@ pub async fn show_main(app: tauri::AppHandle) -> Result<(), String> {
     window
         .set_focus()
         .map_err(|error| format!("聚焦主窗口失败: {error}"))?;
-    crate::append_log("从悬浮窗打开主窗口");
+    crate::log_info("widget", "从悬浮窗打开主窗口");
     Ok(())
 }
 

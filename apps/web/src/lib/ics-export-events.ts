@@ -10,6 +10,7 @@ import {
   type SemesterRow,
   type TimeSlotRow,
 } from '@dawn-tick/core';
+import { exportIcsCopy } from '../copy/export-ics.ts';
 
 /**
  * 排课与日程 → ICS 单次事件（R-01 的纯映射，不读 storage）。
@@ -19,13 +20,7 @@ import {
  * 节假日/调休只是课表口径的日期标记，不写成日历事件。
  */
 
-const EVENT_TYPE_LABEL: Record<string, string> = {
-  exam: '考试',
-  todo: '日程',
-  temp: '临时',
-  homework: '作业',
-  lab: '实验',
-};
+const EVENT_TYPE_LABEL: Record<string, string> = exportIcsCopy.eventType;
 
 function describeCourse(course: CourseRow): string | null {
   const parts = [course.teacher, course.short_name].filter(
@@ -116,7 +111,7 @@ export function collectEventExtras(
     for (const date of dates) {
       const timing = timingOf(row, date, slots, semester.time_zone);
       if (timing === null) continue;
-      const label = EVENT_TYPE_LABEL[row.type] ?? '日程';
+      const label = EVENT_TYPE_LABEL[row.type] ?? exportIcsCopy.eventTypeFallback;
       result.events.push({
         uid: dates.length === 1 ? `${row.id}@dawn-tick` : `${row.id}-${date}@dawn-tick`,
         summary: row.title,

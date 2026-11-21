@@ -5,7 +5,7 @@ import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { ScheduleFocusContext } from '../../components/schedule-focus.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { confirmAction } from '../../components/ui/confirm-dialog.tsx';
-import { DELETE } from '../../copy/zh.ts';
+import { timelineCopy } from '../../copy/home-timeline.ts';
 import { EmptyState } from '../../components/ui/empty-state.tsx';
 import { cn } from '../../lib/cn.ts';
 import { useNowTick } from '../../lib/use-now.ts';
@@ -24,7 +24,7 @@ import { LessonDetailOpener } from './lesson-detail-opener.ts';
 export const timelineCard = defineCard({
   id: 'timeline',
   scope: 'schedule',
-  title: '日程时间线',
+  title: timelineCopy.cardTitle,
   defaultZone: 'main',
   defaultOrder: 1,
   defaultVisible: true,
@@ -69,9 +69,9 @@ function ScheduleTimeline({
   /** 删除一条调课/调休（沿用原来的软删除方式）：确认留在卡片，写库交给 actions。 */
   async function deleteAdjust(event: EventRow): Promise<void> {
     const ok = await confirmAction({
-      title: '删除调课记录',
-      description: DELETE('这次调课记录'),
-      confirmLabel: '确认删除',
+      title: timelineCopy.deleteAdjustTitle,
+      description: timelineCopy.deleteAdjustDescription,
+      confirmLabel: timelineCopy.deleteConfirmButton,
     });
     if (!ok) return;
     await actions.deleteAdjust(event);
@@ -80,9 +80,9 @@ function ScheduleTimeline({
   /** 长按时间线行删除待办/作业/考试/实验：与详情页同一确认口径。 */
   async function deleteTimelineEvent(event: EventRow): Promise<void> {
     const ok = await confirmAction({
-      title: '删除待办',
-      description: DELETE(event.title, ['关联提醒']),
-      confirmLabel: '确认删除',
+      title: timelineCopy.deleteEventTitle,
+      description: timelineCopy.deleteEventDescription(event.title),
+      confirmLabel: timelineCopy.deleteConfirmButton,
     });
     if (!ok) return;
     await actions.removeEvent(event);
@@ -94,11 +94,10 @@ function ScheduleTimeline({
         <div data-role="timeline-empty">
           <EmptyState
             icon={ListChecks}
-            title="这一天没有待办"
-            description="切换日期可看其他日期"
+            title={timelineCopy.emptyTitle}
             action={
-              <Button size="sm" variant="secondary" aria-label="添加待办" onClick={onAddTodo}>
-                添加待办
+              <Button size="sm" variant="secondary" aria-label={timelineCopy.addTodoButton} onClick={onAddTodo}>
+                {timelineCopy.addTodoButton}
               </Button>
             }
           />
@@ -110,21 +109,21 @@ function ScheduleTimeline({
               className="flex flex-col gap-1 rounded-lg border border-line/70 bg-surface-muted/50 p-2"
               data-role="timeline-completed"
               data-count={completed.length}
-              aria-label={`已完成 ${completed.length} 项`}
+              aria-label={timelineCopy.completedGroup(completed.length)}
             >
               <button
                 type="button"
                 className="flex min-h-tap items-center gap-2 rounded-md px-2 text-left hover:bg-surface-muted"
                 data-role="timeline-completed-toggle"
                 aria-expanded={completedOpen}
-                aria-label={`已完成 ${completed.length}：${completedOpen ? '收起' : '展开'}`}
+                aria-label={timelineCopy.completedToggle(completed.length, completedOpen)}
                 onClick={() => setManualCompleted({ date: viewDate, open: !completedOpen })}
               >
                 <ChevronDown
                   className={cn('size-4 shrink-0 text-muted transition-transform', completedOpen && 'rotate-180')}
                   aria-hidden
                 />
-                <span className="text-sm font-semibold text-muted">已完成 {completed.length} 项</span>
+                <span className="text-sm font-semibold text-muted">{timelineCopy.completedGroup(completed.length)}</span>
               </button>
               <ul className="flex flex-col gap-2 px-1 pb-1" data-role="timeline-completed-list" hidden={!completedOpen}>
                 {completed.map((item) => (
@@ -165,15 +164,15 @@ function ScheduleTimeline({
                 </ul>
               </div>
             ))}
-            {main.length === 0 && <span className="text-xs text-muted">这一天的待办都已完成</span>}
+            {main.length === 0 && <span className="text-xs text-muted">{timelineCopy.allDone}</span>}
           </div>
         </>
       )}
       {tomorrowPreview && tomorrowItems > 0 && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-xs text-muted">明日预告：还有 {tomorrowItems} 项安排</span>
+          <span className="text-xs text-muted">{timelineCopy.tomorrowPreview(tomorrowItems)}</span>
           <Button size="sm" variant="secondary" onClick={() => onViewDateChange(tomorrow)}>
-            看明天
+            {timelineCopy.tomorrowButton}
           </Button>
         </div>
       )}
@@ -183,12 +182,12 @@ function ScheduleTimeline({
 
 /** 条目性质角标配色：课程用主题主色、调整用强调色、考试用危险色、作业与实验各有自己的色。 */
 const NATURE_CLASS: Record<TimelineNature, string> = {
-  课程: 'border-primary/40 bg-primary/10 text-primary-strong',
-  调整: 'border-accent/40 bg-accent/10 text-accent-strong',
-  考试: 'border-danger/40 bg-danger/10 text-danger-strong',
-  作业: 'border-primary/40 bg-primary/5 text-primary-strong',
-  实验: 'border-accent/40 bg-accent/5 text-accent-strong',
-  日程: 'border-line bg-surface-muted text-muted',
+  [timelineCopy.nature.lesson]: 'border-primary/40 bg-primary/10 text-primary-strong',
+  [timelineCopy.nature.adjust]: 'border-accent/40 bg-accent/10 text-accent-strong',
+  [timelineCopy.nature.exam]: 'border-danger/40 bg-danger/10 text-danger-strong',
+  [timelineCopy.nature.homework]: 'border-primary/40 bg-primary/5 text-primary-strong',
+  [timelineCopy.nature.lab]: 'border-accent/40 bg-accent/5 text-accent-strong',
+  [timelineCopy.nature.todo]: 'border-line bg-surface-muted text-muted',
 };
 
 interface TimelineRowProps {
@@ -243,7 +242,7 @@ function TimelineRow({
   const marker =
     item.autoDone ? (
       <span className="flex shrink-0 items-center" data-role="timeline-auto-check">
-        <CircleCheck className="size-4 text-muted" role="img" aria-label={`已到时间自动完成：${item.title}`} />
+        <CircleCheck className="size-4 text-muted" role="img" aria-label={timelineCopy.autoDone(item.title)} />
       </span>
     ) : item.checkable && item.event !== undefined ? (
       // 勾选框本体只有 16px：外面套一层 44px 的 label 命中区，视觉尺寸不变（触控可达）
@@ -252,7 +251,7 @@ function TimelineRow({
           type="checkbox"
           className="size-4 shrink-0"
           checked={item.done}
-          aria-label={`标记完成：${item.title}`}
+          aria-label={timelineCopy.markDone(item.title)}
           onChange={() => onToggleDone(item.event as EventRow)}
         />
       </label>
@@ -264,12 +263,18 @@ function TimelineRow({
         className="tabular flex w-12 shrink-0 flex-col items-center justify-center gap-0.5 text-xs font-medium leading-tight text-ink"
         data-role={item.kind === 'lesson' ? 'lesson-time' : 'timeline-time'}
       >
-        {item.startText === null && item.endText !== null && (
-          <span className="text-[10px] font-normal text-muted">截止</span>
+        {item.statusText !== undefined && item.statusText !== null ? (
+          <span data-role="timeline-status">{item.statusText}</span>
+        ) : (
+          <>
+            {item.startText === null && item.endText !== null && (
+              <span className="text-[10px] font-normal text-muted">{timelineCopy.dueLabel}</span>
+            )}
+            {item.startText !== null && <span>{item.startText}</span>}
+            {item.startText !== null && item.endText !== null && <span aria-hidden>–</span>}
+            {item.endText !== null && <span>{item.endText}</span>}
+          </>
         )}
-        {item.startText !== null && <span>{item.startText}</span>}
-        {item.startText !== null && item.endText !== null && <span aria-hidden>–</span>}
-        {item.endText !== null && <span>{item.endText}</span>}
       </span>
       {/* 颜色竖条：把左侧时间与右侧内容隔开；课程用课程色，其余用主题主色 */}
       <span
@@ -298,7 +303,7 @@ function TimelineRow({
               className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[11px] leading-none text-on-primary"
               data-role="timeline-running"
             >
-              进行中
+              {timelineCopy.running}
             </span>
           )}
           {item.countdownText !== undefined && item.countdownText !== null && (
@@ -306,7 +311,7 @@ function TimelineRow({
               {item.countdownText}
             </span>
           )}
-          {item.date === null && <span className="shrink-0 text-[11px] text-muted">未排期</span>}
+          {item.date === null && <span className="shrink-0 text-[11px] text-muted">{timelineCopy.undated}</span>}
         </span>
         {item.location !== null && item.location.length > 0 && (
           <span className="flex min-w-0 items-center gap-1 text-sm text-muted" data-role="timeline-location">
@@ -361,7 +366,7 @@ function TimelineRow({
         <button
           type="button"
           data-role="timeline-event"
-          aria-label={`编辑日程：${item.title}`}
+          aria-label={timelineCopy.editEvent(item.title)}
           className="flex min-w-0 flex-1 items-stretch gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
           onClick={(event) => {
             event.stopPropagation();
@@ -377,7 +382,7 @@ function TimelineRow({
         <button
           type="button"
           data-role="timeline-lesson"
-          aria-label={`查看课程详情：${item.title}`}
+          aria-label={timelineCopy.openLesson(item.title)}
           className="flex min-w-0 flex-1 items-stretch gap-3 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
           onClick={() => onOpenLesson?.(lessonTarget)}
         >
@@ -394,13 +399,13 @@ function TimelineRow({
           <Button
             size="sm"
             variant="ghost"
-            aria-label={`删除调整：${item.title}`}
+            aria-label={timelineCopy.deleteAdjustLabel(item.title)}
             onClick={(event) => {
               event.stopPropagation();
               onDeleteAdjust(item.event as EventRow);
             }}
           >
-            删除
+            {timelineCopy.deleteButton}
           </Button>
         </span>
       )}

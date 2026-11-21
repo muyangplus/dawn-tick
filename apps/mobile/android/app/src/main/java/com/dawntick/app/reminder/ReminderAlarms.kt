@@ -5,12 +5,15 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.dawntick.app.diag.NativeLog
 
 /**
  * 提醒的定时（R-07）：用 AlarmManager 精确闹钟投递，应用关闭后仍可送达。
  * 精确闹钟未授权时退化为 `setAndAllowWhileIdle`，时间可能被系统延后。
  */
 internal object ReminderAlarms {
+    private const val SCOPE = "reminder"
+
     fun schedule(context: Context, record: ReminderRecord) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pending = pendingIntent(context, record.id)
@@ -22,9 +25,11 @@ internal object ReminderAlarms {
             } else {
                 manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
             }
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
+            NativeLog.warn(context, SCOPE, "ReminderAlarms.schedule 精确闹钟被拒，改用非精确闹钟 id=${record.id}", error)
             manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
         }
+        NativeLog.debug(context, SCOPE, "ReminderAlarms.schedule 已排定提醒 id=${record.id} at=$at exact=$exact")
     }
 
     fun cancel(context: Context, id: Long) {
@@ -32,6 +37,7 @@ internal object ReminderAlarms {
         val pending = pendingIntent(context, id)
         pending.cancel()
         manager.cancel(pending)
+        NativeLog.debug(context, SCOPE, "ReminderAlarms.cancel 已取消提醒 id=$id")
     }
 
     private fun pendingIntent(context: Context, id: Long): PendingIntent {

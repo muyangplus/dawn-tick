@@ -50,6 +50,7 @@ export const PLUGIN_METHODS = {
     'openNotificationSettings',
     'readNativeLog',
     'clearNativeLog',
+    'setNativeLogLevel',
     'abi',
   ],
   [PLUGIN_NAMES.schoolWindow]: ['open', 'available'],
@@ -88,7 +89,7 @@ export interface SystemActionsPlugin {
    * 读原生诊断日志（`filesDir/diag/native.log`），返回最近约 200 行。
    *
    * `maxBytes` 限制读取尾部字节数（默认 256KB）；`text` 为空串表示日志还没写入或已清空。
-   * 日志格式 `时间戳 级别 [标签] 消息`，单文件 512KB 滚动为 `native.log.1`。
+   * 日志格式 `时间戳 [级别] 范围: 消息`，单文件 512KB 滚动为 `native.log.1`。
    */
   readNativeLog(options?: { maxBytes?: number }): Promise<{
     text?: string;
@@ -99,6 +100,8 @@ export interface SystemActionsPlugin {
   }>;
   /** 清空原生诊断日志（当前文件与滚动文件）；`cleared` 为 true 表示已执行。 */
   clearNativeLog(): Promise<{ cleared: boolean }>;
+  /** 原生日志级别门槛（error/warn/info/debug/trace），持久化在原生侧，下次启动仍生效。 */
+  setNativeLogLevel(options: { level: string }): Promise<void>;
   /**
    * 设备支持的 ABI（`Build.SUPPORTED_ABIS`，按系统优先级排序）。
    *

@@ -22,11 +22,12 @@ import { FormSurface, type FormContainer } from '../components/ui/sheet.tsx';
 import { Field, Input } from '../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger, Switch } from '../components/ui/controls.tsx';
 import { toast } from '../components/ui/toaster.tsx';
-import { logError, logInfo } from '../log.ts';
+import { logDebug, logError, logInfo } from '../log.ts';
 import { useBusyAction } from '../lib/busy.ts';
 import { errorMessage } from '../lib/errors.ts';
 import { cn } from '../lib/cn.ts';
 import { formatPeriodRange } from '../lib/format.ts';
+import { courseFormCopy } from '../copy/timetable-course-form.ts';
 
 function allWeeks(total: number): number[] {
   return Array.from({ length: total }, (_, index) => index + 1);
@@ -222,7 +223,7 @@ export function CourseForm({
   async function submit(): Promise<void> {
     // 空名在 UI 层已禁用保存，这里再挡一次：回车/程序触发也不写空白课卡
     if (nameEmpty) return;
-    await run('正在保存课程…', async () => {
+    await run(courseFormCopy.saving, async () => {
       setError(null);
       try {
         const payload = {
@@ -245,7 +246,8 @@ export function CourseForm({
           endTime: draft.customTime ? draft.endTime : null,
         }));
 
-        logInfo('course', course === null ? '新建课程：开始' : '修改课程：开始', {
+        logDebug('timetable', '开始保存课程', {
+          creating: course === null,
           name: payload.name,
           schedules: schedules.map((item) => ({
             day: item.dayOfWeek,
@@ -259,28 +261,28 @@ export function CourseForm({
           const created = await createCourse(storage, { semesterId, ...payload });
           savedId = String(created['id']);
           await setSchedules(storage, savedId, schedules, { totalWeeks });
-          logInfo('course', '新建课程', { id: savedId, name: payload.name, schedules: schedules.length });
-          toast.success('已添加课程');
+          logInfo('timetable', '课程已新建', { id: savedId, name: payload.name, schedules: schedules.length });
+          toast.success(courseFormCopy.created);
         } else {
           savedId = course.id;
           await updateCourse(storage, course.id, payload as unknown as Record<string, unknown>);
           await setSchedules(storage, course.id, schedules, { totalWeeks });
-          logInfo('course', '修改课程', { id: course.id, schedules: schedules.length });
-          toast.success('已保存课程');
+          logInfo('timetable', '课程已修改', { id: course.id, schedules: schedules.length });
+          toast.success(courseFormCopy.saved);
         }
         // 重叠只提醒不阻止：课程此时已经保存成功
         const overlap = findOverlap(await listManagedCourses(storage, semesterId), savedId, schedules);
         if (overlap !== null) {
-          toast.info(`与「${overlap.name}」${formatPeriodRange(overlap.start, overlap.end)}重叠，已同时保留`);
+          toast.info(courseFormCopy.overlap(overlap.name, formatPeriodRange(overlap.start, overlap.end)));
         }
         onCreated();
         onOpenChange(false);
       } catch (cause: unknown) {
         // 保存失败同时写日志与界面提示，避免只留一句「无反应」
         const message = errorMessage(cause);
-        logError('course', '保存课程失败', { message, id: course?.id ?? null });
+        logError('timetable', '课程保存失败', { message, id: course?.id ?? null });
         setError(message);
-        toast.error(`保存课程失败：${message}`);
+        toast.error(courseFormCopy.saveFailed(message));
       }
     });
   }
@@ -290,11 +292,11 @@ export function CourseForm({
       open={open}
       onOpenChange={onOpenChange}
       container={container}
-      title={course === null ? '添加课程' : '编辑课程'}
-      description="课程信息与排课时段"
+      title={course === null ? courseFormCopy.createTitle : courseFormCopy.editTitle}
+      description={courseFormCopy.description}
       contentAttrs={{ 'data-role': 'course-form' }}
     >
-      <Field label="课程名">
+      <Field label={courseFormCopy.nameLabel}>
         <Input
           value={name}
           aria-required="true"
@@ -305,39 +307,39 @@ export function CourseForm({
       </Field>
       {nameEmpty && (
         <p id="course-name-error" className="text-xs text-danger-strong">
-          课程名不能为空
+          {courseFormCopy.nameRequired}
         </p>
       )}
       <div className="grid gap-2 tablet:grid-cols-3">
-        <Field label="简称">
+        <Field label={courseFormCopy.shortNameLabel}>
           <Input value={shortName} onChange={(event) => setShortName(event.target.value)} />
         </Field>
-        <Field label="教师">
+        <Field label={courseFormCopy.teacherLabel}>
           <Input value={teacher} onChange={(event) => setTeacher(event.target.value)} />
         </Field>
-        <Field label="地点">
+        <Field label={courseFormCopy.locationLabel}>
           <Input value={location} onChange={(event) => setLocation(event.target.value)} />
         </Field>
       </div>
       <div className="grid gap-2 tablet:grid-cols-2">
-        <Field label="学分">
+        <Field label={courseFormCopy.creditsLabel}>
           <Input type="number" step="0.5" value={credits} onChange={(event) => setCredits(event.target.value)} />
         </Field>
-        <Field label="备注">
+        <Field label={courseFormCopy.noteLabel}>
           <Input value={note} onChange={(event) => setNote(event.target.value)} />
         </Field>
       </div>
 
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted">排课时段</span>
+          <span className="text-xs font-medium text-muted">{courseFormCopy.schedulesTitle}</span>
           <Button
             size="sm"
             variant="ghost"
             onClick={() => setDrafts((current) => [...current, newDraft(totalWeeks, 1, firstPeriod)])}
           >
             <Plus className="size-4" aria-hidden />
-            增加时段
+            {courseFormCopy.addSchedule}
           </Button>
         </div>
         {drafts.map((draft) => (
@@ -347,7 +349,7 @@ export function CourseForm({
                 value={String(draft.dayOfWeek)}
                 onValueChange={(value) => patchDraft(draft.key, { dayOfWeek: Number(value) })}
               >
-                <SelectTrigger aria-label="星期">
+                <SelectTrigger aria-label={courseFormCopy.weekdayAria}>
                   <span>{WEEKDAY_LABELS[draft.dayOfWeek - 1]}</span>
                 </SelectTrigger>
                 <SelectContent>
@@ -362,13 +364,13 @@ export function CourseForm({
                 value={String(draft.periodStart)}
                 onValueChange={(value) => patchDraft(draft.key, { periodStart: Number(value) })}
               >
-                <SelectTrigger aria-label="起始节">
-                  <span>第 {draft.periodStart} 节</span>
+                <SelectTrigger aria-label={courseFormCopy.periodStartAria}>
+                  <span>{courseFormCopy.period(draft.periodStart)}</span>
                 </SelectTrigger>
                 <SelectContent>
                   {slots.map((slot) => (
                     <SelectItem key={slot.period_no} value={String(slot.period_no)}>
-                      第 {slot.period_no} 节
+                      {courseFormCopy.period(slot.period_no)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -377,13 +379,13 @@ export function CourseForm({
                 value={String(draft.periodEnd)}
                 onValueChange={(value) => patchDraft(draft.key, { periodEnd: Number(value) })}
               >
-                <SelectTrigger aria-label="结束节">
-                  <span>第 {draft.periodEnd} 节</span>
+                <SelectTrigger aria-label={courseFormCopy.periodEndAria}>
+                  <span>{courseFormCopy.period(draft.periodEnd)}</span>
                 </SelectTrigger>
                 <SelectContent>
                   {slots.map((slot) => (
                     <SelectItem key={slot.period_no} value={String(slot.period_no)}>
-                      第 {slot.period_no} 节
+                      {courseFormCopy.period(slot.period_no)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -392,25 +394,25 @@ export function CourseForm({
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex min-h-tap items-center gap-2 text-xs text-muted">
                 <Switch
-                  aria-label="自定义时间"
+                  aria-label={courseFormCopy.customTime}
                   checked={draft.customTime}
                   onCheckedChange={(checked) => patchDraft(draft.key, { customTime: checked })}
                 />
-                自定义时间
+                {courseFormCopy.customTime}
               </label>
               {draft.customTime && (
                 <>
                   <Input
                     type="time"
                     className="w-28"
-                    aria-label="开始时间"
+                    aria-label={courseFormCopy.startTimeAria}
                     value={draft.startTime}
                     onChange={(event) => patchDraft(draft.key, { startTime: event.target.value })}
                   />
                   <Input
                     type="time"
                     className="w-28"
-                    aria-label="结束时间"
+                    aria-label={courseFormCopy.endTimeAria}
                     value={draft.endTime}
                     onChange={(event) => patchDraft(draft.key, { endTime: event.target.value })}
                   />
@@ -425,7 +427,7 @@ export function CourseForm({
               />
             </div>
             <div className="flex flex-wrap items-end gap-2">
-              <Field label="教室">
+              <Field label={courseFormCopy.roomLabel}>
                 <Input
                   className="w-28"
                   value={draft.room}
@@ -436,7 +438,7 @@ export function CourseForm({
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label="删除此时段"
+                  aria-label={courseFormCopy.removeScheduleAria}
                   onClick={() => setDrafts((current) => current.filter((item) => item.key !== draft.key))}
                 >
                   <Trash2 className="size-4 text-danger-strong" aria-hidden />
@@ -448,13 +450,13 @@ export function CourseForm({
       </div>
 
       <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-muted">颜色</span>
+        <span className="text-xs font-medium text-muted">{courseFormCopy.colorTitle}</span>
         <div className="flex flex-wrap gap-2">
           {palette.map((color, index) => (
             <button
               key={color}
               type="button"
-              aria-label={`课程色 ${index + 1}`}
+              aria-label={courseFormCopy.colorAria(index + 1)}
               aria-pressed={index === colorIndex}
               onClick={() => setColorIndex(index)}
               className={cn('size-tap rounded-full border-2', index === colorIndex ? 'border-ink' : 'border-transparent')}
@@ -466,7 +468,7 @@ export function CourseForm({
       {error !== null && <p className="text-xs text-danger-strong">{error}</p>}
       <DialogFooter>
         <Button variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>
-          取消
+          {courseFormCopy.cancel}
         </Button>
         <Button
           variant="primary"
@@ -474,7 +476,7 @@ export function CourseForm({
           disabled={nameEmpty || drafts.length === 0 || lastPeriod < firstPeriod}
           onClick={() => void submit()}
         >
-          保存
+          {courseFormCopy.save}
         </Button>
       </DialogFooter>
     </FormSurface>

@@ -1,5 +1,7 @@
 package com.dawntick.app.secret
 
+import com.dawntick.app.R
+import com.dawntick.app.diag.NativeLog
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -17,7 +19,12 @@ class SecretStorePlugin : Plugin() {
     /** 密钥库是否可用：不可用时 Web 层回退明文并在界面显式提示。 */
     @PluginMethod
     fun isAvailable(call: PluginCall) {
-        call.resolve(JSObject().put("available", SecretVault.isAvailable()))
+        val cause = SecretVault.unavailableCause()
+        if (cause != null) {
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.isAvailable 密钥库不可用 cause=${cause.javaClass.simpleName}")
+        }
+        NativeLog.debug(context, SCOPE, "SecretStorePlugin.isAvailable available=${cause == null}")
+        call.resolve(JSObject().put("available", cause == null))
     }
 
     /** 加密：参数 `value`，返回 Base64 密文 `ciphertext`。 */
@@ -25,13 +32,15 @@ class SecretStorePlugin : Plugin() {
     fun encrypt(call: PluginCall) {
         val value = call.getString("value")
         if (value == null) {
-            call.reject("缺少 value")
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.encrypt 缺少参数 value")
+            call.reject(context.getString(R.string.secret_missing_value))
             return
         }
         try {
             call.resolve(JSObject().put("ciphertext", SecretVault.encrypt(value)))
         } catch (error: Exception) {
-            call.reject("加密失败：${error.message ?: error.javaClass.simpleName}")
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.encrypt 加密失败 cause=${error.javaClass.simpleName}")
+            call.reject(context.getString(R.string.secret_encrypt_failed, error.message ?: error.javaClass.simpleName))
         }
     }
 
@@ -40,13 +49,24 @@ class SecretStorePlugin : Plugin() {
     fun decrypt(call: PluginCall) {
         val ciphertext = call.getString("ciphertext")
         if (ciphertext == null) {
-            call.reject("缺少 ciphertext")
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.decrypt 缺少参数 ciphertext")
+            call.reject(context.getString(R.string.secret_missing_ciphertext))
             return
         }
         try {
             call.resolve(JSObject().put("value", SecretVault.decrypt(ciphertext)))
+        } catch (error: IllegalArgumentException) {
+            // Base64 解不开或长度不足 IV
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.decrypt 密文格式无效 cause=${error.javaClass.simpleName}")
+            call.reject(context.getString(R.string.secret_ciphertext_invalid))
         } catch (error: Exception) {
-            call.reject("解密失败：${error.message ?: error.javaClass.simpleName}")
+            NativeLog.warn(context, SCOPE, "SecretStorePlugin.decrypt 解密失败 cause=${error.javaClass.simpleName}")
+            call.reject(context.getString(R.string.secret_decrypt_failed, error.message ?: error.javaClass.simpleName))
         }
+    }
+
+    private companion object {
+        /** 只记异常类名：密文/明文与异常 message 都不进日志。 */
+        const val SCOPE = "credentials"
     }
 }

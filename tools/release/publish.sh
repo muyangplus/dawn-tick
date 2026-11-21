@@ -13,19 +13,12 @@ TAG_EXISTS=false
 if [[ -n "$(git ls-remote "$REMOTE" "refs/tags/${TAG}" | cut -f1 || true)" ]]; then TAG_EXISTS=true; fi
 echo "构建自 ${BUILD_REF}（${TARGET}），标签已存在=${TAG_EXISTS}"
 
-# 比较基准按渠道取：滚动标签（*-latest）永远不作基准
-case "$CHANNEL" in
-  release)
-    PREV=$(gh release list --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == false) | .tagName][]' | grep -v "^${TAG}$" | head -n 1 || true)
-    ;;
-  beta)
-    # 测试版可能是纯版本号（标签说明带 [prerelease]）：按 isPrerelease 取，不按标签名猜
-    PREV=$(gh release list --limit 100 --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease == true) | .tagName][]' | grep -v '^dev-latest$' | grep -v "^${TAG}$" | head -n 1 || true)
-    ;;
-  *)
-    PREV=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v '^dev-latest$' | head -n 1 || true)
-    ;;
-esac
+# 比较基准：按发布时间取本次标签之前的上一个版本，正式版与测试版一起排、可互为基准；
+# 只排除滚动标签（dev-latest 等 *-latest）与草稿。本次标签已存在（重跑旧版本）时取它前面那个，否则取最新一个
+PREV=$(gh release list --limit 100 --exclude-drafts --json tagName,publishedAt --jq "
+  map(select(.tagName | endswith(\"-latest\") | not)) | sort_by(.publishedAt) | map(.tagName)
+  | ([to_entries[] | select(.value == \"${TAG}\") | .key] | first) as \$i
+  | if \$i == null then last elif \$i == 0 then empty else .[\$i - 1] end // empty" || true)
 PREV="${PREV//[[:space:]]/}"
 case "$PREV" in
   *-latest) PREV="" ;;

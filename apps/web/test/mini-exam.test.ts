@@ -12,8 +12,13 @@ const NOW = Date.parse('2026-10-18T18:30:00+08:00');
 
 const at = (text: string): number => Date.parse(text);
 
-function exam(title: string, onDate: string | null, startAt: number | null): ExamWidgetSource {
-  return { title, on_date: onDate, start_at: startAt };
+function exam(
+  title: string,
+  onDate: string | null,
+  startAt: number | null,
+  extra: Partial<ExamWidgetSource> = {},
+): ExamWidgetSource {
+  return { title, on_date: onDate, start_at: startAt, ...extra };
 }
 
 test('考试倒计时：无考试时给空态，不产生下一场', () => {
@@ -43,11 +48,45 @@ test('考试倒计时：按开考时间取最近一场，只统计未过期考�
   assert.equal(examCountdownText(view.next?.startAt ?? 0, NOW), '还有 3 天');
 });
 
-test('考试倒计时：考试当天仍显示，文案为「就是今天」', () => {
-  const sameDay = exam('今日上午考试', '2026-10-18', at('2026-10-18T08:00:00+08:00'));
-  const view = examWidgetView([sameDay], NOW, TZ);
-  assert.equal(view.next?.title, '今日上午考试');
+test('考试倒计时：当天已开考未结束仍显示，文案为「就是今天」', () => {
+  const ongoing = exam('今日晚间考试', '2026-10-18', at('2026-10-18T18:00:00+08:00'), {
+    end_at: at('2026-10-18T20:00:00+08:00'),
+  });
+  const view = examWidgetView([ongoing], NOW, TZ);
+  assert.equal(view.next?.title, '今日晚间考试');
+  assert.equal(view.total, 1);
   assert.equal(examCountdownText(view.next?.startAt ?? 0, NOW), '就是今天');
+});
+
+test('考试倒计时：当天已结束的考试不再显示', () => {
+  const ended = exam('今日上午考试', '2026-10-18', at('2026-10-18T08:00:00+08:00'), {
+    end_at: at('2026-10-18T10:00:00+08:00'),
+  });
+  const view = examWidgetView([ended], NOW, TZ);
+  assert.equal(view.next, null);
+  assert.equal(view.total, 0);
+});
+
+test('考试倒计时：没有结束时间时开考即视为结束', () => {
+  const noEnd = exam('今日上午考试', '2026-10-18', at('2026-10-18T08:00:00+08:00'));
+  assert.equal(examWidgetView([noEnd], NOW, TZ).next, null);
+  // 开考前一刻仍显示
+  const before = at('2026-10-18T07:59:00+08:00');
+  assert.equal(examWidgetView([noEnd], before, TZ).next?.title, '今日上午考试');
+});
+
+test('考试倒计时：勾选完成当天仍显示，次日起不再显示', () => {
+  const done = exam('大学英语四级', '2026-10-25', at('2026-10-25T09:00:00+08:00'), {
+    done: 1,
+    updated_at: at('2026-10-18T12:00:00+08:00'),
+  });
+  const other = exam('高等数学期末', '2026-10-28', at('2026-10-28T09:00:00+08:00'));
+  const sameDay = examWidgetView([done, other], NOW, TZ);
+  assert.equal(sameDay.next?.title, '大学英语四级');
+  assert.equal(sameDay.total, 2);
+  const nextDay = examWidgetView([done, other], at('2026-10-19T00:00:00+08:00'), TZ);
+  assert.equal(nextDay.next?.title, '高等数学期末');
+  assert.equal(nextDay.total, 1);
 });
 
 test('考试倒计时：缺日期用开考时间换算，异常日期回退开考时间', () => {

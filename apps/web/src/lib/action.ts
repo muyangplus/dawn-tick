@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
-import { logWarn } from '../log.ts';
-import { useBusyAction } from './busy.ts';
+import { logError, logWarn, type LogScope } from '../log.ts';
+import { isBusyCancelled, useBusyAction } from './busy.ts';
 import { errorMessage } from './errors.ts';
 import { fail } from './fail.ts';
 import { toast } from './toast.ts';
+import { errorsCopy } from '../copy/errors.ts';
 
 /** 失败提示的句式：发生了什么 + 下一步；失败原因由 `errorMessage` 统一归一。 */
 export interface ActionFailure {
@@ -12,8 +13,8 @@ export interface ActionFailure {
 }
 
 export interface ActionSpec<T> {
-  /** 日志 scope，例如 `course`、`timetable` */
-  scope: string;
+  /** 日志范围，见 `lib/log-scopes.ts` */
+  scope: LogScope;
   /** 进行中的整页蒙版文案 */
   label: string;
   /** 成功 toast：给了才弹 */
@@ -22,9 +23,13 @@ export interface ActionSpec<T> {
   fail?: ActionFailure | false;
   /** 失败日志文案；默认用 `fail.what`，传 `false` 关掉日志 */
   log?: string | false;
+  /** 失败日志级别：默认 error；网络检查这类可重试、不碰数据的动作用 warn */
+  logLevel?: 'error' | 'warn';
   /** 二次确认：返回 false 直接放弃，且不进入 busy */
   confirm?: () => boolean | Promise<boolean>;
-  task: () => Promise<T>;
+  /** 只读操作：Esc / 返回键可取消，task 收到的 signal 随之中止。写数据的操作不要开 */
+  cancellable?: boolean;
+  task: (signal: AbortSignal) => Promise<T>;
 }
 
 export interface ActionResult<T> {
@@ -33,6 +38,8 @@ export interface ActionResult<T> {
   value: T | undefined;
   /** 失败原因（已归一）；取消或重复触发时为 null */
   error: string | null;
+  /** 用户按 Esc / 返回键取消了 */
+  cancelled?: boolean;
 }
 
 export interface ActionApi {
@@ -60,25 +67,26 @@ export function useAction(): ActionApi {
         // 日志由本 hook 按 scope 统一记录，关掉底层的通用失败日志避免一处失败两条
         const value = await runBusyAction(
           spec.label,
-          async () => {
+          async (signal) => {
             started = true;
-            return await spec.task();
+            return await spec.task(signal);
           },
-          { log: false },
+          { log: false, ...(spec.cancellable === true ? { cancellable: true } : {}) },
         );
         if (!started) return { ok: false, value: undefined, error: null };
         if (spec.ok !== undefined) toast.success(spec.ok);
         return { ok: true, value, error: null };
       } catch (cause: unknown) {
+        // 用户主动取消：提示由 Esc / 返回键那边统一给出，这里不记失败
+        if (isBusyCancelled(cause)) return { ok: false, value: undefined, error: null, cancelled: true };
         const message = errorMessage(cause);
         if (spec.log !== false) {
           const failure = spec.fail === undefined || spec.fail === false ? undefined : spec.fail.what;
-          logWarn(spec.scope, typeof spec.log === 'string' ? spec.log : (failure ?? '操作失败'), {
-            message,
-          });
+          const write = spec.logLevel === 'warn' ? logWarn : logError;
+          write(spec.scope, typeof spec.log === 'string' ? spec.log : (failure ?? '操作失败'), { message });
         }
         if (spec.fail !== undefined && spec.fail !== false) {
-          toast.error(fail(spec.fail.what, message, spec.fail.next ?? '请重试').text);
+          toast.error(fail(spec.fail.what, message, spec.fail.next ?? errorsCopy.retry).text);
         }
         return { ok: false, value: undefined, error: message };
       }

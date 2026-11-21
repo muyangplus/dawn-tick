@@ -89,6 +89,8 @@ export interface AppSettings {
   receiveBeta: boolean | null;
   /** 启动后自动检查一次版本更新 */
   autoCheckUpdate: boolean;
+  /** 更新到新版本后弹出新版本内容 */
+  releaseNotesOnUpdate: boolean;
   /** 更新下载源：自动探测 / 国内 Gitee / 国际 GitHub；旧库缺键按 auto */
   downloadSource: DownloadSourceChoice;
   /** 待办排序：按开始时间 / 按类型 */
@@ -122,6 +124,12 @@ export interface AppSettings {
   webdavDaily: boolean;
   /** 远端保留历史多份（关闭时固定文件名覆盖） */
   webdavHistory: boolean;
+  /** AI：OpenAI 兼容接口地址 */
+  aiBaseUrl: string;
+  /** AI：模型名称 */
+  aiModel: string;
+  /** AI：API 密钥，与 WebDAV 密码同样加密，只存本机，不参与导出 */
+  aiApiKey: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -148,6 +156,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   widgetVariant: 'bar',
   receiveBeta: null,
   autoCheckUpdate: true,
+  releaseNotesOnUpdate: true,
   downloadSource: 'auto',
   todoSort: 'start',
   devFeatures: false,
@@ -165,6 +174,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webdavOnStart: true,
   webdavDaily: true,
   webdavHistory: false,
+  aiBaseUrl: '',
+  aiModel: '',
+  aiApiKey: '',
 };
 
 /** 快照保留份数的取值范围。 */
@@ -262,6 +274,7 @@ const FIELDS: { readonly [K in keyof AppSettings]: SettingField<AppSettings[K]> 
     encode: (value) => (value === null ? null : value ? '1' : '0'),
   },
   autoCheckUpdate: flag('auto_check_update'),
+  releaseNotesOnUpdate: flag('release_notes_on_update'),
   downloadSource: oneOf('download_source', DOWNLOAD_SOURCE_CHOICES, '下载源'),
   todoSort: oneOf('todo_sort', TODO_SORTS, '待办排序'),
   devFeatures: flag('dev_features'),
@@ -279,6 +292,9 @@ const FIELDS: { readonly [K in keyof AppSettings]: SettingField<AppSettings[K]> 
   webdavOnStart: flag('webdav_on_start'),
   webdavDaily: flag('webdav_daily'),
   webdavHistory: flag('webdav_history'),
+  aiBaseUrl: text('ai_base_url', true),
+  aiModel: text('ai_model', true),
+  aiApiKey: text('ai_api_key', false),
 };
 
 const FIELD_ENTRIES = Object.entries(FIELDS) as Array<[keyof AppSettings, SettingField<unknown>]>;
@@ -286,13 +302,13 @@ const FIELD_ENTRIES = Object.entries(FIELDS) as Array<[keyof AppSettings, Settin
 export const SETTING_META_KEYS: readonly string[] = FIELD_ENTRIES.map(([, field]) => field.key);
 
 /**
- * 不进备份导出的设置键：备份文件可能被分享出去（WebDAV 密码），
+ * 不进备份导出的设置键：备份文件可能被分享出去（WebDAV 密码、AI 密钥），
  * 以及只对本机有意义的项（数据库日志模式、开机自启、启动时隐藏）——带到另一台设备会改动那台的系统行为。
  */
 export const DEVICE_LOCAL_KEYS: readonly string[] = [WAL_META_KEY, 'auto_start', 'start_hidden'];
-export const EXPORT_EXCLUDED_KEYS: readonly string[] = ['webdav_password', ...DEVICE_LOCAL_KEYS];
-/** 局域网同步另外不带 WebDAV 地址与用户名：密码不随行，带过去只会得到一份配不全的 WebDAV。 */
-export const LAN_EXCLUDED_KEYS: readonly string[] = ['webdav_url', 'webdav_user'];
+export const EXPORT_EXCLUDED_KEYS: readonly string[] = ['webdav_password', 'ai_api_key', ...DEVICE_LOCAL_KEYS];
+/** 局域网同步另外不带 WebDAV 地址与用户名、AI 地址与模型：密钥不随行，带过去只会得到一份配不全的配置。 */
+export const LAN_EXCLUDED_KEYS: readonly string[] = ['webdav_url', 'webdav_user', 'ai_base_url', 'ai_model'];
 
 export async function readSettings(storage: Storage): Promise<AppSettings> {
   const values = await Promise.all(FIELD_ENTRIES.map(([, field]) => storage.readMeta(field.key)));

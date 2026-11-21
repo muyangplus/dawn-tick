@@ -5,6 +5,7 @@ import { Input } from './input.tsx';
 import { toast } from './toaster.tsx';
 import { useAction } from '../../lib/action.ts';
 import { copyText, openExternalUrlDetailed } from '../../system-actions.ts';
+import { uiCopy } from '../../copy/ui.ts';
 
 type Listener = (url: string | null) => void;
 
@@ -82,24 +83,24 @@ export function ExternalLinkConfirm() {
     setError(null);
     const result = await run({
       scope: 'link',
-      label: '正在打开链接…',
+      label: uiCopy.externalLink.busy,
       task: () => openExternalUrlDetailed(url),
     });
     if (!result.ok) {
-      setError(result.error ?? '打开失败，请稍后重试');
+      setError(result.error ?? uiCopy.externalLink.openFailed);
       return;
     }
     const outcome = result.value;
     if (outcome === null || outcome === undefined || !outcome.ok) {
-      setError(outcome?.error ?? '打开失败，请改用「复制链接」');
+      setError(outcome?.error ?? uiCopy.externalLink.openFailedUseCopy);
       return;
     }
     closeExternalLink();
-    toast.success('已在默认浏览器打开');
+    toast.success(uiCopy.externalLink.opened);
   }
 
   async function act(action: () => Promise<boolean>, done: string, failed: string): Promise<void> {
-    const result = await run({ scope: 'link', label: '正在打开链接…', task: action });
+    const result = await run({ scope: 'link', label: uiCopy.externalLink.busy, task: action });
     if (!result.ok) {
       if (result.error !== null) toast.info(failed);
       return;
@@ -119,25 +120,25 @@ export function ExternalLinkConfirm() {
         if (!open) closeExternalLink();
       }}
     >
-      <DialogContent title="打开外部链接" description="应用内不加载该页面，交给系统浏览器">
+      <DialogContent title={uiCopy.externalLink.title} description={uiCopy.externalLink.description}>
         <Input
           readOnly
           data-role="external-link-url"
-          aria-label="链接地址"
+          aria-label={uiCopy.externalLink.urlAria}
           value={url ?? ''}
           onFocus={(event) => event.currentTarget.select()}
         />
         <DialogFooter>
           <Button variant="ghost" onClick={() => closeExternalLink()}>
-            取消
+            {uiCopy.externalLink.cancelButton}
           </Button>
           <Button
             variant="secondary"
             data-role="external-link-copy"
             loading={busy}
-            onClick={() => void act(() => copyText(url ?? ''), '已复制链接', '复制失败，请手动复制链接')}
+            onClick={() => void act(() => copyText(url ?? ''), uiCopy.externalLink.copied, uiCopy.externalLink.copyFailed)}
           >
-            复制链接
+            {uiCopy.externalLink.copyButton}
           </Button>
           <Button
             variant="primary"
@@ -145,7 +146,7 @@ export function ExternalLinkConfirm() {
             loading={busy}
             onClick={() => void open(url ?? '')}
           >
-            用默认浏览器打开
+            {uiCopy.externalLink.openButton}
           </Button>
         </DialogFooter>
       </DialogContent>

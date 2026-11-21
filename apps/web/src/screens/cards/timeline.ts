@@ -2,9 +2,11 @@ import { dateWallClockToEpoch, formatDate, formatTime, LAB_COLOR, WEEKDAY_LABELS
 import type { AppData } from '../../data.ts';
 import type { AdjustTarget } from '../../components/adjust-dialog.tsx';
 import { formatDayCountdown, formatPeriodRange } from '../../lib/format.ts';
+import { timelineCopy } from '../../copy/home-timeline.ts';
 
-/** 条目性质标签的映射：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→日程。 */
-export type TimelineNature = '课程' | '调整' | '日程' | '作业' | '考试' | '实验';
+/** 条目性质标签：`lessonsByDate` 的课次→课程，`reschedules` 的调课/调休/停课→调整，`todos` 的 exam→考试、todo|temp→日程。 */
+export type TimelineNature = (typeof timelineCopy.nature)[keyof typeof timelineCopy.nature];
+const NATURE = timelineCopy.nature;
 
 export interface TimelineItem {
   key: string;
@@ -27,6 +29,8 @@ export interface TimelineItem {
   startText: string | null;
   /** 左侧竖排时间列下半：结束时间（课程）或截止时间（待办/考试） */
   endText: string | null;
+  /** 时间列改写状态（停课）：非空时时间列只显示这几个字，原时间挪到副标题 */
+  statusText?: string | null;
   /** 结束/截止时间戳；null 表示没有时间，永不自动完成 */
   endEpoch: number | null;
   /** 手动勾选（只有带事件行的待办/考试会有） */
@@ -48,12 +52,12 @@ export interface TimelineItem {
 }
 
 export function dateLabel(date: string | null, timeZone: string): string {
-  if (date === null) return '未排期';
+  if (date === null) return timelineCopy.undated;
   const [year, month, day] = date.split('-').map(Number);
   const weekday =
     WEEKDAY_LABELS[(new Date(Date.UTC(year as number, (month as number) - 1, day as number)).getUTCDay() + 6) % 7] ?? '';
   void timeZone;
-  return `${month} 月 ${day} 日 ${weekday}`;
+  return timelineCopy.dateLabel(month as number, day as number, weekday);
 }
 
 /** 待办排序用的时间键：开始时刻优先，其次截止时刻，再退到日期。 */
@@ -84,6 +88,27 @@ function isOverdue(endEpoch: number | null, now: number): boolean {
   return endEpoch !== null && endEpoch <= now;
 }
 
+/** 停课记录对应的原课次：节次与起止时间（自定义时间优先，否则按作息表）；找不到排课返回 null。 */
+function originalSlotOf(
+  data: AppData,
+  scheduleId: string | null,
+): { period: string; time: string | null; minute: number } | null {
+  if (scheduleId === null) return null;
+  for (const course of data.courses) {
+    const schedule = course.schedules.find((row) => row.id === scheduleId);
+    if (schedule === undefined) continue;
+    const start = schedule.startTime ?? data.slots.find((slot) => slot.period_no === schedule.periodStart)?.start_time ?? null;
+    const end = schedule.endTime ?? data.slots.find((slot) => slot.period_no === schedule.periodEnd)?.end_time ?? null;
+    const [hour, minute] = (start ?? '00:00').split(':').map(Number);
+    return {
+      period: formatPeriodRange(schedule.periodStart, schedule.periodEnd),
+      time: start === null || end === null ? null : `${start}–${end}`,
+      minute: (hour ?? 0) * 60 + (minute ?? 0),
+    };
+  }
+  return null;
+}
+
 /** 把某一天的课程、调课与待办合成一条时间线 */
 export function buildTimeline(data: AppData, date: string, now: number = Date.now()): TimelineItem[] {
   const items: TimelineItem[] = [];
@@ -98,7 +123,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: minuteOf(lesson.startAt, data.timeZone),
       rank: 0,
       kind: 'lesson',
-      nature: '课程',
+      nature: NATURE.lesson,
       title: lesson.courseName,
       // 课程条目不再显示「第 X 节」：左侧时间列已经给出开始–结束时间
       detail: '',
@@ -128,18 +153,21 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (itemDate !== null && itemDate !== date) continue;
     // 停课只说明这节课不上了，不是待办：默认已完成，直接进「已完成」分组，不计入未完成安排
     const cancelled = item.action === 'cancel';
+    const original = cancelled ? originalSlotOf(data, item.ref_schedule_id ?? null) : null;
     const newPeriod =
       item.new_period_start === null
-        ? ''
-        : ` ${formatPeriodRange(item.new_period_start, item.new_period_end ?? item.new_period_start)}`;
+        ? null
+        : formatPeriodRange(item.new_period_start, item.new_period_end ?? item.new_period_start);
     const detail =
       item.type === 'makeup'
-        ? '调休'
+        ? timelineCopy.makeup
         : cancelled
-          ? '停课'
+          ? original === null
+            ? ''
+            : timelineCopy.cancelledFrom(original.period, original.time)
           : item.new_date !== null
-            ? `改至 ${item.new_date}${newPeriod}`
-            : '调课';
+            ? timelineCopy.movedTo(item.new_date, newPeriod)
+            : timelineCopy.rescheduled;
     const startAt = item.start_at ?? null;
     const endEpoch = item.end_at ?? null;
     const done = item.done === 1 || cancelled;
@@ -147,15 +175,16 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     items.push({
       key: `adjust-${item.id}`,
       date: itemDate,
-      minute: minuteOf(startAt, data.timeZone),
+      minute: original?.minute ?? minuteOf(startAt, data.timeZone),
       rank: 1,
       kind: 'adjust',
-      nature: item.nature === 'lab' ? '实验' : '调整',
+      nature: item.nature === 'lab' ? NATURE.lab : NATURE.adjust,
       title: item.title,
       detail,
       location: item.location ?? item.new_room ?? null,
       startText: startAt === null ? null : formatTime(startAt, data.timeZone),
       endText: endEpoch === null ? null : formatTime(endEpoch, data.timeZone),
+      statusText: cancelled ? timelineCopy.cancelled : null,
       endEpoch,
       done,
       autoDone,
@@ -195,7 +224,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (endEpoch !== null && endEpoch > now) {
       parts.push(formatDayCountdown(endEpoch, now));
     }
-    if (overdue) parts.push('已过期');
+    if (overdue) parts.push(timelineCopy.overdue);
     if (todo.note !== null && todo.note.length > 0) parts.push(todo.note);
     items.push({
       key: `todo-${todo.id}`,
@@ -203,7 +232,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: data.todoSort === 'type' ? todoIndex : minuteOf(endEpoch, data.timeZone),
       rank: 2,
       kind: isExam ? 'exam' : 'todo',
-      nature: isExam ? '考试' : isHomework ? '作业' : '日程',
+      nature: isExam ? NATURE.exam : isHomework ? NATURE.homework : NATURE.todo,
       title: todo.title,
       detail: parts.join(' · '),
       location: todo.location,
@@ -236,7 +265,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
       minute: startSlot === undefined ? 0 : minuteOf(clockEpoch(lab.on_date, startSlot.start_time, data.timeZone), data.timeZone),
       rank: 0,
       kind: 'lab',
-      nature: '实验',
+      nature: NATURE.lab,
       title: lab.title,
       detail: formatPeriodRange(head, tail),
       location: lab.location,

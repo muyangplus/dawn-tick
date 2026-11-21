@@ -40,6 +40,9 @@ export const PRESET_CONTENT_META_KEY = 'presets_content_v1';
 /** 更新运营：用户点了「忽略此版本」后记住的版本号（只忽略这一个版本）。 */
 export const IGNORED_UPDATE_VERSION_META_KEY = 'ignored_update_version';
 
+/** 新版本内容：上次运行时的应用版本，升级后据此弹一次说明。 */
+export const LAST_RUN_VERSION_META_KEY = 'last_run_version';
+
 /** Android 主屏小组件读取的课表快照。 */
 export const WIDGET_SNAPSHOT_META_KEY = 'widget_snapshot';
 
@@ -72,6 +75,7 @@ export const APP_META_KEYS: readonly string[] = [
     ...SETTING_META_KEYS,
     ...Object.values(CORE_META_KEYS),
     SEEN_NOTICES_META_KEY,
+    LAST_RUN_VERSION_META_KEY,
     TIME_ZONE_ALIGNED_META_KEY,
     LOG_META_KEY,
     NOTIFY_ASKED_META_KEY,

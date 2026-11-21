@@ -1,6 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { createContext, useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
+import { useBackHandler } from '../lib/use-back.ts';
+import { useMediaQuery } from '../lib/use-media.ts';
+import { settingsPageCopy } from '../copy/settings-page.ts';
 
 /**
  * 设置类页面的分组导航外壳：桌面左列分组、右列内容；移动端首页清单 + 点进子页。
@@ -13,6 +16,12 @@ import { cn } from '../lib/cn.ts';
  * - 移动端：先显示分组清单，点进子页（只渲染该组内容），顶上「返回设置列表」回到清单；
  * - 分组内容由调用方提供，组件只负责导航、标题与返回，不关心配置项本身。
  */
+/**
+ * 分组内容此刻是否在用户眼前：窄屏停在分组列表时内容仍挂载（保留表单状态）但被藏起，
+ * 这时内容里的 Esc / 返回键登记应让位给页面返回。
+ */
+export const GroupVisibleContext = createContext(true);
+
 export interface SettingsGroup {
   id: string;
   title: string;
@@ -36,6 +45,15 @@ export interface GroupedSettingsProps {
   openRequest?: { id: string; nonce: number } | null;
   /** 分组清单末尾的附加入口（帮助页），不参与分组切换与计数 */
   extraNav?: ReactNode;
+  /** 页面标识：记下当前分组，从帮助页返回时回到这一组 */
+  memoryKey?: string;
+}
+
+/** 各设置类页面当前打开的分组（null = 移动端清单页）。 */
+const openGroups = new Map<string, string | null>();
+
+export function openGroupOf(memoryKey: string): string | null {
+  return openGroups.get(memoryKey) ?? null;
 }
 
 export function GroupedSettings({
@@ -44,11 +62,20 @@ export function GroupedSettings({
   groups,
   openRequest = null,
   extraNav,
+  memoryKey,
 }: GroupedSettingsProps) {
   /** null = 移动端还在清单页；桌面下 null 视为第一组 */
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = groups.find((group) => group.id === activeId) ?? groups[0];
   const navVisibleOnMobile = activeId === null;
+  // 桌面两栏没有「清单页」这一级；移动端在分组里时 Esc / 返回键回清单
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  useBackHandler(!isDesktop && activeId !== null, () => setActiveId(null));
+
+  useEffect(() => {
+    if (memoryKey === undefined) return;
+    openGroups.set(memoryKey, activeId);
+  }, [memoryKey, activeId]);
 
   useEffect(() => {
     if (openRequest === null) return;
@@ -101,17 +128,19 @@ export function GroupedSettings({
           <button
             type="button"
             data-role="settings-nav-back"
-            aria-label={`返回${pageTitle}列表`}
+            aria-label={settingsPageCopy.backToListAria(pageTitle)}
             className="dt-nav-item flex min-h-tap items-center gap-1 rounded-lg px-2 py-1 text-sm text-primary-strong"
             onClick={() => setActiveId(null)}
           >
             <ChevronLeft className="size-4" aria-hidden />
-            返回
+            {settingsPageCopy.backButton}
           </button>
           <h2 className="min-w-0 truncate text-base font-semibold text-ink">{active?.title}</h2>
         </div>
         <h2 className="hidden pb-3 text-base font-semibold text-ink desktop:block">{active?.title}</h2>
-        <div className="flex min-w-0 flex-col gap-3">{active?.content}</div>
+        <div className="flex min-w-0 flex-col gap-3">
+          <GroupVisibleContext.Provider value={isDesktop || !navVisibleOnMobile}>{active?.content}</GroupVisibleContext.Provider>
+        </div>
       </section>
     </div>
   );

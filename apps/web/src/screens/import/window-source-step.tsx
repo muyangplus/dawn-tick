@@ -6,6 +6,8 @@ import { Field, Input } from '../../components/ui/input.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../../components/ui/controls.tsx';
 import { ImportSurface } from './import-surface.tsx';
 import type { WindowSourceApi } from './use-window-source.ts';
+import { importWindowCopy } from '../../copy/import-window.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 export interface WindowSourceStepProps {
   source: WindowSourceApi;
@@ -20,14 +22,12 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
   return (
     <ImportSurface data-role="window-source">
       <div className="flex flex-col gap-1">
-        <span className="text-sm text-ink">在应用内登录教务，登录后直接带回课表</span>
-        <span className="text-xs text-muted">
-          Windows 打开独立窗口，Android 打开应用内窗口；登录后点窗口里的「导入到晓刻」。
-        </span>
+        <span className="text-sm text-ink">{importWindowCopy.intro}</span>
+        <HelpLink entryId="import-window" />
       </div>
 
       <div className="flex flex-col gap-2">
-        <span className="text-sm text-ink">选择学校</span>
+        <span className="text-sm text-ink">{importWindowCopy.schoolTitle}</span>
         <SchoolPicker
           context={source.presetContext}
           selectedId={source.pickedSchoolId}
@@ -35,7 +35,7 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
           onPick={source.pickSchool}
         />
         <span className="text-xs text-muted" data-role="school-picked">
-          {source.schoolName.trim() === '' ? '未选择学校' : `已选：${source.schoolName}`}
+          {source.schoolName.trim() === '' ? importWindowCopy.schoolNone : importWindowCopy.schoolPicked(source.schoolName)}
         </span>
       </div>
 
@@ -43,16 +43,16 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
       <details className="rounded-md border border-line bg-surface-muted p-3" data-role="window-manual-entry">
         <summary className="flex min-h-tap cursor-pointer items-center gap-2 text-sm text-ink">
           <SlidersHorizontal className="size-4" aria-hidden />
-          手动填写入口地址
+          {importWindowCopy.manualEntry}
         </summary>
         <div className="flex flex-col gap-2 pt-2">
           <div className="grid grid-cols-2 gap-2 tablet:flex tablet:flex-wrap tablet:items-end">
-            <Field label="教务系统">
+            <Field label={importWindowCopy.systemLabel}>
               <Select
                 value={source.schoolSystem}
                 onValueChange={(value) => source.setSchoolSystem(value as SchoolSystem)}
               >
-                <SelectTrigger aria-label="教务系统" className="w-full tablet:w-40">
+                <SelectTrigger aria-label={importWindowCopy.systemLabel} className="w-full tablet:w-40">
                   {systemEntry(source.schoolSystem).label}
                 </SelectTrigger>
                 <SelectContent>
@@ -64,11 +64,11 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
                 </SelectContent>
               </Select>
             </Field>
-            <Field label="学校域名">
+            <Field label={importWindowCopy.domainLabel}>
               <Input
                 value={source.schoolDomain}
                 placeholder="jw.example.edu.cn"
-                aria-label="学校域名"
+                aria-label={importWindowCopy.domainLabel}
                 onChange={(event) => source.setSchoolDomain(event.target.value)}
               />
             </Field>
@@ -79,7 +79,7 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
               disabled={source.schoolDomain.trim().length === 0}
               onClick={source.fillEntry}
             >
-              按入口补齐
+              {importWindowCopy.fillEntry}
             </Button>
             <Button
               size="sm"
@@ -88,15 +88,15 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
               disabled={source.schoolDomain.trim().length === 0}
               onClick={source.saveSchool}
             >
-              保存到我的学校
+              {importWindowCopy.saveSchool}
             </Button>
           </div>
 
-          <Field label="入口地址">
+          <Field label={importWindowCopy.urlLabel}>
             <Input
               value={source.importUrl}
               placeholder="https://jw.example.edu.cn/jwglxt/xtgl/login_slogin.html"
-              aria-label="入口地址"
+              aria-label={importWindowCopy.urlLabel}
               onChange={(event) => source.setImportUrl(event.target.value)}
             />
           </Field>
@@ -114,24 +114,24 @@ export function WindowSourceStep({ source, onUsePaste }: WindowSourceStepProps) 
             disabled={source.importUrl.trim().length === 0}
             onClick={() => void source.openWindow()}
           >
-            打开教务窗口
+            {importWindowCopy.openWindow}
           </Button>
           <Button variant="ghost" className="w-full tablet:w-auto" onClick={() => void source.closeWindow()}>
-            关闭窗口
+            {importWindowCopy.closeWindow}
           </Button>
         </div>
       ) : (
         <div className="flex flex-col gap-2 rounded-md border border-line bg-surface-muted p-3">
-          <span className="text-xs text-muted">当前平台没有内嵌教务窗口，改用「粘贴文本 / 文件」。</span>
+          <span className="text-xs text-muted">{importWindowCopy.unsupported}</span>
           <Button variant="secondary" className="w-full tablet:w-auto" onClick={onUsePaste}>
-            改用粘贴文本
+            {importWindowCopy.usePaste}
           </Button>
         </div>
       )}
 
       {source.canOpen && (
         <Button variant="link" className="w-full tablet:w-auto" onClick={onUsePaste}>
-          改用粘贴文本
+          {importWindowCopy.usePaste}
         </Button>
       )}
     </ImportSurface>

@@ -5,13 +5,14 @@ import { getOrCreateLanDeviceId } from './lib/lan-device-id.ts';
 import { invokeNative, type LanSyncListen, type LanSyncRequest } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { withTimeout } from './lib/timeout.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logError, logInfo, logWarn } from './log.ts';
 import {
   createPairing,
   type Pairing,
   type TrustedToken,
 } from './lan-sync-protocol.ts';
 import type { LanHttpReply } from './lan-sync-payload.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 export * from './lan-sync-protocol.ts';
 export * from './lan-sync-payload.ts';
@@ -54,23 +55,23 @@ export interface StartLanServerResult {
 
 /**
  * 原生「开始监听」的超时：安卓绑定 socket 与启动 UDP 广播都在后台线程，
- * 个别机型会卡住不回调；超过 8 秒按失败处理，让界面回到可重试状态。
+ * 个别机型会卡住不回调；超过 10 秒按失败处理，让界面回到可重试状态。
  */
-export const LAN_SERVER_START_TIMEOUT_MS = 8_000;
+export const LAN_SERVER_START_TIMEOUT_MS = 10_000;
 
 /** 超时原因：由 `startLanServer` 统一加上「开启配对失败：」前缀后展示。 */
-export const LAN_SERVER_START_TIMEOUT_MESSAGE = '原生监听在 8 秒内没有响应，请确认已连接 Wi-Fi 后重试';
+export const LAN_SERVER_START_TIMEOUT_MESSAGE = lanSyncCopy.serverStartTimeout;
 
 /** 失败文案统一前缀：超时与原生异常都拼在冒号后面，界面直接展示。 */
-export const LAN_SERVER_START_ERROR_PREFIX = '开启配对失败：';
+export const LAN_SERVER_START_ERROR_PREFIX = lanSyncCopy.serverStartErrorPrefix;
 
 /** 开配对失败时的可操作提示：与原始原因一起展示，不覆盖原始原因。 */
-export const LAN_SERVER_START_HINT = '请确认已连接 Wi-Fi/热点、关闭 VPN/代理，并确认与对方在同一网段';
+export const LAN_SERVER_START_HINT = lanSyncCopy.serverStartHint;
 
 /** 把原因拼成可直接展示的一行；已带前缀时不重复。 */
 export function startLanServerError(reason: string | null | undefined): string {
   const text = (reason ?? '').trim();
-  if (text === '') return `${LAN_SERVER_START_ERROR_PREFIX}请稍后重试`;
+  if (text === '') return `${LAN_SERVER_START_ERROR_PREFIX}${lanSyncCopy.serverStartRetryLater}`;
   if (text.startsWith(LAN_SERVER_START_ERROR_PREFIX)) return text;
   return `${LAN_SERVER_START_ERROR_PREFIX}${text}`;
 }
@@ -119,10 +120,10 @@ async function defaultLanServerStarter(
   if (plugin === null) return null;
   const result = await plugin.start(Object.keys(args).length === 0 ? undefined : args);
   if (typeof result.host !== 'string' || result.host === '' || typeof result.port !== 'number') {
-    throw new Error('原生层没有返回监听地址与端口');
+    throw new Error(lanSyncCopy.serverNoAddress);
   }
   if (result.listening === false) {
-    throw new Error('原生层报告监听没有开启');
+    throw new Error(lanSyncCopy.serverNotListening);
   }
   return { host: result.host, port: result.port };
 }
@@ -140,7 +141,7 @@ export interface StartLanServerOptions {
   /** 用户在「切换网络」里选中的本机地址；缺省自动选首选局域网。 */
   host?: string | undefined;
   now?: number;
-  /** 单测用：缩短超时，生产固定 8 秒。 */
+  /** 单测用：缩短超时，生产固定 10 秒。 */
   timeoutMs?: number;
 }
 
@@ -148,17 +149,17 @@ export interface StartLanServerOptions {
 export async function startLanServer(options: StartLanServerOptions = {}): Promise<StartLanServerResult> {
   const now = options.now ?? Date.now();
   if (!canServeLanSync()) {
-    return { ok: false, info: null, error: startLanServerError('浏览器端不能开配对，请在桌面版或安卓版上操作') };
+    return { ok: false, info: null, error: startLanServerError(lanSyncCopy.serverBrowser) };
   }
   try {
     // 稳定设备 id：首次生成后持久化；广播与二维码都用它，换 IP / 重启后仍认同一台
     const deviceId = getOrCreateLanDeviceId();
     const listen = await startNativeServer(options.host, deviceId, options.timeoutMs);
     if (listen === null) {
-      return { ok: false, info: null, error: startLanServerError('当前平台不支持开启局域网配对') };
+      return { ok: false, info: null, error: startLanServerError(lanSyncCopy.serverUnsupported) };
     }
     const pairing = createPairing(now);
-    logInfo('lan-sync', '已开启局域网配对', { host: listen.host, port: listen.port });
+    logInfo('sync', '已开启局域网配对', { host: listen.host, port: listen.port });
     return {
       ok: true,
       info: {
@@ -172,7 +173,7 @@ export async function startLanServer(options: StartLanServerOptions = {}): Promi
     };
   } catch (cause: unknown) {
     const reason = errorMessage(cause);
-    logWarn('lan-sync', '开启局域网配对失败', {
+    logError('sync', '局域网配对开启失败', {
       message: reason,
       raw: String(cause),
       host: options.host ?? '',
@@ -193,7 +194,7 @@ export async function stopLanServer(): Promise<void> {
       await plugin?.stop();
     }
   } catch (cause: unknown) {
-    logWarn('lan-sync', '停止局域网配对失败', { message: errorMessage(cause) });
+    logWarn('sync', '局域网配对停止失败', { message: errorMessage(cause) });
   }
 }
 

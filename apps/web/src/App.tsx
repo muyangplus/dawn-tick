@@ -2,9 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { AddActionsProvider, AddFab } from './components/add-menu.tsx';
 import { ScheduleFocusContext } from './components/schedule-focus.ts';
+import { HelpLinkContext } from './components/help-link.tsx';
 import { AdjustDialog } from './components/adjust-dialog.tsx';
 import { AppToolbar } from './components/app-toolbar.tsx';
 import { AppSidebar, BottomNav, type NavId } from './components/nav.tsx';
+import { openGroupOf } from './components/grouped-settings.tsx';
+import { installBackHandlers } from './lib/back-dispatch.ts';
+import { useBackHandler, useRootBackHandler } from './lib/use-back.ts';
 import { LessonDetail } from './components/lesson-detail.tsx';
 import { SearchDialog } from './components/search-dialog.tsx';
 import { ScanFlow } from './components/scan/scan-flow.tsx';
@@ -31,6 +35,7 @@ import { WeekView } from './screens/week-view.tsx';
 import { storageStatusLabel } from './storage-config.ts';
 import { formatWindowRange } from './app/lesson-cell.ts';
 import { NoticeDialog, RemoteNewerDialog, UpdateDialog } from './components/app-dialogs.tsx';
+import { ReleaseNotesDialog } from './components/update/release-notes-dialog.tsx';
 import { ErrorScreen, LoadingScreen, StorageFallbackBanner } from './components/app-screens.tsx';
 import { useAppSession } from './app/use-app-session.ts';
 import { useAppEffects } from './app/use-app-effects.ts';
@@ -38,17 +43,17 @@ import { useTimetableActions } from './app/use-timetable-actions.ts';
 import { useRecoveryActions } from './app/use-recovery.ts';
 import type { HelpTarget } from './help/help-content.ts';
 import './styles.css';
+import { appShellCopy } from './copy/app-shell.ts';
+import { AssistantPanel } from './components/assistant-panel.tsx';
+import type { AssistantNavTarget } from './assistant/host.ts';
+import { featureVisible } from './channel.ts';
 
 // 冒烟测试与外部入口沿用 App.tsx 的导出：加载页的阈值与组件仍是同一份实现
 export { LOADING_SLOW_MS, LoadingScreen, ErrorScreen, StorageFallbackBanner } from './components/app-screens.tsx';
 
 const USER_ID = 'u1';
 
-const STORAGE_LABEL: Record<Storage['kind'], string> = {
-  indexeddb: '浏览器 IndexedDB',
-  sqlite: '原生 SQLite',
-  memory: '内存（测试）',
-};
+const STORAGE_LABEL: Record<Storage['kind'], string> = appShellCopy.storageKind;
 
 /**
  * 应用壳：只做壳——启动、路由、窗口与弹窗挂载。
@@ -71,7 +76,40 @@ export function App() {
     setGroupJump({ page: target.page, id: target.group, nonce: groupJumpSeq.current });
     setView(target.page);
   };
+  /** 界面上的「查看帮助」：切到帮助页并展开对应条目（nonce 保证重复点同一条目也重新定位） */
+  const [helpFocus, setHelpFocus] = useState<{ id: string; nonce: number } | null>(null);
+  /** 帮助页从哪来：Esc / 返回键回到那一页（设置、设备页还回到原来的分组） */
+  const [helpReturn, setHelpReturn] = useState<{ page: NavId; group: string | null } | null>(null);
+  const enterHelp = (): void => {
+    if (view !== 'help') {
+      setHelpReturn({ page: view, group: view === 'settings' || view === 'devices' ? openGroupOf(view) : null });
+    }
+    setView('help');
+  };
+  const openHelpEntry = (entryId: string): void => {
+    groupJumpSeq.current += 1;
+    setHelpFocus({ id: entryId, nonce: groupJumpSeq.current });
+    enterHelp();
+  };
   const actions = useTimetableActions({ session, onNavigate: setView });
+  /** 助手的界面跳转：页面、设置/设备分组，或课表的某天 / 某一屏 */
+  const navigateForAssistant = (target: AssistantNavTarget): void => {
+    if (target.kind === 'page') {
+      setView(target.page);
+    } else if (target.kind === 'settings' || target.kind === 'devices') {
+      if (target.group === null) setView(target.kind);
+      else openHelpTarget({ page: target.kind, group: target.group, label: '' });
+    } else {
+      setView('timetable');
+      if (target.mode === 'day') {
+        session.setMode('today');
+        session.setDayDate(target.date);
+      } else {
+        session.setMode('week');
+        session.setWindowStart(target.date);
+      }
+    }
+  };
   const effects = useAppEffects({ storage, screenStorage: session.uiStorage, settings, data });
   const recovery = useRecoveryActions({ fallback: session.fallback });
   const breakpoint = useBreakpoint();
@@ -92,6 +130,11 @@ export function App() {
   useEffect(() => {
     // 帮助页「去设置」只对这一次切页生效：清掉后手动回到设置/设备不会再次自动跳组
     setGroupJump(null);
+    // 离开帮助页后清掉定位：再从导航进帮助页时不自动展开
+    if (view !== 'help') {
+      setHelpFocus(null);
+      setHelpReturn(null);
+    }
     // 切页时收起课程详情：桌面侧栏不跨页常驻
     actions.closeDetail();
     // 离开日程页回到今天：再进日程默认看今天（搜索命中是从别的页直接带着日期进来，不受影响）
@@ -113,15 +156,9 @@ export function App() {
       ) {
         return;
       }
-      // 弹窗打开时背景不动：只保留 Esc（弹窗自己也能关），/ 不叠第二层搜索、←/→ 与 T 不翻背景
-      if (typeof document !== 'undefined' && document.querySelector('[role="dialog"]') !== null) {
-        if (event.key === 'Escape' && actions.detail !== null) actions.closeDetail();
-        return;
-      }
-      if (event.key === 'Escape' && actions.detail !== null) {
-        actions.closeDetail();
-        return;
-      }
+      // 弹窗打开时背景不动：/ 不叠第二层搜索、←/→ 与 T 不翻背景
+      // Esc 归 `lib/back-dispatch.ts` 统一处理
+      if (typeof document !== 'undefined' && document.querySelector('[role="dialog"]') !== null) return;
       // 日模式 ←/→ 翻一天；周模式平移一屏（设置里的天数）。T 回到今天
       if (event.key === 'ArrowLeft') {
         if (dayMode) session.stepDayBy(-1);
@@ -144,10 +181,23 @@ export function App() {
     session.stepDayBy,
     session.shiftWindow,
     session.backToToday,
-    actions.detail,
-    actions.closeDetail,
     actions.setSearchOpen,
   ]);
+
+  useEffect(() => installBackHandlers(), []);
+  // 桌面侧栏里的课程详情：Esc 关掉；移动端详情在 Sheet 里，由弹窗自己关
+  useBackHandler(actions.detail !== null, actions.closeDetail);
+  // 最外一级：帮助页回来源，其他页回课表；在课表页时不登记，安卓退到后台
+  useRootBackHandler(view !== 'timetable', () => {
+    const back = view === 'help' ? helpReturn : null;
+    if (back === null || back.page === 'help') {
+      setView('timetable');
+    } else if (back.group !== null && (back.page === 'settings' || back.page === 'devices')) {
+      openHelpTarget({ page: back.page, group: back.group, label: '' });
+    } else {
+      setView(back.page);
+    }
+  });
 
   if (session.error !== null) {
     return (
@@ -283,8 +333,10 @@ export function App() {
           onPatch={session.patch}
           onChanged={session.refresh}
           importSignal={actions.settingsImportSignal}
+          importText={actions.settingsImportText}
+          onImportHandled={actions.consumeImportRequest}
           openGroupRequest={groupJump?.page === 'settings' ? groupJump : null}
-          onOpenHelp={() => setView('help')}
+          onOpenHelp={enterHelp}
         />
       )}
       {view === 'devices' && (
@@ -299,10 +351,12 @@ export function App() {
           pendingPair={pendingPair}
           onPendingPairHandled={() => setPendingPair(null)}
           openRequest={groupJump?.page === 'devices' ? groupJump : null}
-          onOpenHelp={() => setView('help')}
+          onOpenHelp={enterHelp}
         />
       )}
-      {view === 'help' && <HelpView onOpenGroup={openHelpTarget} />}
+      {view === 'help' && (
+        <HelpView key={helpFocus?.nonce ?? 0} onOpenGroup={openHelpTarget} focusEntryId={helpFocus?.id ?? null} />
+      )}
     </div>
   );
 
@@ -319,6 +373,12 @@ export function App() {
         onClose={actions.closeDetail}
         onEditCourse={actions.openCourseById}
         onAdjust={(cell) => actions.openAdjustForLesson(cell, detail.date)}
+        adjustment={
+          detail.cell.adjustId === undefined
+            ? null
+            : (data.reschedules.find((row) => row.id === detail.cell.adjustId) ?? null)
+        }
+        onEditAdjust={actions.openAdjustEdit}
       />
     );
 
@@ -328,9 +388,9 @@ export function App() {
       {isDesktop && (
         <AppSidebar
           current={view}
-          onSelect={setView}
-          appName="晓刻 DawnTick"
-          subtitle={`${data.semester.name} · 第 ${data.week} 周`}
+          onSelect={(id) => (id === 'help' ? enterHelp() : setView(id))}
+          appName={appShellCopy.appName}
+          subtitle={appShellCopy.sidebarSubtitle(data.semester.name, data.week)}
         />
       )}
 
@@ -350,7 +410,7 @@ export function App() {
             data-window-range={formatWindowRange(data)}
             data-window-week={data.viewWeek}
             data-window-spans-weeks={data.windowSpansWeeks ? 'true' : 'false'}
-            aria-label={`查看窗口 ${formatWindowRange(data)} · 第 ${data.viewWeek} 周`}
+            aria-label={appShellCopy.windowAria(formatWindowRange(data), data.viewWeek)}
           >
             <AppToolbar
               semester={data.semester}
@@ -375,7 +435,7 @@ export function App() {
               }}
               onToday={session.backToToday}
               onSearch={() => actions.setSearchOpen(true)}
-              onHelp={() => setView('help')}
+              onHelp={enterHelp}
               addActions={actions.addActions}
               onScan={isScanAvailable() ? () => setScanOpen(true) : null}
               compact={!isDesktop}
@@ -396,12 +456,12 @@ export function App() {
             if (event.target === event.currentTarget) actions.closeDetail();
           }}
         >
-          {content}
+          <HelpLinkContext.Provider value={openHelpEntry}>{content}</HelpLinkContext.Provider>
         </main>
       </div>
 
       {isDesktop && wideEnoughForSidePanel && detail !== null && (
-        <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label="课程详情">
+        <aside className="w-96 shrink-0 overflow-y-auto border-l border-line bg-surface p-4" aria-label={appShellCopy.courseDetailTitle}>
           {detailPanel}
         </aside>
       )}
@@ -416,7 +476,7 @@ export function App() {
           if (!open) actions.closeDetail();
         }}
         side={isDesktop || breakpoint === 'tablet' ? 'right' : 'bottom'}
-        title="课程详情"
+        title={appShellCopy.courseDetailTitle}
       >
         {detailPanel}
       </Sheet>
@@ -451,6 +511,25 @@ export function App() {
         }}
       />
 
+      {featureVisible('ai') && (
+        <AssistantPanel
+          open={actions.assistantOpen}
+          onOpenChange={actions.setAssistantOpen}
+          side={isDesktop ? 'right' : 'bottom'}
+          storage={screenStorage}
+          userId={USER_ID}
+          settings={settings}
+          data={data}
+          guardWrite={session.guardWrite}
+          patchSettings={session.patch}
+          reloadSettings={session.reloadSettings}
+          onDataChanged={session.refresh}
+          navigate={navigateForAssistant}
+          openImport={actions.openImportWithText}
+          onOpenAiSettings={() => openHelpTarget({ page: 'settings', group: 'ai', label: '' })}
+        />
+      )}
+
       <CourseForm
         open={actions.courseFormOpen}
         onOpenChange={actions.setCourseFormOpen}
@@ -484,6 +563,14 @@ export function App() {
       {/* 三个只读弹窗：渠道提示、发现新版本、远端有较新的备份 */}
       <NoticeDialog notice={effects.notice} onDismiss={effects.dismissNotice} />
       <UpdateDialog info={effects.updateInfo} onClose={effects.closeUpdate} />
+      <ReleaseNotesDialog
+        notes={effects.releaseNotes}
+        onClose={effects.closeReleaseNotes}
+        onDisable={() => {
+          effects.closeReleaseNotes();
+          void session.patch({ releaseNotesOnUpdate: false });
+        }}
+      />
       <RemoteNewerDialog
         info={session.remoteNewer}
         onClose={() => session.setRemoteNewer(null)}

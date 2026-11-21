@@ -1,4 +1,5 @@
 import type { ImportedSchedule } from '@dawn-tick/core';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 /** 导入渠道：三个入口各自回答「适合谁、产出什么」，步骤 2 只负责该渠道的取材。 */
 export type ImportChannel = 'paste' | 'window' | 'manual';
@@ -7,7 +8,7 @@ export type PasteSource = 'page' | 'file';
 /** 四步固定顺序：选方式 → 取课表 → 预览 → 完成 */
 export type ImportStep = 1 | 2 | 3 | 4;
 /** 失败来源决定错误块挂在哪个操作旁：识别挨着粘贴框，映射挨着映射按钮，文件挨着选文件。 */
-export type ImportFailureSource = 'page' | 'mapping' | 'file' | 'clipboard';
+export type ImportFailureSource = 'page' | 'mapping' | 'file' | 'clipboard' | 'ai';
 
 export interface ImportFailure {
   source: ImportFailureSource;
@@ -28,29 +29,22 @@ export interface ChannelInfo {
 export const CHANNELS: readonly ChannelInfo[] = [
   {
     id: 'paste',
-    title: '粘贴文本 / 文件',
-    scenario: '适用：自己登录教务后复制网页课表，或已有课表文件',
-    output: '产出：解析出的排课预览，勾选后导入',
-    formats: '网页文本 · CSV · Excel · ICS',
+    ...importFlowCopy.channels.paste,
   },
   {
     id: 'window',
-    title: '教务系统内嵌窗口',
-    scenario: '适用：Windows / Android 上用应用内窗口登录教务',
-    output: '产出：从窗口带回页面并直接解析为排课',
+    ...importFlowCopy.channels.window,
   },
   {
     id: 'manual',
-    title: '手动添加',
-    scenario: '适用：只补一两门课，或自动识别总是不准',
-    output: '产出：打开课程表单逐门录入，不经过预览',
+    ...importFlowCopy.channels.manual,
   },
 ];
 
 /** 备份导入（JSON / Base64 / 整包 zip）不在课表导入里：渠道页脚指向正确的入口。 */
-export const BACKUP_IMPORT_HINT = '备份恢复（JSON / Base64 / 整包 zip）在「设备与同步 → 备份恢复」。';
+export const BACKUP_IMPORT_HINT = importFlowCopy.backupHint;
 
-export const STEP_TITLES = ['选择方式', '获取课表', '预览', '完成'] as const;
+export const STEP_TITLES = importFlowCopy.steps;
 export const STEP_COUNT = STEP_TITLES.length;
 
 export function stepTitle(step: ImportStep): string {
@@ -59,7 +53,7 @@ export function stepTitle(step: ImportStep): string {
 
 /** 窄屏步骤文案：完整步骤条收起后仍要知道「第几步、做什么」。 */
 export function compactStepLabel(step: ImportStep): string {
-  return `第 ${step}/${STEP_COUNT} 步 · ${stepTitle(step)}`;
+  return importFlowCopy.compactStep(step, STEP_COUNT, stepTitle(step));
 }
 
 export interface FlowState {
@@ -172,8 +166,8 @@ export function previewSummary(
   conflictCount: number,
   known: boolean,
 ): string {
-  const base = `解析到 ${count} 条排课，已选 ${selected} 条`;
-  return known && conflictCount > 0 ? `${base} · 其中 ${conflictCount} 条重复` : base;
+  const base = importFlowCopy.summary(count, selected);
+  return known && conflictCount > 0 ? importFlowCopy.summaryConflicts(base, conflictCount) : base;
 }
 
 export type FileKind = 'ics' | 'sheet' | 'unknown';
@@ -189,15 +183,15 @@ export function fileKind(fileName: string): FileKind {
 
 /** 文件渠道对非支持格式的就近说明：不进入解析，避免给出看不懂的内部错误。 */
 export function unsupportedFileReason(fileName: string): string {
-  return `不支持「${fileName}」：请选择 .csv / .xlsx / .ics 文件`;
+  return importFlowCopy.unsupportedFile(fileName);
 }
 
 /** 预览表格已按卡片行展示：这里统一给出星期与节次的短文案。 */
 export function scheduleMeta(item: ImportedSchedule): { day: string; periods: string; weeks: string; room: string } {
   return {
-    day: `周${item.dayOfWeek}`,
-    periods: `${item.periodStart}-${item.periodEnd} 节`,
-    weeks: `${item.weeks.length} 周`,
-    room: item.room ?? '—',
+    day: importFlowCopy.weekday(item.dayOfWeek),
+    periods: importFlowCopy.periods(item.periodStart, item.periodEnd),
+    weeks: importFlowCopy.weeks(item.weeks.length),
+    room: item.room ?? importFlowCopy.roomNone,
   };
 }

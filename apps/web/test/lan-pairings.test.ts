@@ -67,7 +67,7 @@ test('配对记录：新建、按 deviceId / 名称去重、端口覆盖、移�
   assert.equal(pairing.lastSyncAt, null);
   assert.equal(pairing.lastSeen, NOW);
   assert.equal(formatLanPairingLabel(pairing), '书房电脑 · 192.168.1.5:8765');
-  assert.equal(formatLanPairingLastSync(pairing), '尚未同步');
+  assert.equal(formatLanPairingLastSync(pairing), '未同步');
   assert.match(formatLanPairingLastSeen(pairing), /最近在线/);
 
   const fallback = createLanPairing({ peer: PEER, token: TOKEN, now: NOW });

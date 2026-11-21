@@ -18,7 +18,14 @@ import {
   validatedStorage,
   WIDGET_VARIANT_LABEL,
   WIDGET_VARIANTS,
+  readSettings,
   writeSettings,
+  type AiChatMessage,
+  type AiChatReply,
+  type AiChatRequest,
+  type AiClient,
+  type EventRow,
+  type SemesterRow,
 } from '@dawn-tick/core';
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
 import type { AppData } from '../src/data.ts';
@@ -31,16 +38,43 @@ import { setWindowsInstallKindForTests } from '../src/lib/update-install.ts';
 import { dismissUpdateTask, setUpdateHostFactoryForTests, startBackgroundUpdate, updateTaskSnapshot } from '../src/lib/update-task.ts';
 import { setAndroidAbiForTests, preferredAndroidAbi } from '../src/lib/android-abi.ts';
 import { resetDownloadSourceCache } from '../src/lib/download-selection.ts';
-import { appVersion, CHANNEL, CHANNEL_LABEL } from '../src/channel.ts';
+import { appVersion, CHANNEL, CHANNEL_LABEL, featureVisible } from '../src/channel.ts';
+import { updateDialogCopy } from '../src/copy/update-dialog.ts';
+import { countdownCopy } from '../src/copy/home-countdown.ts';
+import { timelineCopy } from '../src/copy/home-timeline.ts';
+import { onboardingCopy } from '../src/copy/onboarding.ts';
+import { transferCopy } from '../src/copy/backup-transfer.ts';
+import { helpCopy } from '../src/copy/help.ts';
+import { HELP_CATEGORIES, HELP_ENTRY_COUNT, findHelpEntry } from '../src/help/help-content.ts';
+import { appRecoveryCopy } from '../src/copy/app-recovery.ts';
+import { lanSyncCopy } from '../src/copy/sync-lan.ts';
+import { updateTaskCopy } from '../src/copy/update-task.ts';
+import { adjustCopy } from '../src/copy/timetable-adjust.ts';
+import { courseFormCopy } from '../src/copy/timetable-course-form.ts';
+import { updateSettingsCopy } from '../src/copy/update-settings.ts';
+import { semestersCopy } from '../src/copy/settings-semesters.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
+import { setAiClientForTests } from '../src/lib/ai.ts';
+import { assistantPanelCopy } from '../src/copy/assistant.ts';
+import { listSnapshots } from '../src/backup.ts';
+import { aiCopy } from '../src/copy/settings-ai.ts';
+import { addMenuCopy } from '../src/copy/home-add-menu.ts';
+import { ImportFlow } from '../src/screens/import/import-flow-view.tsx';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { toastSaved } from '../src/screens/settings/file-export.ts';
-import { MOBILE_WIDGETS, WIDGET_PIN_STEPS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
+import { BUSY_TIMEOUT_MS, busySnapshot, runBusy } from '../src/lib/busy.ts';
+import { AiCard } from '../src/screens/settings/ai-card.tsx';
+import { installBackHandlers } from '../src/lib/back-dispatch.ts';
+import { AiEventDialog } from '../src/screens/todo-form/ai-event-dialog.tsx';
+import { uiCopy } from '../src/copy/ui.ts';
+import { toast } from '../src/lib/toast.ts';
+import { clearPendingRestart, pendingRestartSources } from '../src/pending-restart.ts';
+import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
 import { isCorruptLocked, reportCorrupt, resetCorruptGuardForTests } from '../src/db/corrupt-guard.ts';
@@ -277,23 +311,33 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   // 渠道提示：dev 构建首次进入会弹一次开发版提醒，按掉后再继续其余用例
   check(
     'dev 构建首次提示开发版并引导安装正式版',
-    (document.body.textContent ?? '').includes('开发版提示') &&
-      (document.body.textContent ?? '').includes('日常使用建议安装正式版') &&
-      (document.body.textContent ?? '').includes('下载正式版'),
+    (document.body.textContent ?? '').includes(updateDialogCopy.noticeDevTitle) &&
+      (document.body.textContent ?? '').includes(updateDialogCopy.noticeDevDescription) &&
+      (document.body.textContent ?? '').includes(updateDialogCopy.noticeDownloadRelease),
     (document.body.textContent ?? '').slice(0, 60),
   );
-  if (clickByText(document.body, '知道了')) await flush(10);
+  if (clickByText(document.body, updateDialogCopy.noticeDevContinue)) await flush(10);
   check('提示按掉后不再显示', !(document.body.textContent ?? '').includes('开发版提示'), '');
   // I-05：新装默认「今天为第一天」与「始终不显示周末」都开。冒烟固定时钟是周日，
   // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
   clickByText(view.container, '设置');
   await flush(12);
-  const settingsGroupTitles = ['学期设置', '提醒设置', '外观与动效', '课表显示', '作息与选校', '悬浮窗与小组件', '时间与日程'];
+  // AI 分组只在开发版出现（FEATURES.ai）
+  const settingsGroupTitles = [
+    '学期设置',
+    '提醒设置',
+    '外观与动效',
+    '课表显示',
+    '作息与选校',
+    '悬浮窗与小组件',
+    '时间与日程',
+    ...(featureVisible('ai') ? ['AI'] : []),
+  ];
   await waitFor(() => settingsNavItems(view.container).length === settingsGroupTitles.length, 20);
   const listedGroupTitles = (): string[] =>
     settingsGroupTitles.filter((title) => settingsNavItem(view.container, title) !== null);
   check(
-    '设置页改为分组导航：七组清单一次列全',
+    `设置页改为分组导航：${settingsGroupTitles.length} 组清单一次列全`,
     settingsNavItems(view.container).length === settingsGroupTitles.length &&
       listedGroupTitles().length === settingsGroupTitles.length,
     `分组=${listedGroupTitles().join(' / ') || '(无)'}`,
@@ -305,6 +349,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     ['课表显示', '7 天 · 隐藏周末'],
     ['悬浮窗与小组件', '条形 · 浅色'],
     ['时间与日程', 'Asia/Shanghai · 按开始时间'],
+    ...(featureVisible('ai') ? ([['AI', '未配置']] as const) : []),
   ] as const;
   const missingSummaries = summaryChecks.filter(
     ([title, summary]) => !(settingsNavItem(view.container, title)?.textContent ?? '').includes(summary),
@@ -559,7 +604,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check('多天假期第一天卡片显示假期名称', firstDayLabel === '国庆节', firstDayLabel ?? '(未找到)');
   check('假期第二天起只显示放假', laterDayLabel === '放假', laterDayLabel ?? '(未找到)');
 
-  // C1：长按拖动 + 吸附后选生效范围（四选一，主按钮「应用调整」）
+  // C1：长按拖动 + 吸附后选生效范围（四选一，主按钮「改期」）
   const heldWithoutMove = await dragLesson(view.container, '高数');
   await flush(6);
   check(
@@ -602,14 +647,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
-  // I-09：可拖动卡片独占触摸手势；不参与拖动的卡片留纵向滚动，页面才滚得动
+  // I-09：课程卡一律留纵向滚动（回归：Android 手指按在正常课程上滚不动页面）
   const lessonTouchActionOf = (selector: string): string => {
     const cell = view.container
       .querySelector<HTMLElement>(selector)
       ?.closest<HTMLElement>('[data-role="lesson-cell"]');
     return cell?.style.touchAction ?? '(无)';
   };
-  check('I-09 可拖动卡片才独占触摸手势', lessonTouchActionOf('[data-tone="solid"]') === 'none', '');
+  check(
+    'I-09 本周课程卡留纵向滚动',
+    lessonTouchActionOf('[data-tone="solid"]') === 'pan-y',
+    lessonTouchActionOf('[data-tone="solid"]'),
+  );
   check(
     'I-09 非本周卡片留纵向滚动',
     lessonTouchActionOf('[data-dashed="true"]') === 'pan-y',
@@ -671,7 +720,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       globalSwitch != null &&
       globalSwitch.getAttribute('aria-checked') === 'true' &&
       reminderSection.querySelector('input[type="checkbox"][aria-label="使用全局配置"]') === null &&
-      (reminderSection.textContent ?? '').includes('跟随全局设置'),
+      !(reminderSection.textContent ?? '').includes('本课程单独设置'),
     `switch=${globalSwitch?.getAttribute('aria-checked') ?? '(无)'}`,
   );
   if (globalSwitch != null) {
@@ -763,7 +812,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const emptyNameSave = [...document.body.querySelectorAll('button')].find(
     (item) => (item.textContent ?? '').trim() === '保存',
   );
-  const emptyNameErrorShown = (document.body.textContent ?? '').includes('课程名不能为空');
+  const emptyNameErrorShown = (document.body.textContent ?? '').includes(courseFormCopy.nameRequired);
   check(
     '课程名为空时保存禁用并提示',
     emptyNameSave !== undefined && emptyNameSave.disabled && emptyNameErrorShown,
@@ -836,8 +885,8 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       '跨越已占用格只提示不阻止',
       slotRange(view.container) === '第 1–3 节' &&
         clashText.includes('高等数学') &&
-        clashToast.includes('与「高等数学」第 1–2 节重叠，仍可继续新建'),
-      `${slotRange(view.container)} | ${clashText} | ${clashToast.includes('仍可继续新建')}`,
+        clashToast.includes('与「高等数学」第 1–2 节重叠，仍可新建'),
+      `${slotRange(view.container)} | ${clashText} | ${clashToast.includes('仍可新建')}`,
     );
     drag.up(-2 * 56);
     await flush(12);
@@ -872,7 +921,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '重叠课程保存成功并提示',
     (view.container.textContent ?? '').includes('重叠测试课') &&
-      (document.body.textContent ?? '').includes('与「高等数学」第 1–2 节重叠，已同时保留'),
+      (document.body.textContent ?? '').includes(courseFormCopy.overlap('高等数学', '第 1–2 节')),
     (document.body.textContent ?? '').slice(-70),
   );
   // I-10 回归：刚新建出来的课程卡也要能直接拖（不需要先按住等长按）
@@ -1068,10 +1117,16 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     document.querySelector('[data-role="adjust-dialog"]') !== null && overlapMoveText.includes('第 3–4 节'),
     overlapMoveText.slice(-60),
   );
-  if (clickByText(document.body, '应用调整')) await flush(16);
+  const overlapMoveSubmit = [
+    ...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll<HTMLButtonElement>('button') ?? []),
+  ].at(-1);
+  if ((overlapMoveSubmit?.textContent ?? '').trim() === adjustCopy.submit.move) {
+    overlapMoveSubmit?.click();
+    await flush(16);
+  }
   check(
     '重叠调课保存成功并提示',
-    (document.body.textContent ?? '').includes('调整后与「重叠测试课」第 1–3 节重叠，已同时保留'),
+    (document.body.textContent ?? '').includes(adjustCopy.overlapToast('重叠测试课', '第 1–3 节')),
     (document.body.textContent ?? '').slice(-70),
   );
   // 「这一次」的调课要在课表里落到两个位置：原位置灰显标「已调课」，目标位置标「调课」
@@ -1131,7 +1186,9 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '学期概览：空学期显示空态与去添加课程入口',
     emptyStats.container.querySelector('[data-role="semester-stats-empty"]') !== null &&
-      (emptyStats.container.textContent ?? '').includes('去添加课程'),
+      [...emptyStats.container.querySelectorAll('button')].some(
+        (item) => (item.textContent ?? '').trim() === '添加课程',
+      ),
     (emptyStats.container.textContent ?? '').slice(0, 60),
   );
   emptyStats.root.unmount();
@@ -1153,18 +1210,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
-  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源，固定四项
+  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源；「AI 助手」跟随 FEATURES.ai，只在开发版出现
   const addMenuLabels = (): string[] =>
     [...view.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]')].map((item) =>
       (item.textContent ?? '').trim(),
     );
-  const EXPECTED_ADD_ACTIONS = ['加课程', '加待办', '加考试', '导入课表'];
+  const EXPECTED_ADD_ACTIONS = ['加课程', '加待办', '加考试', '导入课表', ...(featureVisible('ai') ? ['AI 助手'] : [])];
   check(
-    'P1-01 日程「添加」菜单含四项新增动作',
+    featureVisible('ai') ? 'P1-01 日程「添加」菜单含四项新增动作与「AI 助手」' : 'P1-01 日程「添加」菜单含四项新增动作，无「AI 助手」',
     addMenuLabels().join('/') === EXPECTED_ADD_ACTIONS.join('/'),
     addMenuLabels().join(' / ') || '(无)',
   );
-  // 移动端 FAB → 底部 Sheet，同样四项，且必须含「加考试」
+  // 移动端 FAB → 底部 Sheet，与菜单同一份清单，且必须含「加考试」
   const mobileFab = view.container.querySelector<HTMLElement>('button[aria-label="添加"]');
   mobileFab?.click();
   await flush(10);
@@ -1172,7 +1229,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     (item.textContent ?? '').trim(),
   );
   check(
-    'P1-01 移动 FAB 底部 Sheet 含四项且含「加考试」',
+    'P1-01 移动 FAB 底部 Sheet 与菜单同一份清单且含「加考试」',
     mobileFab !== null &&
       fabActions.join('/') === EXPECTED_ADD_ACTIONS.join('/') &&
       fabActions.includes('加考试'),
@@ -1389,6 +1446,15 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     (cancelledRow?.textContent ?? '').includes('停课'),
     cancelledRow?.textContent?.trim() ?? '(无)',
   );
+  // 停课条目的时间列只写「停课」，原节次与时间挪到副标题
+  const cancelledStatus = cancelledRow?.querySelector('[data-role="timeline-status"]')?.textContent?.trim() ?? '(无)';
+  check(
+    '日程时间线：停课条目时间列显示停课，副标题是原节次',
+    cancelledRow?.getAttribute('data-kind') === 'adjust' &&
+      cancelledStatus === '停课' &&
+      (cancelledRow?.textContent ?? '').includes('第 9–10 节'),
+    `${cancelledStatus} / ${cancelledRow?.textContent?.trim() ?? '(无)'}`,
+  );
   if (clickByText(view.container, '课表')) await flush(16);
   const cancelledCard = view.container.querySelector('[data-tone="cancelled"]');
   check(
@@ -1410,6 +1476,20 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       (cancelledCard?.className ?? '').includes('cursor-grab') ? '有' : '无'
     }`,
   );
+  // 单击停课的课次：详情顶部写明已停课，并给出修改 / 删除调整
+  cancelledCard?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush(10);
+  const adjustSection = document.querySelector('[data-role="lesson-adjustment"]');
+  const adjustSectionText = adjustSection?.textContent ?? '';
+  check(
+    '单击停课课次：详情显示停课说明与修改、删除调整',
+    adjustSectionText.includes(`${cancelDate} 这一次已停课`) &&
+      adjustSectionText.includes('修改调整') &&
+      adjustSectionText.includes('删除调整'),
+    adjustSectionText.trim() || '(无)',
+  );
+  document.querySelector<HTMLElement>('[aria-label="关闭课程详情"]')?.click();
+  await flush(6);
   if (clickByText(view.container, '日程')) await flush(12);
 
   if (clickMenu(view.container, '添加', '加待办')) await flush(12);
@@ -1587,10 +1667,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   if (openAdjustTrimmed) await flush(12);
   const adjustText = document.body.textContent ?? '';
   const adjustDialogOpened = document.querySelector('[data-role="adjust-dialog"]') !== null;
-  const adjustHasButton = (label: string): boolean =>
-    [...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll('button') ?? [])].some(
-      (item) => (item.textContent ?? '').trim() === label,
-    );
+  // 模式按钮与主按钮同名（改期 / 停课 / 调休 / 改为考试）：主按钮取弹窗里最后一个按钮
+  const adjustSubmitLabel = (): string =>
+    (
+      [...(document.querySelector('[data-role="adjust-dialog"]')?.querySelectorAll('button') ?? [])].at(-1)
+        ?.textContent ?? ''
+    ).trim();
   check(
     '调课弹窗含五个主操作',
     openAdjustTrimmed &&
@@ -1604,23 +1686,24 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     ['这一次', '每周', '指定周', '指定日期'].every((label) => adjustText.includes(label)),
     '',
   );
-  check('改期主按钮为应用调整', adjustHasButton('应用调整'), '');
+  check('改期主按钮为「改期」', adjustSubmitLabel() === adjustCopy.submit.move, adjustSubmitLabel());
   if (clickByText(document.body, '调休')) await flush(8);
   check(
-    '调休为指定两天',
+    '调休为指定两天且主按钮为「调休」',
     document.querySelector('[aria-label="原日期课表"]') !== null &&
-      document.querySelector('[aria-label="目标上课日"]') !== null,
-    '',
+      document.querySelector('[aria-label="目标上课日"]') !== null &&
+      adjustSubmitLabel() === adjustCopy.submit.swap,
+    adjustSubmitLabel(),
   );
   if (clickByText(document.body, '停课')) await flush(8);
   check(
-    '停课主按钮改为确认停课',
-    adjustHasButton('确认停课') && !adjustHasButton('应用调整'),
-    (document.body.textContent ?? '').slice(-40),
+    '停课主按钮为「停课」',
+    adjustSubmitLabel() === adjustCopy.submit.cancel,
+    adjustSubmitLabel(),
   );
   if (clickByText(document.body, '临时加课')) await flush(8);
   check('临时加课可自定义名称', document.querySelector('[aria-label="或自定义课程名称"]') !== null, '');
-  check('临时加课主按钮为应用调整', adjustHasButton('应用调整'), '');
+  check('临时加课主按钮为「加课」', adjustSubmitLabel() === adjustCopy.submit.extra, adjustSubmitLabel());
   // I-11：把这次课改成考试 —— 日期取调整后日期、节次换钟点、可写备注，主按钮随之变化
   if (clickByText(document.body, '改为考试')) await flush(8);
   check(
@@ -1630,12 +1713,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       document.querySelector('[aria-label="考试结束节"]') !== null &&
       document.querySelector('[aria-label="考试备注"]') !== null &&
       (document.body.textContent ?? '').includes('原课次从课表移除'),
-    `主按钮=${adjustHasButton('改为考试') ? '改为考试' : '未变'}`,
+    `主按钮=${adjustSubmitLabel()}`,
   );
   check(
     'I-11 改为考试主按钮随之变化',
-    adjustHasButton('改为考试') && !adjustHasButton('应用调整') && !adjustHasButton('确认停课'),
-    '',
+    adjustSubmitLabel() === adjustCopy.submit.exam,
+    adjustSubmitLabel(),
   );
   if (clickByText(document.body, '取消')) await flush(6);
 
@@ -2363,6 +2446,16 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') === 'true',
     view.container.querySelector('[aria-label="自动检查版本更新"]')?.getAttribute('aria-checked') ?? '(无开关)',
   );
+  check(
+    '更新卡带新版本内容开关，默认开启',
+    view.container.querySelector('[aria-label="更新后显示新版本内容"]')?.getAttribute('aria-checked') === 'true',
+    view.container.querySelector('[aria-label="更新后显示新版本内容"]')?.getAttribute('aria-checked') ?? '(无开关)',
+  );
+  check(
+    '首次运行不弹新版本内容',
+    document.querySelector('[data-role="release-notes"]') === null,
+    '首次运行弹出了新版本内容',
+  );
 
   // —— 双下载源：默认自动探测 Gitee / GitHub，手动切换后检查更新走选中的源（全程桩 fetch） ——
   resetDownloadSourceCache();
@@ -2835,7 +2928,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '日视图空态文案给出下一步',
     dayEmpty !== null &&
       (dayEmpty.textContent ?? '').includes('今天没有课') &&
-      (dayEmpty.textContent ?? '').includes('切换周视图可看本周安排'),
+      (dayEmpty.textContent ?? '').includes('查看周视图'),
     dayEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
   );
   check(
@@ -3065,7 +3158,6 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '手机端小组件清单与引导只在 Android 出现',
     MOBILE_WIDGETS.length === 4 &&
       MOBILE_WIDGETS.every((item) => item.size.length > 0 && item.description.length > 0) &&
-      WIDGET_PIN_STEPS.length === 3 &&
       hasMobileWidgets() === false &&
       view.container.querySelector('[data-role="mobile-widget-guide"]') === null &&
       view.container.querySelector('[aria-label="悬浮窗样式"]') !== null,
@@ -3245,7 +3337,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(12);
   check(
     '忽略后手动检查仍能打开更新弹窗，并提示可取消忽略',
-    (document.querySelector('[data-role="update-ignored"]')?.textContent ?? '').includes('已忽略此版本，可在这里取消忽略') &&
+    (document.querySelector('[data-role="update-ignored"]')?.textContent ?? '').includes(updateDialogCopy.ignoredNote) &&
       document.querySelector('[data-role="update-unignore"]') !== null,
     document.querySelector('[data-role="update-ignored"]')?.textContent?.trim() ?? '(无)',
   );
@@ -3576,7 +3668,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '再次打开更新弹窗：同一任务已就绪，主按钮变为「安装更新」',
     (document.querySelector('[data-role="update-primary"]')?.textContent ?? '').includes('安装更新') &&
-      (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes('可以安装'),
+      (document.querySelector('[data-role="update-status"]')?.textContent ?? '').includes(updateTaskCopy.installerReady),
     document.querySelector('[data-role="update-primary"]')?.textContent?.trim() ?? '(无)',
   );
   closeUpdatePrompt();
@@ -3658,7 +3750,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     updateTaskSnapshot().status === 'ready' &&
       portableWrites[0] === 'DawnTick-update.zip' &&
       (portableTask?.textContent ?? '').includes('便携包') &&
-      (portableTask?.textContent ?? '').includes('可以更新了') &&
+      (portableTask?.textContent ?? '').includes(updateTaskCopy.portableReady) &&
       (portableInstallButton?.textContent ?? '').includes('更新并退出'),
     `${portableWrites[0] ?? '(无)'} / ${portableInstallButton?.textContent?.trim() ?? '(无)'}`,
   );
@@ -3670,7 +3762,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       portableScripts[0] === 'C:\\Temp\\DawnTick-update.zip' &&
       portableExits === 1 &&
       updateTaskSnapshot().installed === true &&
-      (updateTaskSnapshot().message ?? '').includes('自动替换'),
+      updateTaskSnapshot().message === updateTaskCopy.portableApplying,
     `${portableScripts[0] ?? '(无)'} / 退出 ${portableExits}`,
   );
   dismissUpdateTask();
@@ -3719,7 +3811,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       recentItems.every((item) => /v\d+\.\d+\.\d+/.test(item.textContent ?? '')),
     `版本 ${recentItems.map((item) => item.textContent?.slice(0, 12)).join(' / ')}`,
   );
-  if (clickByText(document.body, '知道了')) await flush(6);
+  if (recentDialog !== null && clickByText(recentDialog, updateSettingsCopy.recentClose)) await flush(6);
   check('近期更新弹窗可以关闭', document.querySelector('[data-role="recent-updates-dialog"]') === null, '');
 
   await openDeviceGroup('本地存储');
@@ -3849,8 +3941,11 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '设备页有「发现设备」与「同步前预览」入口',
     (view.container.querySelector('[data-role="lan-sync-discovery"]')?.textContent ?? '').includes('发现设备') &&
       view.container.querySelector('button[aria-label="发现设备"]')?.hasAttribute('disabled') === false &&
-      (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '').includes('同步前预览'),
-    (view.container.querySelector('[data-role="lan-sync-preview-hint"]')?.textContent ?? '(无预览说明)').slice(0, 40),
+      // 同步前预览的说明收进帮助条目 lan-paired，界面只留「查看帮助」入口
+      view.container.querySelector('[data-role="help-link"][data-help-target="lan-paired"]') !== null,
+    view.container.querySelector('[data-role="help-link"][data-help-target="lan-paired"]') === null
+      ? '(无预览帮助入口)'
+      : '',
   );
   if (clickByLabel(view.container, '发现设备')) await flush(12);
   const discoveredPeer = view.container.querySelector<HTMLElement>('[data-role="lan-sync-peers"] button');
@@ -3934,6 +4029,11 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     <LanSyncBlock storage={lanStorage} onSettingsReplaced={async () => {}} onChanged={() => {}} />,
   );
   await flush(10);
+  check(
+    'HelpLink：脱离 App 单独挂载时不渲染「查看帮助」入口',
+    lanView.container.querySelector('[data-role="help-link"]') === null,
+    '',
+  );
   const scanButton = lanView.container.querySelector<HTMLElement>('button[aria-label="扫码配对"]');
   check(
     '安卓扫码桩：配对区出现「扫码配对」按钮',
@@ -4198,8 +4298,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     await flush(4);
     check(
       'Android 空态：已连接 Wi-Fi 但没有 IPv4 时提示重新连接 Wi-Fi',
-      (wifiEmpty?.textContent ?? '').includes('已连接 Wi-Fi，但没有拿到 IPv4 地址') &&
-        (wifiEmpty?.textContent ?? '').includes('仅 IPv6'),
+      (wifiEmpty?.textContent ?? '').includes(lanSyncCopy.networkWifiNoIpv4),
       wifiEmpty?.textContent?.trim() ?? '(无空态)',
     );
     check(
@@ -4253,7 +4352,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     const mobileEmpty = mobileEmptyView.container.querySelector('[data-role="lan-sync-network-empty"]');
     check(
       'Android 空态：只有移动数据时提示先连同一 Wi-Fi',
-      (mobileEmpty?.textContent ?? '').includes('当前没有 Wi-Fi/有线连接'),
+      (mobileEmpty?.textContent ?? '').includes(lanSyncCopy.networkMobileOnly),
       mobileEmpty?.textContent?.trim() ?? '(无空态)',
     );
     mobileEmptyView.root.unmount();
@@ -4564,16 +4663,20 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const exportPasswordInput = document.querySelector<HTMLInputElement>('input[aria-label="加密口令"]');
   const exportPasswordConfirm = document.querySelector<HTMLInputElement>('input[aria-label="确认加密口令"]');
   const encryptionWarning = document.querySelector<HTMLElement>('[data-role="export-password-warning"]');
-  const encryptionScope = document.querySelector<HTMLElement>('[data-role="export-encryption-scope"]');
+  // 加密范围的长说明收进帮助条目 backup-transfer，这里只留入口
+  const encryptionHelp = document.querySelector<HTMLElement>(
+    '[data-role="help-link"][data-help-target="backup-transfer"]',
+  );
   check(
     '导出可选口令加密并警示忘记口令无法恢复',
     encryptionBox?.checked === true &&
       exportPasswordInput?.type === 'password' &&
       exportPasswordConfirm?.type === 'password' &&
       (encryptionWarning?.textContent ?? '').includes('忘记口令将无法恢复') &&
-      (encryptionScope?.textContent ?? '').includes('自动快照') &&
-      (encryptionScope?.textContent ?? '').includes('不加密'),
-    `勾选=${encryptionBox?.checked === true} 警示=${encryptionWarning?.textContent?.trim() ?? '(无)'}`,
+      encryptionHelp !== null,
+    `勾选=${encryptionBox?.checked === true} 警示=${encryptionWarning?.textContent?.trim() ?? '(无)'} 帮助入口=${
+      encryptionHelp !== null
+    }`,
   );
   if (exportPasswordInput !== null) setInputValue(exportPasswordInput, 'smoke-pass-8');
   if (exportPasswordConfirm !== null) setInputValue(exportPasswordConfirm, 'smoke-pass-8');
@@ -5158,9 +5261,9 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
 
   const genericPicked = await pickSchoolInDialog('清华', '清华大学');
   check(
-    '该校暂无专属作息时套用通用作息并提示',
+    '该校没有专属作息时套用通用作息并提示',
     genericPicked?.getAttribute('data-adapted') === 'false' &&
-      schoolTimetableMessage().includes('该校暂无专属作息，已套用通用作息') &&
+      schoolTimetableMessage().includes('该校没有专属作息，已套用通用作息') &&
       schoolTimetableStatus().includes('当前 12 个节次'),
     `${schoolTimetableMessage()} / ${schoolTimetableStatus()}`,
   );
@@ -5213,9 +5316,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await flush(8);
   const deleteDialogText = document.body.textContent ?? '';
   check('删除确认说明后果', deleteDialogText.includes('不可撤销'), deleteDialogText.slice(-40));
-  if (clickByText(document.body, '确认删除')) {
-    await flush(24);
-  }
+  // 确认框标题仍是「删除学期」，主按钮统一为「确认删除」：只点确认框里的按钮
+  const semesterDeleteConfirm =
+    [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
+      (item) => (item.textContent ?? '').trim() === semestersCopy.deleteConfirm,
+    ) ?? null;
+  check(
+    '删除学期确认按钮为确认删除',
+    semestersCopy.deleteConfirm === '确认删除' && semesterDeleteConfirm !== null,
+    semesterDeleteConfirm?.textContent?.trim() ?? '(无)',
+  );
+  semesterDeleteConfirm?.click();
+  await flush(24);
   check('删除后回到引导页', (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'), '');
 
   // 引导页可跳过：用默认值直接建学期进应用
@@ -5251,7 +5363,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     '倒计时卡徽标区与条目区固定分区，空条目区给「加考试」',
     countdownBadges !== null &&
       countdownEntries !== null &&
-      (countdownEntries.textContent ?? '').includes('暂无倒计时条目') &&
+      (countdownEntries.textContent ?? '').includes(countdownCopy.emptyTitle) &&
       countdownEntries.querySelectorAll('button').length === 1 &&
       (countdownEntries.querySelector('button')?.textContent ?? '').trim() === '加考试',
     `徽标区=${countdownBadges === null ? '无' : '有'} 条目区=${countdownEntries?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
@@ -5271,7 +5383,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   check(
     '日程时间线空态给「添加待办」主行动',
     timelineEmpty !== null &&
-      (timelineEmpty.textContent ?? '').includes('切换日期可看其他日期') &&
+      (timelineEmpty.textContent ?? '').includes(timelineCopy.emptyTitle) &&
       timelineEmpty.querySelectorAll('button').length === 1 &&
       (timelineEmpty.querySelector('button')?.textContent ?? '').trim() === '添加待办',
     timelineEmpty?.textContent?.trim().slice(0, 40) ?? '(无空态)',
@@ -5343,7 +5455,13 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   await openSettingsGroup(remounted.container, '学期设置');
   clickByLabel(remounted.container, '删除学期');
   await flush(10);
-  if (clickByText(document.body, '确认删除')) await flush(24);
+  const defaultSemesterDeleteConfirm = [...document.querySelectorAll<HTMLElement>('[role="dialog"] button')].find(
+    (item) => (item.textContent ?? '').trim() === semestersCopy.deleteConfirm,
+  );
+  if (defaultSemesterDeleteConfirm !== undefined) {
+    defaultSemesterDeleteConfirm.click();
+    await flush(24);
+  }
   check(
     '删掉默认学期后回到引导页',
     (remounted.container.textContent ?? '').includes('欢迎使用晓刻 DawnTick'),
@@ -5363,7 +5481,8 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       onboardFileInput.accept.includes('.zip') &&
       onboardFileInput.accept.includes('.json') &&
       onboardImportText !== null &&
-      onboardFormats.includes('支持晓刻导出的 JSON、Base64 文本与整包 zip'),
+      onboardFormats === onboardingCopy.importFormats &&
+      ['JSON', 'Base64', 'zip'].every((format) => transferCopy.importFormatsHint.includes(format)),
     `accept=${onboardFileInput?.accept ?? '(无)'} 提示=${onboardFormats || '(无)'}`,
   );
   // 粘贴 Base64 走同一套解析：解析成功后先出现覆盖后果，再让用户确认
@@ -5379,7 +5498,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   if (clickByLabel(remounted.container, '从文本导入')) await flush(12);
   check(
     '引导页粘贴 Base64 后提示覆盖后果',
-    (remounted.container.textContent ?? '').includes('将覆盖设备上的现有数据，不可撤销') &&
+    (remounted.container.textContent ?? '').includes(onboardingCopy.overwriteWarning) &&
       remounted.container.querySelector('button[aria-label="确认导入"]') !== null,
     (remounted.container.textContent ?? '').slice(-120),
   );
@@ -5677,6 +5796,14 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     const importPaste = importApp.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="粘贴课表页面内容"]',
     );
+    const importAiButton = importApp.container.querySelector<HTMLButtonElement>('[data-role="import-ai"]');
+    check(
+      featureVisible('ai') ? '开发版粘贴步骤出现「用 AI 识别」，未粘贴时禁用' : '非开发版粘贴步骤不出现「用 AI 识别」',
+      featureVisible('ai')
+        ? importAiButton !== null && (importAiButton.textContent ?? '').includes('用 AI 识别') && importAiButton.disabled
+        : importAiButton === null,
+      importAiButton === null ? '(无按钮)' : `disabled=${importAiButton.disabled}`,
+    );
 
     // P2-02：识别失败就地给出手动映射入口，点了会展开并把焦点放到表头行
     if (importPaste instanceof window.HTMLTextAreaElement) {
@@ -5903,7 +6030,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         visibleRows.length === 2 &&
         visibleRows.every((row) => row.getAttribute('data-role') === 'import-conflict-row') &&
         !previewText().includes('无冲突新增课程') &&
-        previewText().includes('筛选态：批选只作用于可见行'),
+        previewText().includes('批量选择只作用于可见行'),
       `可见 ${visibleRows.length} 行 / ${conflictRows().length} 条冲突`,
     );
 
@@ -6076,7 +6203,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     check(
       'P1-07 回退时首屏出现常驻警告条（含重试/打开日志）',
       banner !== null &&
-        (banner.textContent ?? '').includes('原生数据库不可用，已临时使用浏览器存储（本机数据未删除）') &&
+        (banner.textContent ?? '').includes(appRecoveryCopy.fallback.banner) &&
         bannerButtons.includes('重试') &&
         bannerButtons.includes('打开日志'),
       banner?.textContent?.trim().slice(0, 80) ?? '(无警告条)',
@@ -6266,7 +6393,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       ...desktopApp.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]'),
     ].map((item) => (item.textContent ?? '').trim());
     check(
-      'P1-01 桌面工具栏「＋」菜单含四项新增动作',
+      'P1-01 桌面工具栏「＋」菜单与日程「添加」菜单同一份清单',
       desktopApp.container.querySelector('[data-role="app-sidebar"]') !== null &&
         desktopAddLabels.join('/') === EXPECTED_ADD_ACTIONS.join('/'),
       desktopAddLabels.join(' / ') || '(无工具栏菜单)',
@@ -6278,6 +6405,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       desktopExamKind?.getAttribute('aria-pressed') === 'true' &&
         document.querySelector('[aria-label="开考时间"]') !== null,
       `类型选中=${desktopExamKind?.getAttribute('aria-pressed') ?? '(无表单)'}`,
+    );
+    const todoAiButton = document.querySelector('[data-role="todo-form"] [data-role="todo-ai"]');
+    check(
+      featureVisible('ai') ? '开发版新建表单出现「用 AI 生成」' : '非开发版新建表单不出现「用 AI 生成」',
+      featureVisible('ai') ? (todoAiButton?.textContent ?? '').includes('用 AI 生成') : todoAiButton === null,
+      todoAiButton?.textContent?.trim() ?? '(无按钮)',
     );
     if (clickByText(document.body, '取消')) await flush(10);
     if (clickByText(desktopApp.container, '日程')) await flush(16);
@@ -6578,7 +6711,12 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   }
   const helpApp = mount(<App />);
   await flush(24);
-  if (clickByText(helpApp.container, '知道了')) await flush(8);
+  if (
+    clickByText(document.body, updateDialogCopy.noticeDevContinue) ||
+    clickByText(document.body, updateDialogCopy.noticeBetaContinue)
+  ) {
+    await flush(8);
+  }
   const helpToolbarButton = helpApp.container.querySelector<HTMLElement>('button[aria-label="帮助"]');
   helpToolbarButton?.click();
   await flush(12);
@@ -6593,8 +6731,9 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     helpToolbarButton !== null &&
       helpView !== null &&
       helpSearch !== null &&
-      helpCategoryCards.length === 8 &&
-      helpEntries.length >= 10 &&
+      helpCategoryCards.length === HELP_CATEGORIES.length &&
+      HELP_CATEGORIES.length === 9 &&
+      helpEntries.length === HELP_ENTRY_COUNT &&
       (helpView?.textContent ?? '').includes('帮助与使用指引'),
     `分类=${helpCategoryCards.length} 条目=${helpEntries.length} 工具栏=${
       helpToolbarButton !== null ? '有' : '无'
@@ -6657,7 +6796,1138 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     settingsHelpButton !== null && helpApp.container.querySelector('[data-role="help-view"]') !== null,
     settingsHelpButton?.textContent?.trim() ?? '(无入口)',
   );
+
+  // 界面上的「查看帮助」入口（HelpLink）：跳到帮助页并只展开对应条目
+  if (clickByText(helpApp.container, '设备与同步')) await flush(12);
+  await openDeviceGroup('局域网同步', helpApp.container);
+  const lanHelpLink = await waitFor(
+    () => helpApp.container.querySelector('[data-role="help-link"][data-help-target="lan-web"]') !== null,
+    30,
+  );
+  const lanHelpButton = helpApp.container.querySelector<HTMLElement>(
+    '[data-role="help-link"][data-help-target="lan-web"]',
+  );
+  check(
+    'HelpLink：设备页局域网分组给出「查看帮助」入口，无障碍名称带条目标题',
+    lanHelpLink &&
+      lanHelpButton !== null &&
+      (lanHelpButton.textContent ?? '').trim() === helpCopy.viewHelp &&
+      lanHelpButton.getAttribute('aria-label') === helpCopy.viewHelpAria(findHelpEntry('lan-web')?.title ?? '(无条目)'),
+    lanHelpButton?.getAttribute('aria-label') ?? '(无入口)',
+  );
+  lanHelpButton?.click();
+  await flush(12);
+  const focusedHelpEntry = helpApp.container.querySelector<HTMLDetailsElement>(
+    '[data-role="help-entry"][data-help-id="lan-web"]',
+  );
+  const openHelpEntries = [
+    ...helpApp.container.querySelectorAll<HTMLDetailsElement>('[data-role="help-entry"]'),
+  ].filter((entry) => entry.open);
+  check(
+    'HelpLink：点击后打开帮助页并只展开对应条目',
+    helpApp.container.querySelector('[data-role="help-view"]') !== null &&
+      focusedHelpEntry !== null &&
+      focusedHelpEntry.open &&
+      openHelpEntries.length === 1 &&
+      (focusedHelpEntry.querySelectorAll('[data-role="help-steps"] li').length ?? 0) >= 2,
+    `展开=${openHelpEntries.map((entry) => entry.getAttribute('data-help-id')).join(',') || '(无)'}`,
+  );
   helpApp.root.unmount();
+
+  // —— Esc / 返回键：进行中的操作先取消（写入不能中断），再退弹窗里的步骤、关弹窗，再退页面一级 ——
+  {
+    const pressEsc = async (rounds = 10): Promise<KeyboardEvent> => {
+      const event = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      await flush(rounds);
+      return event;
+    };
+    const currentNav = (container: HTMLElement): string =>
+      (
+        container.querySelector<HTMLElement>('[data-role="bottom-nav"] button[aria-current="true"]')?.textContent ?? ''
+      ).trim();
+    const onSettingsPage = (container: HTMLElement): boolean =>
+      container.querySelector('[data-role="settings-actions"]') !== null;
+    const onTimetable = (container: HTMLElement): boolean =>
+      currentNav(container) === '课表' && container.querySelector('[data-role="help-view"]') === null;
+    const openDialogs = (): number => document.querySelectorAll('[role="dialog"]').length;
+    const toastTexts = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].map((item) => (item.textContent ?? '').trim());
+    const hasToast = (text: string): boolean => toastTexts().some((item) => item.includes(text));
+    const dismissToasts = async (): Promise<void> => {
+      toast.dismiss();
+      await flush(4);
+    };
+    const devicesNav = (container: HTMLElement): HTMLElement | null =>
+      container.querySelector<HTMLElement>('nav[aria-label="设备与同步分组"]');
+    const devicesSubpageOpen = (container: HTMLElement): boolean => {
+      const nav = devicesNav(container);
+      const panel = nav?.parentElement?.querySelector('section') ?? null;
+      return nav !== null && nav.classList.contains('hidden') && panel !== null && !panel.classList.contains('hidden');
+    };
+    const devicesListOnly = (container: HTMLElement): boolean => {
+      const nav = devicesNav(container);
+      const panel = nav?.parentElement?.querySelector('section') ?? null;
+      return nav !== null && !nav.classList.contains('hidden') && panel !== null && panel.classList.contains('hidden');
+    };
+    const dismissChannelNotice = async (): Promise<void> => {
+      if (
+        clickByText(document.body, updateDialogCopy.noticeDevContinue) ||
+        clickByText(document.body, updateDialogCopy.noticeBetaContinue)
+      ) {
+        await flush(8);
+      }
+    };
+
+    const backApp = mount(<App />);
+    await flush(24);
+    await dismissChannelNotice();
+    const backRoot = backApp.container;
+
+    // 课表页没有可退的一级：Esc 不被吞（安卓据此退到后台）
+    const idleEsc = await pressEsc();
+    check(
+      'Esc：课表页没有上一级，不拦截按键也不切页',
+      onTimetable(backRoot) && idleEsc.defaultPrevented === false,
+      `当前=${currentNav(backRoot)} defaultPrevented=${idleEsc.defaultPrevented}`,
+    );
+
+    // ① 移动端设置分组 → 分组清单 → 课表
+    clickByText(backRoot, '设置');
+    await flush(12);
+    const enteredGroup = await openSettingsGroup(backRoot, '课表显示');
+    const groupOpenBefore = settingsSubpageOpen(backRoot);
+    const groupEsc = await pressEsc();
+    check(
+      'Esc：移动端设置分组退回分组清单，仍在设置页',
+      enteredGroup &&
+        groupOpenBefore &&
+        settingsNavIsListOnly(backRoot) &&
+        onSettingsPage(backRoot) &&
+        currentNav(backRoot) === '设置' &&
+        groupEsc.defaultPrevented,
+      `进组=${enteredGroup}/${groupOpenBefore} 清单=${settingsNavIsListOnly(backRoot)} 当前=${currentNav(backRoot)}`,
+    );
+    await pressEsc(12);
+    check(
+      'Esc：设置分组清单再按一次回到课表',
+      onTimetable(backRoot) && !onSettingsPage(backRoot),
+      `当前=${currentNav(backRoot)}`,
+    );
+
+    // ② 日程页同样回课表
+    clickByText(backRoot, '日程');
+    await flush(12);
+    const onSchedule = currentNav(backRoot) === '日程';
+    await pressEsc(12);
+    check('Esc：日程页回到课表', onSchedule && onTimetable(backRoot), `当前=${currentNav(backRoot)}`);
+
+    // ③ 导入弹窗：Esc 先退一步，退到第一步再关弹窗，弹窗关掉不离开设置页
+    clickByText(backRoot, '设置');
+    await flush(12);
+    const importButton = backRoot.querySelector<HTMLElement>('[data-role="settings-actions"] button');
+    importButton?.click();
+    await flush(12);
+    const compactStep = (): string =>
+      document.querySelector('[role="dialog"] [data-role="step-compact"]')?.textContent?.trim() ?? '';
+    const stepOne = compactStep();
+    // 渠道卡按 data-channel 取：别处也可能有「粘贴文本」开头的按钮
+    document
+      .querySelector<HTMLElement>('[role="dialog"] [data-role="channel-card"][data-channel="paste"]')
+      ?.click();
+    await flush(10);
+    const stepTwo = compactStep();
+    await pressEsc();
+    const steppedBack = compactStep();
+    check(
+      'Esc：导入弹窗在第 2 步时退回第 1 步，弹窗不关',
+      stepOne.includes('第 1/4 步') &&
+        stepTwo.includes('第 2/4 步') &&
+        steppedBack.includes('第 1/4 步') &&
+        openDialogs() === 1 &&
+        onSettingsPage(backRoot),
+      `${stepOne} → ${stepTwo} → ${steppedBack || '(无)'} 弹窗=${openDialogs()}`,
+    );
+    await pressEsc(12);
+    check(
+      'Esc：导入弹窗在第 1 步时关闭弹窗，仍留在设置页',
+      openDialogs() === 0 && onSettingsPage(backRoot) && currentNav(backRoot) === '设置',
+      `弹窗=${openDialogs()} 当前=${currentNav(backRoot)}`,
+    );
+
+    // ④ 普通弹窗（课程详情以外的确认/表单）：Esc 只关弹窗，不顺带离开页面
+    importButton?.click();
+    await flush(12);
+    const reopened = openDialogs() === 1;
+    await pressEsc(12);
+    check(
+      'Esc：打开的弹窗只关弹窗，不离开所在页面',
+      reopened && openDialogs() === 0 && onSettingsPage(backRoot),
+      `重开=${reopened} 弹窗=${openDialogs()} 当前=${currentNav(backRoot)}`,
+    );
+
+    // ⑤ 只读操作进行中：Esc 取消、提示「已取消」、蒙版收起，且不退分组
+    await openSettingsGroup(backRoot, '课表显示');
+    await dismissToasts();
+    let readSignal: AbortSignal | null = null;
+    const reading = runBusy(
+      '正在测试连接…',
+      (signal) => {
+        readSignal = signal;
+        return new Promise<never>(() => undefined);
+      },
+      { cancellable: true },
+    );
+    reading.catch(() => undefined);
+    await flush(6);
+    const readOverlay = document.querySelector('[data-role="busy-overlay"]') !== null;
+    const readEsc = await pressEsc(8);
+    const readCancelled = await reading.then(
+      () => false,
+      (cause: unknown) => cause instanceof Error && cause.name === 'BusyCancelledError',
+    );
+    check(
+      'Esc：只读操作进行中按 Esc 取消并提示「已取消」，蒙版收起',
+      readOverlay &&
+        readEsc.defaultPrevented &&
+        readCancelled &&
+        (readSignal as AbortSignal | null)?.aborted === true &&
+        hasToast(uiCopy.back.cancelled) &&
+        busySnapshot() === null &&
+        document.querySelector('[data-role="busy-overlay"]') === null,
+      `蒙版前=${readOverlay} 取消=${readCancelled} toast=${toastTexts().join(' | ') || '(无)'}`,
+    );
+    check(
+      'Esc：取消操作的这一下不顺带退出分组',
+      settingsSubpageOpen(backRoot) && onSettingsPage(backRoot),
+      `子页=${settingsSubpageOpen(backRoot)}`,
+    );
+
+    // ⑥ 写入进行中：Esc 只提示「正在写入数据，不能中断」，蒙版与页面都不动
+    await dismissToasts();
+    let releaseWrite: () => void = () => undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let writeSignal: AbortSignal | null = null;
+    const writing = runBusy('正在保存课程…', async (signal) => {
+      writeSignal = signal;
+      await writeGate;
+      return 'saved';
+    });
+    await flush(6);
+    const writeEsc = await pressEsc(8);
+    check(
+      'Esc：写入进行中提示「正在写入数据，不能中断」，蒙版与分组都还在',
+      writeEsc.defaultPrevented &&
+        hasToast(uiCopy.back.writing) &&
+        !hasToast(uiCopy.back.cancelled) &&
+        (writeSignal as AbortSignal | null)?.aborted === false &&
+        document.querySelector('[data-role="busy-overlay"]') !== null &&
+        settingsSubpageOpen(backRoot) &&
+        onSettingsPage(backRoot),
+      `toast=${toastTexts().join(' | ') || '(无)'} 蒙版=${
+        document.querySelector('[data-role="busy-overlay"]') !== null
+      } 子页=${settingsSubpageOpen(backRoot)}`,
+    );
+    releaseWrite();
+    const written = await writing;
+    await flush(6);
+    check(
+      '写入结束后蒙版照常收起，再按 Esc 回到正常的退一级',
+      written === 'saved' && document.querySelector('[data-role="busy-overlay"]') === null,
+      `结果=${written}`,
+    );
+    await pressEsc();
+    check('写入结束后 Esc 退回分组清单', settingsNavIsListOnly(backRoot), '');
+    await dismissToasts();
+
+    // ⑥b 学期设置里的「导入课表」折叠区：展开时 Esc 在流程里退一步；收起后不再接 Esc，直接回分组清单
+    await openSettingsGroup(backRoot, '学期设置');
+    const courseImport = (): HTMLDetailsElement | null =>
+      backRoot.querySelector<HTMLDetailsElement>('details[data-role="course-import"]');
+    const courseImportStep = (): string =>
+      courseImport()?.querySelector('[data-role="step-compact"]')?.textContent?.trim() ?? '';
+    const toggleCourseImport = async (): Promise<void> => {
+      courseImport()?.querySelector<HTMLElement>('summary')?.click();
+      // toggle 事件排在任务队列里
+      await flush(8);
+    };
+    const pickCoursePaste = async (): Promise<void> => {
+      courseImport()?.querySelector<HTMLElement>('[data-role="channel-card"][data-channel="paste"]')?.click();
+      await flush(10);
+    };
+    await toggleCourseImport();
+    const expanded = courseImport()?.open === true;
+    await pickCoursePaste();
+    const expandedStepTwo = courseImportStep();
+    await pressEsc();
+    check(
+      'Esc：展开的导入课表区在第 2 步时退回第 1 步，分组不退',
+      expanded &&
+        expandedStepTwo.includes('第 2/4 步') &&
+        courseImportStep().includes('第 1/4 步') &&
+        settingsSubpageOpen(backRoot),
+      `展开=${expanded} ${expandedStepTwo || '(无)'} → ${courseImportStep() || '(无)'} 子页=${settingsSubpageOpen(backRoot)}`,
+    );
+    await pickCoursePaste();
+    const beforeCollapse = courseImportStep();
+    await toggleCourseImport();
+    const collapsed = courseImport()?.open === false;
+    await pressEsc();
+    check(
+      'Esc：导入课表区收起后不接 Esc，第一下直接回分组清单',
+      beforeCollapse.includes('第 2/4 步') && collapsed && settingsNavIsListOnly(backRoot) && onSettingsPage(backRoot),
+      `收起前=${beforeCollapse || '(无)'} 收起=${collapsed} 清单=${settingsNavIsListOnly(backRoot)}`,
+    );
+    // 回到组里，收起的导入区仍停在第 2 步（Esc 没有暗中退它一步）
+    await openSettingsGroup(backRoot, '学期设置');
+    check(
+      '收起的导入课表区没被 Esc 暗中退步',
+      courseImport()?.open === false && courseImportStep().includes('第 2/4 步'),
+      `open=${courseImport()?.open ?? '(无)'} 步骤=${courseImportStep() || '(无)'}`,
+    );
+    await pressEsc();
+
+    // 展开的导入区停在第 2 步时用顶栏返回回到分组清单：藏起的流程不接 Esc，Esc 直接回课表
+    await openSettingsGroup(backRoot, '学期设置');
+    if (courseImport()?.open !== true) await toggleCourseImport();
+    if (!courseImportStep().includes('第 2/4 步')) await pickCoursePaste();
+    const hiddenOpen = courseImport()?.open === true;
+    const hiddenStep = courseImportStep();
+    backRoot.querySelector<HTMLElement>('[data-role="settings-nav-back"]')?.click();
+    await flush(10);
+    const backedToList = settingsNavIsListOnly(backRoot) && onSettingsPage(backRoot);
+    // 清单页上导入区仍挂着（只是藏起），停在第 2 步：Esc 若被它接走会退成第 1 步而不离开设置页
+    const listStep = courseImportStep();
+    const hiddenEsc = await pressEsc(12);
+    check(
+      'Esc：展开的导入区随分组藏起后不接 Esc，分组清单直接回课表',
+      hiddenOpen &&
+        hiddenStep.includes('第 2/4 步') &&
+        backedToList &&
+        listStep.includes('第 2/4 步') &&
+        onTimetable(backRoot) &&
+        hiddenEsc.defaultPrevented === true,
+      `展开=${hiddenOpen} 步骤=${hiddenStep || '(无)'} 回清单=${backedToList} 清单页步骤=${listStep || '(未挂载)'} 当前=${currentNav(backRoot)}`,
+    );
+
+    // 「＋」→「导入课表」打开设置页的导入抽屉；关掉后离开设置再回来，抽屉不再自行打开
+    const importOnTimetable = onTimetable(backRoot);
+    backRoot.querySelector<HTMLElement>('button[aria-label="添加"]')?.click();
+    await flush(10);
+    const importAction = [...document.querySelectorAll<HTMLElement>('[data-role="add-actions"] button')].find(
+      (item) => (item.textContent ?? '').trim() === '导入课表',
+    );
+    importAction?.click();
+    await flush(16);
+    const drawerOpened = onSettingsPage(backRoot) && openDialogs() > 0;
+    for (let round = 0; round < 4 && openDialogs() > 0; round += 1) await pressEsc(10);
+    const drawerClosed = openDialogs() === 0 && onSettingsPage(backRoot);
+    check(
+      '「＋」导入课表：切到设置页并打开导入抽屉，Esc 关掉后仍在设置页',
+      importOnTimetable && importAction !== undefined && drawerOpened && drawerClosed,
+      `起点课表=${importOnTimetable} 入口=${importAction !== undefined} 打开=${drawerOpened} 关闭=${drawerClosed} 当前=${currentNav(backRoot)}`,
+    );
+    clickByText(backRoot, '课表');
+    await flush(12);
+    clickByText(backRoot, '设置');
+    await flush(16);
+    check(
+      '导入请求处理过后，离开设置再回来不再自行打开导入抽屉',
+      onSettingsPage(backRoot) && openDialogs() === 0,
+      `设置页=${onSettingsPage(backRoot)} 对话框=${openDialogs()}`,
+    );
+    clickByText(backRoot, '设备与同步');
+    await flush(12);
+    clickByText(backRoot, '设置');
+    await flush(16);
+    check('换到设备页再回设置，同样不弹导入抽屉', onSettingsPage(backRoot) && openDialogs() === 0, `对话框=${openDialogs()}`);
+    await pressEsc(12);
+
+    // ⑦ 帮助页从设备页分组进入：Esc 回到原分组，再退清单，再回课表
+    clickByText(backRoot, '设备与同步');
+    await flush(12);
+    await openDeviceGroup('局域网同步', backRoot);
+    await waitFor(() => backRoot.querySelector('[data-role="help-link"][data-help-target="lan-web"]') !== null, 30);
+    backRoot.querySelector<HTMLElement>('[data-role="help-link"][data-help-target="lan-web"]')?.click();
+    await flush(12);
+    const helpShown = backRoot.querySelector('[data-role="help-view"]') !== null;
+    await pressEsc(16);
+    check(
+      'Esc：从设备页分组进入的帮助页，返回到原来的分组',
+      helpShown &&
+        backRoot.querySelector('[data-role="help-view"]') === null &&
+        currentNav(backRoot) === '设备与同步' &&
+        activeDeviceGroup(backRoot) === 'lan' &&
+        devicesSubpageOpen(backRoot),
+      `帮助=${helpShown} 当前=${currentNav(backRoot)} 组=${activeDeviceGroup(backRoot) || '(无)'}`,
+    );
+    await pressEsc();
+    check('Esc：设备页分组退回分组清单', devicesListOnly(backRoot) && currentNav(backRoot) === '设备与同步', '');
+    // 从设备清单进帮助：返回设备清单，而不是课表
+    backRoot.querySelector<HTMLElement>('[data-role="settings-nav-help"]')?.click();
+    await flush(12);
+    const helpFromList = backRoot.querySelector('[data-role="help-view"]') !== null;
+    await pressEsc(16);
+    check(
+      'Esc：从设备分组清单进入的帮助页，返回设备分组清单',
+      helpFromList && currentNav(backRoot) === '设备与同步' && devicesListOnly(backRoot),
+      `帮助=${helpFromList} 当前=${currentNav(backRoot)}`,
+    );
+    await pressEsc(12);
+    check('Esc：设备分组清单回到课表', onTimetable(backRoot), `当前=${currentNav(backRoot)}`);
+
+    // ⑧ 课表顶部「?」进帮助：Esc 回课表
+    backRoot.querySelector<HTMLElement>('button[aria-label="帮助"]')?.click();
+    await flush(12);
+    const helpFromToolbar = backRoot.querySelector('[data-role="help-view"]') !== null;
+    await pressEsc(16);
+    check('Esc：从课表进入的帮助页回到课表', helpFromToolbar && onTimetable(backRoot), `当前=${currentNav(backRoot)}`);
+    backApp.root.unmount();
+
+    // ⑨ 桌面：设置页分组常驻没有「清单」这一级；从设置分组进帮助，Esc 回到那一组，再按回课表
+    const originalMatchMedia = globalThis.matchMedia;
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: (query: string) => ({
+        matches: /min-width: (?:1024|1440)px/.test(query),
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const desktopBack = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      const desk = desktopBack.container;
+      const sidebarCurrent = (): string =>
+        (desk.querySelector<HTMLElement>('[data-role="app-sidebar"] [aria-current="true"]')?.textContent ?? '').trim();
+      clickByText(desk, '设置');
+      await flush(12);
+      await openSettingsGroup(desk, '提醒设置');
+      const groupBefore =
+        desk.querySelector<HTMLElement>('[data-role="settings-nav-item"][aria-current="page"]')?.getAttribute('data-group') ??
+        '';
+      desk.querySelector<HTMLElement>('[data-role="settings-nav-help"]')?.click();
+      await flush(12);
+      const deskHelp = desk.querySelector('[data-role="help-view"]') !== null;
+      await pressEsc(16);
+      const groupAfter =
+        desk.querySelector<HTMLElement>('[data-role="settings-nav-item"][aria-current="page"]')?.getAttribute('data-group') ??
+        '';
+      check(
+        'Esc：桌面从设置分组进入的帮助页，返回设置页的同一分组',
+        groupBefore === 'reminders' &&
+          deskHelp &&
+          desk.querySelector('[data-role="help-view"]') === null &&
+          onSettingsPage(desk) &&
+          groupAfter === 'reminders',
+        `进前=${groupBefore || '(无)'} 帮助=${deskHelp} 回来=${groupAfter || '(无)'} 侧栏=${sidebarCurrent()}`,
+      );
+      await pressEsc(12);
+      check(
+        'Esc：桌面设置页没有分组清单这一级，直接回课表',
+        !onSettingsPage(desk) && sidebarCurrent() === '课表',
+        `侧栏=${sidebarCurrent()}`,
+      );
+      desktopBack.root.unmount();
+    } finally {
+      Object.defineProperty(globalThis, 'matchMedia', {
+        value: originalMatchMedia,
+        configurable: true,
+        writable: true,
+      });
+    }
+
+    // ⑩ 检查预设更新：检查与下载可取消；落盘是另一次不可中断的写入
+    {
+      /** 非空时，写预设正文先等它放行：把操作卡在「落盘」这一步 */
+      let presetWriteGate: Promise<void> | null = null;
+      setStorageOpenerForTests(async () => {
+        const inner = validatedStorage(await openIndexedDbStorage());
+        return new Proxy(inner, {
+          get(target, prop) {
+            if (prop === 'writeMeta') {
+              return async (key: string, value: string): Promise<void> => {
+                if (key === PRESET_CONTENT_META_KEY && presetWriteGate !== null) await presetWriteGate;
+                await target.writeMeta(key, value);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, target);
+            return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        });
+      });
+      const realFetch = globalThis.fetch;
+      let presetTarget = '9.8.0';
+      /** 快照请求是否挂起到取消为止 */
+      let hangSnapshot = false;
+      let snapshotRequests = 0;
+      Object.defineProperty(globalThis, 'fetch', {
+        value: (input: unknown, init?: RequestInit) => {
+          const url = String(input);
+          const versionMatch = /presets-([\d.]+)\.json$/.exec(url);
+          if (!url.includes('api.github.com') && url.endsWith('/version.json')) {
+            return Promise.resolve(
+              presetJsonResponse({ version: presetTarget, schemaVersion: 1, generatedAt: '2026-02-01T00:00:00.000Z' }),
+            );
+          }
+          if (!url.includes('api.github.com') && versionMatch !== null) {
+            snapshotRequests += 1;
+            if (!hangSnapshot) return Promise.resolve(presetJsonResponse(fakePresetSnapshot(versionMatch[1] ?? '')));
+            return new Promise<Response>((_resolve, reject) => {
+              const signal = init?.signal ?? null;
+              const abort = (): void => reject(new DOMException('aborted', 'AbortError'));
+              if (signal?.aborted === true) abort();
+              else signal?.addEventListener('abort', abort, { once: true });
+            });
+          }
+          return Promise.resolve(presetJsonResponse({}, false, 404));
+        },
+        configurable: true,
+        writable: true,
+      });
+      const presetApp = mount(<App />);
+      try {
+        await flush(24);
+        await dismissChannelNotice();
+        const presetRoot = presetApp.container;
+        clickByText(presetRoot, '设备与同步');
+        await flush(12);
+        await openDeviceGroup('诊断与维护', presetRoot);
+        const presetButton = (): HTMLElement | null =>
+          presetRoot.querySelector<HTMLElement>('button[aria-label="检查预设更新"]');
+        const presetResult = (): string =>
+          (presetRoot.querySelector('[data-role="preset-result"]')?.textContent ?? '').trim();
+        const cachedVersion = async (): Promise<string> => {
+          const store = validatedStorage(await openIndexedDbStorage());
+          const snapshot = await store.readMeta(PRESET_SNAPSHOT_META_KEY);
+          const content = await store.readMeta(PRESET_CONTENT_META_KEY);
+          return `${snapshot?.includes(`"${presetTarget}"`) === true ? 'snapshot' : '-'}/${
+            content?.includes(`"${presetTarget}"`) === true ? 'content' : '-'
+          }`;
+        };
+        const overlay = (): boolean => document.querySelector('[data-role="busy-overlay"]') !== null;
+
+        // 下载中按 Esc：取消，不落盘、不提示已下载、不登记待重启
+        clearPendingRestart();
+        await dismissToasts();
+        hangSnapshot = true;
+        presetButton()?.click();
+        await waitFor(() => snapshotRequests > 0, 40);
+        await flush(4);
+        const downloadOverlay = overlay();
+        const downloadEsc = await pressEsc(12);
+        check(
+          'Esc：预设下载中按 Esc 取消，提示「已取消」，不写缓存、不提示已下载、不登记待重启',
+          snapshotRequests > 0 &&
+            downloadOverlay &&
+            downloadEsc.defaultPrevented &&
+            hasToast(uiCopy.back.cancelled) &&
+            !hasToast(`已下载预设 ${presetTarget}`) &&
+            !presetResult().includes(`已下载预设 ${presetTarget}`) &&
+            !pendingRestartSources().includes('preset-update') &&
+            !overlay() &&
+            (await cachedVersion()) === '-/-',
+          `请求=${snapshotRequests} 蒙版前=${downloadOverlay} toast=${toastTexts().join(' | ') || '(无)'} 结果=${
+            presetResult() || '(无)'
+          } 待重启=${pendingRestartSources().join(',') || '(无)'} 缓存=${await cachedVersion()}`,
+        );
+        check(
+          'Esc：取消预设下载不顺带退出「诊断与维护」分组',
+          devicesSubpageOpen(presetRoot) && activeDeviceGroup(presetRoot) === 'maintenance',
+          `组=${activeDeviceGroup(presetRoot) || '(无)'}`,
+        );
+
+        // 落盘中按 Esc：提示不能中断，写入照常完成并提示已下载、登记待重启
+        presetTarget = '9.9.0';
+        hangSnapshot = false;
+        await dismissToasts();
+        let releaseStore: () => void = () => undefined;
+        presetWriteGate = new Promise<void>((resolve) => {
+          releaseStore = resolve;
+        });
+        presetButton()?.click();
+        await flush(12);
+        const storeOverlay = overlay();
+        const storeEsc = await pressEsc(8);
+        const storeToasts = toastTexts().join(' | ');
+        const storeWriting =
+          hasToast(uiCopy.back.writing) && !hasToast(uiCopy.back.cancelled) && overlay() && storeEsc.defaultPrevented;
+        const cachedWhileWriting = await cachedVersion();
+        releaseStore();
+        presetWriteGate = null;
+        await flush(16);
+        check(
+          'Esc：预设落盘中按 Esc 提示「正在写入数据，不能中断」，蒙版不收',
+          storeOverlay && storeWriting && cachedWhileWriting === '-/-',
+          `蒙版前=${storeOverlay} toast=${storeToasts || '(无)'} 写入中缓存=${cachedWhileWriting}`,
+        );
+        check(
+          '预设落盘不被 Esc 打断：写完提示已下载并登记待重启',
+          presetResult().includes(`已下载预设 ${presetTarget}`) &&
+            hasToast(`已下载预设 ${presetTarget}`) &&
+            pendingRestartSources().includes('preset-update') &&
+            !overlay() &&
+            (await cachedVersion()) === 'snapshot/content' &&
+            activeDeviceGroup(presetRoot) === 'maintenance',
+          `结果=${presetResult() || '(无)'} 待重启=${pendingRestartSources().join(',') || '(无)'} 缓存=${await cachedVersion()}`,
+        );
+      } finally {
+        presetApp.root.unmount();
+        setStorageOpenerForTests(null);
+        Object.defineProperty(globalThis, 'fetch', { value: realFetch, configurable: true, writable: true });
+        await dismissToasts();
+      }
+    }
+  }
+
+
+  // —— AI 助手面板：「＋」菜单入口跟随 FEATURES.ai；未配置给去设置；配置后用假模型跑一轮计划与执行 ——
+  {
+    const assistantStore = validatedStorage(await openIndexedDbStorage());
+    if ((await activeSemester(assistantStore, USER_ID)) === undefined) {
+      await createSemester(assistantStore, {
+        userId: USER_ID,
+        name: '助手冒烟学期',
+        startDate: todayText,
+        totalWeeks: 20,
+        timeZone: 'Asia/Shanghai',
+      });
+    }
+    await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
+    const dismissChannelNotice = async (): Promise<void> => {
+      if (
+        clickByText(document.body, updateDialogCopy.noticeDevContinue) ||
+        clickByText(document.body, updateDialogCopy.noticeBetaContinue)
+      ) {
+        await flush(8);
+      }
+    };
+    /** 移动视口：点 FAB 打开「添加」底部 Sheet，返回其中的动作文字 */
+    const openFab = async (app: { container: HTMLElement }): Promise<string[]> => {
+      app.container.querySelector<HTMLElement>('button[aria-label="添加"]')?.click();
+      await flush(10);
+      return [...document.querySelectorAll<HTMLElement>('[data-role="add-actions"] button')].map((item) =>
+        (item.textContent ?? '').trim(),
+      );
+    };
+    const panel = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-role="assistant-panel"]');
+    const assistantLabel = addMenuCopy.actions.assistant;
+
+    const entryApp = mount(<App />);
+    await flush(24);
+    await dismissChannelNotice();
+    const fabLabels = await openFab(entryApp);
+    if (featureVisible('ai')) {
+      check(
+        '开发版「＋」菜单末尾是「AI 助手」',
+        fabLabels.at(-1) === assistantLabel && assistantLabel === 'AI 助手',
+        fabLabels.join(' / ') || '(无)',
+      );
+      if (clickByText(document.body, assistantLabel)) await flush(14);
+      const notConfigured = panel()?.querySelector('[data-role="assistant-not-configured"]') ?? null;
+      check(
+        'AI 未配置时助手面板给出提示与「去设置」，不出现输入框',
+        panel() !== null &&
+          notConfigured !== null &&
+          (notConfigured.textContent ?? '').includes(assistantPanelCopy.notConfigured) &&
+          [...notConfigured.querySelectorAll('button')].some(
+            (button) => (button.textContent ?? '').trim() === assistantPanelCopy.openAiSettings,
+          ) &&
+          panel()?.querySelector('[data-role="assistant-input"]') === null,
+        (panel()?.textContent ?? '(面板未打开)').slice(0, 80),
+      );
+      if (notConfigured instanceof HTMLElement && clickByText(notConfigured, assistantPanelCopy.openAiSettings)) {
+        await flush(20);
+      }
+      check(
+        '点「去设置」关闭助手面板并打开 设置 → AI',
+        panel() === null && (document.body.textContent ?? '').includes(aiCopy.intro),
+        panel() === null ? '面板已关' : '面板仍开着',
+      );
+    } else {
+      check(
+        '非开发版「＋」菜单没有「AI 助手」，也不挂载助手面板',
+        fabLabels.length > 0 && !fabLabels.includes(assistantLabel) && panel() === null,
+        fabLabels.join(' / ') || '(无)',
+      );
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush(8);
+    }
+    entryApp.root.unmount();
+
+    if (featureVisible('ai')) {
+      // 假模型：第一次调用提出一条写入与一条高危，拿到函数结果后给出总结
+      const doomed = await createSemester(assistantStore, {
+        userId: USER_ID,
+        name: '助手冒烟待删学期',
+        startDate: todayText,
+        totalWeeks: 4,
+        timeZone: 'Asia/Shanghai',
+        isActive: false,
+      });
+      const doomedId = String(doomed['id']);
+      const todoTitle = '助手冒烟待办';
+      const systemNotes: string[] = [];
+      /** 第二轮对话改为提出导入课表原文 */
+      let importRound = false;
+      const importRawText = '助手冒烟课表原文\n周一 高等数学 1-2节';
+      const fakeClient: AiClient = {
+        complete: async () => {
+          throw new Error('冒烟假模型只走函数调用');
+        },
+        chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          if (importRound) {
+            if (request.messages.at(-1)?.role === 'tool') return { content: '已准备导入', toolCalls: [] };
+            return {
+              content: '',
+              toolCalls: [{ id: 'call-import', name: 'import_timetable_text', arguments: JSON.stringify({ text: importRawText }) }],
+            };
+          }
+          const system = request.messages.find((message: AiChatMessage) => message.role === 'system');
+          if (system !== undefined) systemNotes.push(system.content);
+          if (request.messages.at(-1)?.role === 'tool') return { content: '已列出两项待确认的操作', toolCalls: [] };
+          return {
+            content: '',
+            toolCalls: [
+              {
+                id: 'call-1',
+                name: 'create_event',
+                arguments: JSON.stringify({ kind: 'todo', title: todoTitle, date: todayText }),
+              },
+              { id: 'call-2', name: 'delete_semester', arguments: JSON.stringify({ id: doomedId }) },
+            ],
+          };
+        },
+      };
+      setAiClientForTests(fakeClient);
+      await writeSettings(assistantStore, { aiBaseUrl: 'https://ai.example.test/v1', aiModel: 'smoke-model' });
+
+      const chatApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openFab(chatApp);
+      if (clickByText(document.body, assistantLabel)) await flush(14);
+      const input = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
+      check(
+        'AI 已配置时助手面板出现输入框与发送按钮',
+        input !== null && panel()?.querySelector('[data-role="assistant-not-configured"]') === null,
+        (panel()?.textContent ?? '(面板未打开)').slice(0, 80),
+      );
+      if (input !== null) {
+        setInputValue(input, '明天加个待办，再删掉那个旧学期');
+        await flush(4);
+        panel()?.querySelector<HTMLElement>('[data-role="assistant-send"]')?.click();
+      }
+      const stepCards = (): HTMLElement[] => [
+        ...document.querySelectorAll<HTMLElement>('[data-role="assistant-panel"] [data-role="assistant-step"]'),
+      ];
+      await waitFor(() => stepCards().length === 2, 60);
+      const cards = stepCards();
+      check(
+        '模型提出的写入与高危操作渲染为计划卡片，高危卡带 data-risk="danger"',
+        cards.length === 2 &&
+          cards[0]?.getAttribute('data-risk') === 'write' &&
+          (cards[0]?.textContent ?? '').includes(todoTitle) &&
+          cards[1]?.getAttribute('data-risk') === 'danger' &&
+          (cards[1]?.textContent ?? '').includes(assistantPanelCopy.danger) &&
+          (cards[1]?.textContent ?? '').includes('助手冒烟待删学期') &&
+          cards.every((card) => card.getAttribute('data-status') === 'pending'),
+        cards.map((card) => `${card.getAttribute('data-risk')}:${card.getAttribute('data-status')}`).join(' / ') || '(无卡片)',
+      );
+      check(
+        '助手回复与上下文说明：回复进对话，system 提示带今天与当前学期',
+        (panel()?.querySelector('[data-role="assistant-assistant"]')?.textContent ?? '').includes('已列出两项待确认的操作') &&
+          systemNotes.length >= 1 &&
+          systemNotes.every((note) => note.includes(`今天是 ${todayText}`) && note.includes('当前学期')),
+        `调用=${systemNotes.length}`,
+      );
+      const executeButton = (): HTMLButtonElement | null =>
+        panel()?.querySelector<HTMLButtonElement>('[data-role="assistant-execute"]') ?? null;
+      const executeText = (): string => (executeButton()?.textContent ?? '').trim();
+      const countAll = executeText();
+      cards[0]?.querySelector<HTMLElement>('button[role="checkbox"]')?.click();
+      await flush(6);
+      const countOne = executeText();
+      stepCards()[0]?.querySelector<HTMLElement>('button[role="checkbox"]')?.click();
+      await flush(6);
+      check(
+        '「执行 N 项」按勾选数计数',
+        countAll === assistantPanelCopy.execute(2) &&
+          countOne === assistantPanelCopy.execute(1) &&
+          executeText() === assistantPanelCopy.execute(2),
+        `${countAll} → ${countOne} → ${executeText()}`,
+      );
+
+      // 有高危项：先弹确认；取消后什么都不执行
+      executeButton()?.click();
+      const confirmShown = await waitFor(
+        () => (document.body.textContent ?? '').includes(assistantPanelCopy.dangerConfirmTitle),
+        30,
+      );
+      check(
+        '勾选里有高危项时执行前先弹确认，并列出高危操作',
+        confirmShown &&
+          (document.body.textContent ?? '').includes('删除学期「助手冒烟待删学期」') &&
+          [...document.querySelectorAll('button')].some(
+            (button) => (button.textContent ?? '').trim() === assistantPanelCopy.dangerConfirm,
+          ),
+        confirmShown ? '' : '(无确认框)',
+      );
+      if (clickByText(document.body, '取消')) await flush(12);
+      check(
+        '取消高危确认后计划不执行',
+        stepCards().every((card) => card.getAttribute('data-status') === 'pending') &&
+          panel()?.querySelector('[data-role="assistant-restore"]') === null,
+        stepCards().map((card) => card.getAttribute('data-status')).join(' / '),
+      );
+
+      executeButton()?.click();
+      await waitFor(() => (document.body.textContent ?? '').includes(assistantPanelCopy.dangerConfirmTitle), 30);
+      if (clickByText(document.body, assistantPanelCopy.dangerConfirm)) await flush(8);
+      const executed = await waitFor(
+        () => stepCards().length === 2 && stepCards().every((card) => card.getAttribute('data-status') === 'done'),
+        80,
+      );
+      const statusTexts = stepCards().map(
+        (card) => (card.querySelector('[data-role="assistant-step-status"]')?.textContent ?? '').trim(),
+      );
+      check(
+        '确认执行后卡片状态更新为已完成并附结果',
+        executed &&
+          statusTexts.every((text) => text.startsWith(assistantPanelCopy.status.done)) &&
+          (statusTexts[0] ?? '').includes(todoTitle) &&
+          (statusTexts[1] ?? '').includes('已删除学期'),
+        stepCards().map((card) => card.getAttribute('data-status')).join(' / ') + ` ${statusTexts.join(' | ')}`,
+      );
+      const restoreButton = panel()?.querySelector<HTMLElement>('[data-role="assistant-restore"]') ?? null;
+      const notes = [...(panel()?.querySelectorAll('[data-role="assistant-note"]') ?? [])].map(
+        (note) => note.textContent ?? '',
+      );
+      check(
+        '执行后出现「恢复快照」，对话里记下执行结果与快照',
+        restoreButton !== null &&
+          (restoreButton.textContent ?? '').trim() === assistantPanelCopy.restoreSnapshot &&
+          notes.some((note) => note.includes(assistantPanelCopy.executedAll(2)) && note.includes('执行前已做快照')),
+        notes.join(' | ') || '(无记录)',
+      );
+      const doomedRow = await assistantStore.collection<SemesterRow>('semesters').get(doomedId);
+      const createdTodo = (await assistantStore.collection<EventRow>('events').getAll()).find(
+        (row) => row.title === todoTitle && row.deleted_at === null,
+      );
+      check(
+        '执行结果落库：新建了待办，待删学期已删除',
+        createdTodo !== undefined && createdTodo.on_date === todayText && doomedRow?.deleted_at != null,
+        `待办=${createdTodo === undefined ? '无' : '有'} 学期删除=${doomedRow?.deleted_at ?? '否'}`,
+      );
+
+      // 恢复快照：恢复前先多留一份当前状态，数据回到执行前
+      // （needsRestart 分支只在桌面端文件快照出现，网页 IndexedDB 快照当场恢复，冒烟走不到）
+      const snapshotsBefore = (await listSnapshots(assistantStore)).length;
+      // 冒烟时钟冻结，快照 id 按毫秒取：拨快一分钟，免得恢复前那份与执行前那份同名互相覆盖
+      const frozenNow = Date.now;
+      Date.now = () => frozenNow() + 60_000;
+      restoreButton?.click();
+      const restoreAsked = await waitFor(() => (document.body.textContent ?? '').includes(assistantPanelCopy.restoreTitle), 30);
+      if (restoreAsked && clickByText(document.body, assistantPanelCopy.restoreConfirm)) await flush(8);
+      const restoredNote = await waitFor(
+        () =>
+          [...(panel()?.querySelectorAll('[data-role="assistant-note"]') ?? [])].some((note) =>
+            (note.textContent ?? '').includes(assistantPanelCopy.restored),
+          ),
+        80,
+      );
+      Date.now = frozenNow;
+      const snapshotsAfter = (await listSnapshots(assistantStore)).length;
+      const doomedBack = await assistantStore.collection<SemesterRow>('semesters').get(doomedId);
+      const todoBack = (await assistantStore.collection<EventRow>('events').getAll()).find(
+        (row) => row.title === todoTitle && row.deleted_at === null,
+      );
+      check(
+        '恢复快照：先多做一份快照，数据回到执行前（待删学期还在，新待办没了），「恢复快照」按钮消失',
+        restoreAsked &&
+          restoredNote &&
+          snapshotsAfter === snapshotsBefore + 1 &&
+          doomedBack !== undefined &&
+          doomedBack.deleted_at === null &&
+          todoBack === undefined &&
+          panel()?.querySelector('[data-role="assistant-restore"]') === null,
+        `确认框=${restoreAsked} 记录=${restoredNote} 快照=${snapshotsBefore}→${snapshotsAfter} 学期=${doomedBack === undefined ? '无此行' : `deleted_at=${doomedBack.deleted_at}`} 待办=${todoBack === undefined ? '无' : '有'}`,
+      );
+
+      // 助手导入课表：只有助手发起的那次打开带原文；之后从设置页「导入课表」打开是普通导入
+      importRound = true;
+      const importInput = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
+      if (importInput !== null) {
+        setInputValue(importInput, '帮我导入这段课表');
+        await flush(4);
+        panel()?.querySelector<HTMLElement>('[data-role="assistant-send"]')?.click();
+      }
+      const importCardShown = await waitFor(
+        () => stepCards().some((card) => card.getAttribute('data-status') === 'pending' && (card.textContent ?? '').includes('打开导入预览')),
+        60,
+      );
+      if (importCardShown) executeButton()?.click();
+      // 课程管理里也嵌着一份导入流程：只看设置页导入对话框里的
+      const importDialog = (): HTMLElement | null =>
+        [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+          (dialog) => dialog.querySelector('[aria-label="导入步骤"]') !== null,
+        ) ?? null;
+      const prefillBox = (): HTMLTextAreaElement | null =>
+        importDialog()?.querySelector<HTMLTextAreaElement>('textarea[aria-label="粘贴课表页面内容"]') ?? null;
+      const prefilled = await waitFor(() => prefillBox()?.value === importRawText, 80);
+      check(
+        '助手执行导入：关掉助手面板、切到设置页打开导入，粘贴框带上原文',
+        importCardShown && prefilled && panel() === null && importDialog()?.querySelector('[data-role="channel-card"]') === null,
+        `卡片=${importCardShown} 粘贴框=${prefillBox()?.value.length ?? '无'} 面板=${panel() === null ? '已关' : '开着'}`,
+      );
+      importDialog()?.querySelector<HTMLElement>('button[aria-label="关闭"]')?.click();
+      const importClosed = await waitFor(() => importDialog() === null, 30);
+      const settingsImport = chatApp.container.querySelector<HTMLElement>('[data-role="settings-actions"]');
+      if (settingsImport !== null && clickByText(settingsImport, '导入课表')) await flush(12);
+      const channelShown = await waitFor(() => (importDialog()?.querySelector('[data-role="channel-card"]') ?? null) !== null, 30);
+      check(
+        '关掉后再点设置页「导入课表」：回到普通的渠道选择，不再带助手的原文',
+        importClosed && settingsImport !== null && channelShown && prefillBox() === null,
+        `已关=${importClosed} 按钮=${settingsImport !== null} 渠道卡=${channelShown} 粘贴框=${prefillBox()?.value.length ?? '无'}`,
+      );
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush(8);
+      chatApp.root.unmount();
+
+      // 停止或「新对话」之后才回来的结果：底层请求不认 signal（安卓原生请求），回来的回复与计划一律丢掉
+      let lateRelease: (() => void) | null = null;
+      let lateCalls = 0;
+      let lateWithPlan = false;
+      const lateClient: AiClient = {
+        complete: async () => {
+          throw new Error('冒烟假模型只走函数调用');
+        },
+        chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          lateCalls += 1;
+          if (request.messages.at(-1)?.role === 'tool') return { content: '迟到的总结', toolCalls: [] };
+          await new Promise<void>((resolve) => {
+            lateRelease = resolve;
+          });
+          if (!lateWithPlan) return { content: '迟到的回复', toolCalls: [] };
+          return {
+            content: '',
+            toolCalls: [{ id: 'call-late', name: 'create_event', arguments: JSON.stringify({ kind: 'todo', title: '迟到的待办', date: todayText }) }],
+          };
+        },
+      };
+      setAiClientForTests(lateClient);
+      const lateApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openFab(lateApp);
+      if (clickByText(document.body, assistantLabel)) await flush(14);
+      const chatEntries = (): number =>
+        panel()?.querySelectorAll('[data-role="assistant-chat"] > [data-role^="assistant-"]').length ?? -1;
+      const panelText = (): string => panel()?.textContent ?? '';
+      const sendLate = async (text: string): Promise<boolean> => {
+        const box = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
+        if (box === null) return false;
+        setInputValue(box, text);
+        await flush(4);
+        panel()?.querySelector<HTMLElement>('[data-role="assistant-send"]')?.click();
+        return waitFor(() => lateRelease !== null && panel()?.querySelector('[data-role="assistant-send"]') === null, 40);
+      };
+      const releaseLate = async (): Promise<void> => {
+        const release = lateRelease as (() => void) | null;
+        lateRelease = null;
+        release?.();
+        await flush(20);
+      };
+
+      // ① 请求进行中点「新对话」：回复迟到也不写回已清空的对话
+      const lateSent = await sendLate('这次会被清空');
+      const clearedWhileBusy = panel() !== null && clickByText(panel() as HTMLElement, assistantPanelCopy.clear);
+      await flush(8);
+      await releaseLate();
+      check(
+        '助手：请求进行中点「新对话」，迟到的回复被丢掉，对话保持为空',
+        lateSent && clearedWhileBusy && chatEntries() === 0 && !panelText().includes('迟到的回复') &&
+          panel()?.querySelector('[data-role="assistant-send"]') !== null,
+        `已发=${lateSent} 清空=${clearedWhileBusy} 条目=${chatEntries()} 调用=${lateCalls}`,
+      );
+
+      // ② 请求进行中点「停止」：迟到的回复带着写入计划，也不进计划、不再请求模型
+      lateWithPlan = true;
+      lateCalls = 0;
+      const stopSent = await sendLate('这次会被停止');
+      const stopped = panel() !== null && clickByText(panel() as HTMLElement, assistantPanelCopy.stop);
+      await flush(8);
+      await releaseLate();
+      const lateEntries = [...(panel()?.querySelectorAll<HTMLElement>('[data-role="assistant-chat"] > [data-role^="assistant-"]') ?? [])].map(
+        (entry) => entry.getAttribute('data-role'),
+      );
+      check(
+        '助手：请求进行中点「停止」，迟到的回复不进对话、计划不出卡片、不再请求下一步',
+        stopSent && stopped && lateEntries.join('/') === 'assistant-user' && lateCalls === 1 &&
+          panel()?.querySelector('[data-role="assistant-step"]') === null && !panelText().includes('迟到的总结') &&
+          panel()?.querySelector('[data-role="assistant-send"]') !== null,
+        `已发=${stopSent} 停止=${stopped} 条目=${lateEntries.join('/') || '(无)'} 调用=${lateCalls}`,
+      );
+      lateApp.root.unmount();
+      setAiClientForTests(undefined);
+      await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
+    }
+  }
+
+  // —— 导入预填：initialText 直接进「网页文本」一步，粘贴框带上原文 ——
+  {
+    const prefillStore = validatedStorage(await openIndexedDbStorage());
+    const prefillSemester = await activeSemester(prefillStore, USER_ID);
+    const prefillText = PAGE_SAMPLE;
+    const prefillApp = mount(
+      <ImportFlow
+        storage={prefillStore}
+        semesterId={prefillSemester === undefined ? '' : String(prefillSemester['id'])}
+        initialText={prefillText}
+        onDone={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await flush(16);
+    const prefillBox = prefillApp.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="粘贴课表页面内容"]');
+    check(
+      '导入流程带 initialText 打开：直接停在网页文本一步，粘贴框已填好原文',
+      prefillBox !== null &&
+        prefillBox.value === prefillText &&
+        prefillApp.container.querySelector('[data-role="channel-card"]') === null,
+      prefillBox === null ? '(无粘贴框)' : `长度=${prefillBox.value.length}`,
+    );
+    prefillApp.root.unmount();
+  }
+
+  // —— AI 请求超时：蒙版超时后中止 signal，识别、测试连接与生成都就地给出超时提示 ——
+  // 默认超时 60 秒：只把 busy 的那一个计时器缩短；假模型不理会 signal（安卓原生请求就是这样），一直挂着
+  {
+    const timeoutStore = validatedStorage(await openIndexedDbStorage());
+    const timeoutSemester = await activeSemester(timeoutStore, USER_ID);
+    const timeoutSemesterId = timeoutSemester === undefined ? '' : String(timeoutSemester['id']);
+    const hangingSignals: Array<AbortSignal | undefined> = [];
+    const hangingClient: AiClient = {
+      complete: (request) => {
+        hangingSignals.push(request.signal);
+        return new Promise<string>(() => undefined);
+      },
+    };
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
+      realSetTimeout(handler as () => void, ms === BUSY_TIMEOUT_MS ? 40 : ms, ...rest)) as typeof setTimeout;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    // 单独挂载的组件没有 App：Esc 取消蒙版的处理装在这里
+    const uninstallBack = installBackHandlers();
+    setAiClientForTests(hangingClient);
+    const timedOut = (text: string): boolean => text.includes('操作超时');
+    try {
+      // 设置 → AI「测试连接」
+      const aiSettings = { ...(await readSettings(timeoutStore)), aiBaseUrl: 'https://ai.example.test/v1', aiModel: 'smoke-model' };
+      const cardApp = mount(<AiCard storage={timeoutStore} settings={aiSettings} onPatch={async () => {}} />);
+      await flush(10);
+      clickByText(cardApp.container, aiCopy.testButton);
+      const cardTimedOut = await waitFor(
+        () => timedOut(cardApp.container.querySelector('[data-role="ai-status"]')?.textContent ?? ''),
+        80,
+      );
+      check(
+        'AI 测试连接超时：状态行给出超时提示，请求的 signal 已中止，蒙版收起',
+        cardTimedOut && hangingSignals.length === 1 && hangingSignals[0]?.aborted === true && busySnapshot() === null,
+        `${(cardApp.container.querySelector('[data-role="ai-status"]')?.textContent ?? '(无)').trim()} 中止=${hangingSignals[0]?.aborted ?? '无'}`,
+      );
+      cardApp.root.unmount();
+
+      // 新建待办 →「用 AI 生成」
+      hangingSignals.length = 0;
+      let eventDialogOpen = true;
+      const dialogApp = mount(
+        <AiEventDialog
+          open
+          onOpenChange={(next) => {
+            eventDialogOpen = next;
+          }}
+          storage={timeoutStore}
+          userId={USER_ID}
+          semesterId={timeoutSemesterId}
+          timeZone="Asia/Shanghai"
+          onCreated={() => {}}
+        />,
+      );
+      await flush(10);
+      const eventInput = document.querySelector<HTMLTextAreaElement>('[data-role="ai-event-input"]');
+      if (eventInput !== null) setInputValue(eventInput, '下周二 9 点期中考试');
+      await flush(4);
+      const eventDialog = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-role="ai-event-dialog"]');
+      const eventError = (): string => eventDialog()?.querySelector('[role="alert"]')?.textContent ?? '';
+      const generateOnce = (): boolean => eventDialog() !== null && clickByText(eventDialog() as HTMLElement, aiCopy.generate);
+      const generateClicked = generateOnce();
+      const eventTimedOut = await waitFor(() => timedOut(eventError()), 80);
+      check(
+        'AI 生成日程超时：对话框里给出超时提示，signal 已中止，对话框仍开着',
+        generateClicked && eventTimedOut && hangingSignals[0]?.aborted === true && eventDialogOpen && busySnapshot() === null,
+        `点击=${generateClicked} 提示=${eventError().trim() || '(无)'} 中止=${hangingSignals[0]?.aborted ?? '无'}`,
+      );
+      // 生成可取消：Esc 取消后不报错、不留未处理的 Promise 拒绝
+      globalThis.setTimeout = realSetTimeout;
+      hangingSignals.length = 0;
+      generateOnce();
+      await flush(8);
+      const cancellableNow = busySnapshot()?.cancellable === true;
+      document.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await flush(16);
+      check(
+        'AI 生成日程可用 Esc 取消：signal 中止、不显示错误、对话框仍开着',
+        cancellableNow && hangingSignals[0]?.aborted === true && eventError() === '' && eventDialogOpen && busySnapshot() === null,
+        `可取消=${cancellableNow} 中止=${hangingSignals[0]?.aborted ?? '无'} 提示=${eventError().trim() || '(无)'} 开着=${eventDialogOpen}`,
+      );
+      dialogApp.root.unmount();
+      toast.dismiss();
+      await flush(4);
+
+      // 导入 → 粘贴网页课表 →「用 AI 识别」
+      if (featureVisible('ai')) {
+        globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
+          realSetTimeout(handler as () => void, ms === BUSY_TIMEOUT_MS ? 40 : ms, ...rest)) as typeof setTimeout;
+        hangingSignals.length = 0;
+        const recognizeApp = mount(
+          <ImportFlow storage={timeoutStore} semesterId={timeoutSemesterId} initialText={PAGE_SAMPLE} onDone={() => {}} onClose={() => {}} />,
+        );
+        await flush(16);
+        recognizeApp.container.querySelector<HTMLButtonElement>('[data-role="import-ai"]')?.click();
+        const aiError = (): string => recognizeApp.container.querySelector('[data-role="import-ai-error"]')?.textContent ?? '';
+        const recognizeTimedOut = await waitFor(() => timedOut(aiError()), 80);
+        check(
+          'AI 识别课表超时：粘贴步骤就地给出超时提示，signal 已中止',
+          recognizeTimedOut && hangingSignals.length >= 1 && hangingSignals.every((signal) => signal?.aborted === true) && busySnapshot() === null,
+          `${aiError().trim() || '(无提示)'} 请求=${hangingSignals.length}`,
+        );
+        recognizeApp.root.unmount();
+      }
+      await flush(4);
+      check('AI 超时与取消没有留下未处理的 Promise 拒绝', unhandled.length === 0, unhandled.map(String).join(' | '));
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      uninstallBack();
+      process.off('unhandledRejection', onUnhandled);
+      setAiClientForTests(undefined);
+      toast.dismiss();
+      await flush(4);
+    }
+  }
 
   return results;
 }

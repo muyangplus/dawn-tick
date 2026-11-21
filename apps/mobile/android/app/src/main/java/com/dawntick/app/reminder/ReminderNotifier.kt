@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.dawntick.app.MainActivity
 import com.dawntick.app.R
+import com.dawntick.app.diag.NativeLog
 
 /**
  * 提醒通知的构建与投递（R-07）：只接管提醒通知，A-* 的 LocalNotifications 其它用途保持原样。
@@ -19,14 +20,18 @@ import com.dawntick.app.R
  */
 internal object ReminderNotifier {
     const val CHANNEL_ID = "dawntick-reminders"
-    private const val CHANNEL_NAME = "提醒"
+    private const val SCOPE = "reminder"
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
-        val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
-            description = "课前提醒与日程提醒"
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            context.getString(R.string.reminder_channel_name),
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = context.getString(R.string.reminder_channel_description)
             enableVibration(true)
         }
         manager.createNotificationChannel(channel)
@@ -45,21 +50,23 @@ internal object ReminderNotifier {
             .setContentIntent(openIntent(context))
 
         for ((index, action) in ReminderActionTable.ids(record.kind).withIndex()) {
-            builder.addAction(0, ReminderActionTable.label(action), actionIntent(context, record.id, action, index))
+            builder.addAction(0, ReminderActionTable.label(context, action), actionIntent(context, record.id, action, index))
         }
 
         try {
             NotificationManagerCompat.from(context).notify(record.id.toInt(), builder.build())
-        } catch (_: SecurityException) {
-            // 用户没给 POST_NOTIFICATIONS：静默失败，权限状态由设置页负责提示
+        } catch (error: SecurityException) {
+            // 用户没给 POST_NOTIFICATIONS：权限状态由设置页负责提示
+            NativeLog.warn(context, SCOPE, "ReminderNotifier.show 未获通知权限，提醒未展示 id=${record.id}", error)
         }
     }
 
     fun cancel(context: Context, id: Long) {
         try {
             NotificationManagerCompat.from(context).cancel(id.toInt())
-        } catch (_: SecurityException) {
+        } catch (error: SecurityException) {
             // 同上：没有权限时本来就没有通知
+            NativeLog.warn(context, SCOPE, "ReminderNotifier.cancel 未获通知权限，跳过撤下通知 id=$id", error)
         }
     }
 

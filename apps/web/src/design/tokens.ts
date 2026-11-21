@@ -1,5 +1,6 @@
 import { DEFAULT_COURSE_COLOR, DEFAULT_COURSE_COLORS, type ThemeMode, type ThemePreset } from '@dawn-tick/core';
 import { AA_LARGE, AA_TEXT, ensureContrast, mix, pickTextOn, rgba } from './contrast.ts';
+import { appThemeCopy } from '../copy/app-theme.ts';
 
 /** 语义色令牌：`*Strong` 为可用于文字与图标的达标变体，原色只用于填充与大面积色块。 */
 export interface ColorTokens {
@@ -83,7 +84,7 @@ const SHARED = {
 
 export const PRESETS: Record<ThemePreset, PresetTokens> = {
   vivid: {
-    label: '青春活力',
+    label: appThemeCopy.preset.vivid,
     light: build({
       bg: '#FFF7F2',
       surface: '#FFFFFF',
@@ -108,7 +109,7 @@ export const PRESETS: Record<ThemePreset, PresetTokens> = {
     courses: [...DEFAULT_COURSE_COLORS],
   },
   fresh: {
-    label: '清爽学院',
+    label: appThemeCopy.preset.fresh,
     light: build({
       bg: '#F7FAFF',
       surface: '#FFFFFF',
@@ -141,7 +142,7 @@ export const PRESETS: Record<ThemePreset, PresetTokens> = {
     ],
   },
   mono: {
-    label: '极简墨色',
+    label: appThemeCopy.preset.mono,
     light: build({
       bg: '#F5F7FA',
       surface: '#FFFFFF',
@@ -175,7 +176,7 @@ export const PRESETS: Record<ThemePreset, PresetTokens> = {
     ],
   },
   muted: {
-    label: '莫兰迪柔光',
+    label: appThemeCopy.preset.muted,
     light: build({
       bg: '#FAF7F2',
       surface: '#FFFFFF',

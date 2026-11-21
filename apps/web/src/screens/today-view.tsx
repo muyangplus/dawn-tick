@@ -7,6 +7,7 @@ import { EmptyState } from '../components/ui/empty-state.tsx';
 import { cn } from '../lib/cn.ts';
 import { formatPeriodRange, formatRemaining } from '../lib/format.ts';
 import { useNowTick } from '../lib/use-now.ts';
+import { todayCopy } from '../copy/home-today.ts';
 
 export interface TodayViewProps {
   data: AppData;
@@ -30,9 +31,9 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
   const inSemester = data.semester !== null && week >= 1 && week <= data.semester.total_weeks;
 
   return (
-    <section className="flex flex-col gap-3" aria-label="日视图">
+    <section className="flex flex-col gap-3" aria-label={todayCopy.regionLabel}>
       <span className="text-xs text-muted">
-        {inSemester ? `第 ${week} 周 · ${lessons.length} 节课` : `${lessons.length} 节课`}
+        {inSemester ? todayCopy.summaryInSemester(week, lessons.length) : todayCopy.summary(lessons.length)}
       </span>
 
       {current !== undefined && (
@@ -42,12 +43,12 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
         >
           <span className="flex items-center gap-2 text-xs text-muted">
             <Timer className="size-3" aria-hidden />
-            正在上课
+            {todayCopy.currentLabel}
           </span>
           <span className="text-base font-semibold text-ink">{current.courseName}</span>
           <div className="flex flex-wrap items-center gap-3">
             <span className="tabular text-xl text-primary-strong" data-role="today-current-remaining">
-              剩余 {formatRemaining(current.endAt, now)}
+              {todayCopy.remaining(formatRemaining(current.endAt, now))}
             </span>
             <span className="tabular text-xs text-muted">
               {formatTime(current.startAt, data.timeZone)}–{formatTime(current.endAt, data.timeZone)}
@@ -61,7 +62,7 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
         <div className="flex flex-col gap-1 rounded-lg border border-line bg-surface p-4 shadow-sm">
           <span className="flex items-center gap-2 text-xs text-muted">
             <Timer className="size-3" aria-hidden />
-            下一节课
+            {todayCopy.nextLabel}
           </span>
           <span className="text-base font-semibold text-ink">{next.courseName}</span>
           <div className="flex flex-wrap items-center gap-3">
@@ -78,12 +79,11 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
         <div data-role="day-empty">
           <EmptyState
             icon={CalendarDays}
-            title={isToday ? '今天没有课' : '这一天没有课'}
-            description="切换周视图可看本周安排"
+            title={isToday ? todayCopy.emptyToday : todayCopy.emptyDay}
             action={
               onOpenWeek === undefined ? undefined : (
-                <Button size="sm" variant="secondary" aria-label="查看周视图" onClick={onOpenWeek}>
-                  查看周视图
+                <Button size="sm" variant="secondary" aria-label={todayCopy.openWeekButton} onClick={onOpenWeek}>
+                  {todayCopy.openWeekButton}
                 </Button>
               )
             }
@@ -102,7 +102,7 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
                 key={`${lesson.scheduleId}-${lesson.startAt}`}
                 role="button"
                 tabIndex={0}
-                aria-label={`查看课程详情：${lesson.courseName}`}
+                aria-label={todayCopy.openLesson(lesson.courseName)}
                 data-role="day-lesson"
                 className={cn(
                   'flex min-h-tap cursor-pointer items-center gap-3 rounded-lg border bg-surface p-3 text-left',
@@ -136,7 +136,7 @@ export function TodayView({ data, date, isToday, onOpenWeek, onSelectLesson }: T
                 </div>
                 {running ? (
                   <span className="tabular text-sm text-primary-strong" data-role="today-running-remaining">
-                    剩余 {formatRemaining(lesson.endAt, now)}
+                    {todayCopy.remaining(formatRemaining(lesson.endAt, now))}
                   </span>
                 ) : (
                   isNext && <Countdown target={lesson.startAt} short className="text-sm text-primary-strong" />

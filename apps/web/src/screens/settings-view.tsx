@@ -7,6 +7,7 @@ import {
   Clock,
   MonitorSmartphone,
   Palette,
+  Sparkles,
 } from 'lucide-react';
 import type { AppSettings, SemesterRow, Storage, TimeSlotRow } from '@dawn-tick/core';
 import { notifyNextStep } from '../notify-state.ts';
@@ -18,6 +19,8 @@ import { GroupedSettings, type SettingsGroup } from '../components/grouped-setti
 import { HelpNavItem } from '../components/help-nav-item.tsx';
 import { PendingRestartBar } from '../components/pending-restart-bar.tsx';
 import { ImportFlow } from './import-flow.tsx';
+import { featureVisible } from '../channel.ts';
+import { AiCard } from './settings/ai-card.tsx';
 import { AppearanceCard } from './settings/appearance-card.tsx';
 import { RemindersCard } from './settings/reminders-card.tsx';
 import { SemestersCard } from './settings/semesters-card.tsx';
@@ -27,6 +30,7 @@ import { TimetableCard } from './settings/timetable-card.tsx';
 import { WidgetCard } from './settings/widget-card.tsx';
 import { summarizeSettings } from './settings-group-summaries.ts';
 import { useNotifyPermission } from './settings/use-notify-permission.ts';
+import { settingsPageCopy } from '../copy/settings-page.ts';
 
 export interface SettingsViewProps {
   storage: Storage;
@@ -42,6 +46,10 @@ export interface SettingsViewProps {
   onChanged: () => void;
   /** 课表空态点「导入课表」时递增，用于自动打开导入抽屉 */
   importSignal?: number;
+  /** 打开导入抽屉时预填的课表原文（来自 AI 助手） */
+  importText?: string | null;
+  /** 打开请求已处理：上层清掉请求与预填原文，之后再开抽屉不再带上 */
+  onImportHandled?: () => void;
   /** 帮助页「去设置」请求：切页后直接打开对应分组 */
   openGroupRequest?: { id: string; nonce: number } | null;
   /** 移动端从设置列表进入帮助页 */
@@ -69,14 +77,24 @@ export function SettingsView({
   onPatch,
   onChanged,
   importSignal = 0,
+  importText = null,
+  onImportHandled,
   openGroupRequest = null,
   onOpenHelp,
 }: SettingsViewProps) {
   /** 顶部快捷动作打开的导入抽屉 */
   const [importDrawerOpen, setImportDrawerOpen] = useState(false);
+  /** 这一次打开抽屉预填的原文：只在助手发起的那次打开时带上 */
+  const [importDialogText, setImportDialogText] = useState<string | null>(null);
 
   useEffect(() => {
-    if (importSignal > 0) setImportDrawerOpen(true);
+    if (importSignal <= 0) return;
+    setImportDialogText(importText);
+    setImportDrawerOpen(true);
+    // 请求用过即清：从别的页面切回设置页时不再自动弹出导入抽屉
+    onImportHandled?.();
+    // 只响应打开请求；原文与回调随请求一起读
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importSignal]);
 
   /** 通知权限：顶部提示条与提醒分组共用同一份 */
@@ -86,7 +104,7 @@ export function SettingsView({
   const groups: SettingsGroup[] = [
     {
       id: 'semesters',
-      title: '学期设置',
+      title: settingsPageCopy.groups.semesters,
       summary: summaries.semesters,
       icon: BadgeCheck,
       content: (
@@ -107,7 +125,7 @@ export function SettingsView({
     },
     {
       id: 'reminders',
-      title: '提醒设置',
+      title: settingsPageCopy.groups.reminders,
       summary: summaries.reminders,
       icon: Bell,
       content: (
@@ -118,7 +136,7 @@ export function SettingsView({
     },
     {
       id: 'appearance',
-      title: '外观与动效',
+      title: settingsPageCopy.groups.appearance,
       summary: summaries.appearance,
       icon: Palette,
       content: (
@@ -129,7 +147,7 @@ export function SettingsView({
     },
     {
       id: 'timetable',
-      title: '课表显示',
+      title: settingsPageCopy.groups.timetable,
       summary: summaries.timetable,
       icon: CalendarDays,
       content: (
@@ -140,7 +158,7 @@ export function SettingsView({
     },
     {
       id: 'slots',
-      title: '作息与选校',
+      title: settingsPageCopy.groups.slots,
       summary: summaries.slots,
       icon: CalendarClock,
       content: (
@@ -151,7 +169,7 @@ export function SettingsView({
     },
     {
       id: 'widget',
-      title: '悬浮窗与小组件',
+      title: settingsPageCopy.groups.widget,
       summary: summaries.widget,
       icon: MonitorSmartphone,
       content: (
@@ -162,7 +180,7 @@ export function SettingsView({
     },
     {
       id: 'time',
-      title: '时间与日程',
+      title: settingsPageCopy.groups.time,
       summary: summaries.time,
       icon: Clock,
       content: (
@@ -171,6 +189,21 @@ export function SettingsView({
         </Card>
       ),
     },
+    ...(featureVisible('ai')
+      ? [
+          {
+            id: 'ai',
+            title: settingsPageCopy.groups.ai,
+            summary: summaries.ai,
+            icon: Sparkles,
+            content: (
+              <Card className="p-4">
+                <AiCard storage={storage} settings={settings} onPatch={onPatch} />
+              </Card>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -182,7 +215,7 @@ export function SettingsView({
           data-role="notify-banner"
           className="flex flex-wrap items-center gap-2 rounded-md border border-danger-strong/40 bg-danger-strong/10 px-3 py-2 text-xs text-danger-strong"
         >
-          <span className="min-w-0 break-words">通知未授权，课前提醒不会弹出</span>
+          <span className="min-w-0 break-words">{settingsPageCopy.notifyBanner}</span>
           <Button
             size="sm"
             variant="secondary"
@@ -195,24 +228,36 @@ export function SettingsView({
       )}
       {/* 设置页只留偏好类入口；导出 / 恢复快照 / 检查更新都归「设备与同步」 */}
       <div className="flex flex-wrap items-center gap-2" data-role="settings-actions">
-        <Button size="sm" variant="primary" onClick={() => setImportDrawerOpen(true)}>
-          导入课表
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            setImportDialogText(null);
+            setImportDrawerOpen(true);
+          }}
+        >
+          {settingsPageCopy.importButton}
         </Button>
       </div>
 
       <GroupedSettings
-        pageTitle="设置"
-        ariaLabel="设置分组"
+        memoryKey="settings"
+        pageTitle={settingsPageCopy.pageTitle}
+        ariaLabel={settingsPageCopy.groupsAriaLabel}
         groups={groups}
         openRequest={openGroupRequest}
         extraNav={onOpenHelp === undefined ? undefined : <HelpNavItem onOpenHelp={onOpenHelp} />}
       />
 
       <Dialog open={importDrawerOpen} onOpenChange={setImportDrawerOpen}>
-        <DialogContent title="导入课表" description="网页课表 / 教务窗口 / ICS / CSV / Excel">
+        <DialogContent
+          title={settingsPageCopy.importDialogTitle}
+          description={settingsPageCopy.importDialogDescription}
+        >
           <ImportFlow
             storage={storage}
             semesterId={activeSemesterId ?? ''}
+            initialText={importDialogText}
             onManual={() => setImportDrawerOpen(false)}
             onDone={onChanged}
             onClose={() => {

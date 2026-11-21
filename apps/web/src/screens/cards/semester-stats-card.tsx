@@ -4,7 +4,8 @@ import { useAddActions } from '../../components/add-menu.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Card, CardTitle } from '../../components/ui/card.tsx';
 import { EmptyState } from '../../components/ui/empty-state.tsx';
-import { COUNT } from '../../copy/zh.ts';
+import { COUNT } from '../../copy/common.ts';
+import { statsCopy } from '../../copy/home-stats.ts';
 import type { AppData } from '../../data.ts';
 import { formatMonthDayRange } from '../../lib/dates.ts';
 import { semesterReportCsv, semesterReportFileName } from '../../lib/semester-report.ts';
@@ -17,7 +18,7 @@ import { defineCard } from './registry.ts';
 export const semesterStatsCard = defineCard({
   id: 'stats',
   scope: 'schedule',
-  title: '学期概览',
+  title: statsCopy.cardTitle,
   defaultZone: 'side',
   defaultOrder: 3,
   defaultVisible: true,
@@ -46,11 +47,11 @@ export function SemesterStatsCard({ data, onAddTodo }: SemesterStatsCardProps) {
           <EmptyState
             icon={GraduationCap}
             size="sm"
-            title="还没有课时与考试"
-            description="添加课程后，这里会汇总课时与考试"
+            title={statsCopy.emptyTitle}
+            description={statsCopy.emptyDescription}
             action={
-              <Button size="sm" variant="secondary" aria-label="去添加课程" onClick={addCourse}>
-                去添加课程
+              <Button size="sm" variant="secondary" aria-label={statsCopy.addCourseButton} onClick={addCourse}>
+                {statsCopy.addCourseButton}
               </Button>
             }
           />
@@ -66,7 +67,7 @@ export function SemesterStatsCard({ data, onAddTodo }: SemesterStatsCardProps) {
       {stats.lessons.total > 0 && <WeekBlock weeks={stats.weeks} current={stats.semester} />}
       {stats.courses.length > 0 && <CourseBlock rows={stats.courses} />}
       <ExamBlock stats={stats} />
-      <ReportExport stats={stats} semesterName={data.semester?.name ?? '学期'} today={data.today} />
+      <ReportExport stats={stats} semesterName={data.semester?.name ?? statsCopy.semesterFallback} today={data.today} />
     </Card>
   );
 }
@@ -81,10 +82,10 @@ function ReportExport({ stats, semesterName, today }: { stats: SemesterStats; se
         semesterReportFileName(today),
         semesterReportCsv(stats, semesterName),
         'csv',
-        'CSV 文件',
+        statsCopy.csvFilterName,
         'text/csv',
       );
-      if (result.saved) toastSaved('已导出学期报表', result.path);
+      if (result.saved) toastSaved(statsCopy.exported, result.path);
     } finally {
       setBusy(false);
     }
@@ -99,7 +100,7 @@ function ReportExport({ stats, semesterName, today }: { stats: SemesterStats; se
       onClick={() => void exportReport()}
     >
       <Download className="size-4 shrink-0" aria-hidden />
-      导出报表
+      {statsCopy.exportButton}
     </Button>
   );
 }
@@ -110,11 +111,11 @@ function StatsHeader({ semester }: { semester: SemesterStats['semester'] }) {
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
         <BarChart3 className="size-4 shrink-0 text-muted" aria-hidden />
-        <CardTitle>学期概览</CardTitle>
+        <CardTitle>{statsCopy.cardTitle}</CardTitle>
       </div>
       <p className="text-xs text-muted" data-role="semester-stats-weeks">
         {semester === null
-          ? '还没有学期数据'
+          ? statsCopy.noSemester
           : `${semesterWeekText(semester)} · ${formatMonthDayRange(semester.startDate, semester.endDate)}`}
       </p>
     </div>
@@ -135,13 +136,13 @@ function StatsSection({ title, role, children }: { title: string; role: string; 
 function LessonBlock({ stats }: { stats: SemesterStats }) {
   const { lessons } = stats;
   return (
-    <StatsSection title="课时" role="semester-stats-lessons">
+    <StatsSection title={statsCopy.lessonsSection} role="semester-stats-lessons">
       <p className="text-sm text-ink">
-        已上 <span className="tabular font-semibold">{COUNT('lesson', lessons.past)}</span>
+        {statsCopy.past} <span className="tabular font-semibold">{COUNT('lesson', lessons.past)}</span>
         <span className="text-muted"> · </span>
-        待上 <span className="tabular font-semibold">{COUNT('lesson', lessons.upcoming)}</span>
+        {statsCopy.upcoming} <span className="tabular font-semibold">{COUNT('lesson', lessons.upcoming)}</span>
       </p>
-      <p className="text-xs text-muted">停课的课次计入已上</p>
+      <p className="text-xs text-muted">{statsCopy.cancelledNote}</p>
     </StatsSection>
   );
 }
@@ -150,11 +151,11 @@ function LessonBlock({ stats }: { stats: SemesterStats }) {
 function WeekBlock({ weeks, current }: { weeks: SemesterStats['weeks']; current: SemesterStats['semester'] }) {
   const max = Math.max(1, ...weeks.map((week) => week.past + week.upcoming));
   return (
-    <StatsSection title="每周课时" role="semester-stats-weeks-chart">
-      <div className="flex h-16 items-end gap-0.5" role="list" aria-label="每周课时">
+    <StatsSection title={statsCopy.weeksSection} role="semester-stats-weeks-chart">
+      <div className="flex h-16 items-end gap-0.5" role="list" aria-label={statsCopy.weeksSection}>
         {weeks.map((week) => {
           const count = week.past + week.upcoming;
-          const label = `第 ${week.week} 周：已上 ${week.past} 节，待上 ${week.upcoming} 节`;
+          const label = statsCopy.weekBar(week.week, week.past, week.upcoming);
           return (
             <div
               key={week.week}
@@ -179,18 +180,18 @@ function WeekBlock({ weeks, current }: { weeks: SemesterStats['weeks']; current:
         })}
       </div>
       <div className="flex items-center justify-between gap-2 text-xs text-muted">
-        <span className="tabular">第 1 周</span>
+        <span className="tabular">{statsCopy.weekLabel(1)}</span>
         <span className="flex items-center gap-3">
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-[2px] bg-primary" aria-hidden />
-            已上
+            {statsCopy.past}
           </span>
           <span className="flex items-center gap-1">
             <span className="size-2 rounded-[2px] bg-line-strong" aria-hidden />
-            待上
+            {statsCopy.upcoming}
           </span>
         </span>
-        <span className="tabular">第 {weeks.length} 周</span>
+        <span className="tabular">{statsCopy.weekLabel(weeks.length)}</span>
       </div>
     </StatsSection>
   );
@@ -201,7 +202,7 @@ const TOP_COURSES = 5;
 /** 课程进度：课时最多的前 5 门，已上 / 总课时。 */
 function CourseBlock({ rows }: { rows: SemesterStats['courses'] }) {
   return (
-    <StatsSection title="课程进度" role="semester-stats-courses">
+    <StatsSection title={statsCopy.coursesSection} role="semester-stats-courses">
       <ul className="flex flex-col gap-1.5">
         {rows.slice(0, TOP_COURSES).map((row) => (
           <li key={row.courseId} className="flex flex-col gap-0.5 text-xs">
@@ -231,24 +232,22 @@ function CourseBlock({ rows }: { rows: SemesterStats['courses'] }) {
 function ExamBlock({ stats }: { stats: SemesterStats }) {
   const { exams } = stats;
   return (
-    <StatsSection title="考试" role="semester-stats-exams">
+    <StatsSection title={statsCopy.examsSection} role="semester-stats-exams">
       {exams.total === 0 ? (
-        <p className="text-xs text-muted">本学期还没有考试安排</p>
+        <p className="text-xs text-muted">{statsCopy.noExams}</p>
       ) : (
         <>
           <p className="text-sm text-ink">
-            共 <span className="tabular font-semibold">{COUNT('event', exams.total)}</span>
+            {statsCopy.examTotal} <span className="tabular font-semibold">{COUNT('event', exams.total)}</span>
             <span className="text-muted"> · </span>
-            已考 <span className="tabular font-semibold">{exams.taken}</span>
+            {statsCopy.examTaken} <span className="tabular font-semibold">{exams.taken}</span>
             <span className="text-muted"> · </span>
-            待考 <span className="tabular font-semibold">{exams.upcoming}</span>
+            {statsCopy.examUpcoming} <span className="tabular font-semibold">{exams.upcoming}</span>
           </p>
           <ExamTimeline items={exams.timeline} />
           {exams.next !== null && (
             <p className="text-xs text-muted" data-role="semester-stats-exam-next">
-              最近一场「{exams.next.title}」
-              {exams.next.daysUntil === 0 ? '就在今天' : `还有 ${exams.next.daysUntil} 天`}（
-              {formatMonthDayRange(exams.next.date)}）
+              {statsCopy.nextExam(exams.next.title, exams.next.daysUntil, formatMonthDayRange(exams.next.date))}
             </p>
           )}
         </>
@@ -265,7 +264,7 @@ function ExamTimeline({ items }: { items: SemesterStats['exams']['timeline'] }) 
         <li key={item.id} className="flex items-center justify-between gap-2 text-xs" data-taken={item.taken}>
           <span className={item.taken ? 'truncate text-muted line-through' : 'truncate text-ink'}>{item.title}</span>
           <span className="tabular shrink-0 text-muted">
-            {item.date === null ? '日期待定' : formatMonthDayRange(item.date)}
+            {item.date === null ? statsCopy.dateTbd : formatMonthDayRange(item.date)}
           </span>
         </li>
       ))}

@@ -1,6 +1,7 @@
 import { isAutoStartSupported } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logError, logInfo, logWarn } from './log.ts';
+import { appSystemCopy } from './copy/app-system.ts';
 
 export { isAutoStartSupported };
 
@@ -17,7 +18,7 @@ export async function readAutoStart(): Promise<boolean | null> {
     if (status === undefined) return null;
     return status.user || status.machine;
   } catch (cause: unknown) {
-    logWarn('autostart', '读取开机自启状态失败', { message: nativeErrorMessage(cause) });
+    logWarn('settings', '开机自启状态读取失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -28,14 +29,14 @@ export interface AutoStartResult {
 }
 
 export async function writeAutoStart(enabled: boolean): Promise<AutoStartResult> {
-  if (!isAutoStartSupported()) return { ok: false, error: '当前平台不支持' };
+  if (!isAutoStartSupported()) return { ok: false, error: appSystemCopy.autostart.unsupported };
   try {
     const status = await invokeNative<AutoStartStatus>('set_autostart', { enabled });
-    logInfo('autostart', enabled ? '已注册开机自启' : '已取消开机自启', status as unknown as Record<string, unknown>);
+    logInfo('settings', '开机自启已更新', { enabled, ...(status as unknown as Record<string, unknown>) });
     return { ok: true };
   } catch (cause: unknown) {
     const error = nativeErrorMessage(cause);
-    logWarn('autostart', '设置开机自启失败', { message: error });
+    logError('settings', '开机自启设置失败', { message: error });
     return { ok: false, error };
   }
 }
@@ -45,10 +46,10 @@ export async function elevateAutoStart(): Promise<boolean> {
   if (!isAutoStartSupported()) return false;
   try {
     await invokeNative('relaunch_elevated');
-    logInfo('autostart', '已请求提权注册');
+    logInfo('settings', '已请求提权注册开机自启');
     return true;
   } catch (cause: unknown) {
-    logWarn('autostart', '申请管理员权限失败', { message: nativeErrorMessage(cause) });
+    logWarn('settings', '管理员权限申请失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -58,9 +59,9 @@ export async function saveStartupPrefs(hidden: boolean): Promise<void> {
   if (!isAutoStartSupported()) return;
   try {
     await invokeNative('save_startup_prefs', { hidden });
-    logInfo('autostart', '保存启动偏好', { hidden });
+    logInfo('settings', '启动偏好已保存', { hidden });
   } catch (cause: unknown) {
-    logWarn('autostart', '保存启动偏好失败', { message: nativeErrorMessage(cause) });
+    logError('settings', '启动偏好保存失败', { message: nativeErrorMessage(cause) });
   }
 }
 
@@ -80,21 +81,21 @@ export async function readElevationStatus(): Promise<boolean | null> {
     const status = await invokeNative<ElevationStatus>('elevation_status');
     return status === undefined ? null : status.elevated;
   } catch (cause: unknown) {
-    logWarn('desktop', '读取运行权限失败', { message: nativeErrorMessage(cause) });
+    logWarn('app', '运行权限读取失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
 
 /** 申请管理员权限并重启（与开机自启提权同一条原生链路）；失败时带回一行原因。 */
 export async function requestElevation(): Promise<ElevationResult> {
-  if (!isAutoStartSupported()) return { ok: false, error: '当前平台不支持' };
+  if (!isAutoStartSupported()) return { ok: false, error: appSystemCopy.autostart.unsupported };
   try {
     await invokeNative('relaunch_elevated');
-    logInfo('desktop', '请求以管理员身份重新启动');
+    logInfo('app', '已请求以管理员身份重启');
     return { ok: true, error: null };
   } catch (cause: unknown) {
     const error = nativeErrorMessage(cause);
-    logWarn('desktop', '提权失败', { message: error });
+    logWarn('app', '提权重启失败', { message: error });
     return { ok: false, error };
   }
 }

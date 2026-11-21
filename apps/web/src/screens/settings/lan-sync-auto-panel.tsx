@@ -12,6 +12,7 @@ import {
   type LanAutoConfig,
   type LanAutoMode,
 } from '../../lan-sync-auto.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
 
 export interface LanAutoPanelProps {
   config: LanAutoConfig;
@@ -24,28 +25,25 @@ export function LanAutoPanel({ config, note, onChange }: LanAutoPanelProps) {
   return (
     <>
       <SwitchField
-        label="自动同步"
-        description="每次启动 / 每 30 分钟；范围沿用上面的勾选"
+        label={copy.autoTitle}
+        description={copy.autoDescription}
         checked={config.mode !== 'off'}
         onCheckedChange={(checked) => onChange(checked ? 'startup' : 'off')}
-        ariaLabel="自动同步"
+        ariaLabel={copy.autoTitle}
         dataRole="lan-sync-auto"
       />
       {config.mode !== 'off' && (
-        <Field label="自动同步频率" hint="失败静默重试一次并记日志">
+        <Field label={copy.autoFrequency} help={copy.autoFrequencyHelp}>
           <Select value={config.mode} onValueChange={(value) => onChange(value as LanAutoMode)}>
-            <SelectTrigger aria-label="自动同步频率">
+            <SelectTrigger aria-label={copy.autoFrequency}>
               <span>{LAN_AUTO_MODE_LABEL[config.mode]}</span>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="startup">每次启动</SelectItem>
-              <SelectItem value="interval30">每 30 分钟</SelectItem>
+              <SelectItem value="startup">{LAN_AUTO_MODE_LABEL.startup}</SelectItem>
+              <SelectItem value="interval30">{LAN_AUTO_MODE_LABEL.interval30}</SelectItem>
             </SelectContent>
           </Select>
         </Field>
-      )}
-      {config.mode !== 'off' && (
-        <span className="text-xs text-muted">自动同步使用当前配对会话；重启或令牌过期后需重新配对。</span>
       )}
       {note !== null && <StatusLine dataRole="lan-sync-auto-status">{note}</StatusLine>}
     </>

@@ -23,9 +23,6 @@ import com.dawntick.app.R
  * 只渲染前 N 行，放不下的整行不渲染；标题放不下由系统换行，换行顶出的部分由根布局裁掉。
  */
 object WidgetRenderer {
-    // 与 packages/core/src/time.ts 的 WEEKDAY_LABELS 同源（Kotlin 侧无法直接引用 TS 常量，改文案时两边一起改）。
-    private val weekdays = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-
     /** 与 widget_*.xml 的 android:padding 一致。 */
     private const val ROOT_PADDING_DP = 12
     /** 与 @dimen/widget_header_height 一致。 */
@@ -189,7 +186,7 @@ object WidgetRenderer {
                     if (current != null) {
                         WidgetText.remaining(current.endsAt)
                     } else {
-                        WidgetText.countdown(primary.startsAt)
+                        WidgetText.countdown(context, primary.startsAt)
                     },
                 )
                 listOf(WidgetText.lessonLine(primary.startsAt, primary.endsAt, primary.title, primary.room))
@@ -257,7 +254,9 @@ object WidgetRenderer {
         val capacity = rowCapacity(context, appWidgetId, maxRows = rowIds.size, countDp = 0)
         val grid = snapshot?.grid.orEmpty()
         // 先按周几、再按节次排，取能放下的前 capacity 行；放不下的整行与空行都不渲染
-        val texts = weekdays.flatMapIndexed { index, weekday ->
+        // R.array.widget_weekdays 与 packages/core/src/time.ts 的 WEEKDAY_LABELS 同源，改文案时两边一起改
+        val weekdays = context.resources.getStringArray(R.array.widget_weekdays)
+        val texts = weekdays.toList().flatMapIndexed { index, weekday ->
             grid.filter { it.dayOfWeek == index + 1 }
                 .sortedBy { it.periodStart }
                 .map { lesson -> weekLessonLine(context, weekday, lesson) }
@@ -314,11 +313,11 @@ object WidgetRenderer {
         )
         val capacity = rowCapacity(context, appWidgetId, maxRows = 2, countDp = COUNT_DP)
         val now = System.currentTimeMillis()
-        val exams = snapshot?.exams.orEmpty().filter { it.startAt > now }.sortedBy { it.startAt }
+        val exams = snapshot?.exams.orEmpty().filter { it.hideAt <= 0L || it.hideAt > now }.sortedBy { it.startAt }
         val nearest = exams.firstOrNull()
         views.setTextViewText(
             R.id.widget_exam_days,
-            if (nearest == null) "" else WidgetText.daysLeft(nearest.startAt),
+            if (nearest == null) "" else WidgetText.daysLeft(context, nearest.startAt),
         )
         val texts = when {
             read.failed -> listOf(context.getString(R.string.widget_read_error))

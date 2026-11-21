@@ -43,7 +43,15 @@ test('默认设置的分组摘要与产品文案一致', () => {
     slots: '12 个节次',
     widget: '条形 · 浅色',
     time: 'Asia/Shanghai · 按开始时间',
+    ai: '未配置',
   });
+});
+
+test('AI 摘要：地址与模型都填了才算已配置', () => {
+  assert.equal(summarize({ aiBaseUrl: 'https://api.example.com/v1', aiModel: ' gpt-4o-mini ' }).ai, '已配置 · gpt-4o-mini');
+  assert.equal(summarize({ aiBaseUrl: 'https://api.example.com/v1' }).ai, '未配置');
+  assert.equal(summarize({ aiModel: 'gpt-4o-mini' }).ai, '未配置');
+  assert.equal(summarize({ aiBaseUrl: '  ', aiModel: 'gpt-4o-mini' }).ai, '未配置');
 });
 
 test('分组摘要随设置实时变化', () => {
@@ -82,7 +90,7 @@ test('没有当前学期或节次时给出可读的空态摘要', () => {
   assert.equal(next.slots, '0 个节次');
 });
 
-test('七个分组 id 都有非空摘要', () => {
+test('每个分组 id 都有非空摘要', () => {
   const summaries = summarize();
   for (const id of SETTINGS_GROUP_IDS) {
     assert.ok(summaries[id].trim().length > 0, `${id} 的摘要不能为空`);

@@ -1,9 +1,12 @@
+import { useEffect, useRef } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { ChannelStep } from './channel-step.tsx';
 import { DoneStep } from './done-step.tsx';
 import { PreviewStep } from './preview-step.tsx';
 import { SourceStep } from './source-step.tsx';
 import { StepBar } from './step-bar.tsx';
+import { useBackHandler } from '../../lib/use-back.ts';
+import { canGoBack } from './import-flow-model.ts';
 import { useImportFlow, type ImportFlowApi } from './use-import-flow.ts';
 import { usePasteSource } from './use-paste-source.ts';
 import { useWindowSource } from './use-window-source.ts';
@@ -15,6 +18,10 @@ export interface ImportFlowProps {
   onManual?: (() => void) | undefined;
   onDone: () => void;
   onClose: () => void;
+  /** 预填的粘贴文本：直接进入「网页文本」一步，由用户点识别进预览 */
+  initialText?: string | null | undefined;
+  /** 是否在用户眼前：收起的折叠区里不接 Esc / 返回键 */
+  visible?: boolean | undefined;
 }
 
 /**
@@ -22,9 +29,20 @@ export interface ImportFlowProps {
  * 步骤只在这里做 switch 分派，业务状态在 use-import-flow / use-paste-source / use-window-source，
  * 纯状态机与选择逻辑在 import-flow-model。
  */
-export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: ImportFlowProps) {
+export function ImportFlow({ storage, semesterId, onManual, onDone, onClose, initialText = null, visible = true }: ImportFlowProps) {
   const flow = useImportFlow({ storage, semesterId, onDone });
   const paste = usePasteSource({ storage, semesterId, onAccepted: flow.accept });
+  // 只在打开时预填一次：之后用户改动粘贴框不再被覆盖
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || initialText === null || initialText === '') return;
+    prefilled.current = true;
+    flow.pickPasteSource('page');
+    paste.setText(initialText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialText]);
+  // 弹窗里 Esc / 返回键先退一步，到第一步再交给弹窗关闭
+  useBackHandler(visible && canGoBack(flow.step), flow.back);
   const windowSource = useWindowSource({
     storage,
     onPayloadText: paste.setText,

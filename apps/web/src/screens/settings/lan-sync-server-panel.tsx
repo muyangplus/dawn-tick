@@ -20,6 +20,8 @@ import { formatPairPayload, formatPairingText } from '../../lan-pair-payload.ts'
 import type { LanServerInfo } from '../../lan-sync.ts';
 import type { Pairing, TrustedToken } from '../../lan-sync-protocol.ts';
 import { LanSyncQrCode } from './lan-sync-qr-code.tsx';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 export interface LanSyncServerPanelProps {
   server: LanServerInfo | null;
@@ -126,31 +128,31 @@ export function LanSyncServerPanel({
         <div className="flex flex-col gap-1" data-role="lan-sync-network">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted" data-role="lan-sync-network-line">
-              {selectedNetwork !== null ? formatLanNetworkLine(selectedNetwork) : '网络：未发现局域网地址'}
+              {selectedNetwork !== null ? formatLanNetworkLine(selectedNetwork) : copy.networkNone}
             </span>
             <Button
               size="sm"
               variant="ghost"
-              aria-label="刷新本机网络"
+              aria-label={copy.refreshNetworkLabel}
               data-role="lan-sync-network-refresh"
               loading={refreshing}
               disabled={busy}
               onClick={() => void refresh()}
             >
               <RefreshCw className="size-3.5" aria-hidden />
-              刷新
+              {copy.refreshNetworkButton}
             </Button>
           </div>
           {networkError !== null && networkError !== '' && (
             <span className="text-xs text-danger-strong" data-role="lan-sync-network-error">
-              读取本机网络失败：{networkError}
+              {copy.networkReadFailed(networkError)}
             </span>
           )}
           {showSelect && selectedNetwork !== null && (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted">切换网络</span>
+              <span className="text-xs text-muted">{copy.switchNetwork}</span>
               <Select value={selectedNetwork.address} onValueChange={onChangeNetwork} disabled={busy}>
-                <SelectTrigger aria-label="切换网络" data-role="lan-sync-network-select" className="max-w-60">
+                <SelectTrigger aria-label={copy.switchNetwork} data-role="lan-sync-network-select" className="max-w-60">
                   <span>{formatLanNetworkLabel(selectedNetwork)}</span>
                 </SelectTrigger>
                 <SelectContent>
@@ -173,7 +175,7 @@ export function LanSyncServerPanel({
                   className="break-all text-xs text-muted"
                   data-role="lan-sync-network-diagnostics"
                 >
-                  诊断信息：{networkStatus.interfaceSummary}
+                  {copy.diagnostics(networkStatus.interfaceSummary)}
                 </span>
               )}
               {onCopyDiagnostics !== undefined && (
@@ -181,14 +183,15 @@ export function LanSyncServerPanel({
                   <Button
                     size="sm"
                     variant="ghost"
-                    aria-label="复制诊断信息"
+                    aria-label={copy.copyDiagnostics}
                     data-role="lan-sync-network-copy-diagnostics"
                     onClick={onCopyDiagnostics}
                   >
-                    复制诊断信息
+                    {copy.copyDiagnostics}
                   </Button>
                 </div>
               )}
+              <HelpLink entryId="lan-network" />
             </div>
           )}
         </div>
@@ -197,42 +200,39 @@ export function LanSyncServerPanel({
         <Button
           size="sm"
           variant="secondary"
-          aria-label={failed ? '重试开启局域网配对' : '开启局域网配对'}
+          aria-label={failed ? copy.retryStartLabel : copy.startLabel}
           loading={busy}
           disabled={server !== null}
           onClick={onStart}
         >
-          {failed ? '重试' : '开启配对'}
+          {failed ? copy.retryButton : copy.startButton}
         </Button>
         <Button
           size="sm"
           variant="ghost"
-          aria-label="停止局域网配对"
+          aria-label={copy.stopLabel}
           disabled={server === null}
           onClick={onStop}
         >
-          停止配对
+          {copy.stopButton}
         </Button>
       </div>
       {server !== null && (
         <span className="text-xs text-muted" data-role="lan-sync-address">
-          本机地址：{server.address}
+          {copy.localAddress(server.address)}
         </span>
       )}
       {pairing !== null && (
         <span className="text-sm text-ink" data-role="lan-sync-code">
-          配对码：{pairing.code}（5 分钟内有效）
+          {copy.pairCode(pairing.code)}
         </span>
       )}
       {server !== null && pairing !== null && (
         <div className="flex flex-wrap items-start gap-3" data-role="lan-sync-pairing-info">
           <LanSyncQrCode text={payload} />
           <div className="flex max-w-60 flex-col gap-1">
-            <span className="text-xs text-muted">
-              二维码是标准配对链接；对方可以在安卓上用「扫一扫」直接识别，也可以复制下面的信息发过去。
-            </span>
-            <Button size="sm" variant="ghost" aria-label="复制配对信息" onClick={onCopy}>
-              复制配对信息
+            <Button size="sm" variant="ghost" aria-label={copy.copyPairing} onClick={onCopy}>
+              {copy.copyPairing}
             </Button>
             <span className="break-all text-xs text-muted" data-role="lan-sync-pairing-text">
               {humanText}
@@ -247,11 +247,11 @@ export function LanSyncServerPanel({
         <div className="flex flex-wrap items-center gap-2" data-role="lan-sync-granted">
           <span className="text-xs text-muted">
             {tokens.length === 0
-              ? '等待对方请求…'
-              : `已有 ${tokens.length} 台设备可长期连接；要添加新设备请生成新配对码`}
+              ? copy.waitingPeer
+              : copy.grantedDevices(tokens.length)}
           </span>
-          <Button size="sm" variant="ghost" aria-label="生成新配对码" onClick={onNewCode}>
-            新配对码
+          <Button size="sm" variant="ghost" aria-label={copy.newCodeLabel} onClick={onNewCode}>
+            {copy.newCodeButton}
           </Button>
         </div>
       )}

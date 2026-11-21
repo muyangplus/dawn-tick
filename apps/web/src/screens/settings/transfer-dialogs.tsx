@@ -9,12 +9,13 @@ import { exportConfig, type ExportFormat } from '../../data-management.ts';
 import { dayStampUtc } from '../../lib/dates.ts';
 import { copyText } from '../../system-actions.ts';
 import { useAction } from '../../lib/action.ts';
-import { fail } from '../../copy/zh.ts';
+import { fail } from '../../copy/common.ts';
 import { Button } from '../../components/ui/button.tsx';
 import { FormDialog } from '../../components/ui/dialog.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { ExportEncryptionFields, exportPasswordIssue } from './backup-encryption.tsx';
 import { saveText, toastSaved } from './file-export.ts';
+import { transferCopy as copy } from '../../copy/backup-transfer.ts';
 
 export { ImportDialog, type ImportDialogProps } from './import-dialog.tsx';
 export { IcsExportDialog, type IcsExportDialogProps } from './ics-export-dialog.tsx';
@@ -55,18 +56,18 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
     if (encryptExport) {
       const issue = exportPasswordIssue(exportPassword, exportPasswordConfirm);
       if (issue !== null) {
-        toast.error(fail('加密', issue, '请修改口令后重试'));
+        toast.error(fail(copy.encryptWhat, issue, copy.encryptNext));
         return;
       }
     }
     await exportAction.run({
       scope: 'backup',
-      label: '正在导出备份…',
+      label: copy.exportingBackup,
       fail: false,
       task: async () => {
         const modules = [...exportModules];
         if (modules.length === 0) {
-          toast.error('请至少勾选一个模块');
+          toast.error(copy.moduleRequired);
           return;
         }
         const outcome = await exportConfig(storage, {
@@ -77,28 +78,26 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           password: encryptExport ? exportPassword : undefined,
         });
         if (outcome.cancelled) {
-          toast.info('已取消保存');
+          toast.info(copy.saveCancelled);
           return;
         }
         if (!outcome.ok) {
           // 损坏时 outcome.error 已是恢复引导文案；「换保存位置」提示保持不变
           toast.error(
-            fail('导出', outcome.error, outcome.corrupt ? '也可换一个保存位置后重试' : '请重试或换一个保存位置'),
+            fail(copy.exportWhat, outcome.error, outcome.corrupt ? copy.exportNextCorrupt : copy.exportNext),
           );
           return;
         }
-        const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join('、');
+        const label = modules.map((module) => BACKUP_MODULE_LABEL[module]).join(copy.moduleSeparator);
         if (exportFormat === 'base64' && outcome.text !== null) {
           setExportText(outcome.text);
-          toast.success(
-            encryptExport ? `已生成加密 Base64 文本（${label}）` : `已生成 Base64 文本（${label}）`,
-          );
+          toast.success(copy.base64Generated(label, encryptExport));
           return;
         }
         toastSaved(
           outcome.path === null
-            ? `已下载 ${outcome.name}`
-            : `已${encryptExport ? '加密' : ''}导出备份（${label}）`,
+            ? copy.downloaded(outcome.name)
+            : copy.backupExported(label, encryptExport),
           outcome.path,
         );
         closeDialog();
@@ -110,9 +109,9 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
   async function saveBase64Backup(): Promise<void> {
     if (exportText === '') return;
     const day = dayStampUtc(Date.now());
-    const result = await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', 'Base64 文本');
+    const result = await saveText(`DawnTick-backup-${day}.base64.txt`, exportText, 'txt', copy.base64Filter);
     if (!result.saved) return;
-    toastSaved('已保存 Base64 文本', result.path);
+    toastSaved(copy.base64Saved, result.path);
     closeDialog();
   }
 
@@ -123,9 +122,9 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
         if (!next) closeDialog();
         else onOpenChange(next);
       }}
-      title="导出备份"
-      description="勾选要导出的模块，并选择导出格式"
-      submitLabel={exportFormat === 'base64' ? '生成文本' : '导出'}
+      title={copy.exportTitle}
+      description={copy.exportDescription}
+      submitLabel={exportFormat === 'base64' ? copy.exportSubmitText : copy.exportSubmit}
       submitting={exportAction.busy}
       submitDisabled={exportModules.size === 0}
       onSubmit={() => void downloadBackup()}
@@ -137,7 +136,7 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
               type="checkbox"
               className="size-4"
               checked={exportModules.has(module)}
-              aria-label={`导出 ${BACKUP_MODULE_LABEL[module]}`}
+              aria-label={copy.exportModuleLabel(BACKUP_MODULE_LABEL[module])}
               onChange={(event) =>
                 setExportModules((current) => {
                   const next = new Set(current);
@@ -158,10 +157,10 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           variant="ghost"
           onClick={() => setExportModules(new Set(BACKUP_MODULES))}
         >
-          全选
+          {copy.selectAll}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => setExportModules(new Set())}>
-          清空
+          {copy.selectNone}
         </Button>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -169,28 +168,28 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
           type="button"
           size="sm"
           variant={exportFormat === 'json' ? 'primary' : 'secondary'}
-          aria-label="导出为 JSON 文件"
+          aria-label={copy.formatJsonLabel}
           onClick={() => setExportFormat('json')}
         >
-          JSON 文件
+          {copy.formatJson}
         </Button>
         <Button
           type="button"
           size="sm"
           variant={exportFormat === 'base64' ? 'primary' : 'secondary'}
-          aria-label="导出为 Base64 文本"
+          aria-label={copy.formatBase64Label}
           onClick={() => setExportFormat('base64')}
         >
-          Base64 文本
+          {copy.formatBase64}
         </Button>
         <Button
           type="button"
           size="sm"
           variant={exportFormat === 'zip' ? 'primary' : 'secondary'}
-          aria-label="导出为整包 zip"
+          aria-label={copy.formatZipLabel}
           onClick={() => setExportFormat('zip')}
         >
-          整包 zip
+          {copy.formatZip}
         </Button>
       </div>
       {exportFormat === 'zip' && (
@@ -199,21 +198,21 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
             <input
               type="checkbox"
               className="size-4"
-              aria-label="整包包含预设"
+              aria-label={copy.bundlePresetsLabel}
               checked={bundlePresets}
               onChange={(event) => setBundlePresets(event.target.checked)}
             />
-            一并打包预设
+            {copy.bundlePresets}
           </label>
           <label className="flex min-h-tap items-center gap-2 text-sm text-ink">
             <input
               type="checkbox"
               className="size-4"
-              aria-label="整包包含日志文件"
+              aria-label={copy.bundleLogsLabel}
               checked={bundleLogs}
               onChange={(event) => setBundleLogs(event.target.checked)}
             />
-            一并打包日志文件
+            {copy.bundleLogs}
           </label>
         </div>
       )}
@@ -236,11 +235,11 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
       />
       {exportFormat === 'base64' && exportText !== '' && (
         <div className="flex flex-col gap-2">
-          <span className="text-xs text-muted">复制下面这段文本，或保存成文件后传输。</span>
+          <span className="text-xs text-muted">{copy.base64Hint}</span>
           <textarea
             readOnly
             data-role="export-base64"
-            aria-label="Base64 备份文本"
+            aria-label={copy.base64TextLabel}
             className="h-32 w-full rounded-md border border-line bg-surface-muted p-2 text-[11px] text-muted"
             value={exportText}
             onFocus={(event) => event.currentTarget.select()}
@@ -253,17 +252,17 @@ export function ExportDialog({ open, onOpenChange, storage }: ExportDialogProps)
               onClick={() => {
                 void copyText(exportText).then((ok) => {
                   if (ok) {
-                    toast.success('已复制 Base64 文本');
+                    toast.success(copy.base64Copied);
                     return;
                   }
-                  toast.error(fail('复制', null, '请手动选中文本复制'));
+                  toast.error(fail(copy.copyWhat, null, copy.copyNext));
                 });
               }}
             >
-              复制文本
+              {copy.copyText}
             </Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => void saveBase64Backup()}>
-              保存为文件
+              {copy.saveAsFile}
             </Button>
           </div>
         </div>

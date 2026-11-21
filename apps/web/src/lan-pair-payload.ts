@@ -5,6 +5,7 @@ import {
   isLanAddress,
   type PeerAddress,
 } from './lan-sync-protocol.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网配对的「标准化连接格式」：纯函数，不碰网络、二维码或界面。
@@ -77,7 +78,7 @@ export function formatPairingText(payload: PairPayload): string {
 /** 宽容解析；返回载荷或可展示的错误原因。 */
 export function parsePairPayload(text: string): PairParseResult {
   const raw = typeof text === 'string' ? text.trim() : '';
-  if (raw === '') return failure('配对信息为空，请扫码或粘贴对方显示的链接');
+  if (raw === '') return failure(lanSyncCopy.payloadEmpty);
 
   for (const candidate of candidatesOf(raw)) {
     const fromLink = parseLink(candidate);
@@ -87,7 +88,7 @@ export function parsePairPayload(text: string): PairParseResult {
     const fromText = parseBasicText(candidate);
     if (fromText !== null) return fromText;
   }
-  return failure('无法识别配对信息：请粘贴 dawn-tick://pair?… 或「IP:端口 配对码」');
+  return failure(lanSyncCopy.payloadUnrecognized);
 }
 
 function failure(error: string): PairParseResult {
@@ -128,13 +129,13 @@ function normalizeName(value: string | null | undefined): string | undefined {
 function fromParams(params: URLSearchParams): PairParseResult {
   const schema = params.get('schema');
   if (schema !== null && schema.trim() !== '' && schema.trim() !== String(PAIR_PAYLOAD_SCHEMA)) {
-    return failure(`配对信息版本 ${schema.trim()} 不受支持，请升级应用`);
+    return failure(lanSyncCopy.payloadVersionUnsupported(schema.trim()));
   }
   const host = (params.get('host') ?? '').trim();
   const code = (params.get('code') ?? '').trim();
   const portText = params.get('port');
-  if (host === '') return failure('配对信息里没有对方地址（host）');
-  if (code === '') return failure('配对信息里没有配对码（code）');
+  if (host === '') return failure(lanSyncCopy.payloadMissingHost);
+  if (code === '') return failure(lanSyncCopy.payloadMissingCode);
   const port = portText === null || portText.trim() === '' ? LAN_SYNC_PORT : normalizePort(portText);
   return validate(
     host,
@@ -162,7 +163,7 @@ function parseLink(text: string): PairParseResult | null {
     const rest = beforeQuery.replace(new RegExp(`^${PAIR_LINK_SCHEME}:`, 'i'), '').replace(/^\/+/, '');
     if (rest.replace(/\/+$/, '').toLowerCase() !== PAIR_LINK_PATH) return null;
   }
-  if (queryIndex < 0) return failure('配对链接缺少参数：请重新生成二维码');
+  if (queryIndex < 0) return failure(lanSyncCopy.payloadLinkMissingQuery);
   return fromParams(new URLSearchParams(trimmed.slice(queryIndex + 1)));
 }
 
@@ -175,7 +176,7 @@ function parseBasicText(text: string): PairParseResult | null {
   const host = match[1] ?? '';
   const port = normalizePort(match[2] ?? String(LAN_SYNC_PORT));
   const code = (match[3] ?? '').trim();
-  if (code === '') return failure('配对信息里没有配对码：应为「IP:端口 6 位配对码」');
+  if (code === '') return failure(lanSyncCopy.payloadTextMissingCode);
   return validate(host, port, code, undefined, undefined);
 }
 
@@ -186,9 +187,9 @@ function validate(
   name: string | undefined,
   deviceId: string | null | undefined,
 ): PairParseResult {
-  if (port === null) return failure('配对信息里的端口不正确：应为 1–65535');
-  if (!/^\d{6}$/.test(code)) return failure('配对码应为 6 位数字');
-  if (!isLanAddress(host)) return failure(`对方地址不是局域网 IPv4：${host}`);
+  if (port === null) return failure(lanSyncCopy.payloadBadPort);
+  if (!/^\d{6}$/.test(code)) return failure(lanSyncCopy.pairCodeFormat);
+  if (!isLanAddress(host)) return failure(lanSyncCopy.payloadHostNotLan(host));
   return {
     ok: true,
     payload: {

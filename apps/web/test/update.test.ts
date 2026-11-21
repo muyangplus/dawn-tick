@@ -5,6 +5,7 @@ import {
   UPDATE_FEEDS,
   UPDATE_RELEASES_API,
   checkForUpdate,
+  compareBuilds,
   compareVersions,
   defaultReceiveBeta,
   pickBetaCandidate,
@@ -48,8 +49,8 @@ function versionBody(overrides: Record<string, unknown> = {}): Record<string, un
     files: {
       windowsSetup: fileSuffix('-windows-x64-setup.exe', version, channel, 120, 'a'.repeat(64)),
       windowsPortable: fileSuffix('-windows-x64-portable.zip', version, channel, 90, 'b'.repeat(64)),
-      android: fileSuffix('-android-arm64-v8a.apk', version, channel, 60, 'c'.repeat(64)),
-      android32: fileSuffix('-android-armeabi-v7a.apk', version, channel, 55, 'e'.repeat(64)),
+      android: fileSuffix('-android-arm64.apk', version, channel, 60, 'c'.repeat(64)),
+      android32: fileSuffix('-android-arm32.apk', version, channel, 55, 'e'.repeat(64)),
       web: fileSuffix('-web.zip', version, channel, 30, 'd'.repeat(64)),
     },
     checksums: 'SHA256SUMS.txt',
@@ -118,6 +119,43 @@ test('dev 构建时间戳不参与版本比较', () => {
   assert.ok(compareVersions('0.1.0.202610132203', '0.1.9') < 0);
 });
 
+test('compareBuilds：同基础版本按 dev 构建时间戳比先后', () => {
+  assert.ok(compareBuilds('0.8.0.202611200803', '0.8.0.202611190000') > 0, '更新的时间戳更大');
+  assert.ok(compareBuilds('0.8.0.202611190000', '0.8.0.202611200803') < 0, '更旧的时间戳更小');
+  assert.equal(compareBuilds('0.8.0.202611200803', '0.8.0.202611200803'), 0, '同一时间戳相等');
+  assert.ok(compareBuilds('v0.8.0.202611200803', '0.8.0.202611190000') > 0, '允许 v 前缀');
+  assert.equal(compareBuilds('v0.8.0.202611200803', '0.8.0.202611200803'), 0);
+});
+
+test('compareBuilds：任一侧没有时间戳只比基础版本', () => {
+  assert.equal(compareBuilds('0.8.0.202611200803', '0.8.0'), 0, '打戳对未打戳视为相同');
+  assert.equal(compareBuilds('0.8.0', '0.8.0.202611200803'), 0);
+  assert.ok(compareBuilds('0.9.0.202611010000', '0.8.0.202611200803') > 0, '基础版本更高时不看时间戳');
+  assert.ok(compareBuilds('0.8.0.202611200803', '0.9.0.202611010000') < 0);
+  assert.ok(compareBuilds('0.9.0', '0.8.0.202611200803') > 0);
+});
+
+test('dev 渠道：同基础版本的更新构建算更新，本地未打戳的构建不提示', async () => {
+  const devManifest = async () =>
+    manifestResponse(versionBody({ channel: 'dev', version: '0.8.0.202611200803', tag: 'dev-latest' }));
+
+  const newer = await checkForUpdate({
+    channel: 'dev',
+    receiveBeta: false,
+    currentVersion: '0.8.0.202611190000',
+    fetchImpl: devManifest,
+  });
+  assert.equal(newer.available, true, '远端构建时间戳更新');
+
+  const local = await checkForUpdate({
+    channel: 'dev',
+    receiveBeta: false,
+    currentVersion: '0.8.0',
+    fetchImpl: devManifest,
+  });
+  assert.equal(local.available, false, '本地未打戳的构建只比基础版本');
+});
+
 test('dev 渠道永远只查 dev 源', () => {
   assert.equal(resolveFeed('dev', true), 'dev');
   assert.equal(resolveFeed('dev', false), 'dev');
@@ -179,7 +217,7 @@ test('发现新版本：版本 / 渠道 / 说明 / 时间来自清单，下载�
   );
   assert.equal(
     status.manifest?.assets?.android?.url,
-    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-android-arm64-v8a.apk',
+    'https://raw.githubusercontent.com/muyangplus/dawn-tick-assets/release/DawnTick-0.2.0-release-android-arm64.apk',
   );
   assert.equal(
     status.manifest?.assets?.web?.url,
@@ -202,7 +240,7 @@ test('armeabi-v7a 设备检查更新时选 v7 包', async () => {
       currentVersion: '0.1.0',
       fetchImpl: async () => manifestResponse(versionBody()),
     });
-    assert.match(String(status.manifest?.assets?.android?.url), /-android-armeabi-v7a\.apk$/);
+    assert.match(String(status.manifest?.assets?.android?.url), /-android-arm32\.apk$/);
     assert.equal(status.manifest?.assets?.android?.size, 55);
   } finally {
     setAndroidAbiForTests(null);
@@ -386,12 +424,12 @@ test('GitHub 的 version.json 不可达时退回旧 Releases 接口（兼容兜�
 test('旧 Releases 兜底也按设备 ABI 选拆分包', async () => {
   const splitAssets = [
     {
-      name: 'DawnTick-0.2.0-release-android-arm64-v8a.apk',
+      name: 'DawnTick-0.2.0-release-android-arm64.apk',
       size: 60,
       browser_download_url: 'https://example.com/android-arm64.apk',
     },
     {
-      name: 'DawnTick-0.2.0-release-android-armeabi-v7a.apk',
+      name: 'DawnTick-0.2.0-release-android-arm32.apk',
       size: 55,
       browser_download_url: 'https://example.com/android-v7.apk',
     },
@@ -416,6 +454,49 @@ test('旧 Releases 兜底也按设备 ABI 选拆分包', async () => {
   } finally {
     setAndroidAbiForTests(null);
   }
+});
+
+test('旧 Releases 兜底仍认 ABI 全称的老资产名', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async (input) => {
+      if (String(input) === VERSION_RELEASE) throw new Error('fetch failed');
+      return manifestResponse(
+        releaseBody({
+          assets: [
+            {
+              name: 'DawnTick-0.2.0-release-android-arm64-v8a.apk',
+              size: 60,
+              browser_download_url: 'https://example.com/android-arm64-v8a.apk',
+            },
+          ],
+        }),
+      );
+    },
+  });
+  assert.equal(status.manifest?.assets?.android?.url, 'https://example.com/android-arm64-v8a.apk');
+});
+
+test('发布内的 version.json（v2）兜底：按标签拼出发布附件地址，Android 有安装包', async () => {
+  const status = await checkForUpdate({
+    channel: 'release',
+    receiveBeta: false,
+    currentVersion: '0.1.0',
+    fetchImpl: async (input) => {
+      const url = String(input);
+      if (url === VERSION_RELEASE || isGitHubApi(url)) throw new Error('fetch failed');
+      return manifestResponse(versionBody());
+    },
+  });
+  const base = 'https://github.com/muyangplus/dawn-tick/releases/download/v0.2.0';
+  assert.equal(status.error, null);
+  assert.equal(status.latest, '0.2.0');
+  assert.equal(status.manifest?.assets?.android?.url, `${base}/DawnTick-0.2.0-release-android-arm64.apk`);
+  assert.equal(status.manifest?.assets?.android?.sha256, 'c'.repeat(64));
+  assert.equal(status.manifest?.assets?.windows?.url, `${base}/DawnTick-0.2.0-release-windows-x64-setup.exe`);
+  assert.equal(status.manifest?.checksumsUrl, `${base}/SHA256SUMS.txt`);
 });
 
 test('旧 Releases 接口也异常时再回退同源 version.json 直连', async () => {

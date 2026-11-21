@@ -138,17 +138,17 @@ impl LanSyncServer {
     /// 切换网络（VPN、热点）后也可能不可用；来源安全仍由 `handle_connection` 逐请求校验。
     fn start_on(advertise: Ipv4Addr) -> Result<Self, String> {
         if !is_lan_ipv4(advertise) {
-            return Err("局域网同步只对外展示局域网地址".to_string());
+            return Err(crate::copy::lan_sync::ADVERTISE_NOT_LAN.to_string());
         }
         let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .map_err(|error| format!("监听局域网端口失败：{error}"))?;
+            .map_err(crate::copy::lan_sync::listen_failed)?;
         let port = listener
             .local_addr()
-            .map_err(|error| format!("读取监听端口失败：{error}"))?
+            .map_err(crate::copy::lan_sync::read_port_failed)?
             .port();
         listener
             .set_nonblocking(true)
-            .map_err(|error| format!("设置非阻塞监听失败：{error}"))?;
+            .map_err(crate::copy::lan_sync::nonblocking_failed)?;
         let shared = Shared::new();
         let accept_shared = shared.clone();
         let accept = std::thread::spawn(move || accept_loop(listener, accept_shared));
@@ -217,7 +217,7 @@ fn accept_loop(listener: TcpListener, shared: Shared) {
             Ok((mut stream, remote)) => {
                 if shared.active.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
                     let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
-                    write_json(&mut stream, 503, &error_body("busy", "连接过多，请稍后重试"));
+                    write_json(&mut stream, 503, &error_body("busy", crate::copy::lan_sync::BUSY_CONNECTIONS));
                     continue;
                 }
                 shared.active.fetch_add(1, Ordering::SeqCst);
@@ -240,7 +240,7 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
     let _ = stream.set_write_timeout(Some(READ_TIMEOUT));
     if !is_lan_ip(remote.ip()) || (!cfg!(debug_assertions) && remote.ip().is_loopback()) {
-        write_json(&mut stream, 403, &error_body("forbidden", "只接受同一局域网内的请求"));
+        write_json(&mut stream, 403, &error_body("forbidden", crate::copy::lan_sync::LAN_ONLY));
         return;
     }
     let request = match read_request(&mut stream) {
@@ -257,17 +257,17 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
     }
     let pairing = request.path == "/pair";
     if pairing && shared.pair_blocked(remote.ip(), now_ms()) {
-        write_json(&mut stream, 429, &error_body("too_many_attempts", "配对失败次数过多，请稍后再试"));
+        write_json(&mut stream, 429, &error_body("too_many_attempts", crate::copy::lan_sync::TOO_MANY_ATTEMPTS));
         return;
     }
     match endpoint(&request.method, &request.path) {
         Endpoint::Match => {}
         Endpoint::MethodNotAllowed => {
-            write_json(&mut stream, 405, &error_body("method_not_allowed", "请求方法不对"));
+            write_json(&mut stream, 405, &error_body("method_not_allowed", crate::copy::lan_sync::METHOD_NOT_ALLOWED));
             return;
         }
         Endpoint::Unknown => {
-            write_json(&mut stream, 404, &error_body("not_found", "没有该接口"));
+            write_json(&mut stream, 404, &error_body("not_found", crate::copy::lan_sync::NOT_FOUND));
             return;
         }
     }
@@ -281,7 +281,7 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
         if queue.len() >= MAX_PENDING {
             drop(queue);
             shared.lock_waiters().remove(&id);
-            write_json(&mut stream, 503, &error_body("busy", "请求队列已满，请稍后重试"));
+            write_json(&mut stream, 503, &error_body("busy", crate::copy::lan_sync::BUSY_QUEUE));
             return;
         }
         queue.push_back(LanSyncRequest {
@@ -305,7 +305,7 @@ fn handle_connection(mut stream: TcpStream, remote: SocketAddr, shared: Shared) 
         Err(_) => {
             shared.lock_waiters().remove(&id);
             shared.lock_queue().retain(|item| item.id != id);
-            write_json(&mut stream, 504, &error_body("timeout", "本机没有在 10 秒内处理请求"));
+            write_json(&mut stream, 504, &error_body("timeout", crate::copy::lan_sync::HANDLER_TIMEOUT));
         }
     }
 }
@@ -350,19 +350,19 @@ struct ParsedRequest {
 ///   不要求等于广播的那块网卡，多网卡、手输地址都不受影响。
 fn check_request_origin(request: &ParsedRequest, local_port: u16) -> Result<(), &'static str> {
     if request.origin.is_some() {
-        return Err("不接受浏览器网页发起的请求");
+        return Err(crate::copy::lan_sync::BROWSER_ORIGIN);
     }
     let Some(host) = request.host.as_deref() else {
-        return Err("缺少 Host");
+        return Err(crate::copy::lan_sync::MISSING_HOST);
     };
     let Some((ip, port)) = host.rsplit_once(':') else {
-        return Err("Host 必须带端口");
+        return Err(crate::copy::lan_sync::HOST_NO_PORT);
     };
     if ip.parse::<Ipv4Addr>().is_err() {
-        return Err("Host 必须是 IP 地址");
+        return Err(crate::copy::lan_sync::HOST_NOT_IP);
     }
     if port.parse::<u16>().ok() != Some(local_port) {
-        return Err("Host 端口不正确");
+        return Err(crate::copy::lan_sync::HOST_BAD_PORT);
     }
     Ok(())
 }
@@ -387,19 +387,19 @@ fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, (u16, String)> 
             break position;
         }
         if started.elapsed() > REQUEST_DEADLINE {
-            return Err((408, "请求发送太慢".to_string()));
+            return Err((408, crate::copy::lan_sync::SLOW_REQUEST.to_string()));
         }
         if buffer.len() > HEADER_LIMIT {
-            return Err((431, "请求头过大".to_string()));
+            return Err((431, crate::copy::lan_sync::HEADERS_TOO_LARGE.to_string()));
         }
         match stream.read(&mut chunk) {
-            Ok(0) => return Err((400, "请求不完整".to_string())),
+            Ok(0) => return Err((400, crate::copy::lan_sync::REQUEST_INCOMPLETE.to_string())),
             Ok(read) => buffer.extend_from_slice(&chunk[..read]),
-            Err(error) => return Err((400, format!("读取请求失败：{error}"))),
+            Err(error) => return Err((400, crate::copy::lan_sync::read_request_failed(error))),
         }
     };
     let head_text = std::str::from_utf8(&buffer[..header_end])
-        .map_err(|_| (400, "请求头不是 UTF-8".to_string()))?;
+        .map_err(|_| (400, crate::copy::lan_sync::HEAD_NOT_UTF8.to_string()))?;
     let head = parse_head(head_text)?;
     let body_start = header_end + 4;
     let mut body = buffer[body_start..].to_vec();
@@ -408,15 +408,15 @@ fn read_request(stream: &mut TcpStream) -> Result<ParsedRequest, (u16, String)> 
     }
     while body.len() < head.content_length {
         if started.elapsed() > REQUEST_DEADLINE {
-            return Err((408, "请求发送太慢".to_string()));
+            return Err((408, crate::copy::lan_sync::SLOW_REQUEST.to_string()));
         }
         match stream.read(&mut chunk) {
-            Ok(0) => return Err((400, "请求体不完整".to_string())),
+            Ok(0) => return Err((400, crate::copy::lan_sync::BODY_INCOMPLETE.to_string())),
             Ok(read) => body.extend_from_slice(&chunk[..read]),
-            Err(error) => return Err((400, format!("读取请求体失败：{error}"))),
+            Err(error) => return Err((400, crate::copy::lan_sync::read_body_failed(error))),
         }
     }
-    let body = String::from_utf8(body).map_err(|_| (400, "请求体不是 UTF-8".to_string()))?;
+    let body = String::from_utf8(body).map_err(|_| (400, crate::copy::lan_sync::BODY_NOT_UTF8.to_string()))?;
     Ok(ParsedRequest {
         method: head.method,
         path: head.path,
@@ -438,24 +438,24 @@ fn parse_head(text: &str) -> Result<Head, (u16, String)> {
     let mut parts = request_line.split_whitespace();
     let method = parts
         .next()
-        .ok_or_else(|| (400, "缺少请求方法".to_string()))?
+        .ok_or_else(|| (400, crate::copy::lan_sync::MISSING_METHOD.to_string()))?
         .to_string();
     let target = parts
         .next()
-        .ok_or_else(|| (400, "缺少请求路径".to_string()))?;
+        .ok_or_else(|| (400, crate::copy::lan_sync::MISSING_PATH.to_string()))?;
     let version = parts.next().unwrap_or_default();
     if !version.starts_with("HTTP/") {
-        return Err((400, "不是 HTTP 请求".to_string()));
+        return Err((400, crate::copy::lan_sync::NOT_HTTP.to_string()));
     }
     if !matches!(method.as_str(), "GET" | "POST" | "OPTIONS") {
-        return Err((405, "不支持的请求方法".to_string()));
+        return Err((405, crate::copy::lan_sync::UNSUPPORTED_METHOD.to_string()));
     }
     let (path, query) = match target.split_once('?') {
         Some((path, query)) => (path, query),
         None => (target, ""),
     };
     if !path.starts_with('/') {
-        return Err((400, "请求路径不正确".to_string()));
+        return Err((400, crate::copy::lan_sync::BAD_PATH.to_string()));
     }
     let mut authorization = None;
     let mut origin = None;
@@ -476,9 +476,9 @@ fn parse_head(text: &str) -> Result<Head, (u16, String)> {
         } else if name.eq_ignore_ascii_case("content-length") {
             let parsed: usize = value
                 .parse()
-                .map_err(|_| (400, "Content-Length 不正确".to_string()))?;
+                .map_err(|_| (400, crate::copy::lan_sync::BAD_CONTENT_LENGTH.to_string()))?;
             if parsed > MAX_BODY_BYTES {
-                return Err((413, "请求体超过 5MB 上限".to_string()));
+                return Err((413, crate::copy::lan_sync::BODY_TOO_LARGE.to_string()));
             }
             content_length = parsed;
         }
@@ -594,9 +594,9 @@ fn parse_listen_host(raw: Option<&str>) -> Result<Option<Ipv4Addr>, String> {
     };
     let address: Ipv4Addr = text
         .parse()
-        .map_err(|_| format!("网络地址不是合法 IPv4：{text}"))?;
+        .map_err(|_| crate::copy::lan_sync::host_not_ipv4(text))?;
     if address.is_unspecified() || !is_lan_ipv4(address) {
-        return Err("只能选择局域网地址".to_string());
+        return Err(crate::copy::lan_sync::HOST_NOT_LAN.to_string());
     }
     Ok(Some(address))
 }
@@ -647,7 +647,7 @@ pub fn lan_sync_start(
     let bind = match requested {
         Some(address) => address,
         None => auto_lan_ipv4()
-            .ok_or_else(|| "没有找到局域网地址，请先连接 Wi-Fi 或有线网络".to_string())?,
+            .ok_or_else(|| crate::copy::lan_sync::NO_LAN_ADDRESS.to_string())?,
     };
     let server = LanSyncServer::start_on(bind)?;
     let info = server.listen_info();
@@ -662,12 +662,15 @@ pub fn lan_sync_start(
         device_id.as_deref(),
         directed_broadcast,
     ) {
-        crate::append_log(&format!("局域网发现广播启动失败：{error}"));
+        crate::log_warn("sync", format!("局域网发现广播启动失败 error={error}"));
     }
-    crate::append_log(&format!(
-        "局域网同步已开启：{}:{}（广播目标 {:?}）",
-        info.host, info.port, directed_broadcast
-    ));
+    crate::log_info(
+        "sync",
+        format!(
+            "局域网同步已开启 addr={}:{} broadcast={:?}",
+            info.host, info.port, directed_broadcast
+        ),
+    );
     *guard = Some(server);
     Ok(info)
 }
@@ -679,7 +682,7 @@ pub fn lan_sync_stop() {
     let server = lock_server().take();
     if let Some(server) = server {
         server.stop();
-        crate::append_log("局域网同步已停止");
+        crate::log_info("sync", "局域网同步已停止");
     }
 }
 

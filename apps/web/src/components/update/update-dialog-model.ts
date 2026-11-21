@@ -1,4 +1,4 @@
-import { fail } from '../../copy/zh.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 import type { UpdatePlan } from '../../lib/update-download.ts';
 import type { UpdateTask, UpdateTaskStatus } from '../../lib/update-task.ts';
 
@@ -34,18 +34,13 @@ export interface UpdateDialogView {
 }
 
 /** 主操作固定叫「立即更新」：不再让用户先选下载、再选安装。 */
-export const PRIMARY_LABEL: Record<Exclude<UpdatePrimaryKind, 'none'>, string> = {
-  update: '立即更新',
-  install: '安装更新',
-  refresh: '立即更新',
-  'download-web': '立即更新',
-};
+export const PRIMARY_LABEL: Record<Exclude<UpdatePrimaryKind, 'none'>, string> = updateDialogCopy.primary;
 
 /** 便携版就绪时的文案：说明点完会退出并自动替换，避免用户以为会弹安装向导。 */
-export const PORTABLE_INSTALL_LABEL = '继续更新并退出';
+export const PORTABLE_INSTALL_LABEL: string = updateDialogCopy.portableInstall;
 
 /** 下载完成自动进入安装：状态行直接说「正在安装」，不再让用户找安装按钮。 */
-export const INSTALLING_TEXT = '正在安装更新，请稍候…';
+export const INSTALLING_TEXT: string = updateDialogCopy.installing;
 
 function primaryLabelOf(kind: UpdatePrimaryKind, installKind: InstallKind | null): string {
   if (kind === 'none') return '';
@@ -66,8 +61,8 @@ interface TaskView {
 
 /** 已失败：授权类问题原样给原因，其余拼成「下载更新失败：…。请稍后重试」。 */
 function failureText(task: UpdateTask): string {
-  if (task.needsPermission) return task.error ?? '请允许安装未知应用后重试';
-  return fail('下载更新', task.error, '请稍后重试');
+  if (task.needsPermission) return task.error ?? updateDialogCopy.allowUnknownApps;
+  return updateDialogCopy.downloadFailed(task.error);
 }
 
 /** 任务状态表：主按钮与可见动作都在这里，`idle` 表示没有匹配的任务，不参与查表。 */
@@ -91,7 +86,7 @@ const TASK_RULES: Record<Exclude<UpdateTaskStatus, 'idle'>, TaskView> = {
     showLater: false,
     showProgress: true,
     tone: 'muted',
-    statusText: (task) => task.message ?? '正在校验安装包…',
+    statusText: (task) => task.message ?? updateDialogCopy.verifying,
   },
   ready: {
     primaryKind: 'install',
@@ -101,7 +96,7 @@ const TASK_RULES: Record<Exclude<UpdateTaskStatus, 'idle'>, TaskView> = {
     showLater: true,
     showProgress: false,
     tone: 'success',
-    statusText: (task) => task.message ?? '安装包已就绪',
+    statusText: (task) => task.message ?? updateDialogCopy.ready,
   },
   failed: {
     primaryKind: 'update',
@@ -121,7 +116,7 @@ const TASK_RULES: Record<Exclude<UpdateTaskStatus, 'idle'>, TaskView> = {
     showLater: true,
     showProgress: false,
     tone: 'muted',
-    statusText: () => '已取消下载，点「立即更新」重新开始',
+    statusText: () => updateDialogCopy.cancelled,
   },
 };
 
@@ -140,7 +135,7 @@ function viewFromTask(task: UpdateTask): UpdateDialogView {
     showMore: !installedReady,
     showLater: rule.showLater,
     showProgress: rule.showProgress,
-    statusText: installedReady ? (task.message ?? '更新已准备，请按提示完成') : rule.statusText(task),
+    statusText: installedReady ? (task.message ?? updateDialogCopy.installedReady) : rule.statusText(task),
     tone: rule.tone,
   };
 }
@@ -206,9 +201,7 @@ export function describeUpdateDialog({
       primaryKind: downloadWeb ? 'download-web' : 'refresh',
       primaryLabel: PRIMARY_LABEL.update,
       showBackground: false,
-      statusText: downloadWeb
-        ? '点击「立即更新」直接下载 Web 版安装包'
-        : '新版本已发布，点击「立即更新」刷新页面后生效',
+      statusText: downloadWeb ? updateDialogCopy.webDownloadHint : updateDialogCopy.webRefreshHint,
     };
   }
   if (plan.kind === 'unavailable') {
@@ -220,8 +213,6 @@ export function describeUpdateDialog({
     primaryLabel: primaryLabelOf('update', installKind),
     // 便携版：提前说清楚下载完成后会自动退出替换，不用再点安装
     statusText:
-      installKind === 'portable'
-        ? '下载并校验通过后会自动退出应用完成替换，随后重新启动'
-        : '下载并校验通过后会自动开始安装',
+      installKind === 'portable' ? updateDialogCopy.portableHint : updateDialogCopy.installerHint,
   };
 }

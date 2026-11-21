@@ -4,6 +4,7 @@ import { invokeNative } from './lib/native.ts';
 import { loadPlugin, type LanSyncPlugin } from './lib/plugins.ts';
 import { logWarn } from './log.ts';
 import { isLanAddress } from './lan-sync-protocol.ts';
+import { lanSyncCopy } from './copy/sync-lan.ts';
 
 /**
  * 局域网多网络识别（桌面 / 安卓）：候选排序、默认选择与界面文案。
@@ -53,9 +54,9 @@ export const LAN_HOST_STORAGE_KEY = 'dt.lan.host';
 
 export const LAN_KIND_LABEL: Record<LanNetworkKind, string> = {
   wifi: 'Wi-Fi',
-  ethernet: '有线网络',
+  ethernet: lanSyncCopy.kindEthernet,
   vpn: 'VPN',
-  other: '其他',
+  other: lanSyncCopy.kindOther,
 };
 
 const KIND_TIER: Record<LanNetworkKind, number> = {
@@ -136,23 +137,20 @@ export function formatLanNetworkLabel(network: LanNetwork): string {
 
 /** 「网络：192.168.1.23 · Wi-Fi」：设备页上的一行。 */
 export function formatLanNetworkLine(network: LanNetwork): string {
-  return `网络：${formatLanNetworkLabel(network)}`;
+  return lanSyncCopy.networkLine(formatLanNetworkLabel(network));
 }
 
 /** 没有候选地址时的默认文案：不知道网络状态（桌面 / 旧版本原生层）时继续用它。 */
-export const LAN_NETWORK_EMPTY_HINT = '未发现局域网地址：请确认已连接 Wi-Fi/热点';
+export const LAN_NETWORK_EMPTY_HINT = lanSyncCopy.networkEmpty;
 
 /** 有 Wi-Fi 但没有 IPv4：最常见的真机问题（Wi-Fi 只分到 IPv6 或 DHCP 没给地址）。 */
-export const LAN_NETWORK_WIFI_IPV6_HINT =
-  '已连接 Wi-Fi，但没有拿到 IPv4 地址（可能是仅 IPv6 网络），请尝试重新连接 Wi-Fi';
+export const LAN_NETWORK_WIFI_IPV6_HINT = lanSyncCopy.networkWifiNoIpv4;
 
 /** 有线同理：有线只拿到 IPv6 时给出与 Wi-Fi 不同的可操作建议。 */
-export const LAN_NETWORK_ETHERNET_IPV6_HINT =
-  '已连接有线网络，但没有拿到 IPv4 地址（可能是仅 IPv6 网络），请检查网线或路由器的 DHCP';
+export const LAN_NETWORK_ETHERNET_IPV6_HINT = lanSyncCopy.networkEthernetNoIpv4;
 
 /** 只有移动数据：开配对必须与对方在同一 Wi-Fi / 局域网。 */
-export const LAN_NETWORK_MOBILE_HINT =
-  '当前没有 Wi-Fi/有线连接：开配对需要两台设备在同一 Wi-Fi，请先连接';
+export const LAN_NETWORK_MOBILE_HINT = lanSyncCopy.networkMobileOnly;
 
 /**
  * 空态文案：先看原生报告的当前传输类型，再看有没有候选 IPv4。
@@ -184,29 +182,33 @@ export interface LanNetworkDiagnosticsInput {
 }
 
 export function formatLanNetworkDiagnostics(input: LanNetworkDiagnosticsInput): string {
-  const yes = (value: boolean): string => (value ? '是' : '否');
-  const lines: string[] = ['晓刻局域网诊断'];
-  lines.push(`候选 IPv4：${input.networks.length} 个`);
+  const yes = (value: boolean): string => (value ? lanSyncCopy.diagYes : lanSyncCopy.diagNo);
+  const lines: string[] = [lanSyncCopy.diagTitle];
+  lines.push(lanSyncCopy.diagCandidates(input.networks.length));
   if (input.networks.length === 0) {
-    lines.push('候选列表：（空）');
+    lines.push(lanSyncCopy.diagCandidatesEmpty);
   } else {
     for (const network of input.networks) {
-      const flag = network.isLan ? '' : '（非局域网）';
+      const flag = network.isLan ? '' : lanSyncCopy.diagNotLan;
       lines.push(`- ${network.address} / ${network.name} / ${network.kind}${flag}`);
     }
   }
   if (input.status === null) {
-    lines.push('网络状态：（原生层未返回）');
+    lines.push(lanSyncCopy.diagStatusMissing);
   } else {
     lines.push(
-      `网络状态：Wi-Fi=${yes(input.status.wifi)} 有线=${yes(input.status.ethernet)} ` +
-        `移动数据=${yes(input.status.mobile)} VPN=${yes(input.status.vpn)} ` +
-        `IPv4=${input.status.ipv4Count}`,
+      lanSyncCopy.diagStatus(
+        yes(input.status.wifi),
+        yes(input.status.ethernet),
+        yes(input.status.mobile),
+        yes(input.status.vpn),
+        input.status.ipv4Count,
+      ),
     );
-    lines.push(`网卡摘要：${input.status.interfaceSummary.trim() || '（空）'}`);
+    lines.push(lanSyncCopy.diagInterfaces(input.status.interfaceSummary.trim()));
   }
   const error = (input.error ?? '').trim();
-  if (error !== '') lines.push(`读取错误：${error}`);
+  if (error !== '') lines.push(lanSyncCopy.diagError(error));
   return lines.join('\n');
 }
 
@@ -369,8 +371,8 @@ export async function readLanNetworks(): Promise<LanNetworkListResult> {
     try {
       return { ...parseLanNetworkResult(await listOverride()), error: null };
     } catch (cause: unknown) {
-      const message = errorMessage(cause, '读取本机网络失败');
-      logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
+      const message = errorMessage(cause, lanSyncCopy.networkReadFailed);
+      logWarn('sync', '本机网络读取失败', { message, raw: String(cause) });
       return { networks: [], status: null, error: message };
     }
   }
@@ -384,13 +386,13 @@ export async function readLanNetworks(): Promise<LanNetworkListResult> {
     if (isAndroidApp()) {
       const plugin = await loadPlugin<LanSyncPlugin>('LanSync');
       if (plugin === null) {
-        return { networks: [], status: null, error: '没有可用的局域网插件，请重新安装应用' };
+        return { networks: [], status: null, error: lanSyncCopy.networkNoPlugin };
       }
       return { ...parseLanNetworkResult(await plugin.networks()), error: null };
     }
   } catch (cause: unknown) {
-    const message = errorMessage(cause, '读取本机网络失败');
-    logWarn('lan-sync', '读取本机网络失败', { message, raw: String(cause) });
+    const message = errorMessage(cause, lanSyncCopy.networkReadFailed);
+    logWarn('sync', '本机网络读取失败', { message, raw: String(cause) });
     return { networks: [], status: null, error: message };
   }
   return { networks: [], status: null, error: null };

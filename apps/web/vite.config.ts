@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { changelogSection } from './src/lib/changelog-section.ts';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 
@@ -17,11 +18,23 @@ function appVersion(): string {
   }
 }
 
+/** 当前版本在 CHANGELOG.md 里的那一段：更新后弹「新版本内容」用，离线也能看。 */
+function releaseNotes(version: string): string {
+  try {
+    return changelogSection(readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8'), version);
+  } catch {
+    return '';
+  }
+}
+
+const version = process.env.DT_VERSION ?? appVersion();
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   define: {
     __DT_CHANNEL__: JSON.stringify(process.env.DT_CHANNEL ?? 'dev'),
-    __DT_VERSION__: JSON.stringify(process.env.DT_VERSION ?? appVersion()),
+    __DT_VERSION__: JSON.stringify(version),
+    __DT_RELEASE_NOTES__: JSON.stringify(releaseNotes(version)),
   },
   build: {
     rollupOptions: {

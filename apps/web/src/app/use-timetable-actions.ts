@@ -5,10 +5,13 @@ import type { AdjustTarget } from '../components/adjust-dialog.tsx';
 import type { CourseFormPreset } from '../screens/course-form.tsx';
 import type { NavId } from '../components/nav.tsx';
 import { loadCourseDetail, weekDateOf, type LessonCell } from '../data.ts';
-import { logInfo, logWarn } from '../log.ts';
+import { logDebug, logWarn } from '../log.ts';
 import { toast } from '../components/ui/toaster.tsx';
 import { lessonCellOf, type DetailState } from './lesson-cell.ts';
 import type { AppSession } from './use-app-session.ts';
+import { appShellCopy } from '../copy/app-shell.ts';
+import { lessonCopy } from '../copy/timetable-lesson.ts';
+import { adjustmentEditTarget } from '../screens/timetable/lesson-adjustment.ts';
 
 /** 事件表单的种类：待办 / 考试 */
 export type EventFormKind = 'todo' | 'exam';
@@ -42,6 +45,13 @@ export interface TimetableActions {
   settingsImportSignal: number;
   /** 切到设置页并让设置页打开导入抽屉 */
   openImport: () => void;
+  /** 助手送来的课表原文：打开导入抽屉时填进粘贴框；普通打开为 null */
+  settingsImportText: string | null;
+  openImportWithText: (text: string) => void;
+  /** 设置页已打开导入抽屉：清掉请求，设置页重新挂载时不再自动打开 */
+  consumeImportRequest: () => void;
+  assistantOpen: boolean;
+  setAssistantOpen: (open: boolean) => void;
   /** 周视图空白格拖动松手：带着预填范围打开课程表单 */
   openQuickCreate: (preset: CourseFormPreset) => void;
   addActions: AddActionHandlers;
@@ -49,6 +59,8 @@ export interface TimetableActions {
   openLessonFromSchedule: (target: AdjustTarget) => Promise<void>;
   openLessonFromDay: (lesson: Occurrence) => void;
   openAdjustForLesson: (cell: LessonCell, date: string) => void;
+  /** 课程详情里的「修改调整」：带着原停课 / 调课记录打开调课弹窗，保存时替换 */
+  openAdjustEdit: (event: EventRow) => void;
   openAdjustForDrop: (cell: LessonCell, date: string, period: number) => void;
   /** 打开某条日程的详情编辑 */
   openEvent: (event: EventRow) => void;
@@ -103,10 +115,21 @@ export function useTimetableActions(input: {
     if (!open) setEditingEvent(null);
   }, []);
 
+  const [settingsImportText, setSettingsImportText] = useState<string | null>(null);
   const openImport = useCallback(() => {
+    setSettingsImportText(null);
     onNavigate('settings');
     setSettingsImportSignal((value) => value + 1);
   }, [onNavigate]);
+  const openImportWithText = useCallback(
+    (text: string) => {
+      setSettingsImportText(text);
+      onNavigate('settings');
+      setSettingsImportSignal((value) => value + 1);
+    },
+    [onNavigate],
+  );
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   /** 拖动入口的加课：预填节次与周次后打开课程表单 */
   const openQuickCreate = useCallback(
@@ -132,12 +155,12 @@ export function useTimetableActions(input: {
       if (cell.eventId !== undefined) {
         const lab = data?.labs.find((row) => row.id === cell.eventId);
         if (lab !== undefined) {
-          logInfo('timetable', '打开实验详情', { id: lab.id, title: lab.title });
+          logDebug('timetable', '打开实验详情', { id: lab.id });
           setEditingEvent(lab);
           setTodoFormOpenState(true);
           return;
         }
-        logWarn('timetable', '实验条目不存在', { id: cell.eventId });
+        logWarn('timetable', '实验条目不存在，改开课程详情', { id: cell.eventId });
       }
       const loaded = await loadCourseDetail(storage, cell.courseId);
       setDetail({ cell, detail: loaded, date: lessonDateOf(cell) });
@@ -190,6 +213,21 @@ export function useTimetableActions(input: {
     [guardWrite, data],
   );
 
+  const openAdjustEdit = useCallback(
+    (event: EventRow): void => {
+      if (!guardWrite('调课')) return;
+      const target = adjustmentEditTarget(event, data?.courses ?? []);
+      if (target === null) {
+        toast.error(lessonCopy.adjustSourceMissing);
+        return;
+      }
+      setDetail(null);
+      setAdjust(target);
+      setAdjustOpenState(true);
+    },
+    [guardWrite, data],
+  );
+
   /** 拖拽入口：落点是某天某个节次，预填进同一个调课弹窗，不再另开一个「调整课程时间」。 */
   const openAdjustForDrop = useCallback(
     (cell: LessonCell, date: string, period: number): void => {
@@ -221,7 +259,7 @@ export function useTimetableActions(input: {
       if (!guardWrite('编辑课程')) return;
       const managed = data?.courses.find((item) => item.id === id) ?? null;
       if (managed === null) {
-        toast.error('找不到这门课');
+        toast.error(appShellCopy.courseNotFound);
         return;
       }
       setEditingCourse(managed);
@@ -230,7 +268,7 @@ export function useTimetableActions(input: {
     [guardWrite, data],
   );
 
-  /** 四个新增动作的唯一实现：工具栏下拉、移动 FAB 与日程页「添加」菜单都调到同一份。 */
+  /** 「＋」菜单动作的唯一实现：工具栏下拉、移动 FAB 与日程页「添加」菜单都调到同一份。 */
   const addActions = useMemo<AddActionHandlers>(
     () => ({
       course: () => {
@@ -252,6 +290,7 @@ export function useTimetableActions(input: {
         setTodoFormOpenState(true);
       },
       import: openImport,
+      assistant: () => setAssistantOpen(true),
     }),
     [guardWrite, openImport],
   );
@@ -340,12 +379,21 @@ export function useTimetableActions(input: {
     eventFormKind,
     settingsImportSignal,
     openImport,
+    settingsImportText,
+    openImportWithText,
+    consumeImportRequest: () => {
+      setSettingsImportText(null);
+      setSettingsImportSignal(0);
+    },
+    assistantOpen,
+    setAssistantOpen,
     openQuickCreate,
     addActions,
     openLesson,
     openLessonFromSchedule,
     openLessonFromDay,
     openAdjustForLesson,
+    openAdjustEdit,
     openAdjustForDrop,
     openEvent,
     openCourseById,

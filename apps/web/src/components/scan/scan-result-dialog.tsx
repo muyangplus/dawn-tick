@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogFooter } from '../ui/dialog.tsx';
 import { StatusLine } from '../ui/status-line.tsx';
 import { toast } from '../ui/toaster.tsx';
 import { copyText } from '../../system-actions.ts';
+import { scanCopy } from '../../copy/import-scan.ts';
 
 export interface ScanResultDialogProps {
   open: boolean;
@@ -33,8 +34,8 @@ export function ScanResultDialog({ open, text, note, error, onClose, onRetry }: 
     if (value === '') return;
     const ok = await copyText(value);
     setCopied(ok ? 'ok' : 'failed');
-    if (ok) toast.success('已复制扫码内容');
-    else toast.error('复制失败，请长按选择文本复制');
+    if (ok) toast.success(scanCopy.copied);
+    else toast.error(scanCopy.copyFailed);
   }
 
   const failed = error !== null && error !== undefined && error !== '';
@@ -42,8 +43,8 @@ export function ScanResultDialog({ open, text, note, error, onClose, onRetry }: 
   return (
     <Dialog open={open} onOpenChange={(value) => { if (!value) onClose(); }}>
       <DialogContent
-        title={failed ? '扫码没有成功' : '扫码结果'}
-        description={failed ? '可以重试，或改用粘贴 / 手输' : '识别到的内容保留在这里，可复制后自行使用'}
+        title={failed ? scanCopy.failedTitle : scanCopy.resultTitle}
+        description={failed ? scanCopy.failedDescription : scanCopy.resultDescription}
         data-role="scan-result"
       >
         {failed ? (
@@ -65,35 +66,35 @@ export function ScanResultDialog({ open, text, note, error, onClose, onRetry }: 
             )}
             {copied === 'failed' && (
               <StatusLine dataRole="scan-result-copy-state" tone="danger">
-                复制失败，请长按选择文本复制
+                {scanCopy.copyFailed}
               </StatusLine>
             )}
             {copied === 'ok' && (
               <StatusLine dataRole="scan-result-copy-state" tone="success">
-                已复制
+                {scanCopy.copiedShort}
               </StatusLine>
             )}
           </>
         )}
         <DialogFooter>
           {failed && onRetry !== undefined && (
-            <Button size="sm" variant="secondary" aria-label="重新扫码" onClick={onRetry}>
-              重新扫码
+            <Button size="sm" variant="secondary" aria-label={scanCopy.retryAria} onClick={onRetry}>
+              {scanCopy.retry}
             </Button>
           )}
           {!failed && (
             <Button
               size="sm"
               variant="secondary"
-              aria-label="复制扫码内容"
+              aria-label={scanCopy.copyAria}
               disabled={text === undefined || text === ''}
               onClick={() => void copy()}
             >
-              复制内容
+              {scanCopy.copy}
             </Button>
           )}
-          <Button size="sm" variant="ghost" aria-label="关闭扫码结果" onClick={onClose}>
-            关闭
+          <Button size="sm" variant="ghost" aria-label={scanCopy.closeAria} onClick={onClose}>
+            {scanCopy.close}
           </Button>
         </DialogFooter>
       </DialogContent>

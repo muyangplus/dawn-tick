@@ -94,14 +94,14 @@ test('错误输入给出可读原因', () => {
   assert.match(errorOf(''), /配对信息为空/);
   assert.match(errorOf('随便写的东西'), /无法识别配对信息/);
   assert.match(errorOf('dawn-tick://pair?schema=2&host=192.168.1.23&port=8765&code=123456'), /版本 2 不受支持/);
-  assert.match(errorOf('dawn-tick://pair?schema=1&port=8765&code=123456'), /没有对方地址/);
-  assert.match(errorOf('dawn-tick://pair?schema=1&host=192.168.1.23&port=8765'), /没有配对码/);
-  assert.match(errorOf('dawn-tick://pair?schema=1&host=192.168.1.23&port=0&code=123456'), /端口不正确/);
+  assert.match(errorOf('dawn-tick://pair?schema=1&port=8765&code=123456'), /缺少对方地址/);
+  assert.match(errorOf('dawn-tick://pair?schema=1&host=192.168.1.23&port=8765'), /缺少配对码/);
+  assert.match(errorOf('dawn-tick://pair?schema=1&host=192.168.1.23&port=0&code=123456'), /端口无效/);
   assert.match(errorOf('dawn-tick://pair?schema=1&host=192.168.1.23&port=8765&code=12345'), /6 位数字/);
   assert.match(errorOf('192.168.1.23:8765 12345'), /6 位数字/);
   assert.match(errorOf('8.8.8.8:8765 123456'), /不是局域网 IPv4/);
   assert.match(errorOf('example.com:8765 123456'), /无法识别配对信息/);
-  assert.match(errorOf('192.168.1.23:8765'), /没有配对码/);
+  assert.match(errorOf('192.168.1.23:8765'), /缺少配对码/);
 });
 
 test('设备名去空白、限长，避免二维码溢出', () => {

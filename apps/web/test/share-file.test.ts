@@ -34,7 +34,7 @@ test('分享文件：没有学期时不导出，空库导入给可读错误', as
   const empty = new MemoryStorage();
   assert.equal(await exportActiveShare(empty, NOW), null);
   const exported = await exportActiveShare(await seeded('A'), NOW);
-  await assert.rejects(importShareText(empty, exported!.text, NOW), /先创建一个学期/);
+  await assert.rejects(importShareText(empty, exported!.text, NOW), /请先创建学期/);
 });
 
 test('分享文件识别与文件名', () => {

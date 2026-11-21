@@ -17,15 +17,10 @@ import {
 } from '@dawn-tick/core';
 import { type HolidayContext, weeksOf } from './context.ts';
 import { type LessonCell } from './types.ts';
+import { formatCopy } from '../copy/format.ts';
 
 /** 课表里条目的角标文案。 */
-const EVENT_LABEL: Record<string, string> = {
-  lab: '实验',
-  homework: '作业',
-  exam: '考试',
-  todo: '日程',
-  temp: '日程',
-};
+const EVENT_LABEL: Record<string, string> = formatCopy.eventBadge;
 
 /** 一条调课的落点 */
 interface MoveIn {
@@ -35,6 +30,8 @@ interface MoveIn {
   periodStart: number;
   periodEnd: number;
   room: string | null;
+  /** 这条调课记录的 id：落点格据此找回记录做修改与删除 */
+  eventId: string;
 }
 
 /** 网格输入：都是已读出的行，函数本身不读 storage。 */
@@ -69,19 +66,20 @@ export function buildGrid(input: GridInput): GridResult {
   const semesterEvents = events.filter((row) => row.deleted_at === null && row.semester_id === semester.id);
   const holidayDates = holidays.holidayDates;
   // 停课与调课都按「排课 + 那天」记录：停课的格子灰显，调课的格子标出原位置与落点
-  const cancelledKeys = new Set<string>();
-  const movedOutKeys = new Set<string>();
+  // 值是停课/调课记录的 id：课表单击时据此找回记录做修改与删除
+  const cancelledKeys = new Map<string, string>();
+  const movedOutKeys = new Map<string, string>();
   const movedIn: MoveIn[] = [];
   for (const row of semesterEvents) {
     if (row.type !== 'reschedule' || row.ref_schedule_id === null) continue;
     const date = row.on_date;
     if (typeof date !== 'string') continue;
     if (row.action === 'cancel') {
-      cancelledKeys.add(`${row.ref_schedule_id}|${date}`);
+      cancelledKeys.set(`${row.ref_schedule_id}|${date}`, row.id);
       continue;
     }
     if (row.action !== 'move' || row.new_date === null) continue;
-    movedOutKeys.add(`${row.ref_schedule_id}|${date}`);
+    movedOutKeys.set(`${row.ref_schedule_id}|${date}`, row.id);
     movedIn.push({
       scheduleId: row.ref_schedule_id,
       newDate: row.new_date,
@@ -89,6 +87,7 @@ export function buildGrid(input: GridInput): GridResult {
       periodStart: row.new_period_start ?? 1,
       periodEnd: row.new_period_end ?? row.new_period_start ?? 1,
       room: row.new_room,
+      eventId: row.id,
     });
   }
   const grid = new Map<string, LessonCell[]>();
@@ -104,11 +103,17 @@ export function buildGrid(input: GridInput): GridResult {
     date: string;
     inWeek: boolean;
     movedIn?: boolean;
+    /** 落点格的调课记录 id */
+    moveEventId?: string;
     customStart?: string | null;
     customEnd?: string | null;
   }): LessonCell => {
     const course = courseById.get(cell.courseId);
     const date = cell.date;
+    const key = `${cell.scheduleId}|${date}`;
+    const cancelledId = cell.inWeek ? cancelledKeys.get(key) : undefined;
+    const movedOutId = cell.inWeek ? movedOutKeys.get(key) : undefined;
+    const adjustId = cell.movedIn === true ? cell.moveEventId : (cancelledId ?? movedOutId);
     return {
       scheduleId: cell.scheduleId,
       courseId: cell.courseId,
@@ -124,9 +129,10 @@ export function buildGrid(input: GridInput): GridResult {
       endTime: slotByPeriod.get(cell.periodEnd)?.end_time ?? '',
       inWeek: cell.inWeek,
       holiday: holidayDates.has(date),
-      cancelled: cell.inWeek && cancelledKeys.has(`${cell.scheduleId}|${date}`),
-      movedOut: cell.inWeek && movedOutKeys.has(`${cell.scheduleId}|${date}`),
+      cancelled: cancelledId !== undefined,
+      movedOut: movedOutId !== undefined,
       movedIn: cell.movedIn === true,
+      ...(adjustId === undefined ? {} : { adjustId }),
       lab: false,
       customStart: cell.customStart ?? null,
       customEnd: cell.customEnd ?? null,
@@ -202,6 +208,7 @@ export function buildGrid(input: GridInput): GridResult {
         date: move.newDate,
         inWeek: true,
         movedIn: true,
+        moveEventId: move.eventId,
       }),
     );
     grid.set(key, list);
@@ -257,7 +264,7 @@ export function buildGrid(input: GridInput): GridResult {
         movedOut: false,
         movedIn: false,
         lab: true,
-        eventLabel: EVENT_LABEL[entry.type] ?? '日程',
+        eventLabel: EVENT_LABEL[entry.type] ?? formatCopy.eventBadgeFallback,
         courseLabel: entry.subject === null ? null : courseById.get(entry.subject)?.name ?? null,
         eventId: entry.id,
         customStart: clockStart,

@@ -64,7 +64,7 @@
 - `lan_sync_start({host, deviceId?})` / `LanSync.start({host, deviceId?})` 的 `host` 只决定对外展示/广播地址，
   `deviceId` 是本机稳定设备 id（见 §3.3），缺省时广播不带该字段（旧版本行为）；
   缺省或该地址已不在本机网卡上时回退 `LanNetworks.preferredAddress()`（通配绑定）。
-  安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 另有 **8 秒超时**。失败文案统一为
+  安卓在 `start` 里另有 **10 秒看门狗**；TS 对 `start` 同样是 **10 秒超时**。失败文案统一为
   `开启配对失败：<异常类: message>`，设备页提供「重试」。
 - 发现使用 **UDP 8766**（`LAN_DISCOVERY_PORT`）；广播目标是选中地址**所属网段的广播地址**
   （桌面按 `ipconfig` 的子网掩码计算，Android 取 `InterfaceAddress.broadcast`），
@@ -413,7 +413,7 @@ Windows 开着系统代理时，`@tauri-apps/plugin-http` 会套用系统代理�
 | `apps/web/test/scan.test.ts` | 通用扫码：pair / text / 未知 scheme 解析、扫码桩取消与不可用原因 |
 | `apps/web/test/lan-pairings.test.ts` | 配对记录持久化（meta/localStorage）、自动重连状态机、探测分支 |
 | `apps/web/test/lan-sync-network.test.ts` | 网段优先级、候选排序与默认选择、切换地址、文案、`status` 归一 / 空态分支 / 诊断文本与 `dt.lan.host` |
-| `apps/web/test/lan-sync-start.test.ts` | 选中地址透传、8 秒超时、原生异常透传与「重试」文案 |
+| `apps/web/test/lan-sync-start.test.ts` | 选中地址透传、10 秒超时、原生异常透传与「重试」文案 |
 | `apps/web/test/lan-sync-http.test.ts` | 桌面走 `lan_http_request`、Android CapacitorHttp、失败回退 fetch |
 | `apps/web/test/lan-sync-discovery.test.ts` | 发现包编解码、去重、超时、Web 端不发现 |
 | `apps/web/test/lan-sync-preview.test.ts` | 预览统计口径、只读、确认后合并 |

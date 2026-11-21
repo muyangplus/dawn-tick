@@ -19,12 +19,13 @@ import { Button } from './ui/button.tsx';
 import { Select, SelectContent, SelectItem, SelectTrigger } from './ui/controls.tsx';
 import { ExternalLink } from './ui/external-link.tsx';
 import { Input } from './ui/input.tsx';
+import { schoolCopy } from '../copy/timetable-school.ts';
 
 /** 地区下拉里「全部地区」的哨兵值：Radix Select 不接受空字符串。 */
 const ALL_PROVINCES = '__all__';
 
 /** 上次选过的学校置顶成这一组。 */
-const RECENT_SCHOOL_GROUP = '最近使用';
+const RECENT_SCHOOL_GROUP = schoolCopy.recentGroup;
 
 export interface SchoolPickerProps {
   /** 预设上下文（决定徽标与版本号）；null 表示还在读取中 */
@@ -48,8 +49,8 @@ export function SchoolPicker({
   onPick,
   selectedId = null,
   pinned = null,
-  searchLabel = '搜索学校',
-  placeholder = '校名 / 简称 / 拼音',
+  searchLabel = schoolCopy.searchLabel,
+  placeholder = schoolCopy.searchPlaceholder,
   listClassName = 'max-h-72',
   className,
 }: SchoolPickerProps) {
@@ -137,18 +138,18 @@ export function SchoolPicker({
         <Button
           size="sm"
           variant={tag === null ? 'primary' : 'secondary'}
-          aria-label="筛选 全部"
+          aria-label={schoolCopy.filterAllAria}
           aria-pressed={tag === null}
           onClick={() => setTag(null)}
         >
-          全部
+          {schoolCopy.filterAll}
         </Button>
         {primaryTags.map((item) => (
           <Button
             key={item}
             size="sm"
             variant={tag === item ? 'primary' : 'secondary'}
-            aria-label={`筛选 ${item}`}
+            aria-label={schoolCopy.filterAria(item)}
             aria-pressed={tag === item}
             onClick={() => setTag(tag === item ? null : item)}
           >
@@ -158,18 +159,18 @@ export function SchoolPicker({
         <Button
           size="sm"
           variant="ghost"
-          aria-label="更多标签"
+          aria-label={schoolCopy.moreTagsAria}
           aria-expanded={moreTagsOpen}
           onClick={() => setMoreTagsOpen((open) => !open)}
         >
-          {moreTagsOpen ? '收起标签' : `更多标签（${foldedTags.length}）`}
+          {moreTagsOpen ? schoolCopy.collapseTags : schoolCopy.moreTags(foldedTags.length)}
         </Button>
         <Select value={province ?? ALL_PROVINCES} onValueChange={(value) => setProvince(value === ALL_PROVINCES ? null : value)}>
-          <SelectTrigger aria-label="地区" className="w-32">
-            {province ?? '全部地区'}
+          <SelectTrigger aria-label={schoolCopy.provinceAria} className="w-32">
+            {province ?? schoolCopy.allProvinces}
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ALL_PROVINCES}>全部地区</SelectItem>
+            <SelectItem value={ALL_PROVINCES}>{schoolCopy.allProvinces}</SelectItem>
             {provinceOptions().map((item) => (
               <SelectItem key={item} value={item}>
                 {item}
@@ -186,7 +187,7 @@ export function SchoolPicker({
               key={item}
               size="sm"
               variant={tag === item ? 'primary' : 'secondary'}
-              aria-label={`筛选 ${item}`}
+              aria-label={schoolCopy.filterAria(item)}
               aria-pressed={tag === item}
               onClick={() => setTag(tag === item ? null : item)}
             >
@@ -197,21 +198,18 @@ export function SchoolPicker({
       )}
 
       <span className="text-xs text-muted" data-role="school-count">
-        共 {results.length} 所
-        {hidden > 0 ? ` · 仅显示前 ${flat.length} 所` : ''}
-        {tag === null ? '' : ` · 筛选 ${tag}`}
-        {province === null ? '' : ` · ${province}`}
+        {schoolCopy.resultCount(results.length, hidden > 0 ? flat.length : null, tag, province)}
       </span>
 
       <div
         id={listId}
         role="listbox"
-        aria-label={`${searchLabel}结果`}
+        aria-label={schoolCopy.resultsAria(searchLabel)}
         className={cn('flex flex-col overflow-y-auto rounded-md border border-line', listClassName)}
       >
         {flat.length === 0 && (
           <div data-role="school-empty" className="p-3 text-sm text-muted">
-            没有匹配的学校，请调整关键词（校名、简称、拼音首字母均可）
+            {schoolCopy.noMatch}
           </div>
         )}
         {groups.map((group) => (
@@ -237,7 +235,7 @@ export function SchoolPicker({
                   data-school-id={school.id}
                   data-adapted={info.adapted ? 'true' : 'false'}
                   data-picked={picked ? 'true' : 'false'}
-                  aria-label={`${school.name}${subtitle === '' ? '' : `，${subtitle}`}，${badge}`}
+                  aria-label={schoolCopy.rowAria(school.name, subtitle, badge)}
                   className={cn(
                     'flex min-h-tap cursor-pointer items-center justify-between gap-2 px-3 py-1',
                     index === active && 'bg-surface-muted',
@@ -251,7 +249,7 @@ export function SchoolPicker({
                     {subtitle !== '' && <span className="truncate text-xs text-muted">{subtitle}</span>}
                   </span>
                   <span className="flex shrink-0 items-center gap-2">
-                    {picked && <span className="text-xs text-primary-strong">已选</span>}
+                    {picked && <span className="text-xs text-primary-strong">{schoolCopy.picked}</span>}
                     <span
                       data-role="school-badge"
                       title={info.reason}
@@ -263,10 +261,10 @@ export function SchoolPicker({
                       <ExternalLink
                         dataRole="request-school"
                         href={requestSchoolUrl(school.name)}
-                        ariaLabel={`请求适配 ${school.name}`}
+                        ariaLabel={schoolCopy.requestAdapterAria(school.name)}
                         className="text-xs text-primary-strong underline-offset-4 hover:underline"
                       >
-                        请求适配
+                        {schoolCopy.requestAdapter}
                       </ExternalLink>
                     )}
                   </span>
@@ -280,20 +278,20 @@ export function SchoolPicker({
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
         <span className="text-xs text-muted">
           {context === null
-            ? '正在读取预设…'
+            ? schoolCopy.presetLoading
             : context.problem !== null
-              ? `预设索引不可用：${context.problem}`
-              : `预设 ${context.version} · 已适配=有解析脚本`}
+              ? schoolCopy.presetUnavailable(context.problem)
+              : schoolCopy.presetFooter(context.version)}
         </span>
         <span className="flex items-center gap-1 text-xs text-muted">
-          找不到你的学校？
+          {schoolCopy.notFound}
           <ExternalLink
             dataRole="request-school-form"
             href={requestSchoolUrl()}
-            ariaLabel="提交学校信息"
+            ariaLabel={schoolCopy.submitSchool}
             className="text-primary-strong underline-offset-4 hover:underline"
           >
-            提交学校信息
+            {schoolCopy.submitSchool}
           </ExternalLink>
         </span>
       </div>

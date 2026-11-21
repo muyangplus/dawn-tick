@@ -61,7 +61,7 @@ pub(crate) fn safe_backup_name(name: &str) -> Result<String, String> {
         || !trimmed.starts_with("dawn-tick-")
         || !trimmed.ends_with(".db")
     {
-        return Err("快照名不合法".to_string());
+        return Err(copy::backup::INVALID_NAME.to_string());
     }
     Ok(trimmed.to_string())
 }
@@ -137,7 +137,7 @@ pub fn delete_backup(name: String) -> Result<(), String> {
     let safe = safe_backup_name(&name)?;
     let path = backups_dir().join(&safe);
     std::fs::remove_file(&path).map_err(|error| format!("删除快照失败: {error}"))?;
-    append_log(&format!("已删除快照: {safe}"));
+    log_info("backup", format!("已删除快照 name={safe}"));
     Ok(())
 }
 
@@ -152,7 +152,7 @@ pub fn prune_backups(keep: usize) -> Result<usize, String> {
         }
     }
     if removed > 0 {
-        append_log(&format!("已按保留份数清理 {removed} 份快照"));
+        log_info("backup", format!("已按保留份数清理快照 count={removed}"));
     }
     Ok(removed)
 }
@@ -163,19 +163,19 @@ pub async fn restore_backup(name: String) -> Result<String, String> {
     let safe = safe_backup_name(&name)?;
     let source = backups_dir().join(&safe);
     if !source.is_file() {
-        return Err("快照不存在".to_string());
+        return Err(copy::backup::NOT_FOUND.to_string());
     }
     let bytes = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
     if bytes == 0 {
-        return Err("快照是空文件，无法恢复".to_string());
+        return Err(copy::backup::EMPTY.to_string());
     }
     if !database_healthy_async(&source).await {
-        return Err("快照已损坏，无法恢复".to_string());
+        return Err(copy::backup::CORRUPT.to_string());
     }
     write_json(&pending_restore_file(), &PendingRestore { name: safe.clone() })
         .then_some(())
-        .ok_or_else(|| "写入恢复请求失败".to_string())?;
-    append_log(&format!("已排队恢复快照: {safe}"));
+        .ok_or_else(|| copy::backup::QUEUE_FAILED.to_string())?;
+    log_info("backup", format!("快照恢复已排队，重启后套用 name={safe}"));
     Ok(safe)
 }
 
@@ -187,29 +187,29 @@ pub(crate) fn apply_pending_restore() {
     };
     let _ = std::fs::remove_file(&marker);
     let Ok(safe) = safe_backup_name(&pending.name) else {
-        append_log("恢复请求里的快照名不合法，已忽略");
+        log_error("backup", "恢复请求的快照名不合法，已忽略");
         return;
     };
     let source = backups_dir().join(&safe);
     if !source.is_file() {
-        append_log(&format!("恢复请求的快照不存在，已忽略: {safe}"));
+        log_error("backup", format!("恢复请求的快照不存在，已忽略 name={safe}"));
         return;
     }
     let bytes = std::fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
     if bytes == 0 {
-        append_log(&format!("恢复请求的快照是空文件，已忽略: {safe}"));
+        log_error("backup", format!("恢复请求的快照是空文件，已忽略 name={safe}"));
         return;
     }
     if !database_healthy(&source) {
-        append_log(&format!("恢复请求的快照未通过自检，已忽略: {safe}"));
+        log_error("backup", format!("恢复请求的快照未通过自检，已忽略 name={safe}"));
         return;
     }
     let dir = data_dir();
     let _ = create_dir_all(&dir);
     let stamp = local_stamp(now_ms());
     match replace_database_with(&dir, &source, &stamp) {
-        Ok(bytes) => append_log(&format!("已套用快照 {safe}（{bytes} 字节），原库留存为 .pre-restore-{stamp}")),
-        Err(error) => append_log(&format!("套用快照失败，原库未改动: {error}")),
+        Ok(bytes) => log_info("backup", format!("已套用快照 name={safe} bytes={bytes} kept=.pre-restore-{stamp}")),
+        Err(error) => log_error("backup", format!("快照套用失败，原库未改动 name={safe} error={error}")),
     }
 }
 
@@ -357,14 +357,26 @@ pub(crate) fn repair_database(dir: &std::path::Path) -> Option<String> {
     let stamp = local_stamp(now_ms());
     let saved = match move_corrupt_aside(dir, &stamp) {
         Ok(saved) => saved,
-        Err(error) => return Some(format!("数据库损坏，暂时无法留存原文件（{error}），重启后再试")),
+        Err(error) => {
+            log_error("storage", format!("数据库损坏，原文件留存失败 error={error}"));
+            return Some(copy::backup::repair_keep_failed(&error));
+        }
     };
     match newest_healthy_snapshot(&dir.join("backups")) {
         Some((name, path)) => match std::fs::copy(&path, &db) {
-            Ok(_) => Some(format!("数据库损坏，已留存 {saved}，并用快照 {name} 恢复")),
-            Err(error) => Some(format!("数据库损坏，已留存 {saved}，恢复快照失败（{error}）")),
+            Ok(_) => {
+                log_warn("storage", format!("数据库损坏，已用快照恢复 kept={saved} snapshot={name}"));
+                Some(copy::backup::repaired(&name, &saved))
+            }
+            Err(error) => {
+                log_error("storage", format!("数据库损坏，快照复制失败 kept={saved} snapshot={name} error={error}"));
+                Some(copy::backup::repair_copy_failed(&error, &saved))
+            }
         },
-        None => Some(format!("数据库损坏，已留存 {saved}，未找到可用快照")),
+        None => {
+            log_error("storage", format!("数据库损坏，没有可用快照 kept={saved}"));
+            Some(copy::backup::repair_no_snapshot(&saved))
+        }
     }
 }
 
@@ -388,10 +400,5 @@ pub fn recovery_notice() -> Option<String> {
 /// 让插件在新进程里打开恢复后的库。命令本身在数据目录里完成，不依赖任何连接。
 #[tauri::command]
 pub async fn recover_database() -> recover::RecoverOutcome {
-    let outcome = recover::recover(&data_dir(), false).await;
-    append_log(&format!(
-        "运行中数据库恢复: recovered={} snapshot={:?} reason={:?}",
-        outcome.recovered, outcome.snapshot, outcome.reason
-    ));
-    outcome
+    recover::recover(&data_dir(), false).await
 }

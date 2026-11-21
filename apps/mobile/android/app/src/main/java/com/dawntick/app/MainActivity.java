@@ -30,7 +30,6 @@ public class MainActivity extends BridgeActivity {
         "ReminderActions",
         "SecretStore",
     };
-    private static final String TAG = "startup";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -66,12 +65,13 @@ public class MainActivity extends BridgeActivity {
                     : info.versionCode;
             NativeLog.info(
                     this,
-                    TAG,
-                    "启动 版本=" + info.versionName + " (" + versionCode + ") SDK=" + Build.VERSION.SDK_INT
+                    "app",
+                    "MainActivity 应用已启动 version=" + info.versionName + " versionCode=" + versionCode
+                            + " sdk=" + Build.VERSION.SDK_INT
             );
             Bridge bridge = getBridge();
             if (bridge == null) {
-                NativeLog.warn(this, TAG, "Bridge 为空，插件自检跳过");
+                NativeLog.warn(this, "app", "MainActivity Bridge 为空，已跳过插件自检");
                 return;
             }
             StringBuilder ready = new StringBuilder();
@@ -85,13 +85,14 @@ public class MainActivity extends BridgeActivity {
                     ready.append(name);
                 }
             }
-            NativeLog.info(
-                    this,
-                    TAG,
-                    "插件自检 已注册=" + ready + " 缺失=" + (missing.length() == 0 ? "无" : missing)
-            );
+            if (missing.length() == 0) {
+                NativeLog.debug(this, "app", "MainActivity 插件自检通过 ready=" + ready);
+            } else {
+                // 缺插件时对应功能在界面上全部失效
+                NativeLog.error(this, "app", "MainActivity 插件未注册 missing=" + missing + " ready=" + ready);
+            }
         } catch (Throwable error) {
-            NativeLog.error(this, TAG, "启动自检失败", error);
+            NativeLog.warn(this, "app", "MainActivity 启动自检失败", error);
         }
     }
 }

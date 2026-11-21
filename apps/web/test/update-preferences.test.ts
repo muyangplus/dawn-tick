@@ -98,6 +98,24 @@ test('shouldPrompt：忽略只压制被忽略的那个版本', () => {
   assert.equal(shouldPrompt({ remote: null, current: '0.5.0', ignored: null }), false, '没查到版本不提示');
 });
 
+test('shouldPrompt：dev 构建按时间戳判断新旧与忽略', () => {
+  assert.equal(
+    shouldPrompt({ remote: '0.8.0.202611200803', current: '0.8.0.202611190000', ignored: null }),
+    true,
+    '同基础版本的更新构建照常提示',
+  );
+  assert.equal(
+    shouldPrompt({ remote: '0.8.0.202611200803', current: '0.8.0.202611190000', ignored: '0.8.0.202611200803' }),
+    false,
+    '被忽略的那次构建不提示',
+  );
+  assert.equal(
+    shouldPrompt({ remote: '0.8.0.202611200803', current: '0.8.0.202611180000', ignored: '0.8.0.202611190000' }),
+    true,
+    '忽略的是更早的构建时照常提示',
+  );
+});
+
 test('isIgnoredVersion：版本比较容忍 v 前缀与空白', () => {
   assert.equal(isIgnoredVersion('v0.5.0', ' 0.5.0'), true);
   assert.equal(isIgnoredVersion('0.5.1', '0.5.0'), false);

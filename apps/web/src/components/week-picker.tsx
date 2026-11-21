@@ -2,6 +2,7 @@ import { maskToWeeks, parityMask } from '@dawn-tick/core';
 import { Button } from './ui/button.tsx';
 import { Field } from './ui/input.tsx';
 import { cn } from '../lib/cn.ts';
+import { weekPickerCopy } from '../copy/timetable-week-picker.ts';
 
 /** 总周次内的全部周次。 */
 function allWeeks(total: number): number[] {
@@ -38,10 +39,10 @@ export function WeekPicker({
   const shortcuts =
     showShortcuts && totalWeeks > 0
       ? ([
-          { id: 'all', label: '全部', weeks: allWeeks(totalWeeks) },
-          { id: 'odd', label: '单周', weeks: parityWeeks(totalWeeks, 'odd') },
-          { id: 'even', label: '双周', weeks: parityWeeks(totalWeeks, 'even') },
-          { id: 'none', label: '清空', weeks: [] },
+          { id: 'all', label: weekPickerCopy.shortcuts.all, weeks: allWeeks(totalWeeks) },
+          { id: 'odd', label: weekPickerCopy.shortcuts.odd, weeks: parityWeeks(totalWeeks, 'odd') },
+          { id: 'even', label: weekPickerCopy.shortcuts.even, weeks: parityWeeks(totalWeeks, 'even') },
+          { id: 'none', label: weekPickerCopy.shortcuts.none, weeks: [] },
         ] as const)
       : [];
 
@@ -56,14 +57,14 @@ export function WeekPicker({
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-end gap-2">
         {showShortcuts && (
-          <Field label="周次">
+          <Field label={weekPickerCopy.label}>
             <div className="flex flex-wrap gap-1">
               {shortcuts.map((item) => (
                 <Button
                   key={item.id}
                   size="sm"
                   variant="secondary"
-                  aria-label={`周次${item.label}`}
+                  aria-label={weekPickerCopy.shortcutAria(item.label)}
                   onClick={() => onValueChange([...item.weeks])}
                 >
                   {item.label}
@@ -73,17 +74,17 @@ export function WeekPicker({
           </Field>
         )}
         <span className="text-xs text-muted">
-          已选 {value.length}/{totalWeeks} 周
+          {weekPickerCopy.selected(value.length, totalWeeks)}
         </span>
       </div>
-      <div className="flex flex-wrap gap-1" role="group" aria-label="周次选择" data-role={dataRole}>
+      <div className="flex flex-wrap gap-1" role="group" aria-label={weekPickerCopy.groupAria} data-role={dataRole}>
         {allWeeks(totalWeeks).map((week) => {
           const selected = value.includes(week);
           return (
             <button
               key={week}
               type="button"
-              aria-label={`第 ${week} 周`}
+              aria-label={weekPickerCopy.weekAria(week)}
               aria-pressed={selected}
               onClick={() => toggle(week)}
               className={cn(

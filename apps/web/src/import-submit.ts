@@ -1,6 +1,7 @@
 import { logError, logInfo } from './log.ts';
 import { isDesktopApp } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage } from './lib/native.ts';
+import { importWindowCopy } from './copy/import-window.ts';
 
 const root = document.getElementById('root');
 
@@ -18,7 +19,7 @@ function show(title: string, detail: string): void {
   text.style.cssText = 'margin:0;color:#555';
   const back = document.createElement('button');
   back.type = 'button';
-  back.textContent = '返回教务页面';
+  back.textContent = importWindowCopy.submitBack;
   back.style.cssText = 'padding:10px 16px;border:1px solid #ccc;border-radius:8px;background:#f5f5f5;cursor:pointer';
   back.onclick = () => {
     window.history.back();
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
   const encoded = params.get('d');
   const nonce = params.get('n') ?? '';
   if (encoded === null || encoded.length === 0) {
-    show('没有收到内容', '请回到教务页面，重新点击右下角「导入到晓刻」。');
+    show(importWindowCopy.submitEmptyTitle, importWindowCopy.submitEmptyDetail);
     return;
   }
 
@@ -52,25 +53,25 @@ async function main(): Promise<void> {
   try {
     payload = decodePayload(encoded);
   } catch (cause: unknown) {
-    logError('import-window', '内容解码失败', { message: String(cause) });
-    show('内容读取失败', '请回到晓刻，用书签或粘贴页面内容');
+    logError('import', '内容解码失败', { message: String(cause) });
+    show(importWindowCopy.submitDecodeTitle, importWindowCopy.submitDecodeDetail);
     return;
   }
 
   if (!isDesktopApp()) {
-    show('交回失败', '当前平台不支持内嵌导入');
+    show(importWindowCopy.submitFailTitle, importWindowCopy.submitUnsupported);
     return;
   }
 
   try {
     await invokeNative('submit_page_import', { payload, nonce });
-    logInfo('import-window', '交回页面内容', { bytes: payload.length });
-    show('已交给晓刻', `共 ${payload.length} 字节；关闭本窗口或返回教务页面`);
+    logInfo('import', '页面内容已交回', { bytes: payload.length });
+    show(importWindowCopy.submitDoneTitle, importWindowCopy.submitDoneDetail(payload.length));
     window.setTimeout(() => window.history.back(), 2000);
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logError('import-window', '交回失败', { message });
-    show('交回失败', message);
+    logError('import', '页面内容交回失败', { message });
+    show(importWindowCopy.submitFailTitle, message);
   }
 }
 

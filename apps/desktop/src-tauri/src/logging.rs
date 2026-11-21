@@ -106,12 +106,12 @@ pub(crate) fn ensure_console() {
             return;
         }
         if AllocConsole() != 0 {
-            let title: Vec<u16> = "晓刻 DawnTick 日志"
+            let title: Vec<u16> = crate::copy::window::DEV_CONSOLE_TITLE
                 .encode_utf16()
                 .chain(std::iter::once(0))
                 .collect();
             SetConsoleTitleW(title.as_ptr());
-            let _ = writeln!(std::io::stdout(), "晓刻 DawnTick 日志已连接到本控制台");
+            let _ = writeln!(std::io::stdout(), "{}", crate::copy::window::DEV_CONSOLE_ATTACHED);
         }
     }
 }
@@ -243,6 +243,103 @@ pub(crate) fn should_write(line: &str) -> bool {
     level_rank(level) <= LOG_LEVEL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// 三端共用的日志范围；与 `apps/web/src/lib/log-scopes.ts`、安卓 `NativeLog.SCOPES` 保持一致。
+pub(crate) const LOG_SCOPES: &[&str] = &[
+    "app", "storage", "backup", "sync", "reminder", "permission", "widget", "update", "preset", "import",
+    "timetable", "todo", "settings", "credentials", "link", "log",
+];
+
+/// 日志级别：error 失败且影响用户或数据；warn 已降级或自动恢复；info 关键流程节点；
+/// debug 排查用的中间状态；trace 高频细节。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+impl LogLevel {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+            LogLevel::Trace => "trace",
+        }
+    }
+}
+
+/// 一行日志：`[级别] 范围: 消息`。范围不在清单里时开发构建直接断言失败。
+/// 消息里的换行（弹窗文案、panic 信息）压成空格，保证一条日志只占一行。
+pub(crate) fn log_at(level: LogLevel, scope: &str, message: &str) {
+    debug_assert!(LOG_SCOPES.contains(&scope), "未登记的日志范围：{scope}");
+    append_log(&log_line(level, scope, message));
+}
+
+/// `log_at` 写出的行（不含时间前缀）：`[级别] 范围: 消息`，消息已压成一行。
+pub(crate) fn log_line(level: LogLevel, scope: &str, message: &str) -> String {
+    format!("[{}] {scope}: {}", level.as_str(), one_line(message))
+}
+
+/// 换行压成空格：按 `\n` / `\r` 切开，各段去掉首尾空白，丢掉空段后用单个空格连接。
+pub(crate) fn one_line(message: &str) -> std::borrow::Cow<'_, str> {
+    if message.contains(['\n', '\r']) {
+        std::borrow::Cow::Owned(
+            message
+                .split(['\n', '\r'])
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(message)
+    }
+}
+
+/// 写进日志的网址只留 `scheme://host/path`：去掉 userinfo、query、fragment 与 `;` 路径参数，
+/// 会话号、令牌常藏在这几处。
+pub(crate) fn redact_url(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme), rest),
+        None => (None, url),
+    };
+    let rest = rest.split(['?', '#']).next().unwrap_or("");
+    let (authority, path) = match rest.find('/') {
+        Some(index) => rest.split_at(index),
+        None => (rest, ""),
+    };
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let path = path.split(';').next().unwrap_or("");
+    match scheme {
+        Some(scheme) => format!("{scheme}://{host}{path}"),
+        None => format!("{host}{path}"),
+    }
+}
+
+pub(crate) fn log_error(scope: &str, message: impl AsRef<str>) {
+    log_at(LogLevel::Error, scope, message.as_ref());
+}
+
+pub(crate) fn log_warn(scope: &str, message: impl AsRef<str>) {
+    log_at(LogLevel::Warn, scope, message.as_ref());
+}
+
+pub(crate) fn log_info(scope: &str, message: impl AsRef<str>) {
+    log_at(LogLevel::Info, scope, message.as_ref());
+}
+
+pub(crate) fn log_debug(scope: &str, message: impl AsRef<str>) {
+    log_at(LogLevel::Debug, scope, message.as_ref());
+}
+
+pub(crate) fn log_trace(scope: &str, message: impl AsRef<str>) {
+    log_at(LogLevel::Trace, scope, message.as_ref());
+}
+
 pub(crate) fn append_log(message: &str) {
     let line = format!("{}{message}", log_prefix());
     if !should_write(&line) {
@@ -266,10 +363,16 @@ pub async fn log_event(level: String, scope: String, message: String, detail: Op
 }
 
 pub(crate) fn log_event_blocking(level: String, scope: String, message: String, detail: Option<String>) {
-    // detail 为前端附带的 JSON 明细；为空时省略，保证日志行格式稳定
+    append_log(&event_line(&level, &scope, &message, detail.as_deref()));
+}
+
+/// 前端日志落盘的行（不含时间前缀）：`[级别] 范围: 消息 明细`。
+/// detail 为前端附带的 JSON 明细；为空或 `null` 时省略，保证日志行格式稳定。
+/// 前端消息或明细带换行时同样折成一行，导出与按级别过滤都按行处理。
+pub(crate) fn event_line(level: &str, scope: &str, message: &str, detail: Option<&str>) -> String {
     let tail = match detail {
         Some(text) if !text.is_empty() && text != "null" => format!(" {text}"),
         _ => String::new(),
     };
-    append_log(&format!("[{level}] {scope}: {message}{tail}"));
+    one_line(&format!("[{level}] {scope}: {message}{tail}")).into_owned()
 }

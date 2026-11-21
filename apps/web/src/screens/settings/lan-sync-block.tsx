@@ -7,7 +7,7 @@ import { useAction } from '../../lib/action.ts';
 import { isAndroidApp } from '../../lib/capabilities.ts';
 import { getOrCreateLanDeviceId } from '../../lib/lan-device-id.ts';
 import type { ScannedPairRequest } from '../../lib/scan.ts';
-import { logWarn } from '../../log.ts';
+import { logDebug, logWarn } from '../../log.ts';
 import { copyText } from '../../system-actions.ts';
 import {
   LAN_SERVER_START_HINT,
@@ -48,6 +48,8 @@ import { loadTrustedTokens, sameTrustedTokens, saveTrustedTokens } from '../../l
 import { LanSyncClientPanel } from './lan-sync-client-panel.tsx';
 import { LanSyncServerPanel } from './lan-sync-server-panel.tsx';
 import { said } from './format.ts';
+import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
+import { HelpLink } from '../../components/help-link.tsx';
 
 export interface LanSyncBlockProps {
   storage: Storage;
@@ -107,8 +109,8 @@ export function LanSyncBlock({
     setNetworkError(result.error);
     setSelectedHost((current) => resolveLanHost(result.networks, current ?? readStoredLanHost()));
     if (result.error !== null) {
-      logWarn('lan-sync', '读取本机网络失败', { message: result.error });
-      setStatus(said(`读取本机网络失败：${result.error}`));
+      logDebug('sync', '本机网络读取失败', { message: result.error });
+      setStatus(said(copy.networkReadFailed(result.error)));
     }
   };
 
@@ -162,7 +164,7 @@ export function LanSyncBlock({
           await respondLanServer(request.id, reply.status, reply.body);
         }
       } catch (cause: unknown) {
-        logWarn('lan-sync', '处理局域网请求失败', { message: errorMessage(cause) });
+        logWarn('sync', '局域网请求处理失败', { message: errorMessage(cause) });
       }
       if (!cancelled) timer = window.setTimeout(() => void tick(), LAN_SYNC_POLL_INTERVAL_MS);
     };
@@ -176,14 +178,14 @@ export function LanSyncBlock({
   async function startPairing(hostOverride?: string): Promise<void> {
     const host = hostOverride ?? selectedNetwork?.address;
     await action.run({
-      scope: 'lan-sync',
-      label: '正在开启局域网配对…',
+      scope: 'sync',
+      label: copy.starting,
       fail: false,
       task: async () => {
         const result = await startLanServer(host === undefined ? {} : { host });
         if (!result.ok || result.info === null) {
-          const message = result.error ?? '开启配对失败：请确认本机已连上 Wi-Fi 或有线网络';
-          const shown = `${message}；${LAN_SERVER_START_HINT}`;
+          const message = result.error ?? copy.startFailedFallback;
+          const shown = copy.startFailedWithHint(message, LAN_SERVER_START_HINT);
           setStartFailed(true);
           setStatus(said(shown));
           toast.error(shown);
@@ -206,9 +208,9 @@ export function LanSyncBlock({
         setServer(result.info);
         setPairing(runtime.current.pairing);
         setTokens(active);
-        const message = `已开启配对：${result.info.address}，配对码 ${result.info.code}（5 分钟内有效）`;
+        const message = copy.started(result.info.address, result.info.code);
         setStatus(said(message));
-        toast.success('已开启局域网配对');
+        toast.success(copy.startedToast);
       },
     });
   }
@@ -222,7 +224,7 @@ export function LanSyncBlock({
     setPairing(null);
     setTokens([]);
     setStartFailed(false);
-    setStatus(said('已停止局域网配对'));
+    setStatus(said(copy.stopped));
   }
 
   /** 生成新的配对码：服务端继续监听，已配对的长期令牌不受影响。 */
@@ -231,7 +233,7 @@ export function LanSyncBlock({
     runtime.current = { ...runtime.current, pairing: next };
     setPairing(next);
     setStartFailed(false);
-    setStatus(said(`已生成新配对码 ${next.code}（5 分钟内有效）`));
+    setStatus(said(copy.newCodeIssued(next.code)));
   }
 
   /** 切换网络：记住地址；已开配对时自动停掉并用新地址重启监听。 */
@@ -243,12 +245,12 @@ export function LanSyncBlock({
     if (server !== null) {
       // 先停旧监听再按新地址重启：广播与展示地址都跟着换
       await stopPairing();
-      const message = `已切换网络：${network.address}，正在按新地址重启监听…`;
+      const message = copy.networkSwitchedRestarting(network.address);
       setStatus(said(message));
       await startPairing(network.address);
       return;
     }
-    setStatus(said(`已切换网络：${network.address}`));
+    setStatus(said(copy.networkSwitched(network.address)));
   }
 
   /** 复制标准配对链接：对方粘贴后由同一套解析器识别。 */
@@ -260,8 +262,8 @@ export function LanSyncBlock({
       code: pairing.code,
     };
     const ok = await copyText(formatPairPayload({ ...payload, name: deviceName, deviceId }));
-    if (ok) toast.success('已复制配对信息');
-    else toast.error('复制失败，请手动抄写地址与配对码');
+    if (ok) toast.success(copy.pairingCopied);
+    else toast.error(copy.pairingCopyFailed);
   }
 
   /** 复制网络诊断：网卡 / 状态 / 读取错误，不含配对码或令牌。 */
@@ -272,18 +274,16 @@ export function LanSyncBlock({
       error: networkError,
     });
     const ok = await copyText(text);
-    if (ok) toast.success('网络诊断信息已复制');
-    else toast.error('复制失败，请截图「诊断信息」发回');
+    if (ok) toast.success(copy.diagnosticsCopied);
+    else toast.error(copy.diagnosticsCopyFailed);
   }
 
   return (
     <div className="flex flex-col gap-1" data-role="lan-sync">
       <span className="text-sm font-medium text-ink" data-role="lan-sync-title">
-        局域网同步
+        {copy.title}
       </span>
-      <span className="text-xs text-muted">
-        同一局域网内直接互传课表、待办与设置：一端开配对，另一端扫码或填地址与配对码。
-      </span>
+      <HelpLink entryId="lan-pair" />
       {canServeLanSync() ? (
         <LanSyncServerPanel
           server={server}
@@ -307,9 +307,12 @@ export function LanSyncBlock({
           onCopy={() => void copyPairing()}
         />
       ) : (
-        <span className="text-xs text-muted" data-role="lan-sync-server-hint">
-          浏览器端只作为发起方：请先在桌面版或安卓版上开启配对，再在这里填对方地址。
-        </span>
+        <div className="flex flex-wrap items-center gap-x-2">
+          <span className="text-xs text-muted" data-role="lan-sync-server-hint">
+            {copy.browserClientOnly}
+          </span>
+          <HelpLink entryId="lan-web" />
+        </div>
       )}
       <LanSyncClientPanel
         storage={storage}

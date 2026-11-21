@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { busySnapshot, runBusy, useBusyAction } from '../src/lib/busy.ts';
+import { logEntries } from '../src/log.ts';
 
 test('runBusy 期间挂上状态，结束（含抛错）一定收起', async () => {
   assert.equal(busySnapshot(), null);
@@ -31,6 +32,20 @@ test('嵌套 runBusy 期间状态不提前收起', async () => {
   });
   assert.equal(innerSaw, '内层');
   assert.equal(busySnapshot(), null);
+});
+
+test('runBusy 超时记 error 并释放蒙版', async () => {
+  const before = new Set(logEntries());
+  await assert.rejects(
+    runBusy('正在导出日志…', () => new Promise<never>(() => undefined), { timeoutMs: 5 }),
+    /操作超时（正在导出日志…）/,
+  );
+  assert.equal(busySnapshot(), null);
+  const added = logEntries().filter((entry) => !before.has(entry));
+  assert.deepEqual(
+    added.map((entry) => [entry.level, entry.scope, entry.message, entry.detail?.['label']]),
+    [['error', 'app', '操作超时，蒙版已释放', '正在导出日志…']],
+  );
 });
 
 test('返回值原样透出', async () => {

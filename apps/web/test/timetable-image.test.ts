@@ -216,7 +216,7 @@ test('没有学期：标题退到「课表」，不抛错', () => {
   const result = model({}, [], data);
   assert.equal(result.title, '课表');
   assert.equal(result.subtitle, '还没有设置学期');
-  assert.equal(result.emptyText, '还没有学期，先创建学期再导出课表');
+  assert.equal(result.emptyText, '还没有学期，请先创建学期再导出课表');
   assert.equal(result.rows.length, 0);
   assert.ok(result.layout.gridHeight > 0);
 });

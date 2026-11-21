@@ -7,10 +7,12 @@ import {
 } from '../db/corrupt-guard.ts';
 import { recoverDatabase } from '../db/recover.ts';
 import { logInfo, logWarn } from '../log.ts';
+import { pathForLog } from '../lib/log-redact.ts';
 import { openDataDirectory, relaunchApplication } from '../storage-config.ts';
 import { Button } from './ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from './ui/dialog.tsx';
 import { toast } from './ui/toaster.tsx';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /**
  * 运行中数据库损坏的恢复对话框。
@@ -45,13 +47,13 @@ export function DatabaseCorruptDialog() {
     try {
       const outcome = await recoverDatabase();
       if (!outcome.recovered) {
-        setFailure(outcome.reason ?? '恢复没有完成，请打开数据目录手动处理');
+        setFailure(outcome.reason ?? appRecoveryCopy.corruptDialog.recoverIncomplete);
         return;
       }
       setDismissed(true);
-      toast.success(`已用快照 ${outcome.snapshot ?? '最近快照'} 恢复，正在重启…`);
+      toast.success(appRecoveryCopy.corruptDialog.restored(outcome.snapshot ?? null));
       if (!(await relaunchApplication())) {
-        toast.info('请手动关闭并重新打开应用，恢复才会生效');
+        toast.info(appRecoveryCopy.corruptDialog.restartToApply);
       }
     } finally {
       setBusy(false);
@@ -61,12 +63,12 @@ export function DatabaseCorruptDialog() {
   async function openDataDir(): Promise<void> {
     const dir = await openDataDirectory();
     if (dir === null) {
-      logWarn('storage', '损坏对话框打开数据目录失败');
-      toast.error('当前平台不支持打开数据目录；请手动定位程序旁的 data 目录');
+      logWarn('storage', '数据目录打开失败', { from: 'corrupt-dialog' });
+      toast.error(appRecoveryCopy.corruptDialog.dataDirUnsupported);
       return;
     }
-    logInfo('storage', '损坏对话框打开数据目录', { dir });
-    toast.info(`已打开数据目录；备份在其中的 backups 子目录：${dir}`);
+    logInfo('storage', '已打开数据目录', { from: 'corrupt-dialog', dir: pathForLog(dir) });
+    toast.info(appRecoveryCopy.corruptDialog.dataDirOpened(dir));
   }
 
   return (
@@ -77,8 +79,8 @@ export function DatabaseCorruptDialog() {
       }}
     >
       <DialogContent
-        title="数据库文件损坏"
-        description="已停止写入，避免损坏扩大；数据目录里的备份快照仍然可用"
+        title={appRecoveryCopy.corruptDialog.title}
+        description={appRecoveryCopy.corruptDialog.description}
         data-role="corrupt-dialog"
       >
         <div className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger/10 p-2 text-xs text-danger-strong">
@@ -89,23 +91,23 @@ export function DatabaseCorruptDialog() {
         </div>
         {event !== null && (
           <p className="break-all text-[11px] text-muted" data-role="corrupt-dialog-detail">
-            原始错误：{event.message}
+            {appRecoveryCopy.corruptDialog.rawError(event.message)}
           </p>
         )}
         {failure !== null && (
           <p role="alert" className="text-xs text-danger-strong" data-role="corrupt-dialog-failure">
-            恢复失败：{failure}
+            {appRecoveryCopy.corruptDialog.recoverFailed(failure)}
           </p>
         )}
         <DialogFooter>
           <Button variant="ghost" disabled={busy} onClick={() => setDismissed(true)}>
-            稍后
+            {appRecoveryCopy.corruptDialog.laterButton}
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => void openDataDir()}>
-            打开数据目录
+            {appRecoveryCopy.corruptDialog.openDataDirButton}
           </Button>
           <Button variant="primary" loading={busy} onClick={() => void recoverAndRestart()}>
-            立即恢复并重启
+            {appRecoveryCopy.corruptDialog.recoverButton}
           </Button>
         </DialogFooter>
       </DialogContent>

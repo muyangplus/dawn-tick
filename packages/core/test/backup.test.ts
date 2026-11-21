@@ -9,7 +9,7 @@ import {
   summarizeBackup,
 } from '../src/backup.ts';
 import { createSemester } from '../src/mutations.ts';
-import { EXPORT_EXCLUDED_KEYS, SETTING_META_KEYS, readSettings, writeSettings } from '../src/settings.ts';
+import { EXPORT_EXCLUDED_KEYS, LAN_EXCLUDED_KEYS, SETTING_META_KEYS, readSettings, writeSettings } from '../src/settings.ts';
 import { activeSemester, weekView } from '../src/repository.ts';
 import { START_DATE, USER_ID, createStorage, eventRow, weekRange } from './kit/index.ts';
 import { validatedStorage } from '../src/validation.ts';
@@ -242,6 +242,29 @@ test('备份键清单由设置键清单派生', () => {
     if (EXPORT_EXCLUDED_KEYS.includes(key)) continue;
     assert.ok(BACKUP_META_KEYS.includes(key), `备份键清单缺少设置键 ${key}`);
   }
+});
+
+test('AI 密钥不进备份；局域网同步另外不带地址与模型', async () => {
+  assert.equal(BACKUP_META_KEYS.includes('ai_api_key'), false, '密钥不应进备份');
+  const { storage } = await seedStorage();
+  await writeSettings(storage, { aiBaseUrl: 'https://api.example.com/v1', aiModel: 'gpt-4o-mini', aiApiKey: 'enc:v1:abc' });
+
+  const backup = await exportBackup(storage, { modules: ['settings'] });
+  assert.equal(backup.meta['ai_base_url'], 'https://api.example.com/v1');
+  assert.equal(backup.meta['ai_model'], 'gpt-4o-mini');
+  assert.equal(backup.meta['ai_api_key'], undefined);
+
+  const lan = await exportBackup(storage, { modules: ['settings'], excludeMeta: LAN_EXCLUDED_KEYS });
+  for (const key of ['ai_base_url', 'ai_model', 'ai_api_key']) {
+    assert.equal(lan.meta[key], undefined, `${key} 不随局域网同步`);
+  }
+
+  const target = createStorage();
+  await writeSettings(target, { aiApiKey: 'enc:v1:local' });
+  await importBackup(target, backup, { modules: ['settings'], mode: 'overwrite' });
+  const settings = await readSettings(target);
+  assert.equal(settings.aiBaseUrl, 'https://api.example.com/v1');
+  assert.equal(settings.aiApiKey, 'enc:v1:local', '导入不动本机密钥');
 });
 
 test('周视图开关随备份导出并还原', async () => {

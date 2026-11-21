@@ -1,7 +1,7 @@
 import { useEffect, useReducer, useState } from 'react';
 import { applyImport, previewDuplicates, type ImportedSchedule, type Storage } from '@dawn-tick/core';
 import { toast } from '../../components/ui/toaster.tsx';
-import { logInfo } from '../../log.ts';
+import { logDebug, logInfo } from '../../log.ts';
 import { useAction } from '../../lib/action.ts';
 import { closeImportWindow } from '../../import-window.ts';
 import {
@@ -17,6 +17,7 @@ import {
   type PasteSource,
   type SelectionMode,
 } from './import-flow-model.ts';
+import { importFlowCopy } from '../../copy/import-flow.ts';
 
 export interface ImportFlowOptions {
   storage: Storage;
@@ -114,13 +115,13 @@ export function useImportFlow({ storage, semesterId, onDone }: ImportFlowOptions
   async function confirm(): Promise<void> {
     await run({
       scope: 'import',
-      label: '正在导入课表…',
-      fail: { what: '导入课表失败', next: '请检查文件与勾选项后重试。' },
+      label: importFlowCopy.importing,
+      fail: importFlowCopy.importFail,
       task: async () => {
         const chosen = schedules.filter((_, index) => selected.has(index));
         const applied = await applyImport(storage, semesterId, chosen);
         setWarnings(applied.warnings);
-        logInfo('import', '应用导入', {
+        logInfo('import', '导入已应用', {
           channel: flow.channel,
           source: flow.channel === 'paste' ? flow.pasteSource : flow.channel,
           selected: chosen.length,
@@ -129,12 +130,12 @@ export function useImportFlow({ storage, semesterId, onDone }: ImportFlowOptions
           skipped: applied.skippedSchedules,
         });
         toast.success(
-          `新增课程 ${applied.createdCourses} · 排课 ${applied.createdSchedules} · 跳过重复 ${applied.skippedSchedules}`,
+          importFlowCopy.imported(applied.createdCourses, applied.createdSchedules, applied.skippedSchedules),
         );
         dispatch({ type: 'done' });
         // 导入完成就关掉内嵌教务窗口，避免用户还要自己关
         await closeImportWindow();
-        logInfo('import', '导入完成并关闭内嵌窗口', { courses: applied.createdCourses });
+        logDebug('import', '内嵌教务窗口已关闭', { courses: applied.createdCourses });
         onDone();
       },
     });

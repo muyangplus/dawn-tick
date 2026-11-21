@@ -1,6 +1,6 @@
 import { canUseWidget } from './lib/capabilities.ts';
 import { invokeNative, nativeErrorMessage, type WidgetLayout } from './lib/native.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logDebug, logInfo, logWarn } from './log.ts';
 
 export { canUseWidget };
 export type { WidgetLayout };
@@ -34,10 +34,10 @@ export async function showWidget(variant?: string): Promise<boolean> {
   if (!canUseWidget()) return false;
   try {
     await invokeNative('show_widget', { variant: variant ?? null });
-    logInfo('widget', '显示悬浮窗', { variant: variant ?? 'bar' });
+    logInfo('widget', '悬浮窗已显示', { variant: variant ?? 'bar' });
     return true;
   } catch (cause: unknown) {
-    logWarn('widget', '显示悬浮窗失败', { message: nativeErrorMessage(cause) });
+    logWarn('widget', '悬浮窗显示失败', { message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -46,7 +46,7 @@ export async function hideWidget(): Promise<void> {
   if (!canUseWidget()) return;
   try {
     await invokeNative('hide_widget');
-    logInfo('widget', '隐藏悬浮窗');
+    logInfo('widget', '悬浮窗已隐藏');
   } catch {
     // 窗口不存在时忽略
   }
@@ -57,9 +57,9 @@ export async function openMainWindow(): Promise<void> {
   if (!canUseWidget()) return;
   try {
     await invokeNative('show_main');
-    logInfo('widget', '从悬浮窗打开主窗口');
+    logInfo('widget', '已从悬浮窗打开主窗口');
   } catch (cause: unknown) {
-    logWarn('widget', '打开主窗口失败', { message: nativeErrorMessage(cause) });
+    logWarn('widget', '主窗口打开失败', { message: nativeErrorMessage(cause) });
   }
 }
 
@@ -81,7 +81,7 @@ export async function measureWidget(
     });
     if (layout === undefined) return null;
     appliedSize = { width: layout.width, height: layout.height };
-    logInfo('widget', '悬浮窗已按内容定高', {
+    logDebug('widget', '悬浮窗已按内容定高', {
       variant,
       rows: contentRows ?? null,
       width: layout.width,
@@ -111,7 +111,7 @@ export async function rememberWidgetSize(
     const layout = await invokeNative<WidgetLayout>('widget_resize', { variant, width, height });
     if (layout === undefined) return null;
     appliedSize = { width: layout.width, height: layout.height };
-    logInfo('widget', '已记住悬浮窗尺寸', {
+    logDebug('widget', '悬浮窗尺寸已记住', {
       variant,
       width: layout.width,
       height: layout.height,
@@ -119,7 +119,7 @@ export async function rememberWidgetSize(
     });
     return layout;
   } catch (cause: unknown) {
-    logWarn('widget', '记住悬浮窗尺寸失败', { message: nativeErrorMessage(cause) });
+    logWarn('widget', '悬浮窗尺寸记录失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -179,7 +179,7 @@ export function watchWidgetResize(variant: string): () => void {
       if (disposed) off();
       else stop = off;
     } catch (cause: unknown) {
-      logWarn('widget', '监听悬浮窗尺寸失败', { message: nativeErrorMessage(cause) });
+      logWarn('widget', '悬浮窗尺寸监听失败', { message: nativeErrorMessage(cause) });
     }
   })();
 

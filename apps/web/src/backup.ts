@@ -12,8 +12,9 @@ import { activeSqlDriver } from './db/active-driver.ts';
 import { dayStampLocal } from './lib/dates.ts';
 import { readMetaJson, writeMetaJson } from './lib/meta.ts';
 import { SNAPSHOT_INDEX_META_KEY, SNAPSHOT_META_PREFIX } from './lib/meta-keys.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logError, logInfo, logWarn } from './log.ts';
 import { applyBackupPackage } from './package.ts';
+import { snapshotsCopy } from './copy/backup-snapshots.ts';
 
 /** 数据库快照：Windows 用原生文件快照（VACUUM INTO 写 backups/），Web 与 Android 把 JSON 存进 app_meta。 */
 
@@ -111,7 +112,7 @@ async function listFileSnapshots(): Promise<SnapshotEntry[]> {
       kind: 'file' as const,
     }));
   } catch (cause: unknown) {
-    logWarn('backup', '读取快照列表失败', { message: nativeErrorMessage(cause) });
+    logWarn('backup', '快照列表读取失败', { message: nativeErrorMessage(cause) });
     return [];
   }
 }
@@ -161,9 +162,9 @@ async function createJsonSnapshot(storage: Storage, now: number): Promise<Snapsh
 
 async function createFileSnapshot(now: number): Promise<SnapshotEntry> {
   const driver = activeSqlDriver();
-  if (driver === null) throw new Error('数据库尚未打开');
+  if (driver === null) throw new Error(snapshotsCopy.databaseNotOpen);
   const target = await invokeNative<{ name: string; path: string; sqlLiteral: string }>('backup_target');
-  if (target === undefined) throw new Error('当前平台不支持文件快照');
+  if (target === undefined) throw new Error(snapshotsCopy.fileSnapshotUnsupported);
   try {
     await driver.all(`VACUUM INTO ${target.sqlLiteral}`);
   } catch (cause: unknown) {
@@ -193,7 +194,7 @@ export async function takeRecoveryNotice(): Promise<string | null> {
     const text = await invokeNative<string | null>('recovery_notice');
     return typeof text === 'string' && text.trim() !== '' ? text : null;
   } catch (cause: unknown) {
-    logWarn('backup', '读取启动自检结论失败', { message: nativeErrorMessage(cause) });
+    logWarn('backup', '启动自检结论读取失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -208,10 +209,10 @@ export async function createSnapshot(
       snapshotKind() === 'json'
         ? await createJsonSnapshot(storage, now)
         : await createFileSnapshot(now);
-    logInfo('backup', '已生成快照', { kind: entry.kind, name: entry.id, bytes: entry.bytes });
+    logInfo('backup', '快照已生成', { kind: entry.kind, name: entry.id, bytes: entry.bytes });
     return entry;
   } catch (cause: unknown) {
-    logWarn('backup', '生成快照失败', { message: nativeErrorMessage(cause) });
+    logError('backup', '快照生成失败', { message: nativeErrorMessage(cause) });
     return null;
   }
 }
@@ -224,10 +225,10 @@ export async function deleteSnapshot(storage: Storage, entry: SnapshotEntry): Pr
     } else {
       await invokeNative('delete_backup', { name: entry.id });
     }
-    logInfo('backup', '已删除快照', { name: entry.id });
+    logInfo('backup', '快照已删除', { name: entry.id });
     return true;
   } catch (cause: unknown) {
-    logWarn('backup', '删除快照失败', { name: entry.id, message: nativeErrorMessage(cause) });
+    logError('backup', '快照删除失败', { name: entry.id, message: nativeErrorMessage(cause) });
     return false;
   }
 }
@@ -241,7 +242,7 @@ export async function pruneSnapshots(storage: Storage, keep: number): Promise<nu
     try {
       return (await invokeNative<number>('prune_backups', { keep: Math.max(1, keep) })) ?? 0;
     } catch (cause: unknown) {
-      logWarn('backup', '清理快照失败', { message: nativeErrorMessage(cause) });
+      logWarn('backup', '旧快照清理失败', { message: nativeErrorMessage(cause) });
       return 0;
     }
   }
@@ -271,10 +272,10 @@ export async function restoreSnapshot(
       return { ok: true, error: null, needsRestart: true, result: null };
     }
     const raw = await storage.readMeta(entry.id);
-    if (raw === undefined) throw new Error('快照内容不存在');
+    if (raw === undefined) throw new Error(snapshotsCopy.snapshotMissing);
     const payload = parseBackup(raw);
     const result = await applyBackupPackage(storage, payload, { mode: 'clear', modules: BACKUP_MODULES });
-    logInfo('backup', '已恢复快照', {
+    logInfo('backup', '快照已恢复', {
       name: entry.id,
       imported: result.imported,
       removed: result.removed,
@@ -282,7 +283,7 @@ export async function restoreSnapshot(
     return { ok: true, error: null, needsRestart: false, result };
   } catch (cause: unknown) {
     const message = nativeErrorMessage(cause);
-    logWarn('backup', '恢复快照失败', { name: entry.id, message });
+    logError('backup', '快照恢复失败', { name: entry.id, message });
     return { ok: false, error: message, needsRestart: false, result: null };
   }
 }

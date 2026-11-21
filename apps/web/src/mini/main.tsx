@@ -16,7 +16,7 @@ import { loadAppData, type AppData } from '../data.ts';
 import { openStorage } from '../db/platform.ts';
 import { applyTheme } from '../theme.ts';
 import { installWebviewGuards } from '../webview-guard.ts';
-import { describeError, logDebug, logError, logInfo, logWarn, installLogHandlers } from '../log.ts';
+import { describeError, installLogHandlers, logDebug, logError, logWarn } from '../log.ts';
 import { fail } from '../lib/fail.ts';
 import { formatCountdown, formatRemaining } from '../lib/format.ts';
 import { WIDGET_DATA_CHANGED_EVENT } from '../widget-snapshot.ts';
@@ -26,6 +26,7 @@ import { examWidgetView } from './exam.ts';
 import { ExamWidgetBody } from './exam.tsx';
 import { miniEmptyText, shouldShowTomorrow, tomorrowPreviewLessons, previewDateFor } from './tomorrow.ts';
 import '../styles.css';
+import { miniCopy } from '../copy/mini.ts';
 
 installWebviewGuards();
 installLogHandlers();
@@ -82,7 +83,7 @@ function Mini() {
       ].join('|');
       if (signature !== lastSignature.current) {
         lastSignature.current = signature;
-        logInfo('mini', '悬浮窗数据已更新', {
+        logDebug('widget', '悬浮窗数据已更新', {
           week: next.week,
           current: next.currentLesson?.courseName ?? '',
           next: next.nextLesson?.courseName ?? '',
@@ -91,8 +92,8 @@ function Mini() {
       }
     } catch (cause: unknown) {
       // 原始异常只进日志；悬浮窗只显示用户语言
-      logWarn('mini', '悬浮窗数据加载失败', { message: describeError(cause) });
-      setError(fail('课表读取失败', '数据暂时读不出来', '请稍后重试；仍失败请重启应用。').text);
+      logError('widget', '悬浮窗数据加载失败', { message: describeError(cause) });
+      setError(fail(miniCopy.loadFailed.what, miniCopy.loadFailed.reason, miniCopy.loadFailed.next).text);
     }
   }, []);
 
@@ -109,9 +110,9 @@ function Mini() {
         applyTheme(loaded.themePreset, loaded.theme);
         await reload();
       } catch (cause: unknown) {
-        logWarn('mini', '悬浮窗初始化失败', { message: describeError(cause) });
+        logError('widget', '悬浮窗初始化失败', { message: describeError(cause) });
         if (!cancelled) {
-          setError(fail('悬浮窗读取失败', '无法打开本机数据', '请关闭后重新打开悬浮窗；仍失败请重启应用。').text);
+          setError(fail(miniCopy.initFailed.what, miniCopy.initFailed.reason, miniCopy.initFailed.next).text);
         }
       }
     })();
@@ -131,7 +132,7 @@ function Mini() {
         if (disposed) off();
         else stop = off;
       } catch (cause: unknown) {
-        logWarn('mini', '订阅数据变更失败', { message: describeError(cause) });
+        logWarn('widget', '数据变更订阅失败', { message: describeError(cause) });
       }
     })();
     return () => {
@@ -161,7 +162,7 @@ function Mini() {
   // 悬浮窗是常用入口：双击整窗或点标题栏「打开」都能回主窗口
   const openMain = (): void => void openMainWindow();
   // 明天有课时把标题栏文案换掉，不再往内容区里塞一行标签（那行会把课程名挤出可视区）
-  const headLabel = current !== undefined ? '正在上课' : undefined;
+  const headLabel = current !== undefined ? miniCopy.inClass : undefined;
   // 明日课程预告：复用设置里的「空日程提示明日预告」，当天没课或当天的课都上完时切过去
   const todayLessons = data?.todayLessons ?? [];
   const tomorrowLessons = data?.tomorrowLessons ?? [];
@@ -175,8 +176,8 @@ function Mini() {
       : (data.lessonsByDate.get(previewDate) ?? []);
   const previewLabel =
     data === null || previewDate === tomorrowDate
-      ? '明日课程预告'
-      : `${WEEKDAY_LABELS[dayOfWeek(previewDate) - 1] ?? ''}课程预告`;
+      ? miniCopy.tomorrowPreview
+      : miniCopy.weekdayPreview(WEEKDAY_LABELS[dayOfWeek(previewDate) - 1] ?? '');
   const showTomorrow = shouldShowTomorrow({
     enabled: tomorrowEnabled,
     todayEnds: todayLessons.map((lesson) => lesson.endAt),
@@ -193,7 +194,7 @@ function Mini() {
     const nextDate = formatDate(next.startAt, zone);
     if (nextDate === data.today) return '';
     const dayAfter = formatDate(Date.parse(`${data.today}T00:00:00Z`) + 2 * 86_400_000, 'UTC');
-    if (nextDate === dayAfter) return '后天';
+    if (nextDate === dayAfter) return miniCopy.dayAfterTomorrow;
     return nextDate;
   })();
   // 实际渲染的列表：today 用当天/预告课程，combo 用未完成且带截止时间的待办（最多 3 条）
@@ -243,7 +244,7 @@ function Mini() {
       <MiniShell variant={variant} onHide={hide} onOpen={openMain} background={background}>
         <div className="mini-empty" data-role="mini-error" role="alert">
           <span>{error}</span>
-          <span className="mini-hint">可点右上「打开」进入主窗口修复数据</span>
+          <span className="mini-hint">{miniCopy.errorHint}</span>
         </div>
       </MiniShell>
     );
@@ -264,8 +265,8 @@ function Mini() {
             {current !== undefined
               ? current.courseName
               : nextIsTomorrow && tomorrowEnabled
-                ? `明日 ${next?.courseName ?? ''}`
-                : next?.courseName ?? '暂无后续课程'}
+                ? miniCopy.tomorrowCourse(next?.courseName ?? '')
+                : next?.courseName ?? miniCopy.noMoreLessons}
           </span>
         </div>
       </MiniShell>
@@ -274,7 +275,7 @@ function Mini() {
 
   if (variant === 'exam') {
     return (
-      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label="考试倒计时" background={background}>
+      <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={miniCopy.examTitle} background={background}>
         <ExamWidgetBody exams={data?.exams ?? []} now={now} timeZone={zone} />
       </MiniShell>
     );
@@ -308,7 +309,7 @@ function Mini() {
                   <span className="mini-item-name">{lesson.courseName}</span>
                   {running && (
                     <span className="tabular mini-item-remain" data-role="mini-running-left">
-                      剩余 {formatRemaining(lesson.endAt, now)}
+                      {miniCopy.remaining(formatRemaining(lesson.endAt, now))}
                     </span>
                   )}
                   {lesson.room !== null && <span className="mini-item-room">{lesson.room}</span>}
@@ -327,10 +328,10 @@ function Mini() {
       <MiniShell variant={variant} onHide={hide} onOpen={openMain} label={headLabel} background={background}>
         <div className="mini-combo-top">
           <span className="mini-label" data-role="mini-top-label">
-            {current !== undefined ? '正在上课' : nextIsTomorrow && tomorrowEnabled ? '明日课程预告' : '下一节课'}
+            {current !== undefined ? miniCopy.inClass : nextIsTomorrow && tomorrowEnabled ? miniCopy.tomorrowPreview : miniCopy.nextLesson}
           </span>
           <span className="mini-title" data-role="mini-title">
-            {current !== undefined ? current.courseName : next?.courseName ?? '暂无后续课程'}
+            {current !== undefined ? current.courseName : next?.courseName ?? miniCopy.noMoreLessons}
           </span>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
@@ -350,9 +351,9 @@ function Mini() {
           </div>
         </div>
         <div className="mini-combo-bottom">
-          <span className="mini-label">待办与作业</span>
+          <span className="mini-label">{miniCopy.tasksLabel}</span>
           {tasks.length === 0 ? (
-            <div className="mini-empty">暂无待办</div>
+            <div className="mini-empty">{miniCopy.noTasks}</div>
           ) : (
             <ul className="mini-list">
               {tasks.map((task) => (
@@ -388,11 +389,11 @@ function Mini() {
           </div>
         </>
       ) : next === undefined ? (
-        <div className="mini-empty">{data?.semester === null ? '尚未创建学期' : '暂无后续课程'}</div>
+        <div className="mini-empty">{data?.semester === null ? miniCopy.noSemester : miniCopy.noMoreLessons}</div>
       ) : (
         <>
           <div className="mini-title" data-role="mini-title">
-            {nextIsTomorrow && tomorrowEnabled ? `明日 ${next.courseName}` : next.courseName}
+            {nextIsTomorrow && tomorrowEnabled ? miniCopy.tomorrowCourse(next.courseName) : next.courseName}
           </div>
           <div className="mini-row">
             <span className="mini-count" data-role="mini-count">
@@ -411,7 +412,7 @@ function Mini() {
 }
 
 const container = document.getElementById('mini-root');
-if (container === null) throw new Error('#mini-root 缺失');
+if (container === null) throw new Error(miniCopy.rootMissing);
 
 createRoot(container).render(
   <StrictMode>

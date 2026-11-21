@@ -1,4 +1,5 @@
 import { withTimeout } from './timeout.ts';
+import { appUpdateCopy } from '../copy/app-update.ts';
 /**
  * 并发分片下载引擎（HTTP Range）：把一个安装包切成若干片并发拉取，按序拼接后交给校验。
  *
@@ -33,7 +34,7 @@ export interface DownloadProgress {
 /** 用户取消下载：不算网络失败，上层状态机据此回到「已取消」而不是「失败」。 */
 export class DownloadCancelledError extends Error {
   constructor() {
-    super('已取消下载');
+    super(appUpdateCopy.download.cancelled);
     this.name = 'DownloadCancelledError';
   }
 }
@@ -41,7 +42,7 @@ export class DownloadCancelledError extends Error {
 /** 服务器在分片过程中才暴露「不支持 Range」：内部信号，外层据此整体回退单流。 */
 class RangeUnsupportedError extends Error {
   constructor() {
-    super('服务器不支持 Range 请求');
+    super(appUpdateCopy.download.rangeUnsupported);
     this.name = 'RangeUnsupportedError';
   }
 }
@@ -210,7 +211,7 @@ async function fetchRange(
   const response = await withTimeout(
     fetchImpl(url, signal === undefined ? { headers } : { headers, signal }),
     30_000,
-    '下载分片超时',
+    appUpdateCopy.download.chunkTimeout,
   );
   if (isCancelled(signal)) throw cancelled();
   // 200 = 服务器（或中间代理）忽略了 Range：这是「不支持分片」的可靠信号。
@@ -218,9 +219,9 @@ async function fetchRange(
   if (response.status === 200) return { kind: 'full', response };
   if (response.status !== 206) {
     discardResponse(response);
-    throw new Error(`更新源返回 ${response.status}`);
+    throw new Error(appUpdateCopy.download.httpStatus(response.status));
   }
-  const bytes = await withTimeout(readBody(response, onBytes, signal), 180_000, '下载数据超时');
+  const bytes = await withTimeout(readBody(response, onBytes, signal), 180_000, appUpdateCopy.download.bodyTimeout);
   return { kind: 'partial', bytes };
 }
 
@@ -269,10 +270,10 @@ async function downloadSingleStream(
   const response = await withTimeout(
     fetchImpl(request.url, request.signal === undefined ? {} : { signal: request.signal }),
     30_000,
-    '下载请求超时',
+    appUpdateCopy.download.requestTimeout,
   );
   if (isCancelled(request.signal)) throw cancelled();
-  if (!response.ok) throw new Error(`更新源返回 ${response.status}`);
+  if (!response.ok) throw new Error(appUpdateCopy.download.httpStatus(response.status));
   const headerTotal = normalizeHeaderTotal(response.headers?.get('content-length'));
   const total = declaredTotal ?? headerTotal;
   const now = request.now ?? defaultNow;
@@ -297,7 +298,7 @@ async function consumeFullResponse(
   declaredTotal: number | null,
   startedAt: number,
 ): Promise<Uint8Array> {
-  if (!response.ok) throw new Error(`更新源返回 ${response.status}`);
+  if (!response.ok) throw new Error(appUpdateCopy.download.httpStatus(response.status));
   const headerTotal = normalizeHeaderTotal(response.headers?.get('content-length'));
   const total = declaredTotal ?? headerTotal;
   const now = request.now ?? defaultNow;
@@ -319,12 +320,12 @@ function assembleRanged(parts: ReadonlyArray<Uint8Array | undefined>, total: num
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const part of parts) {
-    if (part === undefined) throw new Error('下载分片缺失，已停止写入');
+    if (part === undefined) throw new Error(appUpdateCopy.download.chunkMissing);
     bytes.set(part, offset);
     offset += part.length;
   }
   if (offset !== total) {
-    throw new Error(`更新包大小不一致（应为 ${total} 字节，实际 ${offset} 字节），已停止写入`);
+    throw new Error(appUpdateCopy.download.sizeMismatch(total, offset));
   }
   return bytes;
 }
@@ -349,7 +350,7 @@ export interface ChunkedDownloadRequest {
  */
 export async function downloadChunked(request: ChunkedDownloadRequest): Promise<Uint8Array> {
   const fetchImpl = request.fetchImpl ?? globalThis.fetch;
-  if (typeof fetchImpl !== 'function') throw new Error('当前环境无法联网下载更新');
+  if (typeof fetchImpl !== 'function') throw new Error(appUpdateCopy.download.offline);
   const wait = request.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = request.now ?? defaultNow;
   const startedAt = now();

@@ -1,7 +1,7 @@
 import { isAndroidApp, isDesktopApp, supportsBackgroundReminders } from './lib/capabilities.ts';
 import { currentNotifyPermission, ensureNotifyPermission, readNotifyAsked, type NotifyPermission } from './notify.ts';
 import { readNativeNotifyStatus } from './system-actions.ts';
-import { logInfo, logWarn } from './log.ts';
+import { logDebug, logInfo, logWarn } from './log.ts';
 import { errorMessage } from './lib/errors.ts';
 import type { Storage } from '@dawn-tick/core';
 
@@ -108,7 +108,7 @@ export async function exactAlarmState(): Promise<ExactAlarmState> {
     const status = await local.LocalNotifications.checkExactNotificationSetting();
     return status.exact_alarm === 'granted' ? 'granted' : 'denied';
   } catch (cause: unknown) {
-    logWarn('permission', '读取精确闹钟设置失败', {
+    logWarn('permission', '精确闹钟设置读取失败', {
       message: errorMessage(cause),
     });
     return 'unsupported';
@@ -124,7 +124,7 @@ export async function requestExactAlarm(): Promise<boolean> {
     logInfo('permission', '已跳转精确闹钟设置页');
     return true;
   } catch (cause: unknown) {
-    logWarn('permission', '跳转精确闹钟设置页失败', {
+    logWarn('permission', '精确闹钟设置页跳转失败', {
       message: errorMessage(cause),
     });
     return false;
@@ -142,7 +142,7 @@ export async function ensureStartupPermissions(options: { remindersEnabled: bool
   }
 
   const notifications = await ensureNotifyPermission();
-  logInfo('permission', '启动权限检查', { notifications });
+  logDebug('permission', '启动权限检查完成', { notifications });
 
   let alarm = await exactAlarmState();
   if (alarm === 'denied' && options.remindersEnabled) {
@@ -150,7 +150,7 @@ export async function ensureStartupPermissions(options: { remindersEnabled: bool
     alarm = await exactAlarmState();
   }
   if (notifications === 'denied') {
-    logWarn('permission', '通知权限未授予：课前提醒不会弹系统通知');
+    logWarn('permission', '通知权限未授予');
   }
   return { platform: 'capacitor', notifications, exactAlarm: alarm };
 }

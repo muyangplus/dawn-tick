@@ -12,6 +12,8 @@ import {
   type CardZone,
   type LayoutConfig,
 } from '../src/screens/cards/registry.ts';
+import { devicesCopy } from '../src/copy/sync-devices.ts';
+import { settingsPageCopy } from '../src/copy/settings-page.ts';
 
 const SRC_DIR = fileURLToPath(new URL('../src', import.meta.url));
 
@@ -71,8 +73,10 @@ test('上移下移只在同一区域内交换，不跨主列与侧列', () => {
 test('设备与同步页改用分组导航：七组交给 GroupedSettings，不再走卡片注册表与手风琴', () => {
   const source = readSource('screens/devices-view.tsx');
   assert.ok(source.includes('<GroupedSettings'), '设备页要渲染 GroupedSettings');
-  assert.ok(source.includes('pageTitle="设备与同步"'), '分组导航的页面标题应为「设备与同步」');
-  assert.ok(source.includes('ariaLabel="设备与同步分组"'), '分组清单要有无障碍名称「设备与同步分组」');
+  assert.ok(source.includes('pageTitle={devicesCopy.pageTitle}'), '分组导航的页面标题取自 devicesCopy');
+  assert.ok(source.includes('ariaLabel={devicesCopy.groupsLabel}'), '分组清单的无障碍名称取自 devicesCopy');
+  assert.equal(devicesCopy.pageTitle, '设备与同步');
+  assert.equal(devicesCopy.groupsLabel, '设备与同步分组');
 
   for (const id of ['storage', 'backup', 'update', 'webdav', 'lan', 'maintenance', 'about']) {
     assert.ok(source.includes(`id: '${id}'`), `设备页分组清单缺少 ${id}`);
@@ -97,8 +101,10 @@ test('设备与同步页改用分组导航：七组交给 GroupedSettings，不�
 test('设置页改用分组导航：七组交给 GroupedSettings，不再走卡片注册表与手风琴', () => {
   const source = readSource('screens/settings-view.tsx');
   assert.ok(source.includes('<GroupedSettings'), '设置页要渲染 GroupedSettings');
-  assert.ok(source.includes('pageTitle="设置"'), '分组导航的页面标题应为「设置」');
-  assert.ok(source.includes('ariaLabel="设置分组"'), '分组清单要有无障碍名称「设置分组」');
+  assert.ok(source.includes('pageTitle={settingsPageCopy.pageTitle}'), '分组导航的页面标题取自 settingsPageCopy');
+  assert.ok(source.includes('ariaLabel={settingsPageCopy.groupsAriaLabel}'), '分组清单的无障碍名称取自 settingsPageCopy');
+  assert.equal(settingsPageCopy.pageTitle, '设置');
+  assert.equal(settingsPageCopy.groupsAriaLabel, '设置分组');
 
   for (const id of ['semesters', 'reminders', 'appearance', 'timetable', 'slots', 'widget', 'time']) {
     assert.ok(source.includes(`id: '${id}'`), `设置页分组清单缺少 ${id}`);

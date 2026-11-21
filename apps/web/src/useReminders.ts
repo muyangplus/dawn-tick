@@ -11,6 +11,7 @@ import { logWarn } from './log.ts';
 import { toast } from './components/ui/toaster.tsx';
 import { ReminderScheduler } from './reminder-scheduler.ts';
 import type { ClassReminderDefaults } from './reminder-collect.ts';
+import { reminderCopy } from './copy/reminder.ts';
 
 export type { ClassReminderDefaults } from './reminder-collect.ts';
 
@@ -73,10 +74,10 @@ export function useReminders(
         if (native === 'granted') setPermission('granted');
         else if (native === 'denied') {
           setPermission('denied');
-          toast.error('通知权限未授予，提醒不会弹出');
+          toast.error(reminderCopy.permissionDenied);
         }
       } catch (cause: unknown) {
-        logWarn('reminder', '读取提醒权限状态失败', { message: errorMessage(cause) });
+        logWarn('reminder', '提醒权限状态读取失败', { message: errorMessage(cause) });
       }
     },
   };

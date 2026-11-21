@@ -1,3 +1,5 @@
+import { errorsCopy } from '../copy/errors.ts';
+
 /**
  * 统一失败文案：`fail(what, reason, next)` 把「发生了什么、为什么、下一步」拼成一句话。
  * 错误页、卡片级提示与 toast 共用这句式；原始异常只进日志（见 log.ts 的 describeError）。
@@ -17,7 +19,7 @@ function tidy(value: string): string {
 }
 
 export function fail(what: string, reason: string, next: string): Failure {
-  const title = tidy(what) || '操作没有完成';
+  const title = tidy(what) || errorsCopy.failFallbackTitle;
   const why = tidy(reason);
   const then = tidy(next);
   const sentences = [why, then].filter((part) => part !== '');

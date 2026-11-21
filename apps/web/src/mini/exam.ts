@@ -1,9 +1,12 @@
 import { formatDate } from '@dawn-tick/core';
 import { formatMonthDayRange } from '../lib/dates.ts';
 import { formatDayCountdown } from '../lib/format.ts';
+import { miniCopy } from '../copy/mini.ts';
+import { isCountdownVisible, type CountdownSource } from '../lib/countdown-visibility.ts';
+import { formatCopy } from '../copy/format.ts';
 
-/** 悬浮窗考试样式只需要条目里的这三个字段；用结构类型便于冒烟传桩数据。 */
-export interface ExamWidgetSource {
+/** 悬浮窗考试样式只需要条目里的这几个字段；用结构类型便于冒烟传桩数据。 */
+export interface ExamWidgetSource extends CountdownSource {
   title: string;
   on_date: string | null;
   start_at: number | null;
@@ -25,26 +28,25 @@ export interface ExamWidgetView {
 }
 
 /** 无考试时的空态文案（悬浮窗与冒烟同源）。 */
-export const EXAM_EMPTY_TEXT = '暂无考试';
+export const EXAM_EMPTY_TEXT = miniCopy.exam.empty;
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * 考试倒计时数据：按开考时间升序取最近一场；已过当天（按用户时区判断，
- * 考试当天仍保留）的不再算「下一场」。日期优先用条目自带的 `on_date`。
+ * 考试倒计时数据：按开考时间升序取最近一场；考完（有结束时间按结束时间）或勾选完成次日起
+ * 不再算「下一场」，规则与首页倒计时同源。日期优先用条目自带的 `on_date`。
  */
 export function examWidgetView(
   exams: readonly ExamWidgetSource[],
   now: number,
   timeZone: string,
 ): ExamWidgetView {
-  const today = formatDate(now, timeZone);
   const upcoming = exams
     .filter(
       (exam): exam is ExamWidgetSource & { start_at: number } =>
         typeof exam.start_at === 'number' && Number.isFinite(exam.start_at) && exam.start_at > 0,
     )
-    .filter((exam) => formatDate(exam.start_at, timeZone) >= today)
+    .filter((exam) => isCountdownVisible(exam, now, timeZone))
     .sort((left, right) => left.start_at - right.start_at)
     .map((exam) => ({
       title: exam.title,
@@ -61,5 +63,5 @@ export function examWidgetView(
 /** 倒计时文案：`还有 N 天`；考试当天 `formatDayCountdown` 给「今天」，换成「就是今天」。 */
 export function examCountdownText(startAt: number, now: number): string {
   const days = formatDayCountdown(startAt, now);
-  return days === '今天' ? '就是今天' : `还有 ${days}`;
+  return days === formatCopy.today ? miniCopy.exam.today : miniCopy.exam.countdown(days);
 }

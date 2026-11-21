@@ -9,6 +9,8 @@
  * - 纯函数，`apps/web/test/lan-sync-qr.test.ts` 覆盖尺寸、定位 / 版本图案、确定性与超长报错。
  */
 
+import { lanSyncCopy } from './copy/sync-lan.ts';
+
 const EC_LEVEL_M = 0;
 const MAX_VERSION = 10;
 
@@ -127,7 +129,7 @@ function chooseVersion(length: number): { version: number; info: QrVersion } {
     if (length <= byteCapacity(version, info)) return { version, info };
   }
   const limit = byteCapacity(MAX_VERSION, VERSIONS[MAX_VERSION]!);
-  throw new Error(`二维码内容过长（${length} 字节，最多 ${limit} 字节）`);
+  throw new Error(lanSyncCopy.qrTooLong(length, limit));
 }
 
 function utf8Bytes(text: string): number[] {

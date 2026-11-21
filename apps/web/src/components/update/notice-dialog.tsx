@@ -1,6 +1,7 @@
 import { Button } from '../ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../ui/dialog.tsx';
 import { NOTICE_BETA } from './releases.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 
 /** 关掉渠道提示时选了哪条路：× / 「知道了」是确认，另一条是去发布页 */
 export interface NoticeDismissOptions {
@@ -28,17 +29,13 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
       }}
     >
       <DialogContent
-        title={notice === NOTICE_BETA ? '测试版提示' : '开发版提示'}
+        title={notice === NOTICE_BETA ? updateDialogCopy.noticeBetaTitle : updateDialogCopy.noticeDevTitle}
         description={
-          notice === NOTICE_BETA
-            ? '测试版可能不稳定，反馈请附日志'
-            : '开发版仅用于开发与测试，日常使用建议安装正式版'
+          notice === NOTICE_BETA ? updateDialogCopy.noticeBetaDescription : updateDialogCopy.noticeDevDescription
         }
       >
         <p className="text-xs text-muted" data-role="channel-notice-detail">
-          {notice === NOTICE_BETA
-            ? '测试版会先于正式版收到改动，可能包含未完成的功能；遇到问题请在反馈里附上「应用诊断日志」。'
-            : '开发版随每次提交滚动更新，不保证稳定，也不参与测试版开关。'}
+          {notice === NOTICE_BETA ? updateDialogCopy.noticeBetaDetail : updateDialogCopy.noticeDevDetail}
         </p>
         <DialogFooter>
           <Button
@@ -49,7 +46,7 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
             }}
             data-role="channel-notice-releases"
           >
-            下载正式版
+            {updateDialogCopy.noticeDownloadRelease}
           </Button>
           <Button
             variant="primary"
@@ -58,7 +55,7 @@ export function NoticeDialog({ notice, onDismiss }: NoticeDialogProps) {
               onDismiss(notice, {});
             }}
           >
-            知道了
+            {notice === NOTICE_BETA ? updateDialogCopy.noticeBetaContinue : updateDialogCopy.noticeDevContinue}
           </Button>
         </DialogFooter>
       </DialogContent>

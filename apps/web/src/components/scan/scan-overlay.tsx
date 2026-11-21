@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '../ui/button.tsx';
+import { scanCopy } from '../../copy/import-scan.ts';
 
 export interface ScanOverlayProps {
   onCancel: () => void;
@@ -14,7 +15,7 @@ export interface ScanOverlayProps {
  * 挂到 body 的独立容器并临时隐藏 `#root`，否则相机预览会被应用界面挡住；
  * 卸载时原样恢复。组件只在扫码期间渲染。
  */
-export function ScanOverlay({ onCancel, title = '扫一扫', hint = '把二维码放入取景框，识别后自动停止' }: ScanOverlayProps) {
+export function ScanOverlay({ onCancel, title = scanCopy.overlayTitle, hint = scanCopy.overlayHint }: ScanOverlayProps) {
   const [host] = useState<HTMLElement | null>(() =>
     typeof document === 'undefined' ? null : document.createElement('div'),
   );
@@ -53,9 +54,9 @@ export function ScanOverlay({ onCancel, title = '扫一扫', hint = '把二维�
     >
       <div className="mt-10 rounded-md bg-black/60 px-3 py-2 text-sm text-white">{hint}</div>
       <div className="mb-6 flex w-full max-w-xs flex-col items-center gap-2 rounded-md bg-black/60 p-3">
-        <span className="text-center text-xs text-white">扫到第一条内容会自动停止</span>
-        <Button size="sm" variant="secondary" aria-label="取消扫码" onClick={onCancel}>
-          取消扫码
+        <span className="text-center text-xs text-white">{scanCopy.overlayAutoStop}</span>
+        <Button size="sm" variant="secondary" aria-label={scanCopy.cancel} onClick={onCancel}>
+          {scanCopy.cancel}
         </Button>
       </div>
     </div>,

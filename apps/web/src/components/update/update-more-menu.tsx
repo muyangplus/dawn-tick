@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { MoreHorizontal } from 'lucide-react';
 import { cn } from '../../lib/cn.ts';
+import { updateDialogCopy } from '../../copy/update-dialog.ts';
 
 export interface UpdateMoreMenuProps {
   ignored: boolean;
@@ -75,7 +76,7 @@ export function UpdateMoreMenu(props: UpdateMoreMenuProps) {
   return (
     <details ref={root} data-role="update-more" className="relative">
       <summary
-        aria-label="更多更新操作"
+        aria-label={updateDialogCopy.moreAria}
         className={cn(
           'dt-btn-motion inline-flex min-h-tap cursor-pointer list-none items-center justify-center gap-1 rounded-md border border-line bg-surface-muted px-3 text-sm font-medium text-ink',
           'hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-2 focus-visible:ring-offset-page',
@@ -83,37 +84,37 @@ export function UpdateMoreMenu(props: UpdateMoreMenuProps) {
         )}
       >
         <MoreHorizontal className="size-4" aria-hidden />
-        更多
+        {updateDialogCopy.more}
       </summary>
       <div
         role="menu"
-        aria-label="更多更新操作"
+        aria-label={updateDialogCopy.moreAria}
         className="dt-menu-in absolute bottom-full right-0 z-30 mb-1 flex w-52 flex-col gap-1 rounded-md border border-line bg-surface p-1 shadow-md"
       >
         {props.ignored ? (
           <MenuItem root={root} role="update-unignore" onSelect={props.onUnignore}>
-            取消忽略此版本
+            {updateDialogCopy.unignore}
           </MenuItem>
         ) : (
           <MenuItem root={root} role="update-ignore" onSelect={props.onIgnore}>
-            {props.ignoring ? '正在忽略…' : '忽略此版本'}
+            {props.ignoring ? updateDialogCopy.ignoring : updateDialogCopy.ignore}
           </MenuItem>
         )}
         {props.showBackground && (
           <MenuItem root={root} role="update-background" onSelect={props.onBackground}>
-            后台下载并关闭
+            {updateDialogCopy.background}
           </MenuItem>
         )}
         {props.showRetry && (
           <MenuItem root={root} role="update-retry" onSelect={props.onRetry}>
-            重试
+            {updateDialogCopy.retry}
           </MenuItem>
         )}
         <MenuItem root={root} role="update-open-release" onSelect={props.onOpenRelease}>
-          打开发布页
+          {updateDialogCopy.openRelease}
         </MenuItem>
         <MenuItem root={root} role="update-copy-link" onSelect={props.onCopyLink}>
-          复制下载链接
+          {updateDialogCopy.copyLink}
         </MenuItem>
       </div>
     </details>

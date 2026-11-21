@@ -133,11 +133,7 @@ pub fn current_install_kind() -> InstallKind {
 #[tauri::command]
 pub fn windows_install_kind() -> String {
     let kind = current_install_kind();
-    crate::append_log(&format!(
-        "Windows 运行形态判定: {}（{}）",
-        kind.label(),
-        kind.as_str()
-    ));
+    crate::log_debug("update", format!("运行形态 kind={} label={}", kind.as_str(), kind.label()));
     kind.as_str().to_string()
 }
 

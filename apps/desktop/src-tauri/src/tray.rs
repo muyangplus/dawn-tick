@@ -12,7 +12,7 @@ pub(crate) fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let menu: Menu<_> = reminder_actions::build_menu(app)?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
-        .tooltip("晓刻 DawnTick")
+        .tooltip(copy::tray::TOOLTIP)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
@@ -73,14 +73,14 @@ pub(crate) fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     match builder.build(app) {
         Ok(_) => {
-            append_log(&format!("托盘已创建（{icon_source}）"));
+            log_debug("app", format!("托盘已创建 icon={icon_source}"));
             if let Ok(mut state) = TRAY_STATE.lock() {
                 *state = Some((true, icon_source));
             }
             Ok(())
         }
         Err(error) => {
-            append_log(&format!("托盘创建失败: {error}"));
+            log_error("app", format!("托盘创建失败 icon={icon_source} error={error}"));
             if let Ok(mut state) = TRAY_STATE.lock() {
                 *state = Some((false, format!("{icon_source} / {error}")));
             }
@@ -96,6 +96,6 @@ pub fn tray_status() -> serde_json::Value {
         .lock()
         .ok()
         .and_then(|state| state.clone())
-        .unwrap_or((false, "尚未初始化".to_string()));
+        .unwrap_or((false, copy::tray::NOT_INITIALIZED.to_string()));
     serde_json::json!({ "created": created, "detail": detail })
 }

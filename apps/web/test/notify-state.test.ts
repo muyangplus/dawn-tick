@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NOTIFY_STATE_LABEL, isNotifyAbnormal, notifyNextStep, notifyStateOf } from '../src/notify-state.ts';
-import { fail } from '../src/copy/zh.ts';
+import { fail } from '../src/copy/common.ts';
 import type { NotifyStatus } from '../src/permissions.ts';
 
 const base: NotifyStatus = {

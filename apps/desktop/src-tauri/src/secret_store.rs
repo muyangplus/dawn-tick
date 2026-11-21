@@ -80,7 +80,7 @@ fn protect(plain: &[u8]) -> Result<Vec<u8>, String> {
         )
     };
     if ok == 0 {
-        return Err(format!("DPAPI 加密失败（错误码 {}）", unsafe { GetLastError() }));
+        return Err(crate::copy::secret::encrypt_failed(unsafe { GetLastError() }));
     }
     Ok(unsafe { take_output(&output) })
 }
@@ -117,22 +117,19 @@ fn unprotect(sealed: &[u8]) -> Result<Vec<u8>, String> {
         )
     };
     if ok == 0 {
-        return Err(format!(
-            "DPAPI 解密失败（错误码 {}）：密码可能来自别的 Windows 账户或设备",
-            unsafe { GetLastError() }
-        ));
+        return Err(crate::copy::secret::decrypt_failed(unsafe { GetLastError() }));
     }
     Ok(unsafe { take_output(&output) })
 }
 
 #[cfg(not(windows))]
 fn protect(_plain: &[u8]) -> Result<Vec<u8>, String> {
-    Err("当前平台不支持系统密钥加密".to_string())
+    Err(crate::copy::secret::ENCRYPT_UNSUPPORTED.to_string())
 }
 
 #[cfg(not(windows))]
 fn unprotect(_sealed: &[u8]) -> Result<Vec<u8>, String> {
-    Err("当前平台不支持系统密钥解密".to_string())
+    Err(crate::copy::secret::DECRYPT_UNSUPPORTED.to_string())
 }
 
 /// 加密明文并返回 Base64 密文；空明文由调用方拒绝。
@@ -143,16 +140,16 @@ pub fn encrypt_to_base64(plaintext: &str) -> Result<String, String> {
 
 /// 解密 Base64 密文并还原为 UTF-8 文本。
 pub fn decrypt_from_base64(ciphertext: &str) -> Result<String, String> {
-    let sealed = crate::decode_base64(ciphertext).ok_or_else(|| "密文不是合法的 Base64".to_string())?;
+    let sealed = crate::decode_base64(ciphertext).ok_or_else(|| crate::copy::secret::CIPHERTEXT_NOT_BASE64.to_string())?;
     let plain = unprotect(&sealed)?;
-    String::from_utf8(plain).map_err(|_| "解密结果不是合法的 UTF-8".to_string())
+    String::from_utf8(plain).map_err(|_| crate::copy::secret::PLAINTEXT_NOT_UTF8.to_string())
 }
 
 /// 加密 WebDAV 密码：返回 Base64 密文，Web 侧再封成 `enc:v1:` 信封。
 #[tauri::command]
 pub fn secret_encrypt(plaintext: String) -> Result<String, String> {
     if plaintext.is_empty() {
-        return Err("没有需要加密的内容".to_string());
+        return Err(crate::copy::secret::NOTHING_TO_ENCRYPT.to_string());
     }
     encrypt_to_base64(&plaintext)
 }
@@ -161,7 +158,7 @@ pub fn secret_encrypt(plaintext: String) -> Result<String, String> {
 #[tauri::command]
 pub fn secret_decrypt(ciphertext: String) -> Result<String, String> {
     if ciphertext.is_empty() {
-        return Err("缺少密文".to_string());
+        return Err(crate::copy::secret::CIPHERTEXT_MISSING.to_string());
     }
     decrypt_from_base64(&ciphertext)
 }

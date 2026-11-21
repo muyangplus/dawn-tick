@@ -13,16 +13,17 @@
  */
 import type { Collection, Storage, StoreName } from '@dawn-tick/core';
 import { errorMessage } from '../lib/errors.ts';
-import { logError } from '../log.ts';
+import { logError, type LogScope } from '../log.ts';
 import { isFallbackStorage, markStorageFallback } from './fallback.ts';
 import { isCorruptDatabase } from './health.ts';
+import { appRecoveryCopy } from '../copy/app-recovery.ts';
 
 /** 对话框与只读提示共用的一句话：事实 + 下一步。 */
-export const DATABASE_CORRUPT_MESSAGE = '数据库文件损坏，已停止写入；可从最近快照恢复并重启';
+export const DATABASE_CORRUPT_MESSAGE = appRecoveryCopy.corrupt.message;
 /** 写入口被锁死时的统一提示。 */
-export const DATABASE_CORRUPT_WRITE_BLOCKED = '数据库文件损坏，已停止写入';
+export const DATABASE_CORRUPT_WRITE_BLOCKED = appRecoveryCopy.corrupt.writeBlocked;
 /** 导出场景的用户可见文案：保留“恢复后重试”的下一步。 */
-export const EXPORT_CORRUPT_MESSAGE = '数据库文件损坏，导出已停止：可从最近快照恢复后重试';
+export const EXPORT_CORRUPT_MESSAGE = appRecoveryCopy.corrupt.exportBlocked;
 
 /** 首次损坏事件：`message` 是原始错误，只进日志与对话框详情。 */
 export interface CorruptEvent {
@@ -45,11 +46,11 @@ export function isCorruptLocked(): boolean {
  * 上报一次错误：不是损坏返回 false；是损坏则锁定写入（同一会话只通知一次）并返回 true。
  * 调用方拿返回值决定是否换文案，不需要自己判重。
  */
-export function reportCorrupt(cause: unknown, scope = 'storage'): boolean {
+export function reportCorrupt(cause: unknown, scope: LogScope = 'storage'): boolean {
   if (!isCorruptDatabase(cause)) return false;
   if (tripped !== null) return true;
   tripped = { message: errorMessage(cause), at: Date.now() };
-  logError(scope, '数据库文件损坏，已停止写入', { message: tripped.message });
+  logError(scope, '数据库文件损坏，写入已停止', { message: tripped.message });
   for (const listener of [...listeners]) {
     try {
       listener(tripped);

@@ -38,10 +38,10 @@ export function useRowHeight(sectionRef: RefObject<HTMLElement | null>, data: un
       }
       adjustCount.current += 1;
       if (adjustCount.current > MAX_ROW_HEIGHT_ADJUSTS) {
-        logWarn('layout', '行高反复调整，停在当前值', { rowHeight: current, target: next, cards: cards.length });
+        logWarn('timetable', '行高反复调整，停在当前值', { rowHeight: current, target: next, cards: cards.length });
         return;
       }
-      logDebug('layout', '行高按内容定一次', { from: current, to: next, cards: cards.length });
+      logDebug('timetable', '行高已按内容调整', { from: current, to: next, cards: cards.length });
       rowHeightRef.current = next;
       setRowHeight(next);
     },
@@ -90,9 +90,9 @@ export function useRowHeight(sectionRef: RefObject<HTMLElement | null>, data: un
       const cards = measureCards();
       if (cards.length === 0) return;
       const target = rowHeightFor(cards);
-      logDebug('layout', '行高自检', { rowHeight: rowHeightRef.current, target, cards: cards.length });
+      logDebug('timetable', '行高自检', { rowHeight: rowHeightRef.current, target, cards: cards.length });
       if (target !== null && target >= ROW_HEIGHT_MAX) {
-        logWarn('layout', '行高已到上限仍有内容被裁', { rowHeight: rowHeightRef.current, target, cards: cards.length });
+        logWarn('timetable', '行高已到上限，仍有内容被裁', { rowHeight: rowHeightRef.current, target, cards: cards.length });
       }
     }, 2500);
     return () => clearTimeout(timer);

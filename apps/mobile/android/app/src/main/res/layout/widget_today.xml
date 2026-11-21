@@ -12,7 +12,7 @@
     android:foreground="@drawable/widget_bg_stroke"
     android:clipToOutline="true">
 
-    <View
+    <FrameLayout
         android:id="@+id/widget_surface"
         android:layout_width="match_parent"
         android:layout_height="match_parent"

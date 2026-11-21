@@ -1,5 +1,8 @@
 package com.dawntick.app.reminder
 
+import android.content.Context
+import com.dawntick.app.R
+
 /**
  * 提醒动作表（R-07）：与 TS `apps/web/src/lib/reminder-actions.ts`、
  * Rust `apps/desktop/src-tauri/src/reminder_actions.rs` 保持同一组动作。
@@ -26,16 +29,15 @@ internal object ReminderActionTable {
         "lab" to EVENT_ACTIONS,
     )
 
-    private val LABELS = mapOf(
-        SNOOZE to "贪睡 $SNOOZE_MINUTES 分钟",
-        DONE to "完成",
-        MUTE to "勿扰 $MUTE_MINUTES 分钟",
-    )
-
     /** 未知类别按日程处理（Web 层不会传未知值，这里只做防御）。 */
     fun ids(kind: String): List<String> = ACTIONS_BY_KIND[kind] ?: EVENT_ACTIONS
 
     fun supports(kind: String, action: String): Boolean = ids(kind).contains(action)
 
-    fun label(action: String): String = LABELS[action] ?: action
+    fun label(context: Context, action: String): String = when (action) {
+        SNOOZE -> context.getString(R.string.reminder_action_snooze, SNOOZE_MINUTES.toInt())
+        DONE -> context.getString(R.string.reminder_action_done)
+        MUTE -> context.getString(R.string.reminder_action_mute, MUTE_MINUTES.toInt())
+        else -> action
+    }
 }

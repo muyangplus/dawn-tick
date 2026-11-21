@@ -29,10 +29,16 @@ import {
   type ImportDiagnosticsSummary,
   type ImportFieldMapping,
 } from '../../lib/import-diagnostics.ts';
-import { formatLogTimestamp, logEntries, logError, logInfo } from '../../log.ts';
+import { formatLogTimestamp, logDebug, logEntries, logInfo, logWarn } from '../../log.ts';
 import { useAction } from '../../lib/action.ts';
 import { saveText, toastSaved } from '../settings/file-export.ts';
 import { fileKind, unsupportedFileReason, type ImportFailure } from './import-flow-model.ts';
+import { importPasteCopy } from '../../copy/import-paste.ts';
+import { aiCopy } from '../../copy/settings-ai.ts';
+import { featureVisible } from '../../channel.ts';
+import { loadAiClient } from '../../lib/ai.ts';
+import { errorMessage } from '../../lib/errors.ts';
+import { recognizeWithAi } from './ai-recognize.ts';
 
 export interface PasteSourceOptions {
   storage: Storage;
@@ -50,6 +56,10 @@ export interface PasteSourceApi {
   mappingFailure: ImportFailure | null;
   fileFailure: ImportFailure | null;
   clipboardFailure: ImportFailure | null;
+  /** 「用 AI 识别」失败的原因 */
+  aiFailure: ImportFailure | null;
+  /** 是否显示「用 AI 识别」：只在开放 AI 的渠道 */
+  aiVisible: boolean;
   inspection: PageInspection | null;
   /** 最近一次识别尝试的诊断摘要；改过粘贴内容后清空，等下次识别重新生成 */
   diagnostics: ImportDiagnosticsSummary | null;
@@ -60,6 +70,7 @@ export interface PasteSourceApi {
   mapPeriodColumn: number;
   fileInput: RefObject<HTMLInputElement | null>;
   runPage: () => void;
+  runAi: () => Promise<void>;
   copyBookmarklet: () => Promise<void>;
   copyDiagnostics: () => Promise<void>;
   exportDiagnostics: () => Promise<void>;
@@ -100,6 +111,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
   const [mappingFailure, setMappingFailure] = useState<ImportFailure | null>(null);
   const [fileFailure, setFileFailure] = useState<ImportFailure | null>(null);
   const [clipboardFailure, setClipboardFailure] = useState<ImportFailure | null>(null);
+  const [aiFailure, setAiFailure] = useState<ImportFailure | null>(null);
   const [inspection, setInspection] = useState<PageInspection | null>(null);
   const [diagnostics, setDiagnostics] = useState<ImportDiagnosticsSummary | null>(null);
   const [mappingOpen, setMappingOpen] = useState(false);
@@ -121,6 +133,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     setMappingFailure(null);
     setFileFailure(null);
     setClipboardFailure(null);
+    setAiFailure(null);
   }
 
   function diagnosticsMeta(): ImportDiagnosticsMeta {
@@ -149,7 +162,16 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       ...(mapping === undefined ? {} : { mapping }),
     });
     setDiagnostics(summary);
-    logInfo('import', '识别诊断', importDiagnosticsLogDetail(summary, diagnosticsMeta()));
+    // 标题与样例行可能带姓名、学号：只留在用户主动复制的诊断文本里，不进日志
+    const { title: _title, samples: _samples, pageDiagnostics, ...detail } = importDiagnosticsLogDetail(
+      summary,
+      diagnosticsMeta(),
+    );
+    const page = pageDiagnostics as Record<string, unknown> | null;
+    logDebug('import', '识别诊断', {
+      ...detail,
+      pageDiagnostics: page === null ? null : { ...page, title: undefined },
+    });
   }
 
   /** 复制诊断信息：文本已由纯函数脱敏，失败时提示改用导出。 */
@@ -157,9 +179,9 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     if (diagnostics === null) return;
     try {
       await navigator.clipboard.writeText(renderImportDiagnosticsText(diagnostics, diagnosticsMeta()));
-      toast.success('诊断信息已复制');
+      toast.success(importPasteCopy.diagnosticsCopied);
     } catch {
-      toast.error('浏览器未允许写入剪贴板，请改用「导出诊断日志」');
+      toast.error(importPasteCopy.clipboardDenied);
     }
   }
 
@@ -182,10 +204,10 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       name,
       renderImportDiagnosticsText(diagnostics, diagnosticsMeta(), { logLines }),
       'txt',
-      '导入诊断日志',
+      importPasteCopy.diagnosticsSaveTitle,
     );
     if (!result.saved) return;
-    toastSaved('已导出导入诊断日志', result.path);
+    toastSaved(importPasteCopy.diagnosticsExported, result.path);
   }
 
   /** 通用网页导入：识别粘贴进来的课表页面，不绑定具体学校。 */
@@ -198,16 +220,16 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     if (result.schedules.length === 0) {
       setPageFailure({
         source: 'page',
-        reason: result.warnings.join('；') || '没有识别到排课',
+        reason: result.warnings.join(importPasteCopy.warningSeparator) || importPasteCopy.noSchedules,
       });
-      logError('page-import', '未识别到课表', {
+      logWarn('import', '未识别到课表', {
         shape: result.shape,
         tables: result.tables,
         frames: countPastedFrames(text),
       });
       return;
     }
-    logInfo('page-import', '识别课表页面', {
+    logInfo('import', '课表页面已识别', {
       shape: result.shape,
       tables: result.tables,
       frames: countPastedFrames(text),
@@ -216,13 +238,47 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     onAccepted(result.schedules, result.warnings);
   }
 
+  /** 用 AI 识别：结果进同一个预览，确认后才写入；发出去的只有粘贴内容与学期周数、节次。 */
+  async function runAi(): Promise<void> {
+    resetFailures();
+    const outcome = await run({
+      scope: 'import',
+      label: aiCopy.importRunning,
+      fail: false,
+      cancellable: true,
+      task: async (signal) => {
+        try {
+          const client = await loadAiClient(storage);
+          const result = await recognizeWithAi(client, storage, semesterId, text, signal);
+          if (signal.aborted) return;
+          if (result.schedules.length === 0) {
+            setAiFailure({
+              source: 'ai',
+              reason: result.warnings.join(importPasteCopy.warningSeparator) || aiCopy.importNoResult,
+            });
+            logWarn('import', 'AI 未识别出课程', { warnings: result.warnings.length });
+            return;
+          }
+          logInfo('import', 'AI 已识别课表', { schedules: result.schedules.length, warnings: result.warnings.length });
+          onAccepted(result.schedules, result.warnings);
+        } catch (cause: unknown) {
+          if (signal.aborted) return;
+          logWarn('import', 'AI 识别失败', { error: errorMessage(cause) });
+          setAiFailure({ source: 'ai', reason: errorMessage(cause) });
+        }
+      },
+    });
+    // task 内部的失败已就地提示；走到这里的只剩超时
+    if (outcome.error !== null) setAiFailure({ source: 'ai', reason: outcome.error });
+  }
+
   async function copyBookmarklet(): Promise<void> {
     try {
       await navigator.clipboard.writeText(PAGE_BOOKMARKLET);
       setBookmarkCopied(true);
-      toast.success('已复制，粘贴到浏览器书签的地址栏');
+      toast.success(importPasteCopy.bookmarkCopied);
     } catch {
-      setClipboardFailure({ source: 'clipboard', reason: '浏览器未允许写入剪贴板，请手动复制下方代码' });
+      setClipboardFailure({ source: 'clipboard', reason: importPasteCopy.bookmarkClipboardDenied });
     }
   }
 
@@ -262,11 +318,11 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     if (result.schedules.length === 0) {
       setMappingFailure({
         source: 'mapping',
-        reason: result.warnings.join('；') || '没有识别到排课',
+        reason: result.warnings.join(importPasteCopy.warningSeparator) || importPasteCopy.noSchedules,
       });
       return;
     }
-    logInfo('page-import', '按手动映射解析', {
+    logInfo('import', '已按手动映射解析', {
       headerRow: mapHeaderRow,
       dayStart: mapDayStart,
       dayCount: mapDayCount,
@@ -285,14 +341,16 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     }
     const result = await run({
       scope: 'import',
-      label: '正在读取课表文件…',
-      log: '读取课表文件失败',
-      task: async () => {
+      label: importPasteCopy.readingFile,
+      log: '课表文件读取失败',
+      cancellable: true,
+      task: async (signal) => {
         const semester = await loadSemester(storage, semesterId);
-        if (semester === undefined) throw new Error('学期不存在');
+        if (semester === undefined) throw new Error(importPasteCopy.noSemester);
         if (kind === 'ics') {
           const calendar = parseIcs(await file.text(), { defaultTimeZone: semester.time_zone });
           const timeSlots = await listTimeSlots(storage, semesterId);
+          if (signal.aborted) return;
           const converted = icsToSchedules(
             calendar,
             {
@@ -311,6 +369,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
           return;
         }
         const parsed = parseTimetableMatrix(await readMatrix(file), semester.total_weeks);
+        if (signal.aborted) return;
         onAccepted(
           parsed.slots.map((slot) => ({
             courseName: slot.name,
@@ -327,7 +386,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     });
     if (!result.ok && result.error !== null) {
       // 解析器的内部报错只进日志；界面给用户能理解的原因与下一步
-      setFileFailure({ source: 'file', reason: '文件里的课表没能识别' });
+      setFileFailure({ source: 'file', reason: importPasteCopy.fileNotRecognized });
     }
   }
 
@@ -340,6 +399,8 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     mappingFailure,
     fileFailure,
     clipboardFailure,
+    aiFailure,
+    aiVisible: featureVisible('ai'),
     inspection,
     diagnostics,
     mappingOpen,
@@ -349,6 +410,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
     mapPeriodColumn,
     fileInput,
     runPage,
+    runAi,
     copyBookmarklet,
     copyDiagnostics,
     exportDiagnostics,

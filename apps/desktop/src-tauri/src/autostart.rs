@@ -30,7 +30,7 @@ pub(crate) mod autostart_reg {
     }
 
     pub fn command_line() -> Result<String, String> {
-        let exe = std::env::current_exe().map_err(|error| format!("获取程序路径失败: {error}"))?;
+        let exe = std::env::current_exe().map_err(crate::copy::common::program_path_failed)?;
         Ok(format!("\"{}\" {}", exe.display(), super::HIDDEN_ARG))
     }
 
@@ -62,7 +62,7 @@ pub(crate) mod autostart_reg {
             )
         };
         if status != ERROR_SUCCESS {
-            return Err(format!("打开注册表项失败，代码 {status}"));
+            return Err(crate::copy::autostart::open_key_failed(status));
         }
         let mut data: Vec<u8> = value.encode_utf16().flat_map(|unit| unit.to_le_bytes()).collect();
         data.extend_from_slice(&[0, 0]);
@@ -71,7 +71,7 @@ pub(crate) mod autostart_reg {
             unsafe { RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, data.as_ptr(), data.len() as u32) };
         unsafe { RegCloseKey(key) };
         if status != ERROR_SUCCESS {
-            return Err(format!("写入启动项失败，代码 {status}"));
+            return Err(crate::copy::autostart::write_failed(status));
         }
         Ok(())
     }
@@ -176,16 +176,16 @@ pub fn set_autostart(enabled: bool) -> Result<AutostartStatus, String> {
         if enabled {
             let command = autostart_reg::command_line()?;
             autostart_reg::write(HKEY_CURRENT_USER, &command)?;
-            append_log("已写入用户级开机自启");
+            log_info("settings", "已开启用户级开机自启");
         } else {
             let user = autostart_reg::remove(HKEY_CURRENT_USER);
-            append_log(&format!("已移除用户级开机自启（用户级={user}）"));
+            log_info("settings", format!("已关闭用户级开机自启 removed={user}"));
         }
         Ok(autostart_status_inner())
     }
     #[cfg(not(windows))]
     {
         let _ = enabled;
-        Err("当前平台不支持开机自启".to_string())
+        Err(copy::autostart::UNSUPPORTED.to_string())
     }
 }

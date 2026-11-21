@@ -8,7 +8,8 @@ import type {
   WidgetVariant,
 } from '@dawn-tick/core';
 import { PRESETS } from '../design/tokens.ts';
-import { COUNT } from '../copy/zh.ts';
+import { settingsSummaryCopy } from '../copy/settings-page.ts';
+import { aiCopy } from '../copy/settings-ai.ts';
 
 /** 设置页的分组 id：顺序与分组清单一致，摘要按同一份 id 返回。 */
 export const SETTINGS_GROUP_IDS = [
@@ -19,6 +20,7 @@ export const SETTINGS_GROUP_IDS = [
   'slots',
   'widget',
   'time',
+  'ai',
 ] as const;
 
 export type SettingsGroupId = (typeof SETTINGS_GROUP_IDS)[number];
@@ -33,31 +35,14 @@ export interface SettingsSummaryInput {
   slots: readonly TimeSlotRow[];
 }
 
-const THEME_MODE_LABEL: Record<ThemeMode, string> = {
-  system: '跟随系统',
-  light: '浅色',
-  dark: '深色',
-};
+const THEME_MODE_LABEL: Record<ThemeMode, string> = settingsSummaryCopy.themeMode;
 
-const TODO_SORT_LABEL: Record<TodoSort, string> = {
-  start: '按开始时间',
-  type: '按类型',
-};
+const TODO_SORT_LABEL: Record<TodoSort, string> = settingsSummaryCopy.todoSort;
 
 /** 悬浮窗样式的短名：完整名太长，清单里只留一句能认出样式的话。 */
-const WIDGET_VARIANT_SHORT_LABEL: Record<WidgetVariant, string> = {
-  bar: '条形',
-  today: '今日课表',
-  minimal: '极简数字',
-  combo: '组合卡',
-  exam: '考试倒计时',
-};
+const WIDGET_VARIANT_SHORT_LABEL: Record<WidgetVariant, string> = settingsSummaryCopy.widgetVariantShort;
 
-const WIDGET_BACKGROUND_LABEL: Record<WidgetBackground, string> = {
-  light: '浅色',
-  dark: '深色',
-  transparent: '透明',
-};
+const WIDGET_BACKGROUND_LABEL: Record<WidgetBackground, string> = settingsSummaryCopy.widgetBackground;
 
 /**
  * 设置页分组清单的一行摘要（纯函数）。
@@ -69,16 +54,20 @@ export function summarizeSettings(input: SettingsSummaryInput): SettingsGroupSum
   const { settings, semesters, activeSemesterId, slots } = input;
   const activeSemester = semesters.find((semester) => semester.id === activeSemesterId);
 
+  const copy = settingsSummaryCopy;
   return {
-    semesters: activeSemester?.name ?? '还没有学期',
+    semesters: activeSemester?.name ?? copy.noSemester,
     reminders: settings.classReminderEnabled
-      ? `课前 ${COUNT('minute', settings.classReminderMinutes)}`
-      : '课前提醒已关闭',
-    appearance: `${PRESETS[settings.themePreset].label} · ${THEME_MODE_LABEL[settings.theme]}`,
-    timetable: `${settings.viewDays} 天 · ${settings.hideWeekends ? '隐藏周末' : '显示周末'}`,
-    /** COUNT('period', 14) = 「14 个」，后面接「节次」组成「14 个节次」 */
-    slots: `${COUNT('period', slots.length)}节次`,
-    widget: `${WIDGET_VARIANT_SHORT_LABEL[settings.widgetVariant]} · ${WIDGET_BACKGROUND_LABEL[settings.widgetBackground]}`,
-    time: `${settings.timeZone} · ${TODO_SORT_LABEL[settings.todoSort]}`,
+      ? copy.classReminderOn(settings.classReminderMinutes)
+      : copy.classReminderOff,
+    appearance: copy.pair(PRESETS[settings.themePreset].label, THEME_MODE_LABEL[settings.theme]),
+    timetable: copy.timetable(settings.viewDays, settings.hideWeekends),
+    slots: copy.slots(slots.length),
+    widget: copy.pair(
+      WIDGET_VARIANT_SHORT_LABEL[settings.widgetVariant],
+      WIDGET_BACKGROUND_LABEL[settings.widgetBackground],
+    ),
+    time: copy.pair(settings.timeZone, TODO_SORT_LABEL[settings.todoSort]),
+    ai: settings.aiBaseUrl.trim() !== '' && settings.aiModel.trim() !== '' ? aiCopy.summaryOn(settings.aiModel.trim()) : aiCopy.summaryOff,
   };
 }
