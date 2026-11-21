@@ -18,6 +18,7 @@ import {
   validatedStorage,
   WIDGET_VARIANT_LABEL,
   WIDGET_VARIANTS,
+  readSettings,
   writeSettings,
   type AiChatMessage,
   type AiChatReply,
@@ -66,7 +67,10 @@ import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { toastSaved } from '../src/screens/settings/file-export.ts';
-import { busySnapshot, runBusy } from '../src/lib/busy.ts';
+import { BUSY_TIMEOUT_MS, busySnapshot, runBusy } from '../src/lib/busy.ts';
+import { AiCard } from '../src/screens/settings/ai-card.tsx';
+import { installBackHandlers } from '../src/lib/back-dispatch.ts';
+import { AiEventDialog } from '../src/screens/todo-form/ai-event-dialog.tsx';
 import { uiCopy } from '../src/copy/ui.ts';
 import { toast } from '../src/lib/toast.ts';
 import { clearPendingRestart, pendingRestartSources } from '../src/pending-restart.ts';
@@ -7085,6 +7089,62 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     );
     await pressEsc();
 
+    // 展开的导入区停在第 2 步时用顶栏返回回到分组清单：藏起的流程不接 Esc，Esc 直接回课表
+    await openSettingsGroup(backRoot, '学期设置');
+    if (courseImport()?.open !== true) await toggleCourseImport();
+    if (!courseImportStep().includes('第 2/4 步')) await pickCoursePaste();
+    const hiddenOpen = courseImport()?.open === true;
+    const hiddenStep = courseImportStep();
+    backRoot.querySelector<HTMLElement>('[data-role="settings-nav-back"]')?.click();
+    await flush(10);
+    const backedToList = settingsNavIsListOnly(backRoot) && onSettingsPage(backRoot);
+    // 清单页上导入区仍挂着（只是藏起），停在第 2 步：Esc 若被它接走会退成第 1 步而不离开设置页
+    const listStep = courseImportStep();
+    const hiddenEsc = await pressEsc(12);
+    check(
+      'Esc：展开的导入区随分组藏起后不接 Esc，分组清单直接回课表',
+      hiddenOpen &&
+        hiddenStep.includes('第 2/4 步') &&
+        backedToList &&
+        listStep.includes('第 2/4 步') &&
+        onTimetable(backRoot) &&
+        hiddenEsc.defaultPrevented === true,
+      `展开=${hiddenOpen} 步骤=${hiddenStep || '(无)'} 回清单=${backedToList} 清单页步骤=${listStep || '(未挂载)'} 当前=${currentNav(backRoot)}`,
+    );
+
+    // 「＋」→「导入课表」打开设置页的导入抽屉；关掉后离开设置再回来，抽屉不再自行打开
+    const importOnTimetable = onTimetable(backRoot);
+    backRoot.querySelector<HTMLElement>('button[aria-label="添加"]')?.click();
+    await flush(10);
+    const importAction = [...document.querySelectorAll<HTMLElement>('[data-role="add-actions"] button')].find(
+      (item) => (item.textContent ?? '').trim() === '导入课表',
+    );
+    importAction?.click();
+    await flush(16);
+    const drawerOpened = onSettingsPage(backRoot) && openDialogs() > 0;
+    for (let round = 0; round < 4 && openDialogs() > 0; round += 1) await pressEsc(10);
+    const drawerClosed = openDialogs() === 0 && onSettingsPage(backRoot);
+    check(
+      '「＋」导入课表：切到设置页并打开导入抽屉，Esc 关掉后仍在设置页',
+      importOnTimetable && importAction !== undefined && drawerOpened && drawerClosed,
+      `起点课表=${importOnTimetable} 入口=${importAction !== undefined} 打开=${drawerOpened} 关闭=${drawerClosed} 当前=${currentNav(backRoot)}`,
+    );
+    clickByText(backRoot, '课表');
+    await flush(12);
+    clickByText(backRoot, '设置');
+    await flush(16);
+    check(
+      '导入请求处理过后，离开设置再回来不再自行打开导入抽屉',
+      onSettingsPage(backRoot) && openDialogs() === 0,
+      `设置页=${onSettingsPage(backRoot)} 对话框=${openDialogs()}`,
+    );
+    clickByText(backRoot, '设备与同步');
+    await flush(12);
+    clickByText(backRoot, '设置');
+    await flush(16);
+    check('换到设备页再回设置，同样不弹导入抽屉', onSettingsPage(backRoot) && openDialogs() === 0, `对话框=${openDialogs()}`);
+    await pressEsc(12);
+
     // ⑦ 帮助页从设备页分组进入：Esc 回到原分组，再退清单，再回课表
     clickByText(backRoot, '设备与同步');
     await flush(12);
@@ -7642,6 +7702,82 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       await flush(8);
       chatApp.root.unmount();
+
+      // 停止或「新对话」之后才回来的结果：底层请求不认 signal（安卓原生请求），回来的回复与计划一律丢掉
+      let lateRelease: (() => void) | null = null;
+      let lateCalls = 0;
+      let lateWithPlan = false;
+      const lateClient: AiClient = {
+        complete: async () => {
+          throw new Error('冒烟假模型只走函数调用');
+        },
+        chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          lateCalls += 1;
+          if (request.messages.at(-1)?.role === 'tool') return { content: '迟到的总结', toolCalls: [] };
+          await new Promise<void>((resolve) => {
+            lateRelease = resolve;
+          });
+          if (!lateWithPlan) return { content: '迟到的回复', toolCalls: [] };
+          return {
+            content: '',
+            toolCalls: [{ id: 'call-late', name: 'create_event', arguments: JSON.stringify({ kind: 'todo', title: '迟到的待办', date: todayText }) }],
+          };
+        },
+      };
+      setAiClientForTests(lateClient);
+      const lateApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openFab(lateApp);
+      if (clickByText(document.body, assistantLabel)) await flush(14);
+      const chatEntries = (): number =>
+        panel()?.querySelectorAll('[data-role="assistant-chat"] > [data-role^="assistant-"]').length ?? -1;
+      const panelText = (): string => panel()?.textContent ?? '';
+      const sendLate = async (text: string): Promise<boolean> => {
+        const box = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
+        if (box === null) return false;
+        setInputValue(box, text);
+        await flush(4);
+        panel()?.querySelector<HTMLElement>('[data-role="assistant-send"]')?.click();
+        return waitFor(() => lateRelease !== null && panel()?.querySelector('[data-role="assistant-send"]') === null, 40);
+      };
+      const releaseLate = async (): Promise<void> => {
+        const release = lateRelease as (() => void) | null;
+        lateRelease = null;
+        release?.();
+        await flush(20);
+      };
+
+      // ① 请求进行中点「新对话」：回复迟到也不写回已清空的对话
+      const lateSent = await sendLate('这次会被清空');
+      const clearedWhileBusy = panel() !== null && clickByText(panel() as HTMLElement, assistantPanelCopy.clear);
+      await flush(8);
+      await releaseLate();
+      check(
+        '助手：请求进行中点「新对话」，迟到的回复被丢掉，对话保持为空',
+        lateSent && clearedWhileBusy && chatEntries() === 0 && !panelText().includes('迟到的回复') &&
+          panel()?.querySelector('[data-role="assistant-send"]') !== null,
+        `已发=${lateSent} 清空=${clearedWhileBusy} 条目=${chatEntries()} 调用=${lateCalls}`,
+      );
+
+      // ② 请求进行中点「停止」：迟到的回复带着写入计划，也不进计划、不再请求模型
+      lateWithPlan = true;
+      lateCalls = 0;
+      const stopSent = await sendLate('这次会被停止');
+      const stopped = panel() !== null && clickByText(panel() as HTMLElement, assistantPanelCopy.stop);
+      await flush(8);
+      await releaseLate();
+      const lateEntries = [...(panel()?.querySelectorAll<HTMLElement>('[data-role="assistant-chat"] > [data-role^="assistant-"]') ?? [])].map(
+        (entry) => entry.getAttribute('data-role'),
+      );
+      check(
+        '助手：请求进行中点「停止」，迟到的回复不进对话、计划不出卡片、不再请求下一步',
+        stopSent && stopped && lateEntries.join('/') === 'assistant-user' && lateCalls === 1 &&
+          panel()?.querySelector('[data-role="assistant-step"]') === null && !panelText().includes('迟到的总结') &&
+          panel()?.querySelector('[data-role="assistant-send"]') !== null,
+        `已发=${stopSent} 停止=${stopped} 条目=${lateEntries.join('/') || '(无)'} 调用=${lateCalls}`,
+      );
+      lateApp.root.unmount();
       setAiClientForTests(undefined);
       await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
     }
@@ -7671,6 +7807,126 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       prefillBox === null ? '(无粘贴框)' : `长度=${prefillBox.value.length}`,
     );
     prefillApp.root.unmount();
+  }
+
+  // —— AI 请求超时：蒙版超时后中止 signal，识别、测试连接与生成都就地给出超时提示 ——
+  // 默认超时 60 秒：只把 busy 的那一个计时器缩短；假模型不理会 signal（安卓原生请求就是这样），一直挂着
+  {
+    const timeoutStore = validatedStorage(await openIndexedDbStorage());
+    const timeoutSemester = await activeSemester(timeoutStore, USER_ID);
+    const timeoutSemesterId = timeoutSemester === undefined ? '' : String(timeoutSemester['id']);
+    const hangingSignals: Array<AbortSignal | undefined> = [];
+    const hangingClient: AiClient = {
+      complete: (request) => {
+        hangingSignals.push(request.signal);
+        return new Promise<string>(() => undefined);
+      },
+    };
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
+      realSetTimeout(handler as () => void, ms === BUSY_TIMEOUT_MS ? 40 : ms, ...rest)) as typeof setTimeout;
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    // 单独挂载的组件没有 App：Esc 取消蒙版的处理装在这里
+    const uninstallBack = installBackHandlers();
+    setAiClientForTests(hangingClient);
+    const timedOut = (text: string): boolean => text.includes('操作超时');
+    try {
+      // 设置 → AI「测试连接」
+      const aiSettings = { ...(await readSettings(timeoutStore)), aiBaseUrl: 'https://ai.example.test/v1', aiModel: 'smoke-model' };
+      const cardApp = mount(<AiCard storage={timeoutStore} settings={aiSettings} onPatch={async () => {}} />);
+      await flush(10);
+      clickByText(cardApp.container, aiCopy.testButton);
+      const cardTimedOut = await waitFor(
+        () => timedOut(cardApp.container.querySelector('[data-role="ai-status"]')?.textContent ?? ''),
+        80,
+      );
+      check(
+        'AI 测试连接超时：状态行给出超时提示，请求的 signal 已中止，蒙版收起',
+        cardTimedOut && hangingSignals.length === 1 && hangingSignals[0]?.aborted === true && busySnapshot() === null,
+        `${(cardApp.container.querySelector('[data-role="ai-status"]')?.textContent ?? '(无)').trim()} 中止=${hangingSignals[0]?.aborted ?? '无'}`,
+      );
+      cardApp.root.unmount();
+
+      // 新建待办 →「用 AI 生成」
+      hangingSignals.length = 0;
+      let eventDialogOpen = true;
+      const dialogApp = mount(
+        <AiEventDialog
+          open
+          onOpenChange={(next) => {
+            eventDialogOpen = next;
+          }}
+          storage={timeoutStore}
+          userId={USER_ID}
+          semesterId={timeoutSemesterId}
+          timeZone="Asia/Shanghai"
+          onCreated={() => {}}
+        />,
+      );
+      await flush(10);
+      const eventInput = document.querySelector<HTMLTextAreaElement>('[data-role="ai-event-input"]');
+      if (eventInput !== null) setInputValue(eventInput, '下周二 9 点期中考试');
+      await flush(4);
+      const eventDialog = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-role="ai-event-dialog"]');
+      const eventError = (): string => eventDialog()?.querySelector('[role="alert"]')?.textContent ?? '';
+      const generateOnce = (): boolean => eventDialog() !== null && clickByText(eventDialog() as HTMLElement, aiCopy.generate);
+      const generateClicked = generateOnce();
+      const eventTimedOut = await waitFor(() => timedOut(eventError()), 80);
+      check(
+        'AI 生成日程超时：对话框里给出超时提示，signal 已中止，对话框仍开着',
+        generateClicked && eventTimedOut && hangingSignals[0]?.aborted === true && eventDialogOpen && busySnapshot() === null,
+        `点击=${generateClicked} 提示=${eventError().trim() || '(无)'} 中止=${hangingSignals[0]?.aborted ?? '无'}`,
+      );
+      // 生成可取消：Esc 取消后不报错、不留未处理的 Promise 拒绝
+      globalThis.setTimeout = realSetTimeout;
+      hangingSignals.length = 0;
+      generateOnce();
+      await flush(8);
+      const cancellableNow = busySnapshot()?.cancellable === true;
+      document.body.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      await flush(16);
+      check(
+        'AI 生成日程可用 Esc 取消：signal 中止、不显示错误、对话框仍开着',
+        cancellableNow && hangingSignals[0]?.aborted === true && eventError() === '' && eventDialogOpen && busySnapshot() === null,
+        `可取消=${cancellableNow} 中止=${hangingSignals[0]?.aborted ?? '无'} 提示=${eventError().trim() || '(无)'} 开着=${eventDialogOpen}`,
+      );
+      dialogApp.root.unmount();
+      toast.dismiss();
+      await flush(4);
+
+      // 导入 → 粘贴网页课表 →「用 AI 识别」
+      if (featureVisible('ai')) {
+        globalThis.setTimeout = ((handler: TimerHandler, ms?: number, ...rest: unknown[]) =>
+          realSetTimeout(handler as () => void, ms === BUSY_TIMEOUT_MS ? 40 : ms, ...rest)) as typeof setTimeout;
+        hangingSignals.length = 0;
+        const recognizeApp = mount(
+          <ImportFlow storage={timeoutStore} semesterId={timeoutSemesterId} initialText={PAGE_SAMPLE} onDone={() => {}} onClose={() => {}} />,
+        );
+        await flush(16);
+        recognizeApp.container.querySelector<HTMLButtonElement>('[data-role="import-ai"]')?.click();
+        const aiError = (): string => recognizeApp.container.querySelector('[data-role="import-ai-error"]')?.textContent ?? '';
+        const recognizeTimedOut = await waitFor(() => timedOut(aiError()), 80);
+        check(
+          'AI 识别课表超时：粘贴步骤就地给出超时提示，signal 已中止',
+          recognizeTimedOut && hangingSignals.length >= 1 && hangingSignals.every((signal) => signal?.aborted === true) && busySnapshot() === null,
+          `${aiError().trim() || '(无提示)'} 请求=${hangingSignals.length}`,
+        );
+        recognizeApp.root.unmount();
+      }
+      await flush(4);
+      check('AI 超时与取消没有留下未处理的 Promise 拒绝', unhandled.length === 0, unhandled.map(String).join(' | '));
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      uninstallBack();
+      process.off('unhandledRejection', onUnhandled);
+      setAiClientForTests(undefined);
+      toast.dismiss();
+      await flush(4);
+    }
   }
 
   return results;

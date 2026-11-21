@@ -174,6 +174,42 @@ test('可取消的操作照样受超时约束，超时不当作取消', async ()
   assert.equal(busySnapshot(), null);
 });
 
+test('超时：先以超时报错再中止 signal，底层请求能停下，迟到结果可按 signal.aborted 丢弃', async () => {
+  const job = gated('late');
+  const pending = runBusy('正在识别…', job.task, { timeoutMs: 5, cancellable: true });
+  assert.equal(job.signal()?.aborted, false, '超时前 signal 未中止');
+  let rejection: unknown = null;
+  await pending.catch((cause: unknown) => {
+    rejection = cause;
+  });
+  assert.ok(rejection instanceof Error);
+  assert.equal(isBusyCancelled(rejection), false, '超时不当作用户取消');
+  assert.match((rejection as Error).message, /操作超时（正在识别…）/);
+  assert.equal(job.signal()?.aborted, true, '超时后 signal 中止');
+  assert.equal(busySnapshot(), null);
+  job.release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(busySnapshot(), null, '迟到的结果不再改动蒙版');
+});
+
+test('超时：不可取消的操作同样中止 signal', async () => {
+  const job = gated('late');
+  await assert.rejects(runBusy('正在生成…', job.task, { timeoutMs: 5 }), (cause: unknown) => !isBusyCancelled(cause) && /操作超时/.test((cause as Error).message));
+  assert.equal(job.signal()?.aborted, true);
+  job.release();
+});
+
+test('超时之前正常完成：signal 不被中止，计时器不再触发', async () => {
+  let seen: AbortSignal | null = null;
+  const value = await runBusy('正在识别…', async (signal) => {
+    seen = signal;
+    return 'ok';
+  }, { timeoutMs: 5 });
+  assert.equal(value, 'ok');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal((seen as AbortSignal | null)?.aborted, false);
+});
+
 test('isBusyCancelled 只认 BusyCancelledError', () => {
   assert.equal(isBusyCancelled(new BusyCancelledError('x')), true);
   assert.equal(isBusyCancelled(new Error('已取消（x）')), false);

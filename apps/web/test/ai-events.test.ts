@@ -147,3 +147,18 @@ test('generateEventDrafts：模型输出无法解析时抛可读错误', async (
   const { client } = fakeClient('好的，已为你添加');
   await assert.rejects(generateEventDrafts(client, 'x', Date.UTC(2026, 10, 20), 'Asia/Shanghai'), /没有 JSON/);
 });
+
+test('generateEventDrafts：把 signal 交给模型请求，超时或取消时能中止', async () => {
+  const seen: Array<AbortSignal | undefined> = [];
+  const client: AiClient = {
+    complete: async (request: AiRequest) => {
+      seen.push(request.signal);
+      return '[]';
+    },
+  };
+  const controller = new AbortController();
+  await generateEventDrafts(client, 'x', Date.UTC(2026, 10, 20), 'Asia/Shanghai', controller.signal);
+  await generateEventDrafts(client, 'x', Date.UTC(2026, 10, 20), 'Asia/Shanghai');
+  assert.equal(seen[0], controller.signal);
+  assert.equal(seen[1], undefined);
+});
