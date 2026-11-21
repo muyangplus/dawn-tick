@@ -241,7 +241,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
   /** 用 AI 识别：结果进同一个预览，确认后才写入；发出去的只有粘贴内容与学期周数、节次。 */
   async function runAi(): Promise<void> {
     resetFailures();
-    await run({
+    const outcome = await run({
       scope: 'import',
       label: aiCopy.importRunning,
       fail: false,
@@ -268,6 +268,8 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
         }
       },
     });
+    // task 内部的失败已就地提示；走到这里的只剩超时
+    if (outcome.error !== null) setAiFailure({ source: 'ai', reason: outcome.error });
   }
 
   async function copyBookmarklet(): Promise<void> {

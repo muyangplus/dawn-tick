@@ -55,10 +55,12 @@ export async function generateEventDrafts(
   input: string,
   now: number,
   timeZone: string,
+  signal?: AbortSignal,
 ): Promise<{ items: AiEventDraft[]; warnings: string[] }> {
   const today = formatDate(now, timeZone);
   const output = await client.complete({
     messages: eventPromptMessages(input, { today, weekday: dayOfWeek(today), timeZone }),
+    ...(signal === undefined ? {} : { signal }),
   });
   return parseEventDrafts(output);
 }

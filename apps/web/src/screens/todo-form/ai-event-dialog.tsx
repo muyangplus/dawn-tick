@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.
 import { InlineError } from '../../components/ui/inline-error.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
 import { loadAiClient } from '../../lib/ai.ts';
-import { useBusyAction } from '../../lib/busy.ts';
+import { isBusyCancelled, useBusyAction } from '../../lib/busy.ts';
 import { errorMessage } from '../../lib/errors.ts';
 import { fail } from '../../lib/fail.ts';
 import { logInfo, logWarn } from '../../log.ts';
@@ -47,19 +47,31 @@ export function AiEventDialog({ open, onOpenChange, storage, userId, semesterId,
 
   async function generate(): Promise<void> {
     reset();
-    await run(copy.generating, async () => {
-      try {
-        const client = await loadAiClient(storage);
-        const result = await generateEventDrafts(client, input, Date.now(), timeZone);
-        setDrafts(result.items);
-        setWarnings(result.warnings);
-        setPicked(result.items.map(() => true));
-        logInfo('todo', 'AI 已生成日程草稿', { items: result.items.length, warnings: result.warnings.length });
-      } catch (cause: unknown) {
-        logWarn('todo', 'AI 生成日程失败', { error: errorMessage(cause) });
-        setError(fail(copy.generateWhat, errorMessage(cause), copy.generateNext).text);
-      }
-    });
+    try {
+      // 只读：Esc / 返回键可取消，超时也会中止请求
+      await run(
+        copy.generating,
+        async (signal) => {
+          try {
+            const client = await loadAiClient(storage);
+            const result = await generateEventDrafts(client, input, Date.now(), timeZone, signal);
+            if (signal.aborted) return;
+            setDrafts(result.items);
+            setWarnings(result.warnings);
+            setPicked(result.items.map(() => true));
+            logInfo('todo', 'AI 已生成日程草稿', { items: result.items.length, warnings: result.warnings.length });
+          } catch (cause: unknown) {
+            if (signal.aborted) return;
+            logWarn('todo', 'AI 生成日程失败', { error: errorMessage(cause) });
+            setError(fail(copy.generateWhat, errorMessage(cause), copy.generateNext).text);
+          }
+        },
+        { cancellable: true },
+      );
+    } catch (cause: unknown) {
+      // run 只在超时或取消时抛出：取消不算失败
+      if (!isBusyCancelled(cause)) setError(fail(copy.generateWhat, errorMessage(cause), copy.generateNext).text);
+    }
   }
 
   const chosen = (drafts ?? []).filter((_, index) => picked[index] === true);

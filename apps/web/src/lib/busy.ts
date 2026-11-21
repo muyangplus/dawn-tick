@@ -62,7 +62,7 @@ export interface RunBusyOptions {
 /**
  * 跑一个慢操作：盖蒙版、挡住重复点击，结束后无论成败都收起；抛出的错误原样交给调用方。
  *
- * `timeoutMs` 默认 60 秒：超时后主动报错并释放蒙版，底层 Promise 即使永不 settle 也不会
+ * `timeoutMs` 默认 60 秒：超时后主动报错、中止 `signal` 并释放蒙版，底层 Promise 即使永不 settle 也不会
  * 把后续所有操作一起锁死（用户报的「导出日志后其它功能全卡死」就是这个锁被占住）。
  *
  * 可取消的操作被取消时立即以 `BusyCancelledError` 结束并收起蒙版；`signal` 交给底层请求真正中止，
@@ -84,6 +84,9 @@ export async function runBusy<T>(
       timer = setTimeout(() => {
         logError('app', '操作超时，蒙版已释放', { label, timeoutMs });
         reject(new Error(errorsCopy.busyTimeout(label)));
+        // 先以超时结束，再中止底层请求：迟到的结果靠 signal.aborted 丢掉，不在蒙版收起后再改界面
+        if (onAbort !== undefined) entry.controller.signal.removeEventListener('abort', onAbort);
+        entry.controller.abort();
       }, Math.max(1, timeoutMs));
     });
     const cancelled = new Promise<never>((_resolve, reject) => {

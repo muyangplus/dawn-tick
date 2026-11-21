@@ -118,7 +118,16 @@ export function AiCard({ storage, settings, onPatch }: AiCardProps) {
         }
       },
     });
-    if (result.cancelled === true) setStatus(said(uiCopy.back.cancelled));
+    if (result.cancelled === true) {
+      setStatus(said(uiCopy.back.cancelled));
+      return;
+    }
+    // task 内部的失败已就地提示；走到这里的只剩超时
+    if (result.error !== null) {
+      const message = fail(copy.testWhat, result.error, copy.testNext);
+      setStatus(said(message));
+      toast.error(message);
+    }
   }
 
   const keyView = keyStatus(keyInfo, keyBusy, keySaveError);
