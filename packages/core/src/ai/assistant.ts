@@ -152,6 +152,8 @@ async function toolsTurn<C>(
     }
     messages.push({ role: 'assistant', content: reply.content, toolCalls: reply.toolCalls });
     for (const call of reply.toolCalls as AiToolCall[]) {
+      // 迟到的回复里还有函数调用时，停下后不再逐个执行
+      input.signal?.throwIfAborted();
       const content = await handleCall({ name: call.name, args: parseArgs(call.arguments) }, input, plan);
       messages.push({ role: 'tool', toolCallId: call.id, content });
     }
@@ -222,6 +224,7 @@ async function jsonTurn<C>(
     if (turn.calls.length === 0) return { reply: turn.reply, exhausted: false };
     const results: string[] = [];
     for (const call of turn.calls) {
+      input.signal?.throwIfAborted();
       results.push(`${call.name}：${await handleCall(call, input, plan)}`);
     }
     messages.push({ role: 'user', content: `函数结果：\n${results.join('\n')}` });
