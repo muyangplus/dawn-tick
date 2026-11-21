@@ -66,6 +66,9 @@ import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
 import { shouldShowTomorrow, tomorrowPreviewLessons } from '../src/mini/tomorrow.ts';
 import { toastSaved } from '../src/screens/settings/file-export.ts';
+import { busySnapshot, runBusy } from '../src/lib/busy.ts';
+import { uiCopy } from '../src/copy/ui.ts';
+import { toast } from '../src/lib/toast.ts';
 import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
@@ -6825,6 +6828,316 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     `展开=${openHelpEntries.map((entry) => entry.getAttribute('data-help-id')).join(',') || '(无)'}`,
   );
   helpApp.root.unmount();
+
+  // —— Esc / 返回键：进行中的操作先取消（写入不能中断），再退弹窗里的步骤、关弹窗，再退页面一级 ——
+  {
+    const pressEsc = async (rounds = 10): Promise<KeyboardEvent> => {
+      const event = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      await flush(rounds);
+      return event;
+    };
+    const currentNav = (container: HTMLElement): string =>
+      (
+        container.querySelector<HTMLElement>('[data-role="bottom-nav"] button[aria-current="true"]')?.textContent ?? ''
+      ).trim();
+    const onSettingsPage = (container: HTMLElement): boolean =>
+      container.querySelector('[data-role="settings-actions"]') !== null;
+    const onTimetable = (container: HTMLElement): boolean =>
+      currentNav(container) === '课表' && container.querySelector('[data-role="help-view"]') === null;
+    const openDialogs = (): number => document.querySelectorAll('[role="dialog"]').length;
+    const toastTexts = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('[data-sonner-toast]')].map((item) => (item.textContent ?? '').trim());
+    const hasToast = (text: string): boolean => toastTexts().some((item) => item.includes(text));
+    const dismissToasts = async (): Promise<void> => {
+      toast.dismiss();
+      await flush(4);
+    };
+    const devicesNav = (container: HTMLElement): HTMLElement | null =>
+      container.querySelector<HTMLElement>('nav[aria-label="设备与同步分组"]');
+    const devicesSubpageOpen = (container: HTMLElement): boolean => {
+      const nav = devicesNav(container);
+      const panel = nav?.parentElement?.querySelector('section') ?? null;
+      return nav !== null && nav.classList.contains('hidden') && panel !== null && !panel.classList.contains('hidden');
+    };
+    const devicesListOnly = (container: HTMLElement): boolean => {
+      const nav = devicesNav(container);
+      const panel = nav?.parentElement?.querySelector('section') ?? null;
+      return nav !== null && !nav.classList.contains('hidden') && panel !== null && panel.classList.contains('hidden');
+    };
+    const dismissChannelNotice = async (): Promise<void> => {
+      if (
+        clickByText(document.body, updateDialogCopy.noticeDevContinue) ||
+        clickByText(document.body, updateDialogCopy.noticeBetaContinue)
+      ) {
+        await flush(8);
+      }
+    };
+
+    const backApp = mount(<App />);
+    await flush(24);
+    await dismissChannelNotice();
+    const backRoot = backApp.container;
+
+    // 课表页没有可退的一级：Esc 不被吞（安卓据此退到后台）
+    const idleEsc = await pressEsc();
+    check(
+      'Esc：课表页没有上一级，不拦截按键也不切页',
+      onTimetable(backRoot) && idleEsc.defaultPrevented === false,
+      `当前=${currentNav(backRoot)} defaultPrevented=${idleEsc.defaultPrevented}`,
+    );
+
+    // ① 移动端设置分组 → 分组清单 → 课表
+    clickByText(backRoot, '设置');
+    await flush(12);
+    const enteredGroup = await openSettingsGroup(backRoot, '课表显示');
+    const groupOpenBefore = settingsSubpageOpen(backRoot);
+    const groupEsc = await pressEsc();
+    check(
+      'Esc：移动端设置分组退回分组清单，仍在设置页',
+      enteredGroup &&
+        groupOpenBefore &&
+        settingsNavIsListOnly(backRoot) &&
+        onSettingsPage(backRoot) &&
+        currentNav(backRoot) === '设置' &&
+        groupEsc.defaultPrevented,
+      `进组=${enteredGroup}/${groupOpenBefore} 清单=${settingsNavIsListOnly(backRoot)} 当前=${currentNav(backRoot)}`,
+    );
+    await pressEsc(12);
+    check(
+      'Esc：设置分组清单再按一次回到课表',
+      onTimetable(backRoot) && !onSettingsPage(backRoot),
+      `当前=${currentNav(backRoot)}`,
+    );
+
+    // ② 日程页同样回课表
+    clickByText(backRoot, '日程');
+    await flush(12);
+    const onSchedule = currentNav(backRoot) === '日程';
+    await pressEsc(12);
+    check('Esc：日程页回到课表', onSchedule && onTimetable(backRoot), `当前=${currentNav(backRoot)}`);
+
+    // ③ 导入弹窗：Esc 先退一步，退到第一步再关弹窗，弹窗关掉不离开设置页
+    clickByText(backRoot, '设置');
+    await flush(12);
+    const importButton = backRoot.querySelector<HTMLElement>('[data-role="settings-actions"] button');
+    importButton?.click();
+    await flush(12);
+    const compactStep = (): string =>
+      document.querySelector('[role="dialog"] [data-role="step-compact"]')?.textContent?.trim() ?? '';
+    const stepOne = compactStep();
+    // 渠道卡按 data-channel 取：别处也可能有「粘贴文本」开头的按钮
+    document
+      .querySelector<HTMLElement>('[role="dialog"] [data-role="channel-card"][data-channel="paste"]')
+      ?.click();
+    await flush(10);
+    const stepTwo = compactStep();
+    await pressEsc();
+    const steppedBack = compactStep();
+    check(
+      'Esc：导入弹窗在第 2 步时退回第 1 步，弹窗不关',
+      stepOne.includes('第 1/4 步') &&
+        stepTwo.includes('第 2/4 步') &&
+        steppedBack.includes('第 1/4 步') &&
+        openDialogs() === 1 &&
+        onSettingsPage(backRoot),
+      `${stepOne} → ${stepTwo} → ${steppedBack || '(无)'} 弹窗=${openDialogs()}`,
+    );
+    await pressEsc(12);
+    check(
+      'Esc：导入弹窗在第 1 步时关闭弹窗，仍留在设置页',
+      openDialogs() === 0 && onSettingsPage(backRoot) && currentNav(backRoot) === '设置',
+      `弹窗=${openDialogs()} 当前=${currentNav(backRoot)}`,
+    );
+
+    // ④ 普通弹窗（课程详情以外的确认/表单）：Esc 只关弹窗，不顺带离开页面
+    importButton?.click();
+    await flush(12);
+    const reopened = openDialogs() === 1;
+    await pressEsc(12);
+    check(
+      'Esc：打开的弹窗只关弹窗，不离开所在页面',
+      reopened && openDialogs() === 0 && onSettingsPage(backRoot),
+      `重开=${reopened} 弹窗=${openDialogs()} 当前=${currentNav(backRoot)}`,
+    );
+
+    // ⑤ 只读操作进行中：Esc 取消、提示「已取消」、蒙版收起，且不退分组
+    await openSettingsGroup(backRoot, '课表显示');
+    await dismissToasts();
+    let readSignal: AbortSignal | null = null;
+    const reading = runBusy(
+      '正在测试连接…',
+      (signal) => {
+        readSignal = signal;
+        return new Promise<never>(() => undefined);
+      },
+      { cancellable: true },
+    );
+    reading.catch(() => undefined);
+    await flush(6);
+    const readOverlay = document.querySelector('[data-role="busy-overlay"]') !== null;
+    const readEsc = await pressEsc(8);
+    const readCancelled = await reading.then(
+      () => false,
+      (cause: unknown) => cause instanceof Error && cause.name === 'BusyCancelledError',
+    );
+    check(
+      'Esc：只读操作进行中按 Esc 取消并提示「已取消」，蒙版收起',
+      readOverlay &&
+        readEsc.defaultPrevented &&
+        readCancelled &&
+        (readSignal as AbortSignal | null)?.aborted === true &&
+        hasToast(uiCopy.back.cancelled) &&
+        busySnapshot() === null &&
+        document.querySelector('[data-role="busy-overlay"]') === null,
+      `蒙版前=${readOverlay} 取消=${readCancelled} toast=${toastTexts().join(' | ') || '(无)'}`,
+    );
+    check(
+      'Esc：取消操作的这一下不顺带退出分组',
+      settingsSubpageOpen(backRoot) && onSettingsPage(backRoot),
+      `子页=${settingsSubpageOpen(backRoot)}`,
+    );
+
+    // ⑥ 写入进行中：Esc 只提示「正在写入数据，不能中断」，蒙版与页面都不动
+    await dismissToasts();
+    let releaseWrite: () => void = () => undefined;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let writeSignal: AbortSignal | null = null;
+    const writing = runBusy('正在保存课程…', async (signal) => {
+      writeSignal = signal;
+      await writeGate;
+      return 'saved';
+    });
+    await flush(6);
+    const writeEsc = await pressEsc(8);
+    check(
+      'Esc：写入进行中提示「正在写入数据，不能中断」，蒙版与分组都还在',
+      writeEsc.defaultPrevented &&
+        hasToast(uiCopy.back.writing) &&
+        !hasToast(uiCopy.back.cancelled) &&
+        (writeSignal as AbortSignal | null)?.aborted === false &&
+        document.querySelector('[data-role="busy-overlay"]') !== null &&
+        settingsSubpageOpen(backRoot) &&
+        onSettingsPage(backRoot),
+      `toast=${toastTexts().join(' | ') || '(无)'} 蒙版=${
+        document.querySelector('[data-role="busy-overlay"]') !== null
+      } 子页=${settingsSubpageOpen(backRoot)}`,
+    );
+    releaseWrite();
+    const written = await writing;
+    await flush(6);
+    check(
+      '写入结束后蒙版照常收起，再按 Esc 回到正常的退一级',
+      written === 'saved' && document.querySelector('[data-role="busy-overlay"]') === null,
+      `结果=${written}`,
+    );
+    await pressEsc();
+    check('写入结束后 Esc 退回分组清单', settingsNavIsListOnly(backRoot), '');
+    await dismissToasts();
+
+    // ⑦ 帮助页从设备页分组进入：Esc 回到原分组，再退清单，再回课表
+    clickByText(backRoot, '设备与同步');
+    await flush(12);
+    await openDeviceGroup('局域网同步', backRoot);
+    await waitFor(() => backRoot.querySelector('[data-role="help-link"][data-help-target="lan-web"]') !== null, 30);
+    backRoot.querySelector<HTMLElement>('[data-role="help-link"][data-help-target="lan-web"]')?.click();
+    await flush(12);
+    const helpShown = backRoot.querySelector('[data-role="help-view"]') !== null;
+    await pressEsc(16);
+    check(
+      'Esc：从设备页分组进入的帮助页，返回到原来的分组',
+      helpShown &&
+        backRoot.querySelector('[data-role="help-view"]') === null &&
+        currentNav(backRoot) === '设备与同步' &&
+        activeDeviceGroup(backRoot) === 'lan' &&
+        devicesSubpageOpen(backRoot),
+      `帮助=${helpShown} 当前=${currentNav(backRoot)} 组=${activeDeviceGroup(backRoot) || '(无)'}`,
+    );
+    await pressEsc();
+    check('Esc：设备页分组退回分组清单', devicesListOnly(backRoot) && currentNav(backRoot) === '设备与同步', '');
+    // 从设备清单进帮助：返回设备清单，而不是课表
+    backRoot.querySelector<HTMLElement>('[data-role="settings-nav-help"]')?.click();
+    await flush(12);
+    const helpFromList = backRoot.querySelector('[data-role="help-view"]') !== null;
+    await pressEsc(16);
+    check(
+      'Esc：从设备分组清单进入的帮助页，返回设备分组清单',
+      helpFromList && currentNav(backRoot) === '设备与同步' && devicesListOnly(backRoot),
+      `帮助=${helpFromList} 当前=${currentNav(backRoot)}`,
+    );
+    await pressEsc(12);
+    check('Esc：设备分组清单回到课表', onTimetable(backRoot), `当前=${currentNav(backRoot)}`);
+
+    // ⑧ 课表顶部「?」进帮助：Esc 回课表
+    backRoot.querySelector<HTMLElement>('button[aria-label="帮助"]')?.click();
+    await flush(12);
+    const helpFromToolbar = backRoot.querySelector('[data-role="help-view"]') !== null;
+    await pressEsc(16);
+    check('Esc：从课表进入的帮助页回到课表', helpFromToolbar && onTimetable(backRoot), `当前=${currentNav(backRoot)}`);
+    backApp.root.unmount();
+
+    // ⑨ 桌面：设置页分组常驻没有「清单」这一级；从设置分组进帮助，Esc 回到那一组，再按回课表
+    const originalMatchMedia = globalThis.matchMedia;
+    Object.defineProperty(globalThis, 'matchMedia', {
+      value: (query: string) => ({
+        matches: /min-width: (?:1024|1440)px/.test(query),
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      }),
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const desktopBack = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      const desk = desktopBack.container;
+      const sidebarCurrent = (): string =>
+        (desk.querySelector<HTMLElement>('[data-role="app-sidebar"] [aria-current="true"]')?.textContent ?? '').trim();
+      clickByText(desk, '设置');
+      await flush(12);
+      await openSettingsGroup(desk, '提醒设置');
+      const groupBefore =
+        desk.querySelector<HTMLElement>('[data-role="settings-nav-item"][aria-current="page"]')?.getAttribute('data-group') ??
+        '';
+      desk.querySelector<HTMLElement>('[data-role="settings-nav-help"]')?.click();
+      await flush(12);
+      const deskHelp = desk.querySelector('[data-role="help-view"]') !== null;
+      await pressEsc(16);
+      const groupAfter =
+        desk.querySelector<HTMLElement>('[data-role="settings-nav-item"][aria-current="page"]')?.getAttribute('data-group') ??
+        '';
+      check(
+        'Esc：桌面从设置分组进入的帮助页，返回设置页的同一分组',
+        groupBefore === 'reminders' &&
+          deskHelp &&
+          desk.querySelector('[data-role="help-view"]') === null &&
+          onSettingsPage(desk) &&
+          groupAfter === 'reminders',
+        `进前=${groupBefore || '(无)'} 帮助=${deskHelp} 回来=${groupAfter || '(无)'} 侧栏=${sidebarCurrent()}`,
+      );
+      await pressEsc(12);
+      check(
+        'Esc：桌面设置页没有分组清单这一级，直接回课表',
+        !onSettingsPage(desk) && sidebarCurrent() === '课表',
+        `侧栏=${sidebarCurrent()}`,
+      );
+      desktopBack.root.unmount();
+    } finally {
+      Object.defineProperty(globalThis, 'matchMedia', {
+        value: originalMatchMedia,
+        configurable: true,
+        writable: true,
+      });
+    }
+  }
 
 
   // —— AI 助手面板：「＋」菜单入口跟随 FEATURES.ai；未配置给去设置；配置后用假模型跑一轮计划与执行 ——
