@@ -247,6 +247,51 @@ test('课表草稿：周次区间先截到学期范围再展开', () => {
   assert.deepEqual(weeksOf('0-3'), [1, 2, 3]);
 });
 
+test('课表草稿：周次文本支持单双周标记', () => {
+  const weeksOf = (weeks: unknown, totalWeeks = 16): number[] | undefined =>
+    parseScheduleDrafts(JSON.stringify([{ courseName: 'X', dayOfWeek: 1, periodStart: 1, weeks }]), {
+      totalWeeks,
+      periodCount: 10,
+    }).items[0]?.weeks;
+  const ODD = ALL_WEEKS.filter((week) => week % 2 === 1);
+  const EVEN = ALL_WEEKS.filter((week) => week % 2 === 0);
+  assert.deepEqual(weeksOf('1-16单周'), ODD);
+  assert.deepEqual(weeksOf('1-16(双)'), EVEN);
+  assert.deepEqual(weeksOf('1-16 周 (单)'), ODD, '周字与括号前有空格');
+  assert.deepEqual(weeksOf('1-16 周（双周）'), EVEN, '全角括号');
+  assert.deepEqual(weeksOf('1-16周 单周'), ODD, '标记与区间之间有空格');
+  assert.deepEqual(weeksOf('第1-8周单,10-16双'), [1, 3, 5, 7, 10, 12, 14, 16], '标记只管所在的那一段');
+  assert.deepEqual(weeksOf('3-9单'), [3, 5, 7, 9]);
+  assert.deepEqual(weeksOf('2-9单'), [3, 5, 7, 9], '起点不合单双时从下一周开始');
+  assert.deepEqual(weeksOf('5单'), [5]);
+  assert.deepEqual(weeksOf('1-4'), [1, 2, 3, 4], '无标记不筛单双');
+});
+
+test('课表草稿：单独的单双标记按全学期算', () => {
+  const weeksOf = (weeks: unknown, totalWeeks = 16): number[] | undefined =>
+    parseScheduleDrafts(JSON.stringify([{ courseName: 'X', dayOfWeek: 1, periodStart: 1, weeks }]), {
+      totalWeeks,
+      periodCount: 10,
+    }).items[0]?.weeks;
+  assert.deepEqual(weeksOf('单周'), ALL_WEEKS.filter((week) => week % 2 === 1));
+  assert.deepEqual(weeksOf('双'), ALL_WEEKS.filter((week) => week % 2 === 0));
+  assert.deepEqual(weeksOf('1-8,单'), [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15]);
+  const started = performance.now();
+  assert.deepEqual(weeksOf('1-50000000双', 5), [2, 4]);
+  assert.ok(performance.now() - started < 200, '大数区间不逐周展开');
+});
+
+test('课表草稿：单双周同时出现按每周算', () => {
+  const weeksOf = (weeks: unknown): number[] | undefined =>
+    parseScheduleDrafts(JSON.stringify([{ courseName: 'X', dayOfWeek: 1, periodStart: 1, weeks }]), {
+      totalWeeks: 6,
+      periodCount: 10,
+    }).items[0]?.weeks;
+  assert.deepEqual(weeksOf('单双周'), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(weeksOf('1-6单双周'), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(weeksOf('1-6单'), [1, 3, 5], '只有单仍按单周');
+});
+
 test('课表草稿：单个数字周次在学期外时跳过并说明', () => {
   const result = parseScheduleDrafts(
     JSON.stringify([
@@ -410,6 +455,7 @@ test('课表提示词：带学期周数与节次对照，用户内容单独一�
   assert.match(messages[0]!.content, /本学期共 18 周/);
   assert.match(messages[0]!.content, /1 08:00-08:45；2 08:55-09:40/);
   assert.match(messages[0]!.content, /courseName/);
+  assert.ok(messages[0]!.content.includes('1-16单'), '周次示例带单双写法');
   assert.equal(messages[1]!.content, '周一 1-2 节 高数');
 
   const empty = schedulePromptMessages('x', { totalWeeks: 16, periods: [] });

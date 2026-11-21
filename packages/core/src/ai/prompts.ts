@@ -20,7 +20,7 @@ export function schedulePromptMessages(input: string, context: SchedulePromptCon
       role: 'system',
       content: [
         '你把用户给出的课表内容（网页文本、表格或描述）整理成 JSON 数组，只输出 JSON，不要解释。',
-        '每个元素：{"courseName": 课程名, "dayOfWeek": 1-7（周一为 1）, "periodStart": 开始节次, "periodEnd": 结束节次, "weeks": 上课周次数组如 [1,2,3] 或文本 "1-16", "room": 教室或 null, "teacher": 教师或 null}。',
+        '每个元素：{"courseName": 课程名, "dayOfWeek": 1-7（周一为 1）, "periodStart": 开始节次, "periodEnd": 结束节次, "weeks": 上课周次数组如 [1,2,3] 或文本 "1-16"、"1-16单"、"2-16双", "room": 教室或 null, "teacher": 教师或 null}。',
         `本学期共 ${context.totalWeeks} 周。节次对照：${periods}。只有时间没有节次时按对照换算。`,
         '同一门课每个上课时段一项；不确定的字段填 null，不要编造。',
       ].join('\n'),

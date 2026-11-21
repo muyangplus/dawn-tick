@@ -122,7 +122,10 @@ function validDate(value: string): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
-/** 周次：数组 `[1,2,3]`、单个数字，或文本 `1-16`、`第1-8周,10周`；超出学期的周次去掉。 */
+/**
+ * 周次：数组 `[1,2,3]`、单个数字，或文本 `1-16`、`第1-8周,10周`、`1-16单周`、`1-16(双)`、`单周`；
+ * 超出学期的周次去掉。单双标记只管它所在的那一段，单独出现时按全学期算。
+ */
 function weeksOf(value: unknown, totalWeeks: number): number[] | null {
   const result = new Set<number>();
   const add = (week: number): void => {
@@ -136,15 +139,25 @@ function weeksOf(value: unknown, totalWeeks: number): number[] | null {
   } else if (typeof value === 'number') {
     add(value);
   } else if (typeof value === 'string') {
-    for (const raw of value.split(/[,，、\s]+/)) {
-      const part = raw.replace(/[第周]/g, '');
+    // 「1-16 周 (单)」这类写法先把单双标记贴到前一段上，再按分隔符切
+    const normalized = value.replace(/\s+周/g, '周').replace(/\s*[(（]?\s*([单双])\s*周?\s*[)）]?/g, '$1');
+    for (const raw of normalized.split(/[,，、;；\s]+/)) {
+      // 同时写了单和双（「单双周」）就是每周
+      const odd = raw.includes('单');
+      const even = raw.includes('双');
+      const parity = odd === even ? null : odd ? 1 : 0;
+      const part = raw.replace(/[第周单双]/g, '');
+      const addIn = (from: number, to: number): void => {
+        for (let week = from; week <= to; week += 1) if (parity === null || week % 2 === parity) add(week);
+      };
       const range = /^(\d+)\s*[-–~～]\s*(\d+)$/.exec(part);
       if (range !== null) {
         // 先截到学期范围再展开：模型给出离谱的大数时不至于卡住
         const from = Math.max(1, Math.min(Number(range[1]), Number(range[2])));
         const to = Math.min(totalWeeks, Math.max(Number(range[1]), Number(range[2])));
-        for (let week = from; week <= to; week += 1) add(week);
+        addIn(from, to);
       } else if (/^\d+$/.test(part)) add(Number(part));
+      else if (part === '' && (odd || even)) addIn(1, totalWeeks);
     }
   } else if (value === undefined || value === null) {
     return null;
