@@ -9,6 +9,7 @@ export interface RuntimeCredit {
 export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Web', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
   { component: 'Web', name: '@capacitor-mlkit/barcode-scanning', version: '8.2.1', license: 'Apache-2.0' },
+  { component: 'Web', name: '@capacitor/app', version: '8.1.2', license: 'MIT' },
   { component: 'Web', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
   { component: 'Web', name: '@capacitor/filesystem', version: '8.1.5', license: 'MIT' },
   { component: 'Web', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
@@ -40,6 +41,7 @@ export const RUNTIME_CREDITS: readonly RuntimeCredit[] = [
   { component: 'Android', name: '@capacitor-community/sqlite', version: '8.1.1', license: 'MIT' },
   { component: 'Android', name: '@capacitor-mlkit/barcode-scanning', version: '8.2.1', license: 'Apache-2.0' },
   { component: 'Android', name: '@capacitor/android', version: '8.5.3', license: 'MIT' },
+  { component: 'Android', name: '@capacitor/app', version: '8.1.2', license: 'MIT' },
   { component: 'Android', name: '@capacitor/core', version: '8.5.3', license: 'MIT' },
   { component: 'Android', name: '@capacitor/filesystem', version: '8.1.5', license: 'MIT' },
   { component: 'Android', name: '@capacitor/local-notifications', version: '8.3.1', license: 'MIT' },
