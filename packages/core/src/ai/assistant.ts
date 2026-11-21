@@ -138,6 +138,8 @@ async function toolsTurn<C>(
   if (chat === undefined) throw new AiToolsUnsupportedError('客户端不支持函数调用');
   const tools = actionTools(input.actions);
   for (let step = 0; step < maxSteps; step += 1) {
+    // 底层请求不认 signal 时（Android 原生请求）也要在下一步之前停下
+    input.signal?.throwIfAborted();
     const system: AiChatMessage = { role: 'system', content: `${SYSTEM_RULES}\n${input.contextNote}` };
     const reply = await chat.call(input.client, {
       messages: [system, ...messages],
@@ -206,6 +208,7 @@ async function jsonTurn<C>(
 ): Promise<{ reply: string; exhausted: boolean }> {
   const system = `${SYSTEM_RULES}\n${input.contextNote}\n${jsonRules(input.actions)}`;
   for (let step = 0; step < maxSteps; step += 1) {
+    input.signal?.throwIfAborted();
     // 退回模式的接口只认 system / user：模型自己的输出与函数结果都以 user 消息回传
     const output = await input.client.complete({
       messages: [

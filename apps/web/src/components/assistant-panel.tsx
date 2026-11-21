@@ -151,6 +151,8 @@ export function AssistantPanel(props: AssistantPanelProps) {
         signal: controller.signal,
         onQuery: (name) => setProgress(copy.querying(actionLabel(name))),
       });
+      // 停止或清空之后才回来的结果：底层请求可能没认 signal，丢掉，不写回已清空的对话
+      if (controller.signal.aborted) return;
       history.current = result.history;
       mode.current = result.mode;
       push('assistant', result.exhausted ? copy.exhausted : result.reply === '' ? copy.emptyReply : result.reply);
