@@ -7,6 +7,7 @@ import { createCourse, createSchedule, deleteCourse, deleteSchedule, updateCours
 import { createEvent, deleteEvent, deleteReminder, setReminder, updateEvent } from '../mutations/events.ts';
 import { listSchedules, listSemesters, listTimeSlots, loadSemester } from '../repository.ts';
 import { addDays, diffDays, isValidTimeZone } from '../time.ts';
+import { parseClock } from '../timetable.ts';
 import type { CourseRow, CourseScheduleRow, EventRow, ReminderRow, ReminderTargetType, SemesterRow, TimeSlotRow } from '../types.ts';
 import { describeWeeks, maskToWeeks, weeksToMask } from '../weeks.ts';
 import {
@@ -308,8 +309,13 @@ export const addPeriodAction = defineAction<AiCoreContext, PeriodAppend>({
   },
   preview: ({ next, start, end }) => `追加第 ${next} 节 ${start}-${end}`,
   async run({ semester, next, start, end }, context) {
-    const created = await appendTimeSlot(context.storage, semester.id, 45, 10);
-    await updateTimeSlot(context.storage, String(created['id']), { startTime: start, endTime: end });
+    // 直接按目标时间追加：固定的 45 + 10 分钟在晚间会跨过午夜，被校验拒掉
+    const last = (await listTimeSlots(context.storage, semester.id)).at(-1);
+    const gap = last === undefined ? 0 : parseClock(start) - parseClock(last.end_time);
+    const created = await appendTimeSlot(context.storage, semester.id, parseClock(end) - parseClock(start), gap);
+    if (created['start_time'] !== start || created['end_time'] !== end) {
+      await updateTimeSlot(context.storage, String(created['id']), { startTime: start, endTime: end });
+    }
     return `已追加第 ${next} 节`;
   },
 });
