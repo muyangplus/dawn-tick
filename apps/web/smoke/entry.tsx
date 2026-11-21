@@ -19,6 +19,12 @@ import {
   WIDGET_VARIANT_LABEL,
   WIDGET_VARIANTS,
   writeSettings,
+  type AiChatMessage,
+  type AiChatReply,
+  type AiChatRequest,
+  type AiClient,
+  type EventRow,
+  type SemesterRow,
 } from '@dawn-tick/core';
 import { App, LOADING_SLOW_MS, LoadingScreen } from '../src/App.tsx';
 import type { AppData } from '../src/data.ts';
@@ -49,6 +55,11 @@ import { semestersCopy } from '../src/copy/settings-semesters.ts';
 import { formatLogTimestamp } from '../src/log.ts';
 import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
+import { setAiClientForTests } from '../src/lib/ai.ts';
+import { assistantPanelCopy } from '../src/copy/assistant.ts';
+import { aiCopy } from '../src/copy/settings-ai.ts';
+import { addMenuCopy } from '../src/copy/home-add-menu.ts';
+import { ImportFlow } from '../src/screens/import/import-flow-view.tsx';
 import { MiniShell } from '../src/mini/shell.tsx';
 import { ExamWidgetBody } from '../src/mini/exam.tsx';
 import { AppSidebar } from '../src/components/nav.tsx';
@@ -1190,18 +1201,18 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
-  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源，固定四项
+  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源；「AI 助手」跟随 FEATURES.ai，只在开发版出现
   const addMenuLabels = (): string[] =>
     [...view.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]')].map((item) =>
       (item.textContent ?? '').trim(),
     );
-  const EXPECTED_ADD_ACTIONS = ['加课程', '加待办', '加考试', '导入课表'];
+  const EXPECTED_ADD_ACTIONS = ['加课程', '加待办', '加考试', '导入课表', ...(featureVisible('ai') ? ['AI 助手'] : [])];
   check(
-    'P1-01 日程「添加」菜单含四项新增动作',
+    featureVisible('ai') ? 'P1-01 日程「添加」菜单含四项新增动作与「AI 助手」' : 'P1-01 日程「添加」菜单含四项新增动作，无「AI 助手」',
     addMenuLabels().join('/') === EXPECTED_ADD_ACTIONS.join('/'),
     addMenuLabels().join(' / ') || '(无)',
   );
-  // 移动端 FAB → 底部 Sheet，同样四项，且必须含「加考试」
+  // 移动端 FAB → 底部 Sheet，与菜单同一份清单，且必须含「加考试」
   const mobileFab = view.container.querySelector<HTMLElement>('button[aria-label="添加"]');
   mobileFab?.click();
   await flush(10);
@@ -1209,7 +1220,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     (item.textContent ?? '').trim(),
   );
   check(
-    'P1-01 移动 FAB 底部 Sheet 含四项且含「加考试」',
+    'P1-01 移动 FAB 底部 Sheet 与菜单同一份清单且含「加考试」',
     mobileFab !== null &&
       fabActions.join('/') === EXPECTED_ADD_ACTIONS.join('/') &&
       fabActions.includes('加考试'),
@@ -6373,7 +6384,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       ...desktopApp.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]'),
     ].map((item) => (item.textContent ?? '').trim());
     check(
-      'P1-01 桌面工具栏「＋」菜单含四项新增动作',
+      'P1-01 桌面工具栏「＋」菜单与日程「添加」菜单同一份清单',
       desktopApp.container.querySelector('[data-role="app-sidebar"]') !== null &&
         desktopAddLabels.join('/') === EXPECTED_ADD_ACTIONS.join('/'),
       desktopAddLabels.join(' / ') || '(无工具栏菜单)',
@@ -6813,6 +6824,267 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     `展开=${openHelpEntries.map((entry) => entry.getAttribute('data-help-id')).join(',') || '(无)'}`,
   );
   helpApp.root.unmount();
+
+
+  // —— AI 助手面板：「＋」菜单入口跟随 FEATURES.ai；未配置给去设置；配置后用假模型跑一轮计划与执行 ——
+  {
+    const assistantStore = validatedStorage(await openIndexedDbStorage());
+    if ((await activeSemester(assistantStore, USER_ID)) === undefined) {
+      await createSemester(assistantStore, {
+        userId: USER_ID,
+        name: '助手冒烟学期',
+        startDate: todayText,
+        totalWeeks: 20,
+        timeZone: 'Asia/Shanghai',
+      });
+    }
+    await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
+    const dismissChannelNotice = async (): Promise<void> => {
+      if (
+        clickByText(document.body, updateDialogCopy.noticeDevContinue) ||
+        clickByText(document.body, updateDialogCopy.noticeBetaContinue)
+      ) {
+        await flush(8);
+      }
+    };
+    /** 移动视口：点 FAB 打开「添加」底部 Sheet，返回其中的动作文字 */
+    const openFab = async (app: { container: HTMLElement }): Promise<string[]> => {
+      app.container.querySelector<HTMLElement>('button[aria-label="添加"]')?.click();
+      await flush(10);
+      return [...document.querySelectorAll<HTMLElement>('[data-role="add-actions"] button')].map((item) =>
+        (item.textContent ?? '').trim(),
+      );
+    };
+    const panel = (): HTMLElement | null => document.querySelector<HTMLElement>('[data-role="assistant-panel"]');
+    const assistantLabel = addMenuCopy.actions.assistant;
+
+    const entryApp = mount(<App />);
+    await flush(24);
+    await dismissChannelNotice();
+    const fabLabels = await openFab(entryApp);
+    if (featureVisible('ai')) {
+      check(
+        '开发版「＋」菜单末尾是「AI 助手」',
+        fabLabels.at(-1) === assistantLabel && assistantLabel === 'AI 助手',
+        fabLabels.join(' / ') || '(无)',
+      );
+      if (clickByText(document.body, assistantLabel)) await flush(14);
+      const notConfigured = panel()?.querySelector('[data-role="assistant-not-configured"]') ?? null;
+      check(
+        'AI 未配置时助手面板给出提示与「去设置」，不出现输入框',
+        panel() !== null &&
+          notConfigured !== null &&
+          (notConfigured.textContent ?? '').includes(assistantPanelCopy.notConfigured) &&
+          [...notConfigured.querySelectorAll('button')].some(
+            (button) => (button.textContent ?? '').trim() === assistantPanelCopy.openAiSettings,
+          ) &&
+          panel()?.querySelector('[data-role="assistant-input"]') === null,
+        (panel()?.textContent ?? '(面板未打开)').slice(0, 80),
+      );
+      if (notConfigured instanceof HTMLElement && clickByText(notConfigured, assistantPanelCopy.openAiSettings)) {
+        await flush(20);
+      }
+      check(
+        '点「去设置」关闭助手面板并打开 设置 → AI',
+        panel() === null && (document.body.textContent ?? '').includes(aiCopy.intro),
+        panel() === null ? '面板已关' : '面板仍开着',
+      );
+    } else {
+      check(
+        '非开发版「＋」菜单没有「AI 助手」，也不挂载助手面板',
+        fabLabels.length > 0 && !fabLabels.includes(assistantLabel) && panel() === null,
+        fabLabels.join(' / ') || '(无)',
+      );
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush(8);
+    }
+    entryApp.root.unmount();
+
+    if (featureVisible('ai')) {
+      // 假模型：第一次调用提出一条写入与一条高危，拿到函数结果后给出总结
+      const doomed = await createSemester(assistantStore, {
+        userId: USER_ID,
+        name: '助手冒烟待删学期',
+        startDate: todayText,
+        totalWeeks: 4,
+        timeZone: 'Asia/Shanghai',
+        isActive: false,
+      });
+      const doomedId = String(doomed['id']);
+      const todoTitle = '助手冒烟待办';
+      const systemNotes: string[] = [];
+      const fakeClient: AiClient = {
+        complete: async () => {
+          throw new Error('冒烟假模型只走函数调用');
+        },
+        chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          const system = request.messages.find((message: AiChatMessage) => message.role === 'system');
+          if (system !== undefined) systemNotes.push(system.content);
+          if (request.messages.at(-1)?.role === 'tool') return { content: '已列出两项待确认的操作', toolCalls: [] };
+          return {
+            content: '',
+            toolCalls: [
+              {
+                id: 'call-1',
+                name: 'create_event',
+                arguments: JSON.stringify({ kind: 'todo', title: todoTitle, date: todayText }),
+              },
+              { id: 'call-2', name: 'delete_semester', arguments: JSON.stringify({ id: doomedId }) },
+            ],
+          };
+        },
+      };
+      setAiClientForTests(fakeClient);
+      await writeSettings(assistantStore, { aiBaseUrl: 'https://ai.example.test/v1', aiModel: 'smoke-model' });
+
+      const chatApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openFab(chatApp);
+      if (clickByText(document.body, assistantLabel)) await flush(14);
+      const input = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
+      check(
+        'AI 已配置时助手面板出现输入框与发送按钮',
+        input !== null && panel()?.querySelector('[data-role="assistant-not-configured"]') === null,
+        (panel()?.textContent ?? '(面板未打开)').slice(0, 80),
+      );
+      if (input !== null) {
+        setInputValue(input, '明天加个待办，再删掉那个旧学期');
+        await flush(4);
+        panel()?.querySelector<HTMLElement>('[data-role="assistant-send"]')?.click();
+      }
+      const stepCards = (): HTMLElement[] => [
+        ...document.querySelectorAll<HTMLElement>('[data-role="assistant-panel"] [data-role="assistant-step"]'),
+      ];
+      await waitFor(() => stepCards().length === 2, 60);
+      const cards = stepCards();
+      check(
+        '模型提出的写入与高危操作渲染为计划卡片，高危卡带 data-risk="danger"',
+        cards.length === 2 &&
+          cards[0]?.getAttribute('data-risk') === 'write' &&
+          (cards[0]?.textContent ?? '').includes(todoTitle) &&
+          cards[1]?.getAttribute('data-risk') === 'danger' &&
+          (cards[1]?.textContent ?? '').includes(assistantPanelCopy.danger) &&
+          (cards[1]?.textContent ?? '').includes('助手冒烟待删学期') &&
+          cards.every((card) => card.getAttribute('data-status') === 'pending'),
+        cards.map((card) => `${card.getAttribute('data-risk')}:${card.getAttribute('data-status')}`).join(' / ') || '(无卡片)',
+      );
+      check(
+        '助手回复与上下文说明：回复进对话，system 提示带今天与当前学期',
+        (panel()?.querySelector('[data-role="assistant-assistant"]')?.textContent ?? '').includes('已列出两项待确认的操作') &&
+          systemNotes.length >= 1 &&
+          systemNotes.every((note) => note.includes(`今天是 ${todayText}`) && note.includes('当前学期')),
+        `调用=${systemNotes.length}`,
+      );
+      const executeButton = (): HTMLButtonElement | null =>
+        panel()?.querySelector<HTMLButtonElement>('[data-role="assistant-execute"]') ?? null;
+      const executeText = (): string => (executeButton()?.textContent ?? '').trim();
+      const countAll = executeText();
+      cards[0]?.querySelector<HTMLElement>('button[role="checkbox"]')?.click();
+      await flush(6);
+      const countOne = executeText();
+      stepCards()[0]?.querySelector<HTMLElement>('button[role="checkbox"]')?.click();
+      await flush(6);
+      check(
+        '「执行 N 项」按勾选数计数',
+        countAll === assistantPanelCopy.execute(2) &&
+          countOne === assistantPanelCopy.execute(1) &&
+          executeText() === assistantPanelCopy.execute(2),
+        `${countAll} → ${countOne} → ${executeText()}`,
+      );
+
+      // 有高危项：先弹确认；取消后什么都不执行
+      executeButton()?.click();
+      const confirmShown = await waitFor(
+        () => (document.body.textContent ?? '').includes(assistantPanelCopy.dangerConfirmTitle),
+        30,
+      );
+      check(
+        '勾选里有高危项时执行前先弹确认，并列出高危操作',
+        confirmShown &&
+          (document.body.textContent ?? '').includes('删除学期「助手冒烟待删学期」') &&
+          [...document.querySelectorAll('button')].some(
+            (button) => (button.textContent ?? '').trim() === assistantPanelCopy.dangerConfirm,
+          ),
+        confirmShown ? '' : '(无确认框)',
+      );
+      if (clickByText(document.body, '取消')) await flush(12);
+      check(
+        '取消高危确认后计划不执行',
+        stepCards().every((card) => card.getAttribute('data-status') === 'pending') &&
+          panel()?.querySelector('[data-role="assistant-restore"]') === null,
+        stepCards().map((card) => card.getAttribute('data-status')).join(' / '),
+      );
+
+      executeButton()?.click();
+      await waitFor(() => (document.body.textContent ?? '').includes(assistantPanelCopy.dangerConfirmTitle), 30);
+      if (clickByText(document.body, assistantPanelCopy.dangerConfirm)) await flush(8);
+      const executed = await waitFor(
+        () => stepCards().length === 2 && stepCards().every((card) => card.getAttribute('data-status') === 'done'),
+        80,
+      );
+      const statusTexts = stepCards().map(
+        (card) => (card.querySelector('[data-role="assistant-step-status"]')?.textContent ?? '').trim(),
+      );
+      check(
+        '确认执行后卡片状态更新为已完成并附结果',
+        executed &&
+          statusTexts.every((text) => text.startsWith(assistantPanelCopy.status.done)) &&
+          (statusTexts[0] ?? '').includes(todoTitle) &&
+          (statusTexts[1] ?? '').includes('已删除学期'),
+        stepCards().map((card) => card.getAttribute('data-status')).join(' / ') + ` ${statusTexts.join(' | ')}`,
+      );
+      const restoreButton = panel()?.querySelector<HTMLElement>('[data-role="assistant-restore"]') ?? null;
+      const notes = [...(panel()?.querySelectorAll('[data-role="assistant-note"]') ?? [])].map(
+        (note) => note.textContent ?? '',
+      );
+      check(
+        '执行后出现「恢复快照」，对话里记下执行结果与快照',
+        restoreButton !== null &&
+          (restoreButton.textContent ?? '').trim() === assistantPanelCopy.restoreSnapshot &&
+          notes.some((note) => note.includes(assistantPanelCopy.executedAll(2)) && note.includes('执行前已做快照')),
+        notes.join(' | ') || '(无记录)',
+      );
+      const doomedRow = await assistantStore.collection<SemesterRow>('semesters').get(doomedId);
+      const createdTodo = (await assistantStore.collection<EventRow>('events').getAll()).find(
+        (row) => row.title === todoTitle && row.deleted_at === null,
+      );
+      check(
+        '执行结果落库：新建了待办，待删学期已删除',
+        createdTodo !== undefined && createdTodo.on_date === todayText && doomedRow?.deleted_at != null,
+        `待办=${createdTodo === undefined ? '无' : '有'} 学期删除=${doomedRow?.deleted_at ?? '否'}`,
+      );
+      chatApp.root.unmount();
+      setAiClientForTests(undefined);
+      await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
+    }
+  }
+
+  // —— 导入预填：initialText 直接进「网页文本」一步，粘贴框带上原文 ——
+  {
+    const prefillStore = validatedStorage(await openIndexedDbStorage());
+    const prefillSemester = await activeSemester(prefillStore, USER_ID);
+    const prefillText = PAGE_SAMPLE;
+    const prefillApp = mount(
+      <ImportFlow
+        storage={prefillStore}
+        semesterId={prefillSemester === undefined ? '' : String(prefillSemester['id'])}
+        initialText={prefillText}
+        onDone={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await flush(16);
+    const prefillBox = prefillApp.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="粘贴课表页面内容"]');
+    check(
+      '导入流程带 initialText 打开：直接停在网页文本一步，粘贴框已填好原文',
+      prefillBox !== null &&
+        prefillBox.value === prefillText &&
+        prefillApp.container.querySelector('[data-role="channel-card"]') === null,
+      prefillBox === null ? '(无粘贴框)' : `长度=${prefillBox.value.length}`,
+    );
+    prefillApp.root.unmount();
+  }
 
   return results;
 }

@@ -46,6 +46,8 @@ export interface SettingsViewProps {
   onChanged: () => void;
   /** 课表空态点「导入课表」时递增，用于自动打开导入抽屉 */
   importSignal?: number;
+  /** 打开导入抽屉时预填的课表原文（来自 AI 助手） */
+  importText?: string | null;
   /** 帮助页「去设置」请求：切页后直接打开对应分组 */
   openGroupRequest?: { id: string; nonce: number } | null;
   /** 移动端从设置列表进入帮助页 */
@@ -73,6 +75,7 @@ export function SettingsView({
   onPatch,
   onChanged,
   importSignal = 0,
+  importText = null,
   openGroupRequest = null,
   onOpenHelp,
 }: SettingsViewProps) {
@@ -235,6 +238,7 @@ export function SettingsView({
           <ImportFlow
             storage={storage}
             semesterId={activeSemesterId ?? ''}
+            initialText={importText}
             onManual={() => setImportDrawerOpen(false)}
             onDone={onChanged}
             onClose={() => {

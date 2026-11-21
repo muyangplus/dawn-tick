@@ -6,15 +6,17 @@ import {
   GraduationCap,
   ListChecks,
   Plus,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from './ui/button.tsx';
 import { Sheet } from './ui/sheet.tsx';
 import { cn } from '../lib/cn.ts';
 import { addMenuCopy } from '../copy/home-add-menu.ts';
+import { featureVisible } from '../channel.ts';
 
 /** 统一「＋」菜单的四类新增动作：桌面工具栏、移动 FAB、日程页「添加」菜单共用同一份定义。 */
-export type AddActionId = 'course' | 'todo' | 'exam' | 'import';
+export type AddActionId = 'course' | 'todo' | 'exam' | 'import' | 'assistant';
 
 export interface AddActionItem {
   id: AddActionId;
@@ -22,15 +24,21 @@ export interface AddActionItem {
   icon: LucideIcon;
 }
 
-/** 动作顺序即菜单顺序：课程 → 待办 → 考试 → 导入。 */
+/** 动作顺序即菜单顺序：课程 → 待办 → 考试 → 导入 → AI 助手。 */
 export const ADD_ACTIONS: readonly AddActionItem[] = [
   { id: 'course', label: addMenuCopy.actions.course, icon: BookPlus },
   { id: 'todo', label: addMenuCopy.actions.todo, icon: ListChecks },
   { id: 'exam', label: addMenuCopy.actions.exam, icon: GraduationCap },
   { id: 'import', label: addMenuCopy.actions.import, icon: FileInput },
+  { id: 'assistant', label: addMenuCopy.actions.assistant, icon: Sparkles },
 ];
 
-/** 四个动作的具体实现由 App 提供：菜单只做动作派发，不内嵌表单。 */
+/** 当前渠道可见的动作：AI 助手跟随 `FEATURES.ai`。 */
+export function visibleAddActions(): readonly AddActionItem[] {
+  return featureVisible('ai') ? ADD_ACTIONS : ADD_ACTIONS.filter((item) => item.id !== 'assistant');
+}
+
+/** 各动作的具体实现由 App 提供：菜单只做动作派发，不内嵌表单。 */
 export type AddActionHandlers = Record<AddActionId, () => void>;
 
 const AddActionsContext = createContext<AddActionHandlers | null>(null);
@@ -97,7 +105,7 @@ export function AddMenuButton({ actions }: { actions: AddActionHandlers }) {
         aria-label={addMenuCopy.menuLabel}
         className="dt-menu-in absolute right-0 z-30 mt-1 flex w-44 flex-col gap-1 rounded-md border border-line bg-surface p-1 shadow-md"
       >
-        {ADD_ACTIONS.map(({ id, label, icon: Icon }) => (
+        {visibleAddActions().map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -133,7 +141,7 @@ export function AddFab({ actions }: { actions: AddActionHandlers }) {
       </button>
       <Sheet open={open} onOpenChange={setOpen} side="bottom" title={addMenuCopy.menuLabel}>
         <div className="flex flex-col gap-2" data-role="add-actions">
-          {ADD_ACTIONS.map(({ id, label, icon: Icon }) => (
+          {visibleAddActions().map(({ id, label, icon: Icon }) => (
             <Button
               key={id}
               variant="secondary"

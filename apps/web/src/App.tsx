@@ -41,6 +41,9 @@ import { useRecoveryActions } from './app/use-recovery.ts';
 import type { HelpTarget } from './help/help-content.ts';
 import './styles.css';
 import { appShellCopy } from './copy/app-shell.ts';
+import { AssistantPanel } from './components/assistant-panel.tsx';
+import type { AssistantNavTarget } from './assistant/host.ts';
+import { featureVisible } from './channel.ts';
 
 // 冒烟测试与外部入口沿用 App.tsx 的导出：加载页的阈值与组件仍是同一份实现
 export { LOADING_SLOW_MS, LoadingScreen, ErrorScreen, StorageFallbackBanner } from './components/app-screens.tsx';
@@ -78,6 +81,24 @@ export function App() {
     setView('help');
   };
   const actions = useTimetableActions({ session, onNavigate: setView });
+  /** 助手的界面跳转：页面、设置/设备分组，或课表的某天 / 某一屏 */
+  const navigateForAssistant = (target: AssistantNavTarget): void => {
+    if (target.kind === 'page') {
+      setView(target.page);
+    } else if (target.kind === 'settings' || target.kind === 'devices') {
+      if (target.group === null) setView(target.kind);
+      else openHelpTarget({ page: target.kind, group: target.group, label: '' });
+    } else {
+      setView('timetable');
+      if (target.mode === 'day') {
+        session.setMode('today');
+        session.setDayDate(target.date);
+      } else {
+        session.setMode('week');
+        session.setWindowStart(target.date);
+      }
+    }
+  };
   const effects = useAppEffects({ storage, screenStorage: session.uiStorage, settings, data });
   const recovery = useRecoveryActions({ fallback: session.fallback });
   const breakpoint = useBreakpoint();
@@ -291,6 +312,7 @@ export function App() {
           onPatch={session.patch}
           onChanged={session.refresh}
           importSignal={actions.settingsImportSignal}
+          importText={actions.settingsImportText}
           openGroupRequest={groupJump?.page === 'settings' ? groupJump : null}
           onOpenHelp={() => setView('help')}
         />
@@ -466,6 +488,25 @@ export function App() {
           setView('devices');
         }}
       />
+
+      {featureVisible('ai') && (
+        <AssistantPanel
+          open={actions.assistantOpen}
+          onOpenChange={actions.setAssistantOpen}
+          side={isDesktop ? 'right' : 'bottom'}
+          storage={screenStorage}
+          userId={USER_ID}
+          settings={settings}
+          data={data}
+          guardWrite={session.guardWrite}
+          patchSettings={session.patch}
+          reloadSettings={session.reloadSettings}
+          onDataChanged={session.refresh}
+          navigate={navigateForAssistant}
+          openImport={actions.openImportWithText}
+          onOpenAiSettings={() => openHelpTarget({ page: 'settings', group: 'ai', label: '' })}
+        />
+      )}
 
       <CourseForm
         open={actions.courseFormOpen}

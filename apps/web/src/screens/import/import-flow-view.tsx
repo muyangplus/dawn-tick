@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { Storage } from '@dawn-tick/core';
 import { ChannelStep } from './channel-step.tsx';
 import { DoneStep } from './done-step.tsx';
@@ -15,6 +16,8 @@ export interface ImportFlowProps {
   onManual?: (() => void) | undefined;
   onDone: () => void;
   onClose: () => void;
+  /** 预填的粘贴文本：直接进入「网页文本」一步，由用户点识别进预览 */
+  initialText?: string | null | undefined;
 }
 
 /**
@@ -22,9 +25,18 @@ export interface ImportFlowProps {
  * 步骤只在这里做 switch 分派，业务状态在 use-import-flow / use-paste-source / use-window-source，
  * 纯状态机与选择逻辑在 import-flow-model。
  */
-export function ImportFlow({ storage, semesterId, onManual, onDone, onClose }: ImportFlowProps) {
+export function ImportFlow({ storage, semesterId, onManual, onDone, onClose, initialText = null }: ImportFlowProps) {
   const flow = useImportFlow({ storage, semesterId, onDone });
   const paste = usePasteSource({ storage, semesterId, onAccepted: flow.accept });
+  // 只在打开时预填一次：之后用户改动粘贴框不再被覆盖
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || initialText === null || initialText === '') return;
+    prefilled.current = true;
+    flow.pickPasteSource('page');
+    paste.setText(initialText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialText]);
   const windowSource = useWindowSource({
     storage,
     onPayloadText: paste.setText,

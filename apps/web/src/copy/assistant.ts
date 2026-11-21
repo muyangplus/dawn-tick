@@ -1,3 +1,5 @@
+import { OVERWRITE } from './common.ts';
+
 /** AI 助手：执行结果与失败原因。 */
 export const assistantHostCopy = {
   noSemester: '还没有学期',
@@ -16,3 +18,49 @@ export const assistantHostCopy = {
   updateFailed: '检查更新失败',
 } as const;
 
+/** AI 助手面板。 */
+export const assistantPanelCopy = {
+  title: 'AI 助手',
+  description: '查询与修改课表、日程和设置。修改先列成计划，勾选确认后才执行',
+  menuLabel: 'AI 助手',
+  notConfigured: '还没有配置 AI 服务：先到 设置 → AI 填写接口地址、模型与密钥',
+  openAiSettings: '去设置',
+  inputLabel: '对助手说',
+  inputPlaceholder: '如：下周三的高数挪到周五上午；把明天设为假日',
+  send: '发送',
+  stop: '停止',
+  thinking: '正在思考…',
+  querying: (what: string) => `正在查询：${what}`,
+  you: '你',
+  assistant: '助手',
+  speaker: (who: string) => `${who}：`,
+  exhausted: '这一轮步骤用完了，换个说法或拆小一点再试',
+  emptyReply: '（没有回复）',
+  requestWhat: '请求 AI',
+  planTitle: '待执行计划',
+  danger: '高危',
+  execute: (count: number) => `执行 ${count} 项`,
+  executing: '正在执行…',
+  status: {
+    running: '执行中',
+    done: '已完成',
+    failed: '失败',
+    skipped: '未执行',
+  },
+  stepStatus: (status: string, message: string | null) => (message === null ? status : `${status}：${message}`),
+  reselectSkipped: '重新勾选未执行项',
+  dangerConfirmTitle: '执行高危操作',
+  dangerConfirmDescription: (items: readonly string[]) => `计划里有高危操作：${items.join('；')}。会覆盖本机数据，执行前会先做一份快照`,
+  dangerConfirm: '确认执行',
+  snapshotSkipped: '执行前的快照没有做成，已停止执行',
+  executedAll: (count: number) => `已执行 ${count} 项`,
+  executedPartly: (done: number, reason: string) => `执行了 ${done} 项后停下：${reason}`,
+  executedNote: (result: string, snapshotId: string) => `${result}。执行前已做快照 ${snapshotId}`,
+  restoreSnapshot: '恢复快照',
+  restoreTitle: '恢复执行前的快照',
+  restoreDescription: OVERWRITE('执行前的快照', ''),
+  restoreConfirm: '恢复',
+  restored: '已恢复到执行前',
+  restoreWhat: '恢复快照',
+  clear: '新对话',
+} as const;

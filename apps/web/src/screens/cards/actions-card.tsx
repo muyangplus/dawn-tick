@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CalendarClock, ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react';
 import { addDays } from '@dawn-tick/core';
-import { ADD_ACTIONS, useAddActions } from '../../components/add-menu.tsx';
+import { useAddActions, visibleAddActions } from '../../components/add-menu.tsx';
 import { Button } from '../../components/ui/button.tsx';
 import { Dialog, DialogContent, DialogFooter } from '../../components/ui/dialog.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
@@ -29,7 +29,7 @@ function ScheduleActions(ctx: ScheduleCardContext) {
   const addItems =
     addActions === null
       ? [{ label: scheduleCopy.addTodoFallback, onSelect: ctx.onAddTodo }]
-      : ADD_ACTIONS.map((item) => ({ label: item.label, onSelect: () => addActions[item.id]() }));
+      : visibleAddActions().map((item) => ({ label: item.label, onSelect: () => addActions[item.id]() }));
   const [rangeOpen, setRangeOpen] = useState(false);
   const [rangeFrom, setRangeFrom] = useState(viewDate);
   const [rangeTo, setRangeTo] = useState(viewDate);

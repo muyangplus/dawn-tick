@@ -6,5 +6,6 @@ export const addMenuCopy = {
     todo: '加待办',
     exam: '加考试',
     import: '导入课表',
+    assistant: 'AI 助手',
   },
 } as const;

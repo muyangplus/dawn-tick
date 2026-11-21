@@ -45,6 +45,11 @@ export interface TimetableActions {
   settingsImportSignal: number;
   /** 切到设置页并让设置页打开导入抽屉 */
   openImport: () => void;
+  /** 助手送来的课表原文：打开导入抽屉时填进粘贴框；普通打开为 null */
+  settingsImportText: string | null;
+  openImportWithText: (text: string) => void;
+  assistantOpen: boolean;
+  setAssistantOpen: (open: boolean) => void;
   /** 周视图空白格拖动松手：带着预填范围打开课程表单 */
   openQuickCreate: (preset: CourseFormPreset) => void;
   addActions: AddActionHandlers;
@@ -108,10 +113,21 @@ export function useTimetableActions(input: {
     if (!open) setEditingEvent(null);
   }, []);
 
+  const [settingsImportText, setSettingsImportText] = useState<string | null>(null);
   const openImport = useCallback(() => {
+    setSettingsImportText(null);
     onNavigate('settings');
     setSettingsImportSignal((value) => value + 1);
   }, [onNavigate]);
+  const openImportWithText = useCallback(
+    (text: string) => {
+      setSettingsImportText(text);
+      onNavigate('settings');
+      setSettingsImportSignal((value) => value + 1);
+    },
+    [onNavigate],
+  );
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   /** 拖动入口的加课：预填节次与周次后打开课程表单 */
   const openQuickCreate = useCallback(
@@ -250,7 +266,7 @@ export function useTimetableActions(input: {
     [guardWrite, data],
   );
 
-  /** 四个新增动作的唯一实现：工具栏下拉、移动 FAB 与日程页「添加」菜单都调到同一份。 */
+  /** 「＋」菜单动作的唯一实现：工具栏下拉、移动 FAB 与日程页「添加」菜单都调到同一份。 */
   const addActions = useMemo<AddActionHandlers>(
     () => ({
       course: () => {
@@ -272,6 +288,7 @@ export function useTimetableActions(input: {
         setTodoFormOpenState(true);
       },
       import: openImport,
+      assistant: () => setAssistantOpen(true),
     }),
     [guardWrite, openImport],
   );
@@ -360,6 +377,10 @@ export function useTimetableActions(input: {
     eventFormKind,
     settingsImportSignal,
     openImport,
+    settingsImportText,
+    openImportWithText,
+    assistantOpen,
+    setAssistantOpen,
     openQuickCreate,
     addActions,
     openLesson,
