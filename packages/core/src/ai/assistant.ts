@@ -23,7 +23,7 @@ export interface AiPlanStep {
   id: string;
   action: string;
   args: AiArgs;
-  /** parse 之后的参数：执行时直接用，不再重新解析 */
+  /** 生成计划时 parse 的结果，只用于预览；执行时按 args 重新解析，读到当时的数据 */
   params: unknown;
   preview: string;
   risk: Exclude<AiActionRisk, 'query'>;
@@ -189,7 +189,10 @@ function jsonTurnOf(output: string): JsonTurn {
   const calls = Array.isArray(record.calls)
     ? record.calls.flatMap((raw: unknown) => {
         const call = raw as { name?: unknown; arguments?: unknown };
-        return typeof call.name === 'string' ? [{ name: call.name, args: call.arguments ?? {} }] : [];
+        if (typeof call.name !== 'string') return [];
+        // 仿 OpenAI 格式的模型常把 arguments 写成 JSON 字符串
+        const args = typeof call.arguments === 'string' ? parseArgs(call.arguments) : (call.arguments ?? {});
+        return [{ name: call.name, args }];
       })
     : [];
   return { calls, reply: typeof record.reply === 'string' ? record.reply : '' };
@@ -272,7 +275,9 @@ export async function executePlan<C>(
     const action = findAction(actions, step.action);
     if (action === undefined) return { done, failed: { step, message: `没有名为 ${step.action} 的操作` } };
     try {
-      const result = await action.run(step.params, context);
+      // 计划可能隔了几步或几轮才执行，前面的步骤和用户的手动修改都可能改了数据，按执行时的数据重新解析
+      const params = await action.parse(step.args, context);
+      const result = await action.run(params, context);
       done.push({ step, summary: typeof result === 'string' && result !== '' ? result : step.preview });
       onProgress?.(done.length);
     } catch (error) {

@@ -7,9 +7,11 @@ import {
   AI_QUERY_MAX_DAYS,
   AI_TIMETABLE_ACTIONS,
   AiArgError,
+  executePlan,
   findAction,
   type AiArgs,
   type AiCoreContext,
+  type AiPlanStep,
 } from '../src/ai/index.ts';
 import { builtinHolidayName, builtinWorkdayName } from '../src/holidays.ts';
 import { addDays } from '../src/time.ts';
@@ -67,6 +69,19 @@ async function call(context: AiCoreContext, name: string, args: AiArgs = {}): Pr
 async function previewOf(context: AiCoreContext, name: string, args: AiArgs = {}): Promise<string> {
   const action = actionOf(name);
   return action.preview(await action.parse(args, context), context);
+}
+
+/** 像助手生成计划那样逐步 parse + preview（都基于同一份数据），只生成不执行。 */
+async function planOf(context: AiCoreContext, calls: Array<[string, AiArgs]>): Promise<AiPlanStep[]> {
+  const steps: AiPlanStep[] = [];
+  for (const [name, args] of calls) {
+    const action = actionOf(name);
+    assert.notEqual(action.risk, 'query');
+    const params = await action.parse(args, context);
+    const preview = await action.preview(params, context);
+    steps.push({ id: `step-${steps.length + 1}`, action: name, args, params, preview, risk: action.risk as AiPlanStep['risk'] });
+  }
+  return steps;
 }
 
 async function rejectsArg(context: AiCoreContext, name: string, args: AiArgs, message: RegExp | string): Promise<void> {
@@ -570,6 +585,31 @@ test('set_active_semester：只有目标学期为当前，别人的学期不受�
   await rejectsArg(context, 'set_active_semester', { id: 'sem-u2' }, '找不到学期 sem-u2');
 });
 
+test('set_active_semester：目标学期排在当前学期之前时也能切换，始终只有一个当前学期', async () => {
+  // 目标 id 排在前面、也先写入：按顺序逐行改的话会先把目标设为当前，与旧的当前学期撞上唯一约束
+  const storage = createStorage();
+  await storage.collection('users').put(userRow({ id: 'u1' }));
+  const semesters = storage.collection<SemesterRow>('semesters');
+  await semesters.put(semesterRow({ id: 'aaa-target', name: '目标学期', is_active: 0 }));
+  await semesters.put(semesterRow({ id: 'zzz-active', name: '原当前学期', is_active: 1 }));
+  await semesters.put(semesterRow({ id: 'mmm-other', name: '其他学期', is_active: 0 }));
+  const context = contextOf(storage);
+  const ids = (await semesters.getAll()).map((item) => item.id);
+  assert.ok(ids.indexOf('aaa-target') < ids.indexOf('zzz-active'), '目标学期须先于当前学期被遍历到');
+
+  const { result } = await call(context, 'set_active_semester', { id: 'aaa-target' });
+  assert.equal(result, '已切换到学期「目标学期」');
+  const active = (await alive<SemesterRow>(storage, 'semesters')).filter((item) => item.is_active === 1);
+  assert.deepEqual(active.map((item) => item.id), ['aaa-target']);
+  assert.equal((await row<SemesterRow>(storage, 'semesters', 'zzz-active')).is_active, 0);
+  assert.equal((await row<SemesterRow>(storage, 'semesters', 'mmm-other')).is_active, 0);
+
+  // 切回去同样只有一个当前学期
+  await call(context, 'set_active_semester', { id: 'zzz-active' });
+  const back = (await alive<SemesterRow>(storage, 'semesters')).filter((item) => item.is_active === 1);
+  assert.deepEqual(back.map((item) => item.id), ['zzz-active']);
+});
+
 test('delete_semester：高危，连同课程与日程删除', async () => {
   const context = await seeded();
   await context.storage.collection<EventRow>('events').put(eventRow('e-1', 'todo', { title: '交报告' }));
@@ -645,6 +685,44 @@ test('add_period：参数校验', async () => {
     await slots.put({ ...timeSlotRow(period, `${hour}:00`, `${hour}:45`), id: `full-${period}`, semester_id: 'sem-full' });
   }
   await rejectsArg(context, 'add_period', { semesterId: 'sem-full', start: '23:00', end: '23:30' }, '节次不能超过 20 节');
+});
+
+test('add_period：同一计划里两次追加，执行时各自接在当时的最后一节后', async () => {
+  const context = await seeded();
+  const plan = await planOf(context, [
+    ['add_period', { start: '15:50', end: '16:35' }],
+    ['add_period', { start: '16:45', end: '17:30' }],
+  ]);
+  // 生成计划时两步都看到 6 节
+  assert.deepEqual(plan.map((planned) => planned.preview), ['追加第 7 节 15:50-16:35', '追加第 7 节 16:45-17:30']);
+  const execution = await executePlan(plan, ACTIONS, context);
+  assert.equal(execution.failed, null);
+  assert.deepEqual(execution.done.map((done) => done.summary), ['已追加第 7 节', '已追加第 8 节']);
+  const slots = (await alive<TimeSlotRow>(context.storage, 'time_slots'))
+    .filter((slot) => slot.semester_id === SEMESTER_ID)
+    .sort((a, b) => a.period_no - b.period_no);
+  assert.equal(slots.length, 8);
+  assert.deepEqual(
+    slots.slice(6).map((slot) => [slot.period_no, slot.start_time, slot.end_time]),
+    [
+      [7, '15:50', '16:35'],
+      [8, '16:45', '17:30'],
+    ],
+  );
+});
+
+test('add_period：执行时数据已变、参数不再成立时那一步失败', async () => {
+  const context = await seeded();
+  const plan = await planOf(context, [
+    ['add_period', { start: '15:50', end: '16:35' }],
+    // 生成计划时接在第 6 节后合法；第一步执行后要接在 16:35 之后，不再成立
+    ['add_period', { start: '16:00', end: '16:45' }],
+  ]);
+  const execution = await executePlan(plan, ACTIONS, context);
+  assert.deepEqual(execution.done.map((done) => done.step.id), ['step-1']);
+  assert.deepEqual(execution.failed, { step: plan[1], message: '上课时间不能早于第 7 节下课（16:35）' });
+  const slots = (await alive<TimeSlotRow>(context.storage, 'time_slots')).filter((slot) => slot.semester_id === SEMESTER_ID);
+  assert.equal(slots.length, 7);
 });
 
 test('delete_period：有课排着时拒绝，空出来后可删', async () => {
@@ -851,6 +929,22 @@ test('update_schedule：改周次、空串清空教室', async () => {
   assert.equal((await row<CourseScheduleRow>(context.storage, 'course_schedules', 's-1')).room, '新教室');
   await call(context, 'update_schedule', { id: 's-1', room: null });
   assert.equal((await row<CourseScheduleRow>(context.storage, 'course_schedules', 's-1')).room, null);
+});
+
+test('update_schedule：同一计划里两步改同一时段，后一步不会把前一步改回去', async () => {
+  const context = await scheduleFixture();
+  const plan = await planOf(context, [
+    ['update_schedule', { id: 's-1', room: 'B201' }],
+    ['update_schedule', { id: 's-1', weeks: [1, 2, 3] }],
+  ]);
+  const execution = await executePlan(plan, ACTIONS, context);
+  assert.equal(execution.failed, null);
+  assert.equal(execution.done.length, 2);
+  const updated = await row<CourseScheduleRow>(context.storage, 'course_schedules', 's-1');
+  assert.deepEqual(
+    [updated.room, updated.weeks_mask, updated.day_of_week, updated.period_start, updated.period_end],
+    ['B201', weeksToMask([1, 2, 3]), 1, 1, 2],
+  );
 });
 
 test('update_schedule：参数校验', async () => {

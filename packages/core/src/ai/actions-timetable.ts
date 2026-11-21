@@ -218,10 +218,11 @@ export const setActiveSemesterAction = defineAction<AiCoreContext, SemesterRow>(
   parse: (args, context) => semesterById(context, reqString(args, 'id')),
   preview: (semester) => `切换到学期「${semester.name}」`,
   async run(semester, context) {
+    // 先清掉其他当前学期再设目标，否则中途会出现两个当前学期，被唯一约束拒绝
     for (const row of await listSemesters(context.storage, context.userId)) {
-      const active = row.id === semester.id ? 1 : 0;
-      if (row.is_active !== active) await updateSemester(context.storage, row.id, { is_active: active });
+      if (row.id !== semester.id && row.is_active === 1) await updateSemester(context.storage, row.id, { is_active: 0 });
     }
+    if (semester.is_active !== 1) await updateSemester(context.storage, semester.id, { is_active: 1 });
     return `已切换到学期「${semester.name}」`;
   },
 });

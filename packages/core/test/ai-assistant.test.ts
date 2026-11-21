@@ -946,6 +946,38 @@ test('退回：查询结果以「函数结果：」用户消息回传，写入�
   assert.ok(!result.history.some((message) => message.role === 'tool'));
 });
 
+test('退回：arguments 写成 JSON 字符串时照样解析；解析不了或不是对象时报参数错误', async () => {
+  const first = JSON.stringify({
+    calls: [
+      { name: 'list_courses', arguments: '{"keyword":"英"}' },
+      { name: 'add_course', arguments: '{"name":"物理","weekday":5}' },
+      { name: 'list_courses', arguments: '' },
+      { name: 'list_courses', arguments: '{keyword:' },
+      { name: 'list_courses', arguments: '"文本"' },
+      { name: 'list_courses', arguments: '[1,2]' },
+      { name: 'add_course', arguments: '{"name":"化学","weekday":9}' },
+    ],
+  });
+  const { client, completeRequests } = scriptedClient({ complete: [first, '{"calls":[],"reply":"好"}'] });
+  const context = newCtx();
+  const result = await runAssistantTurn({ ...baseInput(client, context), mode: 'json' });
+  assert.equal(result.reply, '好');
+  assert.deepEqual(context.log, ['list:英', 'list:']);
+  assert.deepEqual(
+    result.plan.map((planned) => [planned.id, planned.action, planned.args, planned.params]),
+    [['step-1', 'add_course', { name: '物理', weekday: 5 }, { name: '物理', weekday: 5 }]],
+  );
+  assert.deepEqual(completeRequests[1]!.messages.at(-1)!.content.split('\n').slice(1), [
+    'list_courses：{"result":["英语"]}',
+    'add_course：{"status":"已加入待执行计划，等用户确认","preview":"添加「物理」，周5"}',
+    'list_courses：{"result":["高数","英语"]}',
+    'list_courses：{"error":"参数应为 JSON 对象"}',
+    'list_courses：{"error":"参数应为 JSON 对象"}',
+    'list_courses：{"error":"参数应为 JSON 对象"}',
+    'add_course：{"error":"参数 weekday 不能大于 7"}',
+  ]);
+});
+
 test('退回：模型没按格式输出时整段去空白当回复', async () => {
   const { client } = scriptedClient({ complete: ['  今天没有课。\n'] });
   const result = await runAssistantTurn(baseInput(client));
@@ -1096,22 +1128,23 @@ test('退回：JSON 方式里 complete 出错原样抛出', async () => {
 
 // ---- 执行计划 ----
 
-function step(id: string, action: string, params: unknown, preview: string): AiPlanStep {
-  return { id, action, args: {}, params, preview, risk: 'write' };
+/** 计划步骤：args 是执行时重新解析的原始参数；params 只给预览用，默认故意放一份过期值。 */
+function step(id: string, action: string, args: Record<string, unknown>, preview: string, params: unknown = { stale: true }): AiPlanStep {
+  return { id, action, args, params, preview, risk: 'write' };
 }
 
-test('executePlan：按顺序用保存的参数执行，不再解析；结果为文本时作摘要，否则用预览', async () => {
+test('executePlan：按顺序执行，每步按 args 重新解析、不用保存的 params；结果为文本时作摘要，否则用预览', async () => {
   const context = newCtx();
   const progress: number[] = [];
   const parsesBefore = addParseCount;
   const steps = [
-    step('step-1', 'add_course', { name: '物理', weekday: 1 }, '添加「物理」'),
-    step('step-2', 'clear_all', null, '清空全部课程'),
-    step('step-3', 'add_course', { name: '化学', weekday: 2 }, '添加「化学」'),
+    step('step-1', 'add_course', { name: '物理', weekday: 1 }, '添加「物理」', { name: '旧物理', weekday: 1 }),
+    step('step-2', 'clear_all', {}, '清空全部课程'),
+    step('step-3', 'add_course', { name: '化学', weekday: 2 }, '添加「化学」', { name: '旧化学', weekday: 2 }),
   ];
   const execution = await executePlan(steps, ACTIONS, context, (done) => progress.push(done));
-  assert.equal(addParseCount, parsesBefore, 'parse 未被调用');
-  assert.deepEqual(context.log, ['add:物理', 'clear', 'add:化学']);
+  assert.equal(addParseCount - parsesBefore, 2, '两步 add_course 执行时各解析一次');
+  assert.deepEqual(context.log, ['add:物理', 'clear', 'add:化学'], '用 args 重新解析的结果，不用 params');
   assert.deepEqual(context.courses, ['化学']);
   assert.deepEqual(
     execution.done.map((result) => [result.step.id, result.summary]),
@@ -1125,6 +1158,50 @@ test('executePlan：按顺序用保存的参数执行，不再解析；结果为
   assert.deepEqual(progress, [1, 2, 3]);
 });
 
+test('executePlan：解析在执行时进行，读到前面步骤写入后的数据', async () => {
+  // 解析时记下当时的课程数；前一步加了课，后一步解析就该看到
+  const seen: number[] = [];
+  const countingAdd = defineAction<Ctx, { name: string; before: number }>({
+    name: 'counting_add',
+    description: '',
+    parameters: objectSchema({ name: schema.string('课程名') }, ['name']),
+    risk: 'write',
+    parse: (args, context) => ({ name: reqString(args, 'name'), before: context.courses.length }),
+    preview: (params) => `添加「${params.name}」`,
+    run: async (params, context) => {
+      seen.push(params.before);
+      context.courses.push(params.name);
+      return `已添加 ${params.name}`;
+    },
+  });
+  const context = newCtx();
+  // 生成计划时两步都解析在 2 门课的数据上
+  const steps = [
+    step('step-1', 'counting_add', { name: '物理' }, '添加「物理」', { name: '物理', before: 2 }),
+    step('step-2', 'counting_add', { name: '化学' }, '添加「化学」', { name: '化学', before: 2 }),
+  ];
+  const execution = await executePlan(steps, [countingAdd], context);
+  assert.equal(execution.failed, null);
+  assert.deepEqual(seen, [2, 3]);
+});
+
+test('executePlan：执行时解析出错，那一步失败并报出解析的原因，之后不再执行', async () => {
+  const context = newCtx();
+  const progress: number[] = [];
+  const steps = [
+    step('step-1', 'add_course', { name: '物理', weekday: 1 }, '添加「物理」'),
+    // 生成计划时的 params 是合法的，但 args 已经解析不过
+    step('step-2', 'add_course', { name: '化学', weekday: 9 }, '添加「化学」', { name: '化学', weekday: 2 }),
+    step('step-3', 'clear_all', {}, '清空全部课程'),
+  ];
+  const execution = await executePlan(steps, ACTIONS, context, (done) => progress.push(done));
+  assert.deepEqual(execution.done.map((result) => result.step.id), ['step-1']);
+  assert.deepEqual(execution.failed, { step: steps[1], message: '参数 weekday 不能大于 7' });
+  assert.deepEqual(context.log, ['add:物理'], '解析失败的那步与之后的步骤都不执行');
+  assert.deepEqual(context.courses, ['高数', '英语', '物理']);
+  assert.deepEqual(progress, [1]);
+});
+
 test('executePlan：空串结果也用预览作摘要', async () => {
   const empty = defineAction<Ctx, null>({
     name: 'empty',
@@ -1135,7 +1212,7 @@ test('executePlan：空串结果也用预览作摘要', async () => {
     preview: () => '',
     run: async () => '',
   });
-  const execution = await executePlan([step('s', 'empty', null, '预览文本')], [empty], newCtx());
+  const execution = await executePlan([step('s', 'empty', {}, '预览文本')], [empty], newCtx());
   assert.equal(execution.done[0]!.summary, '预览文本');
 });
 
@@ -1144,8 +1221,8 @@ test('executePlan：遇到失败即停，报出那一步与原因', async () => 
   const progress: number[] = [];
   const steps = [
     step('step-1', 'add_course', { name: '物理', weekday: 1 }, '添加「物理」'),
-    step('step-2', 'failing_write', null, '会失败的一步'),
-    step('step-3', 'clear_all', null, '清空全部课程'),
+    step('step-2', 'failing_write', {}, '会失败的一步'),
+    step('step-3', 'clear_all', {}, '清空全部课程'),
   ];
   const execution = await executePlan(steps, ACTIONS, context, (done) => progress.push(done));
   assert.deepEqual(execution.done.map((result) => result.step.id), ['step-1']);
@@ -1156,7 +1233,7 @@ test('executePlan：遇到失败即停，报出那一步与原因', async () => 
 
 test('executePlan：未知操作直接失败', async () => {
   const context = newCtx();
-  const steps = [step('step-1', 'vanished', null, '旧操作'), step('step-2', 'clear_all', null, '清空')];
+  const steps = [step('step-1', 'vanished', {}, '旧操作'), step('step-2', 'clear_all', {}, '清空')];
   const execution = await executePlan(steps, ACTIONS, context);
   assert.deepEqual(execution.done, []);
   assert.deepEqual(execution.failed, { step: steps[0], message: '没有名为 vanished 的操作' });
@@ -1176,9 +1253,10 @@ test('计划由 runAssistantTurn 产出后可直接交给 executePlan', async ()
   });
   const context = newCtx();
   const turn = await runAssistantTurn(baseInput(client, context));
+  assert.deepEqual(turn.plan.map((planned) => [planned.args, planned.params]), [[{ name: '生物', weekday: 4 }, { name: '生物', weekday: 4 }]]);
   const parsesBefore = addParseCount;
   const execution = await executePlan(turn.plan, ACTIONS, context);
-  assert.equal(addParseCount, parsesBefore);
+  assert.equal(addParseCount - parsesBefore, 1, '执行时按计划里的 args 再解析一次');
   assert.deepEqual(execution.done.map((result) => result.summary), ['已添加 生物']);
   assert.deepEqual(context.courses, ['高数', '英语', '生物']);
 });
