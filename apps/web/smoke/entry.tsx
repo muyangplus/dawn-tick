@@ -69,6 +69,7 @@ import { toastSaved } from '../src/screens/settings/file-export.ts';
 import { busySnapshot, runBusy } from '../src/lib/busy.ts';
 import { uiCopy } from '../src/copy/ui.ts';
 import { toast } from '../src/lib/toast.ts';
+import { clearPendingRestart, pendingRestartSources } from '../src/pending-restart.ts';
 import { MOBILE_WIDGETS, hasMobileWidgets, pinWidget } from '../src/widget-pin.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
 import { markStorageFallback } from '../src/db/fallback.ts';
@@ -7037,6 +7038,53 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     check('写入结束后 Esc 退回分组清单', settingsNavIsListOnly(backRoot), '');
     await dismissToasts();
 
+    // ⑥b 学期设置里的「导入课表」折叠区：展开时 Esc 在流程里退一步；收起后不再接 Esc，直接回分组清单
+    await openSettingsGroup(backRoot, '学期设置');
+    const courseImport = (): HTMLDetailsElement | null =>
+      backRoot.querySelector<HTMLDetailsElement>('details[data-role="course-import"]');
+    const courseImportStep = (): string =>
+      courseImport()?.querySelector('[data-role="step-compact"]')?.textContent?.trim() ?? '';
+    const toggleCourseImport = async (): Promise<void> => {
+      courseImport()?.querySelector<HTMLElement>('summary')?.click();
+      // toggle 事件排在任务队列里
+      await flush(8);
+    };
+    const pickCoursePaste = async (): Promise<void> => {
+      courseImport()?.querySelector<HTMLElement>('[data-role="channel-card"][data-channel="paste"]')?.click();
+      await flush(10);
+    };
+    await toggleCourseImport();
+    const expanded = courseImport()?.open === true;
+    await pickCoursePaste();
+    const expandedStepTwo = courseImportStep();
+    await pressEsc();
+    check(
+      'Esc：展开的导入课表区在第 2 步时退回第 1 步，分组不退',
+      expanded &&
+        expandedStepTwo.includes('第 2/4 步') &&
+        courseImportStep().includes('第 1/4 步') &&
+        settingsSubpageOpen(backRoot),
+      `展开=${expanded} ${expandedStepTwo || '(无)'} → ${courseImportStep() || '(无)'} 子页=${settingsSubpageOpen(backRoot)}`,
+    );
+    await pickCoursePaste();
+    const beforeCollapse = courseImportStep();
+    await toggleCourseImport();
+    const collapsed = courseImport()?.open === false;
+    await pressEsc();
+    check(
+      'Esc：导入课表区收起后不接 Esc，第一下直接回分组清单',
+      beforeCollapse.includes('第 2/4 步') && collapsed && settingsNavIsListOnly(backRoot) && onSettingsPage(backRoot),
+      `收起前=${beforeCollapse || '(无)'} 收起=${collapsed} 清单=${settingsNavIsListOnly(backRoot)}`,
+    );
+    // 回到组里，收起的导入区仍停在第 2 步（Esc 没有暗中退它一步）
+    await openSettingsGroup(backRoot, '学期设置');
+    check(
+      '收起的导入课表区没被 Esc 暗中退步',
+      courseImport()?.open === false && courseImportStep().includes('第 2/4 步'),
+      `open=${courseImport()?.open ?? '(无)'} 步骤=${courseImportStep() || '(无)'}`,
+    );
+    await pressEsc();
+
     // ⑦ 帮助页从设备页分组进入：Esc 回到原分组，再退清单，再回课表
     clickByText(backRoot, '设备与同步');
     await flush(12);
@@ -7136,6 +7184,148 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         configurable: true,
         writable: true,
       });
+    }
+
+    // ⑩ 检查预设更新：检查与下载可取消；落盘是另一次不可中断的写入
+    {
+      /** 非空时，写预设正文先等它放行：把操作卡在「落盘」这一步 */
+      let presetWriteGate: Promise<void> | null = null;
+      setStorageOpenerForTests(async () => {
+        const inner = validatedStorage(await openIndexedDbStorage());
+        return new Proxy(inner, {
+          get(target, prop) {
+            if (prop === 'writeMeta') {
+              return async (key: string, value: string): Promise<void> => {
+                if (key === PRESET_CONTENT_META_KEY && presetWriteGate !== null) await presetWriteGate;
+                await target.writeMeta(key, value);
+              };
+            }
+            const value: unknown = Reflect.get(target, prop, target);
+            return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        });
+      });
+      const realFetch = globalThis.fetch;
+      let presetTarget = '9.8.0';
+      /** 快照请求是否挂起到取消为止 */
+      let hangSnapshot = false;
+      let snapshotRequests = 0;
+      Object.defineProperty(globalThis, 'fetch', {
+        value: (input: unknown, init?: RequestInit) => {
+          const url = String(input);
+          const versionMatch = /presets-([\d.]+)\.json$/.exec(url);
+          if (!url.includes('api.github.com') && url.endsWith('/version.json')) {
+            return Promise.resolve(
+              presetJsonResponse({ version: presetTarget, schemaVersion: 1, generatedAt: '2026-02-01T00:00:00.000Z' }),
+            );
+          }
+          if (!url.includes('api.github.com') && versionMatch !== null) {
+            snapshotRequests += 1;
+            if (!hangSnapshot) return Promise.resolve(presetJsonResponse(fakePresetSnapshot(versionMatch[1] ?? '')));
+            return new Promise<Response>((_resolve, reject) => {
+              const signal = init?.signal ?? null;
+              const abort = (): void => reject(new DOMException('aborted', 'AbortError'));
+              if (signal?.aborted === true) abort();
+              else signal?.addEventListener('abort', abort, { once: true });
+            });
+          }
+          return Promise.resolve(presetJsonResponse({}, false, 404));
+        },
+        configurable: true,
+        writable: true,
+      });
+      const presetApp = mount(<App />);
+      try {
+        await flush(24);
+        await dismissChannelNotice();
+        const presetRoot = presetApp.container;
+        clickByText(presetRoot, '设备与同步');
+        await flush(12);
+        await openDeviceGroup('诊断与维护', presetRoot);
+        const presetButton = (): HTMLElement | null =>
+          presetRoot.querySelector<HTMLElement>('button[aria-label="检查预设更新"]');
+        const presetResult = (): string =>
+          (presetRoot.querySelector('[data-role="preset-result"]')?.textContent ?? '').trim();
+        const cachedVersion = async (): Promise<string> => {
+          const store = validatedStorage(await openIndexedDbStorage());
+          const snapshot = await store.readMeta(PRESET_SNAPSHOT_META_KEY);
+          const content = await store.readMeta(PRESET_CONTENT_META_KEY);
+          return `${snapshot?.includes(`"${presetTarget}"`) === true ? 'snapshot' : '-'}/${
+            content?.includes(`"${presetTarget}"`) === true ? 'content' : '-'
+          }`;
+        };
+        const overlay = (): boolean => document.querySelector('[data-role="busy-overlay"]') !== null;
+
+        // 下载中按 Esc：取消，不落盘、不提示已下载、不登记待重启
+        clearPendingRestart();
+        await dismissToasts();
+        hangSnapshot = true;
+        presetButton()?.click();
+        await waitFor(() => snapshotRequests > 0, 40);
+        await flush(4);
+        const downloadOverlay = overlay();
+        const downloadEsc = await pressEsc(12);
+        check(
+          'Esc：预设下载中按 Esc 取消，提示「已取消」，不写缓存、不提示已下载、不登记待重启',
+          snapshotRequests > 0 &&
+            downloadOverlay &&
+            downloadEsc.defaultPrevented &&
+            hasToast(uiCopy.back.cancelled) &&
+            !hasToast(`已下载预设 ${presetTarget}`) &&
+            !presetResult().includes(`已下载预设 ${presetTarget}`) &&
+            !pendingRestartSources().includes('preset-update') &&
+            !overlay() &&
+            (await cachedVersion()) === '-/-',
+          `请求=${snapshotRequests} 蒙版前=${downloadOverlay} toast=${toastTexts().join(' | ') || '(无)'} 结果=${
+            presetResult() || '(无)'
+          } 待重启=${pendingRestartSources().join(',') || '(无)'} 缓存=${await cachedVersion()}`,
+        );
+        check(
+          'Esc：取消预设下载不顺带退出「诊断与维护」分组',
+          devicesSubpageOpen(presetRoot) && activeDeviceGroup(presetRoot) === 'maintenance',
+          `组=${activeDeviceGroup(presetRoot) || '(无)'}`,
+        );
+
+        // 落盘中按 Esc：提示不能中断，写入照常完成并提示已下载、登记待重启
+        presetTarget = '9.9.0';
+        hangSnapshot = false;
+        await dismissToasts();
+        let releaseStore: () => void = () => undefined;
+        presetWriteGate = new Promise<void>((resolve) => {
+          releaseStore = resolve;
+        });
+        presetButton()?.click();
+        await flush(12);
+        const storeOverlay = overlay();
+        const storeEsc = await pressEsc(8);
+        const storeToasts = toastTexts().join(' | ');
+        const storeWriting =
+          hasToast(uiCopy.back.writing) && !hasToast(uiCopy.back.cancelled) && overlay() && storeEsc.defaultPrevented;
+        const cachedWhileWriting = await cachedVersion();
+        releaseStore();
+        presetWriteGate = null;
+        await flush(16);
+        check(
+          'Esc：预设落盘中按 Esc 提示「正在写入数据，不能中断」，蒙版不收',
+          storeOverlay && storeWriting && cachedWhileWriting === '-/-',
+          `蒙版前=${storeOverlay} toast=${storeToasts || '(无)'} 写入中缓存=${cachedWhileWriting}`,
+        );
+        check(
+          '预设落盘不被 Esc 打断：写完提示已下载并登记待重启',
+          presetResult().includes(`已下载预设 ${presetTarget}`) &&
+            hasToast(`已下载预设 ${presetTarget}`) &&
+            pendingRestartSources().includes('preset-update') &&
+            !overlay() &&
+            (await cachedVersion()) === 'snapshot/content' &&
+            activeDeviceGroup(presetRoot) === 'maintenance',
+          `结果=${presetResult() || '(无)'} 待重启=${pendingRestartSources().join(',') || '(无)'} 缓存=${await cachedVersion()}`,
+        );
+      } finally {
+        presetApp.root.unmount();
+        setStorageOpenerForTests(null);
+        Object.defineProperty(globalThis, 'fetch', { value: realFetch, configurable: true, writable: true });
+        await dismissToasts();
+      }
     }
   }
 
