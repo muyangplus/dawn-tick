@@ -5,6 +5,8 @@
 
 ## [未发布]
 
+## [0.9.0] - 2026-11-21
+
 ### 新增
 
 - 升级后首次打开弹出本版本的更新内容，每个版本只弹一次；设置「更新后显示新版本内容」可关闭
@@ -420,7 +422,8 @@
 - 课表、日程、导入、提醒、备份恢复、WebDAV、悬浮窗与桌面小组件、按渠道检查更新
 - 用正式密钥签名的 Android 安装包与 Windows 安装包 / 便携包 / Web 静态包
 
-[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.8.0...dev
+[未发布]: https://github.com/muyangplus/dawn-tick/compare/v0.9.0...dev
+[0.9.0]: https://github.com/muyangplus/dawn-tick/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/muyangplus/dawn-tick/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/muyangplus/dawn-tick/compare/v0.6.12...v0.7.0
 [0.6.12]: https://github.com/muyangplus/dawn-tick/compare/v0.6.11...v0.6.12
