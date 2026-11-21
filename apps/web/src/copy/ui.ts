@@ -2,6 +2,12 @@
  * 基础组件文案：弹窗壳、确认框、折叠卡片、下拉候选、「?」说明与外部链接确认框。
  */
 export const uiCopy = {
+  /** Esc / 返回键遇到进行中的操作 */
+  back: {
+    cancelled: '已取消',
+    writing: '正在写入数据，不能中断',
+  },
+
   dialog: {
     closeAria: '关闭',
     submitButton: '保存',

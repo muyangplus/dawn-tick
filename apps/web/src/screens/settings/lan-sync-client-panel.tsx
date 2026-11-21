@@ -31,6 +31,7 @@ import { said } from './format.ts';
 import { lanSyncPanelCopy as copy } from '../../copy/sync-lan-panel.ts';
 import { HelpLink } from '../../components/help-link.tsx';
 import { lanSyncCopy } from '../../copy/sync-lan.ts';
+import { uiCopy } from '../../copy/ui.ts';
 
 export interface LanSyncClientPanelProps {
   storage: Storage;
@@ -156,13 +157,15 @@ export function LanSyncClientPanel({
     const peerDeviceId = deviceId ?? discovered?.deviceId;
     dispatch({ type: 'pairing' });
     setPreview(null);
-    await action.run({
+    const outcome = await action.run({
       scope: 'sync',
       label: copy.pairing,
       fail: false,
-      task: async () => {
+      cancellable: true,
+      task: async (signal) => {
         // 提交给服务端的设备名是本机名；扫码/粘贴里的 name 是「对方」的展示名，只用于本地记录
         const reachable = await checkPeerReachable(peer);
+        if (signal.aborted) return;
         if (!reachable.ok) {
           const detail = reachable.hint ?? copy.unreachableFallback;
           const error = reachable.error === null || reachable.error === '' ? detail : copy.unreachableDetail(detail, reachable.error);
@@ -172,6 +175,8 @@ export function LanSyncClientPanel({
           return;
         }
         const result = await pairWithPeer(peer, codeText, Date.now(), defaultDeviceName());
+        // 取消后对方可能已记下这台设备，本机不保存令牌，下次重新配对即可
+        if (signal.aborted) return;
         if (!result.ok || result.session === null) {
           const error = result.error ?? copy.pairFailedFallback;
           dispatch({ type: 'failed', error });
@@ -186,6 +191,10 @@ export function LanSyncClientPanel({
         toast.success(copy.pairedToast);
       },
     });
+    if (outcome.cancelled === true) {
+      dispatch({ type: 'reset' });
+      note(uiCopy.back.cancelled);
+    }
   }
 
   function toggleScope(scope: LanScope, checked: boolean): void {

@@ -24,6 +24,7 @@ import {
 } from '../../lib/credentials.ts';
 import { fail } from '../../copy/common.ts';
 import { toast } from '../../components/ui/toaster.tsx';
+import { uiCopy } from '../../copy/ui.ts';
 import { formatBytes, said } from './format.ts';
 import { webdavCopy as copy } from '../../copy/sync-webdav.ts';
 
@@ -145,12 +146,15 @@ export function WebdavBlock({
   async function testDav(): Promise<void> {
     await commitPassword();
     setDavStatus(said(copy.testing));
-    await davAction.run({
+    const result = await davAction.run({
       scope: 'sync',
       label: copy.testing,
       fail: false,
-      task: async () => {
+      // 只读：Esc / 返回键可取消；请求没有取消口，取消后结果丢掉
+      cancellable: true,
+      task: async (signal) => {
         const status = await testConnection(davSettings());
+        if (signal.aborted) return;
         if (!status.ok) {
           const message = fail(copy.connectWhat, status.error ?? copy.serverStatus(status.status), copy.connectNext);
           setDavStatus(said(message));
@@ -168,6 +172,7 @@ export function WebdavBlock({
         toast.success(message);
       },
     });
+    if (result.cancelled === true) setDavStatus(said(uiCopy.back.cancelled));
   }
 
   async function uploadDav(): Promise<void> {

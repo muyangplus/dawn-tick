@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { logError, logWarn, type LogScope } from '../log.ts';
-import { useBusyAction } from './busy.ts';
+import { isBusyCancelled, useBusyAction } from './busy.ts';
 import { errorMessage } from './errors.ts';
 import { fail } from './fail.ts';
 import { toast } from './toast.ts';
@@ -27,7 +27,9 @@ export interface ActionSpec<T> {
   logLevel?: 'error' | 'warn';
   /** 二次确认：返回 false 直接放弃，且不进入 busy */
   confirm?: () => boolean | Promise<boolean>;
-  task: () => Promise<T>;
+  /** 只读操作：Esc / 返回键可取消，task 收到的 signal 随之中止。写数据的操作不要开 */
+  cancellable?: boolean;
+  task: (signal: AbortSignal) => Promise<T>;
 }
 
 export interface ActionResult<T> {
@@ -36,6 +38,8 @@ export interface ActionResult<T> {
   value: T | undefined;
   /** 失败原因（已归一）；取消或重复触发时为 null */
   error: string | null;
+  /** 用户按 Esc / 返回键取消了 */
+  cancelled?: boolean;
 }
 
 export interface ActionApi {
@@ -63,16 +67,18 @@ export function useAction(): ActionApi {
         // 日志由本 hook 按 scope 统一记录，关掉底层的通用失败日志避免一处失败两条
         const value = await runBusyAction(
           spec.label,
-          async () => {
+          async (signal) => {
             started = true;
-            return await spec.task();
+            return await spec.task(signal);
           },
-          { log: false },
+          { log: false, ...(spec.cancellable === true ? { cancellable: true } : {}) },
         );
         if (!started) return { ok: false, value: undefined, error: null };
         if (spec.ok !== undefined) toast.success(spec.ok);
         return { ok: true, value, error: null };
       } catch (cause: unknown) {
+        // 用户主动取消：提示由 Esc / 返回键那边统一给出，这里不记失败
+        if (isBusyCancelled(cause)) return { ok: false, value: undefined, error: null, cancelled: true };
         const message = errorMessage(cause);
         if (spec.log !== false) {
           const failure = spec.fail === undefined || spec.fail === false ? undefined : spec.fail.what;

@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/button.tsx';
 import { Field, Input } from '../../components/ui/input.tsx';
 import { StatusLine, type StatusMessage, type StatusTone } from '../../components/ui/status-line.tsx';
 import { toast } from '../../components/ui/toaster.tsx';
+import { uiCopy } from '../../copy/ui.ts';
 import { useAction } from '../../lib/action.ts';
 import { loadAiClient } from '../../lib/ai.ts';
 import { isWebApp } from '../../lib/capabilities.ts';
@@ -96,23 +97,28 @@ export function AiCard({ storage, settings, onPatch }: AiCardProps) {
   async function test(): Promise<void> {
     await commitKey();
     setStatus(said(copy.testing));
-    await action.run({
+    const result = await action.run({
       scope: 'settings',
       label: copy.testing,
       fail: false,
-      task: async () => {
+      // 只读：Esc / 返回键可取消，请求一起中止
+      cancellable: true,
+      task: async (signal) => {
         try {
           const client = await loadAiClient(storage);
-          await client.complete({ messages: [{ role: 'user', content: 'ping' }] });
+          await client.complete({ messages: [{ role: 'user', content: 'ping' }], signal });
+          if (signal.aborted) return;
           setStatus(said(copy.testOk));
           toast.success(copy.testOk);
         } catch (cause: unknown) {
+          if (signal.aborted) return;
           const message = fail(copy.testWhat, errorMessage(cause), copy.testNext);
           setStatus(said(message));
           toast.error(message);
         }
       },
     });
+    if (result.cancelled === true) setStatus(said(uiCopy.back.cancelled));
   }
 
   const keyView = keyStatus(keyInfo, keyBusy, keySaveError);

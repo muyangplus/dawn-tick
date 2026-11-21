@@ -47,6 +47,7 @@ export async function recognizeWithAi(
   storage: Storage,
   semesterId: string,
   text: string,
+  signal?: AbortSignal,
 ): Promise<{ schedules: ImportedSchedule[]; warnings: string[] }> {
   const semester = await loadSemester(storage, semesterId);
   if (semester === undefined) throw new Error(importPasteCopy.noSemester);
@@ -56,6 +57,7 @@ export async function recognizeWithAi(
       totalWeeks: semester.total_weeks,
       periods: slots.map((slot) => `${slot.period_no} ${slot.start_time}-${slot.end_time}`),
     }),
+    ...(signal === undefined ? {} : { signal }),
   });
   const parsed = parseScheduleDrafts(output, {
     totalWeeks: semester.total_weeks,

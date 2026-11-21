@@ -202,6 +202,7 @@ export function DevicesView({
     <div className="flex flex-col gap-3" data-role="devices-view" aria-label={devicesCopy.pageTitle}>
       {/* 页面顶部不放快捷动作行：导出/导入/ICS 在「本地存储」，快照在「备份与恢复」，检查更新在「更新」 */}
       <GroupedSettings
+        memoryKey="devices"
         pageTitle={devicesCopy.pageTitle}
         ariaLabel={devicesCopy.groupsLabel}
         groups={groups}

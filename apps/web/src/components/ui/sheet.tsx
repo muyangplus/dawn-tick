@@ -1,6 +1,7 @@
 import { Drawer } from 'vaul';
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/cn.ts';
+import { BackScopeContext, useBackScope } from '../../lib/use-back.ts';
 import { Dialog, DialogContent } from './dialog.tsx';
 
 export interface SheetProps {
@@ -29,12 +30,16 @@ export function Sheet({
   bodyClassName,
   contentAttrs,
 }: SheetProps) {
+  const backScope = useBackScope();
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange} direction={side}>
       <Drawer.Portal>
         <Drawer.Overlay className="dt-overlay fixed inset-0 z-40 bg-overlay" />
         <Drawer.Content
           {...contentAttrs}
+          onEscapeKeyDown={(event) => {
+            if (backScope.handle()) event.preventDefault();
+          }}
           data-container="sheet"
           className={cn(
             'dt-sheet fixed z-50 flex flex-col gap-4 border-line bg-surface p-4',
@@ -52,7 +57,7 @@ export function Sheet({
             data-role="sheet-body"
             className={cn('min-h-0 flex-1 overflow-y-auto', bodyClassName)}
           >
-            {children}
+            <BackScopeContext.Provider value={backScope}>{children}</BackScopeContext.Provider>
           </div>
         </Drawer.Content>
       </Drawer.Portal>

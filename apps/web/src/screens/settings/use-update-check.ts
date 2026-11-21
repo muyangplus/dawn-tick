@@ -12,6 +12,7 @@ import {
   type DownloadSourceResolution,
 } from '../../lib/download-selection.ts';
 import { probeAllSources } from '../../lib/download-probe.ts';
+import { fetchWithSignal } from '../../lib/abortable-fetch.ts';
 import { updateFetch } from '../../lib/update-fetch.ts';
 import { isIgnoredVersion } from '../../lib/update-preferences.ts';
 import { checkForUpdate, releaseChannelOf, resolveFeed, resolveReceiveBeta, verifyHint } from '../../update.ts';
@@ -98,18 +99,23 @@ export function useUpdateCheck(settings: AppSettings): UpdateCheckApi {
       log: '更新检查失败',
       logLevel: 'warn',
       fail: updateSettingsCopy.checkFailed,
-      task: async () => {
+      // 只读：Esc / 返回键可取消
+      cancellable: true,
+      task: async (signal) => {
         // 手动检查前先确保有源：自动模式命中缓存时不会额外发请求
         const resolved = await resolveNow(false);
+        if (signal.aborted) return;
         const status = await checkForUpdate({
           channel: CHANNEL,
           receiveBeta: resolveReceiveBeta(settings.receiveBeta, CHANNEL),
           currentVersion: appVersion(),
-          fetchImpl: updateFetch(),
+          fetchImpl: fetchWithSignal(updateFetch(), signal),
           ...(resolved === null ? {} : { source: resolved.source }),
           // 选中的源失败时自动回退另一个源：Gitee 镜像还没同步时也能更新
           fallback: true,
         });
+        // 已取消：底层没认 signal 时请求仍会跑完，结果丢掉
+        if (signal.aborted) return;
         if (status.error !== null) {
           const message = updateSettingsCopy.checkFailedText(status.error);
           setResult(said(message));

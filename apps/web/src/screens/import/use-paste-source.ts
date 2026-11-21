@@ -245,10 +245,12 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       scope: 'import',
       label: aiCopy.importRunning,
       fail: false,
-      task: async () => {
+      cancellable: true,
+      task: async (signal) => {
         try {
           const client = await loadAiClient(storage);
-          const result = await recognizeWithAi(client, storage, semesterId, text);
+          const result = await recognizeWithAi(client, storage, semesterId, text, signal);
+          if (signal.aborted) return;
           if (result.schedules.length === 0) {
             setAiFailure({
               source: 'ai',
@@ -260,6 +262,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
           logInfo('import', 'AI 已识别课表', { schedules: result.schedules.length, warnings: result.warnings.length });
           onAccepted(result.schedules, result.warnings);
         } catch (cause: unknown) {
+          if (signal.aborted) return;
           logWarn('import', 'AI 识别失败', { error: errorMessage(cause) });
           setAiFailure({ source: 'ai', reason: errorMessage(cause) });
         }
@@ -338,12 +341,14 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
       scope: 'import',
       label: importPasteCopy.readingFile,
       log: '课表文件读取失败',
-      task: async () => {
+      cancellable: true,
+      task: async (signal) => {
         const semester = await loadSemester(storage, semesterId);
         if (semester === undefined) throw new Error(importPasteCopy.noSemester);
         if (kind === 'ics') {
           const calendar = parseIcs(await file.text(), { defaultTimeZone: semester.time_zone });
           const timeSlots = await listTimeSlots(storage, semesterId);
+          if (signal.aborted) return;
           const converted = icsToSchedules(
             calendar,
             {
@@ -362,6 +367,7 @@ export function usePasteSource({ storage, semesterId, onAccepted }: PasteSourceO
           return;
         }
         const parsed = parseTimetableMatrix(await readMatrix(file), semester.total_weeks);
+        if (signal.aborted) return;
         onAccepted(
           parsed.slots.map((slot) => ({
             courseName: slot.name,

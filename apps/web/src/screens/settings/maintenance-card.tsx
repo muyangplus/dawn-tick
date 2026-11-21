@@ -12,6 +12,7 @@ import { CHANNEL } from '../../channel.ts';
 import { resolveFeed, resolveReceiveBeta } from '../../update.ts';
 import { DOWNLOAD_SOURCE_LABEL, MIRRORS, type DownloadSource } from '../../lib/download-source.ts';
 import { resolveDownloadSource } from '../../lib/download-selection.ts';
+import { fetchWithSignal } from '../../lib/abortable-fetch.ts';
 import { updateFetch } from '../../lib/update-fetch.ts';
 import { logInfo, logWarn } from '../../log.ts';
 import { canUseWidget } from '../../lib/capabilities.ts';
@@ -113,10 +114,12 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
       log: '预设快照下载失败',
       logLevel: 'warn',
       fail: { what: copy.checkPresetWhat, next: copy.retryLater },
-      task: async () => {
+      // 只检查与下载、校验通过才写缓存：写缓存前取消即放弃
+      cancellable: true,
+      task: async (signal) => {
         const currentVersion = presetSource?.version ?? BUILTIN_PRESET_VERSION;
         // 预设与更新共用同一个下载源：auto 按探测结果选，手动指定优先；跨源回退只在自动模式开启
-        const doFetch = updateFetch();
+        const doFetch = fetchWithSignal(updateFetch(), signal);
         const resolved =
           typeof doFetch === 'function'
             ? await resolveDownloadSource(settings.downloadSource, doFetch, {
@@ -129,7 +132,9 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
           cachedVersion: currentVersion,
           source,
           fallback,
+          fetchImpl: fetchWithSignal(globalThis.fetch, signal),
         });
+        if (signal.aborted) return;
         if (status.error !== null) {
           const message = fail(copy.checkPresetWhat, status.error, copy.retryLater);
           setPresetResult(said(message));
@@ -156,6 +161,7 @@ export function MaintenanceCard({ storage, settings, onPatch }: MaintenanceCardP
         // 取快照优先用实际取到版本清单的源，避免再从刚失败的源重试一遍
         const snapshotSource = status.downloadSource ?? source;
         const snapshot = await fetchSnapshot(status.version, undefined, { source: snapshotSource, fallback });
+        if (signal.aborted) return;
         // 正文校验通过才落盘：不合法时保留原有缓存，不提示「下次启动生效」
         const stored = await storeDownloadedSnapshot(storage, snapshot);
         if (!stored.ok) {

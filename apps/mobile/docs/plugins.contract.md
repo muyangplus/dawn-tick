@@ -198,6 +198,16 @@ HTTP 路径白名单（原生层只放行这些，其余 404/405）：`/ping`、
 | 使用的方法 | `isSupported` / `requestPermissions` / `startScan` / `stopScan` / `addListener('barcodesScanned')` / `addListener('scanError')` |
 | 为什么不用 `scan()` | `scan()` 依赖 Google Play 服务的条码模块，无 GMS / 国产 ROM 会直接失败；`startScan()` 用打包进 APK 的 ML Kit 模型 |
 
+### 7.2 返回键
+
+返回键同样用第三方插件，由 `apps/web/src/lib/back-dispatch.ts` 在 Capacitor 平台动态加载：
+
+| 项 | 内容 |
+|---|---|
+| 依赖 | `@capacitor/app@^8.1.2`（`apps/mobile/package.json` 与 `apps/web/package.json` 都声明） |
+| 使用的方法 | `addListener('backButton')` / `minimizeApp` |
+| 行为 | 注册监听后系统不再默认退出；网页侧按「中断只读操作 → 关弹窗 → 逐级返回」处理，都无事可做时调用 `minimizeApp` |
+
 ## 8. ReminderActions
 
 提醒动作（R-07）：课前/日程提醒的定时、投递与通知按钮。插件只接管提醒投递，`LocalNotifications` 的其它用途保持原样；动作语义（贪睡 10 分钟 / 完成 / 勿扰 1 小时）与纯函数在 TS `apps/web/src/lib/reminder-actions.ts`，Android 只负责排定、展示通知、回传动作，并在进程不在线时把动作排队。

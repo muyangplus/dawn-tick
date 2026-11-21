@@ -5,6 +5,8 @@ import { DoneStep } from './done-step.tsx';
 import { PreviewStep } from './preview-step.tsx';
 import { SourceStep } from './source-step.tsx';
 import { StepBar } from './step-bar.tsx';
+import { useBackHandler } from '../../lib/use-back.ts';
+import { canGoBack } from './import-flow-model.ts';
 import { useImportFlow, type ImportFlowApi } from './use-import-flow.ts';
 import { usePasteSource } from './use-paste-source.ts';
 import { useWindowSource } from './use-window-source.ts';
@@ -37,6 +39,8 @@ export function ImportFlow({ storage, semesterId, onManual, onDone, onClose, ini
     paste.setText(initialText);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialText]);
+  // 弹窗里 Esc / 返回键先退一步，到第一步再交给弹窗关闭
+  useBackHandler(canGoBack(flow.step), flow.back);
   const windowSource = useWindowSource({
     storage,
     onPayloadText: paste.setText,

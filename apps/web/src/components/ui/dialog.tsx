@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import type { ComponentProps, FormEvent, ReactNode } from 'react';
 import { cn } from '../../lib/cn.ts';
+import { BackScopeContext, useBackScope } from '../../lib/use-back.ts';
 import { Button } from './button.tsx';
 import { uiCopy } from '../../copy/ui.ts';
 
@@ -14,8 +15,11 @@ export function DialogContent({
   children,
   title,
   description,
+  onEscapeKeyDown,
   ...props
 }: ComponentProps<typeof DialogPrimitive.Content> & { title: string; description?: string | undefined }) {
+  // 弹窗里的步骤（如导入流程）登记在这里：Esc / 返回键先退一步，退到头再关弹窗
+  const backScope = useBackScope();
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="dt-overlay fixed inset-0 z-40 bg-overlay" />
@@ -28,6 +32,10 @@ export function DialogContent({
           className,
         )}
         {...props}
+        onEscapeKeyDown={(event) => {
+          onEscapeKeyDown?.(event);
+          if (!event.defaultPrevented && backScope.handle()) event.preventDefault();
+        }}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1">
@@ -49,7 +57,7 @@ export function DialogContent({
           data-role="dialog-body"
           className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pr-1"
         >
-          {children}
+          <BackScopeContext.Provider value={backScope}>{children}</BackScopeContext.Provider>
         </div>
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>

@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../lib/cn.ts';
+import { useBackHandler } from '../lib/use-back.ts';
+import { useMediaQuery } from '../lib/use-media.ts';
 import { settingsPageCopy } from '../copy/settings-page.ts';
 
 /**
@@ -37,6 +39,15 @@ export interface GroupedSettingsProps {
   openRequest?: { id: string; nonce: number } | null;
   /** 分组清单末尾的附加入口（帮助页），不参与分组切换与计数 */
   extraNav?: ReactNode;
+  /** 页面标识：记下当前分组，从帮助页返回时回到这一组 */
+  memoryKey?: string;
+}
+
+/** 各设置类页面当前打开的分组（null = 移动端清单页）。 */
+const openGroups = new Map<string, string | null>();
+
+export function openGroupOf(memoryKey: string): string | null {
+  return openGroups.get(memoryKey) ?? null;
 }
 
 export function GroupedSettings({
@@ -45,11 +56,20 @@ export function GroupedSettings({
   groups,
   openRequest = null,
   extraNav,
+  memoryKey,
 }: GroupedSettingsProps) {
   /** null = 移动端还在清单页；桌面下 null 视为第一组 */
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = groups.find((group) => group.id === activeId) ?? groups[0];
   const navVisibleOnMobile = activeId === null;
+  // 桌面两栏没有「清单页」这一级；移动端在分组里时 Esc / 返回键回清单
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+  useBackHandler(!isDesktop && activeId !== null, () => setActiveId(null));
+
+  useEffect(() => {
+    if (memoryKey === undefined) return;
+    openGroups.set(memoryKey, activeId);
+  }, [memoryKey, activeId]);
 
   useEffect(() => {
     if (openRequest === null) return;

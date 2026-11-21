@@ -240,6 +240,7 @@ export function SettingsView({
       </div>
 
       <GroupedSettings
+        memoryKey="settings"
         pageTitle={settingsPageCopy.pageTitle}
         ariaLabel={settingsPageCopy.groupsAriaLabel}
         groups={groups}

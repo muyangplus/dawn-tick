@@ -93,8 +93,8 @@ export function AdjustDialog({
   const run: ActionApi['run'] = (spec) =>
     runAction({
       ...spec,
-      task: async () => {
-        const value = await spec.task();
+      task: async (signal) => {
+        const value = await spec.task(signal);
         if (replaceEventId !== undefined) await deleteEvent(storage, replaceEventId);
         return value;
       },
