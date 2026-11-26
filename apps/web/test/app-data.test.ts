@@ -32,6 +32,7 @@ import {
   buildTimelineData,
   loadAppData,
   loadHolidays,
+  lessonShown,
   loadSemesterContext,
   weekDateOf,
 } from '../src/data.ts';
@@ -113,6 +114,50 @@ test('设置可持久化并影响加载结果', async () => {
 
   await writeSettings(storage, { autoTimeZone: true });
   assert.equal((await readSettings(storage)).autoTimeZone, true);
+});
+
+test('lessonShown：非本周与停课各按开关隐藏', () => {
+  const cases: Array<[inWeek: boolean, cancelled: boolean, showOtherWeeks: boolean, showCancelled: boolean, shown: boolean]> = [
+    [true, false, false, false, true],
+    [true, false, true, false, true],
+    [true, false, false, true, true],
+    [true, false, true, true, true],
+    [false, false, false, false, false],
+    [false, false, true, false, true],
+    [false, false, false, true, false],
+    [false, false, true, true, true],
+    [true, true, false, false, false],
+    [true, true, true, false, false],
+    [true, true, false, true, true],
+    [true, true, true, true, true],
+    [false, true, false, false, false],
+    [false, true, true, false, false],
+    [false, true, false, true, false],
+    [false, true, true, true, true],
+  ];
+  for (const [inWeek, cancelled, showOtherWeeks, showCancelled, shown] of cases) {
+    assert.equal(
+      lessonShown({ inWeek, cancelled }, { showOtherWeeks, showCancelled }),
+      shown,
+      `inWeek=${inWeek} cancelled=${cancelled} showOtherWeeks=${showOtherWeeks} showCancelled=${showCancelled}`,
+    );
+  }
+  // 默认设置：非本周课照常虚线显示，停课不显示
+  assert.equal(lessonShown({ inWeek: false, cancelled: false }, DEFAULT_SETTINGS), true);
+  assert.equal(lessonShown({ inWeek: true, cancelled: true }, DEFAULT_SETTINGS), false);
+});
+
+test('loadAppData 把「显示停课课程」带进 AppData', async () => {
+  const storage = await open('flow-show-cancelled');
+  await createSemester(storage, {
+    userId: USER_ID,
+    name: '测试学期',
+    startDate: weekStart(formatDate(Date.now(), TIME_ZONE)),
+    totalWeeks: 20,
+    timeZone: TIME_ZONE,
+  });
+  assert.equal((await loadAppData(storage, DEFAULT_SETTINGS)).showCancelled, false);
+  assert.equal((await loadAppData(storage, { ...DEFAULT_SETTINGS, showCancelled: true })).showCancelled, true);
 });
 
 test('软删除的课程不再出现在周视图', async () => {

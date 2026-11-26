@@ -83,6 +83,11 @@
     <string name="secret_ciphertext_invalid">密文格式无效</string>
     <string name="secret_decrypt_failed">解密失败：%1$s</string>
 
+    <!-- AI 流式请求 -->
+    <string name="ai_stream_missing_args">缺少请求编号或地址</string>
+    <string name="ai_stream_bad_url">只支持 http 与 https 地址</string>
+    <string name="ai_stream_failed">请求失败：%1$s</string>
+
     <!-- 局域网配对；lan_start_timeout 与 Web sync-lan.ts 的 serverStartTimeout 句式一致 -->
     <string name="lan_start_timeout">本机监听 %1$d 秒内没有响应，请确认已连接 Wi-Fi 后重试</string>
     <string name="lan_address_not_local">网络地址不在本机：%1$s</string>

@@ -7,6 +7,7 @@ import { AI_EVENT_ACTIONS } from '../src/assistant/actions-events.ts';
 import {
   ASSISTANT_ACTIONS,
   applyExecution,
+  anchorOfTurn,
   cardsOf,
   contextNoteOf,
   hasDanger,
@@ -14,6 +15,7 @@ import {
   resetSkipped,
   selectedSteps,
   toggleCard,
+  type ChatEntry,
   type PlanCard,
 } from '../src/assistant/panel-model.ts';
 
@@ -85,10 +87,11 @@ test('上下文说明：星期 1-7 依次为一至日', () => {
 
 // ---- 卡片 ----
 
-test('新计划默认全选（高危也勾上），状态为待执行', () => {
-  const cards = cardsOf([step('a'), step('b', 'danger')]);
+test('新计划默认全选（高危也勾上），状态为待执行，记下所属轮次', () => {
+  const cards = cardsOf([step('a'), step('b', 'danger')], 3);
   assert.deepEqual(ids(cards), ['a', 'b']);
   for (const card of cards) {
+    assert.equal(card.turn, 3);
     assert.equal(card.checked, true);
     assert.equal(card.status, 'pending');
     assert.equal(card.message, null);
@@ -96,7 +99,7 @@ test('新计划默认全选（高危也勾上），状态为待执行', () => {
 });
 
 test('勾选切换只作用于待执行的那张卡', () => {
-  const cards = cardsOf([step('a'), step('b')]);
+  const cards = cardsOf([step('a'), step('b')], 1);
   const toggled = toggleCard(cards, 'a');
   assert.deepEqual(toggled.map((card) => card.checked), [false, true]);
   assert.deepEqual(toggleCard(toggled, 'a').map((card) => card.checked), [true, true]);
@@ -105,7 +108,7 @@ test('勾选切换只作用于待执行的那张卡', () => {
 });
 
 test('非待执行的卡不能切换勾选', () => {
-  const base = cardsOf([step('a'), step('b'), step('c'), step('d')]);
+  const base = cardsOf([step('a'), step('b'), step('c'), step('d')], 1);
   const statuses: PlanCard['status'][] = ['running', 'done', 'failed', 'skipped'];
   const cards = base.map((card, index) => ({ ...card, status: statuses[index]! }));
   for (const card of cards) {
@@ -114,7 +117,7 @@ test('非待执行的卡不能切换勾选', () => {
 });
 
 test('待执行步骤按计划顺序，去掉未勾选与非待执行的', () => {
-  let cards = cardsOf([step('a'), step('b'), step('c'), step('d'), step('e')]);
+  let cards = cardsOf([step('a'), step('b'), step('c'), step('d'), step('e')], 1);
   cards = toggleCard(cards, 'b');
   cards = cards.map((card) => (card.step.id === 'd' ? { ...card, status: 'done' } : card));
   assert.deepEqual(
@@ -131,7 +134,7 @@ test('hasDanger 只看传入的步骤', () => {
 });
 
 test('markRunning 只把传入的步骤标为执行中', () => {
-  const cards = cardsOf([step('a'), step('b'), step('c')]);
+  const cards = cardsOf([step('a'), step('b'), step('c')], 1);
   const running = markRunning(cards, [step('a'), step('c')]);
   assert.deepEqual(running.map((card) => card.status), ['running', 'pending', 'running']);
   assert.deepEqual(running.map((card) => card.checked), [true, true, true]);
@@ -141,7 +144,7 @@ test('markRunning 只把传入的步骤标为执行中', () => {
 
 test('执行结果：成功记摘要，失败记原因，其后的勾选项标为未执行，没跑的卡不变', () => {
   const plan = [step('a'), step('b'), step('c', 'danger'), step('d'), step('e')];
-  let cards = toggleCard(cardsOf(plan), 'e');
+  let cards = toggleCard(cardsOf(plan, 1), 'e');
   const steps = selectedSteps(cards);
   assert.deepEqual(steps.map((item) => item.id), ['a', 'b', 'c', 'd']);
   cards = markRunning(cards, steps);
@@ -166,7 +169,7 @@ test('执行结果：成功记摘要，失败记原因，其后的勾选项标�
 
 test('执行结果：全部成功时都标为已完成', () => {
   const steps = [step('a'), step('b')];
-  const cards = markRunning(cardsOf(steps), steps);
+  const cards = markRunning(cardsOf(steps, 1), steps);
   const result = applyExecution(cards, steps, {
     done: steps.map((item) => ({ step: item, summary: `完成 ${item.id}` })),
     failed: null,
@@ -179,7 +182,7 @@ test('执行结果：全部成功时都标为已完成', () => {
 
 test('执行结果：第一步就失败时其余勾选项都未执行', () => {
   const steps = [step('a'), step('b')];
-  const cards = markRunning(cardsOf(steps), steps);
+  const cards = markRunning(cardsOf(steps, 1), steps);
   const result = applyExecution(cards, steps, { done: [], failed: { step: steps[0]!, message: '失败了' } });
   assert.deepEqual(result.map((card) => [card.status, card.message]), [
     ['failed', '失败了'],
@@ -188,11 +191,11 @@ test('执行结果：第一步就失败时其余勾选项都未执行', () => {
 });
 
 test('多轮计划叠在一起时，只改这次执行的卡', () => {
-  const earlier = applyExecution(cardsOf([step('t1-1')]), [step('t1-1')], {
+  const earlier = applyExecution(cardsOf([step('t1-1')], 1), [step('t1-1')], {
     done: [{ step: step('t1-1'), summary: '旧结果' }],
     failed: null,
   });
-  const cards = [...earlier, ...cardsOf([step('t2-1')])];
+  const cards = [...earlier, ...cardsOf([step('t2-1')], 2)];
   const steps = selectedSteps(cards);
   assert.deepEqual(steps.map((item) => item.id), ['t2-1']);
   const result = applyExecution(cards, steps, { done: [{ step: steps[0]!, summary: '新结果' }], failed: null });
@@ -201,10 +204,10 @@ test('多轮计划叠在一起时，只改这次执行的卡', () => {
 
 test('未执行的卡恢复为待执行且不勾选，其余不变', () => {
   const cards: PlanCard[] = [
-    { step: step('a'), checked: true, status: 'done', message: '好了' },
-    { step: step('b'), checked: true, status: 'failed', message: '坏了' },
-    { step: step('c'), checked: true, status: 'skipped', message: null },
-    { step: step('d'), checked: false, status: 'pending', message: null },
+    { step: step('a'), turn: 1, checked: true, status: 'done', message: '好了' },
+    { step: step('b'), turn: 1, checked: true, status: 'failed', message: '坏了' },
+    { step: step('c'), turn: 1, checked: true, status: 'skipped', message: null },
+    { step: step('d'), turn: 1, checked: false, status: 'pending', message: null },
   ];
   const reset = resetSkipped(cards);
   assert.deepEqual(reset.map((card) => [card.status, card.checked]), [
@@ -216,4 +219,40 @@ test('未执行的卡恢复为待执行且不勾选，其余不变', () => {
   assert.equal(reset[0], cards[0]);
   // 恢复后可以重新勾选执行
   assert.deepEqual(selectedSteps(toggleCard(reset, 'c')).map((item) => item.id), ['c']);
+});
+
+test('多轮计划：卡片的轮次不随执行结果改变', () => {
+  const steps = [step('a')];
+  const result = applyExecution(markRunning(cardsOf(steps, 4), steps), steps, {
+    done: [{ step: steps[0]!, summary: '好了' }],
+    failed: null,
+  });
+  assert.equal(result[0]?.turn, 4);
+  assert.equal(resetSkipped(result)[0]?.turn, 4);
+});
+
+// ---- 卡片挂靠位置 ----
+
+function entry(id: number, role: ChatEntry['role'], turn: number): ChatEntry {
+  return { id, role, text: `第 ${id} 条`, turn };
+}
+
+test('卡片挂在那一轮最后一条助手回复或提示后面', () => {
+  const entries = [
+    entry(1, 'user', 1),
+    entry(2, 'assistant', 1),
+    entry(3, 'user', 2),
+    entry(4, 'assistant', 2),
+    entry(5, 'note', 2),
+    entry(6, 'user', 3),
+  ];
+  assert.equal(anchorOfTurn(entries, 1), 2);
+  assert.equal(anchorOfTurn(entries, 2), 5, '提示在回复之后时挂在提示后面');
+});
+
+test('那一轮只有用户的话或不存在时返回 null（放到末尾）', () => {
+  const entries = [entry(1, 'user', 1), entry(2, 'assistant', 1), entry(3, 'user', 2)];
+  assert.equal(anchorOfTurn(entries, 2), null);
+  assert.equal(anchorOfTurn(entries, 9), null);
+  assert.equal(anchorOfTurn([], 1), null);
 });

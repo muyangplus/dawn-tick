@@ -22,6 +22,7 @@ const SOURCES = [
   { name: PLUGIN_NAMES.lanSync, file: 'lan/LanSyncPlugin.kt' },
   { name: PLUGIN_NAMES.reminderActions, file: 'reminder/ReminderActionsPlugin.kt' },
   { name: PLUGIN_NAMES.secretStore, file: 'secret/SecretStorePlugin.kt' },
+  { name: PLUGIN_NAMES.aiStream, file: 'ai/AiStreamPlugin.kt' },
 ] as const;
 
 function readAndroid(file: string): string {
@@ -55,6 +56,7 @@ test('Capacitor 插件方法名与 Android 实现、契约文档一致', () => {
 
 test('插件名与加载入口集中在 lib/plugins.ts', () => {
   assert.deepEqual(Object.values(PLUGIN_NAMES).toSorted(), [
+    'AiStream',
     'ApkInstaller',
     'DawnTickWidget',
     'FileShare',

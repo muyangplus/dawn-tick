@@ -50,8 +50,18 @@ export function contextNoteOf(input: ContextNoteInput): string {
 
 export type PlanCardStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
+/** 对话里的一条：用户的话、助手回复或系统提示；`turn` 把计划卡片挂到对应的那一轮。 */
+export interface ChatEntry {
+  id: number;
+  role: 'user' | 'assistant' | 'note';
+  text: string;
+  turn: number;
+}
+
 export interface PlanCard {
   step: AiPlanStep;
+  /** 产出这一步的那一轮 */
+  turn: number;
   checked: boolean;
   status: PlanCardStatus;
   /** 执行结果或失败原因 */
@@ -59,8 +69,17 @@ export interface PlanCard {
 }
 
 /** 新收到的计划：默认全选；高危项也勾上，执行前另行二次确认。 */
-export function cardsOf(steps: readonly AiPlanStep[]): PlanCard[] {
-  return steps.map((step) => ({ step, checked: true, status: 'pending', message: null }));
+export function cardsOf(steps: readonly AiPlanStep[], turn: number): PlanCard[] {
+  return steps.map((step) => ({ step, turn, checked: true, status: 'pending', message: null }));
+}
+
+/** 卡片挂在哪一条后面：那一轮的最后一条助手回复或提示；找不到时返回 null，放到对话末尾。 */
+export function anchorOfTurn(entries: readonly ChatEntry[], turn: number): number | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index] as ChatEntry;
+    if (entry.turn === turn && entry.role !== 'user') return entry.id;
+  }
+  return null;
 }
 
 export function toggleCard(cards: readonly PlanCard[], id: string): PlanCard[] {

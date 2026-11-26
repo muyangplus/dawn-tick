@@ -54,6 +54,15 @@ export interface GridResult {
   labs: EventRow[];
 }
 
+/** 课表格是否画出来：非本周课与停课课次各按设置隐藏。 */
+export function lessonShown(
+  lesson: Pick<LessonCell, 'inWeek' | 'cancelled'>,
+  options: { showOtherWeeks: boolean; showCancelled: boolean },
+): boolean {
+  if (!lesson.inWeek && !options.showOtherWeeks) return false;
+  return !lesson.cancelled || options.showCancelled;
+}
+
 /**
  * 铺课表网格：主课次按列日期所属周次判定，调课落点画到目标格，
  * 实验按周次位图铺，窗口外的周次按设置虚线显示。

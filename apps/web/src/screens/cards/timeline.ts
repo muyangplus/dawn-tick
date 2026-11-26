@@ -153,6 +153,7 @@ export function buildTimeline(data: AppData, date: string, now: number = Date.no
     if (itemDate !== null && itemDate !== date) continue;
     // 停课只说明这节课不上了，不是待办：默认已完成，直接进「已完成」分组，不计入未完成安排
     const cancelled = item.action === 'cancel';
+    if (cancelled && !data.showCancelled) continue;
     const original = cancelled ? originalSlotOf(data, item.ref_schedule_id ?? null) : null;
     const newPeriod =
       item.new_period_start === null

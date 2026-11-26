@@ -71,6 +71,8 @@ export interface AppSettings {
   startHidden: boolean;
   /** 周视图里用虚线显示非本周课程 */
   showOtherWeeks: boolean;
+  /** 周视图与首页时间线显示停课的课次 */
+  showCancelled: boolean;
   /** 课前提醒总开关：未单独设置的课程按下面的分钟数提醒 */
   classReminderEnabled: boolean;
   /** 课前提醒默认提前分钟数 */
@@ -147,6 +149,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoStart: false,
   startHidden: true,
   showOtherWeeks: true,
+  showCancelled: false,
   classReminderEnabled: true,
   classReminderMinutes: 20,
   quietHours: DEFAULT_QUIET_HOURS,
@@ -260,6 +263,7 @@ const FIELDS: { readonly [K in keyof AppSettings]: SettingField<AppSettings[K]> 
   autoStart: flag('auto_start'),
   startHidden: flag('start_hidden'),
   showOtherWeeks: flag('show_other_weeks'),
+  showCancelled: flag('show_cancelled'),
   classReminderEnabled: flag('class_reminder_enabled'),
   classReminderMinutes: intRange('class_reminder_minutes', 1, 180, '提醒提前分钟数需要在 1 到 180 之间'),
   quietHours: { key: 'quiet_hours', parse: parseQuietHours, encode: encodeQuietHours, check: checkQuietHours },

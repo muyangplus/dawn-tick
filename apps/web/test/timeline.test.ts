@@ -64,6 +64,8 @@ function makeData(overrides: Partial<AppData> = {}): AppData {
     grid: new Map(),
     todayLessons: [LESSON],
     todoSort: 'start',
+    // 这里的停课用例都在验证条目怎么显示，默认打开；关掉时的行为另有用例
+    showCancelled: true,
     currentLesson: undefined,
     nextLesson: undefined,
     exams: [],
@@ -283,4 +285,41 @@ test('时间线：非停课的调整不带 statusText', () => {
   const item = buildTimeline(makeData({ reschedules: [move] }), '2026-10-13', 0).find((entry) => entry.key === 'adjust-e-move');
   assert.equal(item?.statusText, null);
   assert.equal(item?.detail, '改至 2026-10-15 第 5–6 节');
+});
+
+test('时间线：「显示停课课程」关闭时不列停课条目，其他调整照常', () => {
+  const move = {
+    ...CANCEL_EVENT,
+    id: 'e-move',
+    on_date: '2026-10-13',
+    action: 'move',
+    new_date: '2026-10-13',
+    new_period_start: 5,
+    new_period_end: 6,
+  } as EventRow;
+  const now = Date.UTC(2026, 9, 13, 0, 30, 0);
+  const hidden = buildTimeline(
+    makeData({ showCancelled: false, courses: [courseWith({})], slots: SLOT_ROWS, reschedules: [CANCEL_EVENT, PHYSICS_CANCEL, move] }),
+    '2026-10-13',
+    now,
+  );
+  assert.equal(hidden.some((item) => item.key === 'adjust-e-cancel' || item.key === 'adjust-e-phy'), false);
+  assert.ok(hidden.some((item) => item.key === 'adjust-e-move'), '改期不受停课开关影响');
+  assert.ok(hidden.some((item) => item.kind === 'lesson'), '照常上的课仍在');
+  assert.equal(splitTimeline(hidden).completed.some((item) => item.statusText === '停课'), false);
+
+  const shown = buildTimeline(
+    makeData({ showCancelled: true, courses: [courseWith({})], slots: SLOT_ROWS, reschedules: [CANCEL_EVENT, PHYSICS_CANCEL, move] }),
+    '2026-10-13',
+    now,
+  );
+  assert.ok(shown.some((item) => item.key === 'adjust-e-cancel'));
+  assert.ok(shown.some((item) => item.key === 'adjust-e-phy'));
+  assert.ok(shown.some((item) => item.key === 'adjust-e-move'));
+});
+
+test('时间线：AppData 默认不列停课条目', () => {
+  const data = appDataOf({ today: '2026-10-13', reschedules: [CANCEL_EVENT] });
+  assert.equal(data.showCancelled, false);
+  assert.equal(buildTimeline(data, '2026-10-13', Date.UTC(2026, 9, 13, 0, 30, 0)).length, 0);
 });

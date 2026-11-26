@@ -10,4 +10,6 @@ export const timetableSettingsCopy = {
   hideWeekendsDescription: '跳过周六日',
   showOtherWeeksLabel: '周视图显示非本周课程',
   showOtherWeeksDescription: '这一周不上的课用虚线框标出',
+  showCancelledLabel: '显示停课课程',
+  showCancelledDescription: '周视图与首页时间线保留停课的课次',
 } as const;

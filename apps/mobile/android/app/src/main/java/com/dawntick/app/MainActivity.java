@@ -4,6 +4,7 @@ import android.content.pm.PackageInfo;
 import android.os.Build;
 import android.os.Bundle;
 
+import com.dawntick.app.ai.AiStreamPlugin;
 import com.dawntick.app.diag.NativeLog;
 import com.dawntick.app.install.ApkInstallerPlugin;
 import com.dawntick.app.lan.LanSyncPlugin;
@@ -29,6 +30,7 @@ public class MainActivity extends BridgeActivity {
         "LanSync",
         "ReminderActions",
         "SecretStore",
+        "AiStream",
     };
 
     @Override
@@ -46,6 +48,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ReminderActionsPlugin.class);
         // WebDAV 密码：AndroidKeyStore AES-GCM 加解密（Web 侧封 `enc:v1:` 信封）
         registerPlugin(SecretStorePlugin.class);
+        // AI 助手：SSE 流式回复（CapacitorHttp 会整段缓冲）
+        registerPlugin(AiStreamPlugin.class);
         super.onCreate(savedInstanceState);
         logStartupSelfCheck();
     }

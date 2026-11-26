@@ -103,6 +103,7 @@ function appData(overrides: Partial<AppData> = {}, cells: readonly LessonCell[] 
     grid,
     todayLessons: [],
     todoSort: 'start',
+    showCancelled: false,
     tomorrowLessons: [],
     currentLesson: undefined,
     nextLesson: undefined,
@@ -234,7 +235,7 @@ test('非本周课程按「显示非本周课程」设置进出，并画虚线',
 });
 
 test('停课与放假：停课标「停课」用虚线，放假列带假期名且课程灰显', () => {
-  const result = model({}, [
+  const result = model({ showCancelled: true }, [
     lesson({ cancelled: true, holiday: true, name: '停课课' }),
   ]);
   assert.equal(result.cards[0]?.status, '停课');
@@ -249,6 +250,28 @@ test('停课与放假：停课标「停课」用虚线，放假列带假期名�
   assert.equal(holiday.columns[0]?.holidayName, null);
   assert.equal(holidayModel.columns[0]?.holidayName, '国庆节');
   assert.equal(holidayModel.cards[0]?.muted, true);
+});
+
+test('停课课次按「显示停课课程」设置进出，默认不画', () => {
+  const cells = [lesson({ cancelled: true, name: '停课课' }), lesson({ scheduleId: 's-2', date: '2026-10-20', dayOfWeek: 2, name: '照常课' })];
+  const hidden = model({}, cells);
+  assert.equal(DEFAULT_SETTINGS.showCancelled, false);
+  assert.deepEqual(hidden.cards.map((card) => card.name), ['照常课']);
+
+  const shown = model({ showCancelled: true }, cells);
+  assert.deepEqual(shown.cards.map((card) => card.name), ['停课课', '照常课']);
+  assert.equal(shown.cards[0]?.status, '停课');
+
+  // 只有停课课时，关掉开关就是空态
+  const onlyCancelled = model({ showCancelled: false }, [lesson({ cancelled: true })]);
+  assert.equal(onlyCancelled.cards.length, 0);
+  assert.equal(onlyCancelled.empty, true);
+
+  // 非本周且停课：两个开关都开才画
+  const ghostCancelled = [lesson({ inWeek: false, cancelled: true })];
+  assert.equal(model({ showOtherWeeks: true, showCancelled: false }, ghostCancelled).cards.length, 0);
+  assert.equal(model({ showOtherWeeks: false, showCancelled: true }, ghostCancelled).cards.length, 0);
+  assert.equal(model({ showOtherWeeks: true, showCancelled: true }, ghostCancelled).cards.length, 1);
 });
 
 test('坏色值退回主题主色，不让整页绘制失败', () => {

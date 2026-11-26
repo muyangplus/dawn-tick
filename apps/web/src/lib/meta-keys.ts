@@ -4,6 +4,7 @@ import {
   SETTING_META_KEYS,
   WAL_META_KEY,
   WEEKS_RAW_BACKFILL_KEY,
+  COURSE_END_CONVERT_KEY,
 } from '@dawn-tick/core';
 
 /**
@@ -54,6 +55,9 @@ export const WEBDAV_LAST_SYNC_META_KEY = 'webdav_last_sync';
 export const LAN_PAIRINGS_META_KEY = 'lan_pairings_v1';
 export const LAN_TRUSTED_TOKENS_META_KEY = 'lan_trusted_tokens_v1';
 
+/** AI 助手的对话：只存本机，不进备份与同步。 */
+export const ASSISTANT_CHAT_META_KEY = 'assistant_chat_v1';
+
 /** 库内 JSON 快照：正文键为 `backup:<createdAt>`，列表索引见下。 */
 export const SNAPSHOT_META_PREFIX = 'backup:';
 /** 快照列表的轻量索引 `{ id, createdAt, bytes }[]`：列表只读它，不再读快照正文。 */
@@ -66,6 +70,7 @@ export const CORE_META_KEYS = {
   // 早期按行同步的游标；该同步方式已移除，键保留登记以识别旧库里的残留行
   syncCursor: 'sync_cursor',
   weeksRawBackfill: WEEKS_RAW_BACKFILL_KEY,
+  courseEndConvert: COURSE_END_CONVERT_KEY,
   walMode: WAL_META_KEY,
 } as const;
 
@@ -90,6 +95,7 @@ export const APP_META_KEYS: readonly string[] = [
     LAN_PAIRINGS_META_KEY,
     LAN_TRUSTED_TOKENS_META_KEY,
     SNAPSHOT_INDEX_META_KEY,
+    ASSISTANT_CHAT_META_KEY,
   ]),
 ];
 

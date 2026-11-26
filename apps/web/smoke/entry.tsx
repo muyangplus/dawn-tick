@@ -58,6 +58,7 @@ import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
 import { setAiClientForTests } from '../src/lib/ai.ts';
 import { assistantPanelCopy } from '../src/copy/assistant.ts';
+import { ASSISTANT_CHAT_META_KEY } from '../src/lib/meta-keys.ts';
 import { listSnapshots } from '../src/backup.ts';
 import { aiCopy } from '../src/copy/settings-ai.ts';
 import { addMenuCopy } from '../src/copy/home-add-menu.ts';
@@ -1432,6 +1433,39 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const cancelDate = addDays(seededMonday, 9);
   await setViewDate(cancelDate);
   if (clickMenu(view.container, '更多操作', '当天全部停课')) await flush(18);
+  // 「显示停课课程」默认关：时间线不列停课条目，课表也不画停课课次
+  check(
+    '显示停课课程默认关：日程时间线不列停课条目',
+    rowIn('timeline-completed', '往期课') === undefined && rowIn('timeline-main', '往期课') === undefined,
+    `已完成=${rowsText('timeline-completed').slice(0, 40)} / 主=${rowsText('timeline-main').slice(0, 40)}`,
+  );
+  if (clickByText(view.container, '课表')) await flush(16);
+  const hiddenCancelledCards = view.container.querySelectorAll('[data-tone="cancelled"]').length;
+  check(
+    '显示停课课程默认关：课表不画停课课次',
+    hiddenCancelledCards === 0 && view.container.querySelector('[data-role="cancelled-label"]') === null,
+    `停课卡 ${hiddenCancelledCards} 张`,
+  );
+  // 设置 · 课表显示：「显示停课课程」开关默认关，打开后继续核对停课的显示
+  await gotoSettings();
+  await openSettingsGroup(view.container, '课表显示');
+  const showCancelledSwitch = (): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>('[role="switch"][aria-label="显示停课课程"]');
+  check(
+    '课表显示卡有「显示停课课程」开关，默认关',
+    showCancelledSwitch()?.getAttribute('aria-checked') === 'false' &&
+      (settingsPanel(view.container)?.textContent ?? '').includes('显示停课课程'),
+    `aria-checked=${showCancelledSwitch()?.getAttribute('aria-checked') ?? '(无开关)'}`,
+  );
+  showCancelledSwitch()?.click();
+  await flush(16);
+  check(
+    '打开「显示停课课程」后开关为开',
+    showCancelledSwitch()?.getAttribute('aria-checked') === 'true',
+    `aria-checked=${showCancelledSwitch()?.getAttribute('aria-checked') ?? '(无开关)'}`,
+  );
+  if (clickByText(view.container, '日程')) await flush(12);
+  await setViewDate(cancelDate);
   const cancelledRow = rowIn('timeline-completed', '往期课');
   check(
     '日程时间线：停课默认已完成并进已完成分组',
@@ -6171,6 +6205,41 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     todoApp.root.unmount();
   }
 
+  // 首次使用就回退（库里没有学期）：不给建学期表单，改给原因与重试/打开日志
+  {
+    // 独立的空库，不动后面用例依赖的默认库
+    setStorageOpenerForTests(async () =>
+      markStorageFallback(
+        validatedStorage(await openIndexedDbStorage('dawn-tick-smoke-fallback-empty')),
+        'smoke 模拟首次使用时原生库打不开',
+      ),
+    );
+    const firstRunApp = mount(<App />);
+    await flush(20);
+    const firstRun = firstRunApp.container.querySelector('[data-role="storage-fallback-first-run"]');
+    const firstRunButtons = [...(firstRun?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      '回退且无学期：显示「数据库没能打开」页，含原因与重试/打开日志两个按钮',
+      firstRun !== null &&
+        (firstRun.querySelector('h1')?.textContent ?? '') === appRecoveryCopy.fallbackFirstRun.title &&
+        (firstRun.textContent ?? '').includes(appRecoveryCopy.fallbackFirstRun.body) &&
+        (firstRun.textContent ?? '').includes(appRecoveryCopy.fallbackFirstRun.next) &&
+        firstRunButtons.join('|') === '重试|打开日志',
+      firstRun?.textContent?.trim().slice(0, 80) ?? '(无回退首屏)',
+    );
+    check(
+      '回退且无学期：不渲染建学期表单，也不叠警告条',
+      firstRunApp.container.querySelector('[data-role="onboarding-scroll"]') === null &&
+        firstRunApp.container.querySelector('[data-role="storage-fallback-banner"]') === null &&
+        !(firstRunApp.container.textContent ?? '').includes(onboardingCopy.importFormats),
+      (firstRunApp.container.textContent ?? '').slice(0, 80),
+    );
+    firstRunApp.root.unmount();
+    setStorageOpenerForTests(null);
+  }
+
   // P1-07：原生库失败 → 回退可见、设备页标「临时回退」、写入口只读拦截
   {
     // 回退也要有数据可看：前面的用例可能删过学期，这里补一个最小学期
@@ -6207,6 +6276,23 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         bannerButtons.includes('重试') &&
         bannerButtons.includes('打开日志'),
       banner?.textContent?.trim().slice(0, 80) ?? '(无警告条)',
+    );
+    // 窄屏上说明曾被按钮挤成一字一行：说明须独占一段，按钮不在其中
+    const bannerMessage = banner?.querySelector(':scope > p') ?? null;
+    check(
+      '回退警告条：说明独占一段，徽标与按钮在另一行',
+      bannerMessage !== null &&
+        (bannerMessage.textContent ?? '').trim() === appRecoveryCopy.fallback.banner &&
+        bannerMessage.querySelector('button') === null &&
+        (banner?.querySelectorAll(':scope > :not(p) button').length ?? 0) === 2 &&
+        !(bannerMessage.textContent ?? '').includes(appRecoveryCopy.fallback.badge),
+      `说明=${bannerMessage?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
+    );
+    check(
+      '有学期时回退：主界面照常显示，不出现回退首屏',
+      fallbackApp.container.querySelector('[data-role="storage-fallback-first-run"]') === null &&
+        fallbackApp.container.querySelector('[data-role="onboarding-scroll"]') === null,
+      '',
     );
 
     clickByText(fallbackApp.container, '设备与同步');
@@ -7730,8 +7816,14 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       await dismissChannelNotice();
       await openFab(lateApp);
       if (clickByText(document.body, assistantLabel)) await flush(14);
-      const chatEntries = (): number =>
-        panel()?.querySelectorAll('[data-role="assistant-chat"] > [data-role^="assistant-"]').length ?? -1;
+      /** 对话里的条目（用户、助手、提示），按文档顺序；不含示例、计划与进度 */
+      const entryRoles = (): string[] =>
+        [
+          ...(panel()?.querySelectorAll<HTMLElement>(
+            ['user', 'assistant', 'note'].map((role) => `[data-role="assistant-chat"] > [data-role="assistant-${role}"]`).join(', '),
+          ) ?? []),
+        ].map((entry) => entry.getAttribute('data-role') ?? '');
+      const chatEntries = (): number => (panel() === null ? -1 : entryRoles().length);
       const panelText = (): string => panel()?.textContent ?? '';
       const sendLate = async (text: string): Promise<boolean> => {
         const box = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
@@ -7767,9 +7859,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       const stopped = panel() !== null && clickByText(panel() as HTMLElement, assistantPanelCopy.stop);
       await flush(8);
       await releaseLate();
-      const lateEntries = [...(panel()?.querySelectorAll<HTMLElement>('[data-role="assistant-chat"] > [data-role^="assistant-"]') ?? [])].map(
-        (entry) => entry.getAttribute('data-role'),
-      );
+      const lateEntries = entryRoles();
       check(
         '助手：请求进行中点「停止」，迟到的回复不进对话、计划不出卡片、不再请求下一步',
         stopSent && stopped && lateEntries.join('/') === 'assistant-user' && lateCalls === 1 &&
@@ -7778,6 +7868,150 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         `已发=${stopSent} 停止=${stopped} 条目=${lateEntries.join('/') || '(无)'} 调用=${lateCalls}`,
       );
       lateApp.root.unmount();
+
+      // —— 多轮对话：对话存在本机，重开应用读回；空对话给示例；失败可重试；回复流式显示并排版；「新对话」清空存档 ——
+      let multiFail = true;
+      let streamGate: (() => void) | null = null;
+      const multiAsked: string[] = [];
+      const multiClient: AiClient = {
+        complete: async () => {
+          throw new Error('冒烟假模型只走函数调用');
+        },
+        chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          multiAsked.push(request.messages.at(-1)?.content ?? '');
+          if (multiFail) throw new Error('冒烟假模型故障');
+          request.onText?.('**本周**有');
+          await new Promise<void>((resolve) => {
+            streamGate = resolve;
+          });
+          return { content: '**本周**有两节课：\n- 高等数学\n- 大学英语', toolCalls: [] };
+        },
+      };
+      setAiClientForTests(multiClient);
+      const examples = (): string[] =>
+        [...(panel()?.querySelectorAll<HTMLElement>('[data-role="assistant-examples"] button') ?? [])].map((button) =>
+          (button.textContent ?? '').trim(),
+        );
+      const openAssistant = async (app: { container: HTMLElement }): Promise<void> => {
+        await openFab(app);
+        if (clickByText(document.body, assistantLabel)) await flush(14);
+      };
+      const has = (selector: string): boolean => (panel()?.querySelector(selector) ?? null) !== null;
+
+      let multiApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openAssistant(multiApp);
+      const lateRestored = await waitFor(() => entryRoles().join('/') === 'assistant-user' && panelText().includes('这次会被停止'), 30);
+      check(
+        '助手：重开应用后读回上一次的对话（停止的那句还在），不显示示例',
+        lateRestored && examples().length === 0 && has('[data-role="assistant-new"]'),
+        `条目=${entryRoles().join('/') || '(无)'} 示例=${examples().length}`,
+      );
+
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-new"]')?.click();
+      await flush(8);
+      check(
+        '助手：「新对话」清空对话，空对话给出示例问题，「新对话」按钮隐藏',
+        chatEntries() === 0 &&
+          examples().join('|') === assistantPanelCopy.examples.join('|') &&
+          (panel()?.querySelector('[data-role="assistant-examples"]')?.textContent ?? '').includes(assistantPanelCopy.examplesTitle) &&
+          !has('[data-role="assistant-new"]'),
+        `条目=${chatEntries()} 示例=${examples().join(' / ') || '(无)'}`,
+      );
+
+      const firstExample = assistantPanelCopy.examples[0] ?? '';
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-examples"] button')?.click();
+      const retryShown = await waitFor(() => has('[data-role="assistant-retry"]'), 40);
+      const failNote = panel()?.querySelector('[data-role="assistant-note"]')?.textContent ?? '';
+      check(
+        '助手：点示例直接发出；模型出错时记下原因，提示里给「重试」',
+        retryShown &&
+          entryRoles().join('/') === 'assistant-user/assistant-note' &&
+          (panel()?.querySelector('[data-role="assistant-user"]')?.textContent ?? '').includes(firstExample) &&
+          failNote.includes('冒烟假模型故障') &&
+          (panel()?.querySelector('[data-role="assistant-note"] [data-role="assistant-retry"]')?.textContent ?? '').trim() ===
+            assistantPanelCopy.retry &&
+          multiAsked.join('|') === firstExample &&
+          examples().length === 0,
+        `条目=${entryRoles().join('/') || '(无)'} 提示=${failNote.slice(0, 40)} 请求=${multiAsked.join('|')}`,
+      );
+
+      multiFail = false;
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-retry"]')?.click();
+      const drafting = await waitFor(
+        () => streamGate !== null && (panel()?.querySelector('[data-role="assistant-draft"]')?.textContent ?? '').includes('本周有'),
+        40,
+      );
+      check(
+        '助手：「重试」重发同一句、不重复用户气泡；回复流式显示在草稿气泡里，进度为「正在思考」',
+        drafting &&
+          (panel()?.querySelector('[data-role="assistant-draft"] strong')?.textContent ?? '') === '本周' &&
+          (panel()?.querySelector('[data-role="assistant-progress"]')?.textContent ?? '') === assistantPanelCopy.thinking &&
+          !has('[data-role="assistant-retry"]') &&
+          multiAsked.length === 2 &&
+          multiAsked[1] === firstExample &&
+          entryRoles().filter((role) => role === 'assistant-user').length === 1,
+        `草稿=${drafting} 请求=${multiAsked.join('|')} 条目=${entryRoles().join('/')}`,
+      );
+      const releaseStream = streamGate as (() => void) | null;
+      streamGate = null;
+      releaseStream?.();
+      const replied = await waitFor(() => entryRoles().includes('assistant-assistant'), 40);
+      const replyBubble = panel()?.querySelector('[data-role="assistant-assistant"]') ?? null;
+      check(
+        '助手：回复排版为粗体与列表，草稿气泡与进度收起',
+        replied &&
+          (replyBubble?.querySelector('strong')?.textContent ?? '') === '本周' &&
+          [...(replyBubble?.querySelectorAll('ul > li') ?? [])].map((item) => item.textContent).join('|') === '高等数学|大学英语' &&
+          !has('[data-role="assistant-draft"]') &&
+          !has('[data-role="assistant-progress"]') &&
+          !has('[data-role="assistant-retry"]'),
+        `条目=${entryRoles().join('/')} 回复=${(replyBubble?.textContent ?? '(无)').slice(0, 40)}`,
+      );
+
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush(8);
+      const panelClosed = panel() === null;
+      await openAssistant(multiApp);
+      check(
+        '助手：关掉面板再打开，对话与排版都还在',
+        panelClosed &&
+          entryRoles().join('/') === 'assistant-user/assistant-note/assistant-assistant' &&
+          (panel()?.querySelector('[data-role="assistant-assistant"] strong')?.textContent ?? '') === '本周',
+        `关闭=${panelClosed} 条目=${entryRoles().join('/') || '(无)'}`,
+      );
+      await flush(8);
+      multiApp.root.unmount();
+
+      multiApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openAssistant(multiApp);
+      const reloaded = await waitFor(() => entryRoles().join('/') === 'assistant-user/assistant-note/assistant-assistant', 30);
+      check(
+        '助手：重开应用后对话从本机读回（上次失败的「重试」不再出现）',
+        reloaded &&
+          (panel()?.querySelector('[data-role="assistant-user"]')?.textContent ?? '').includes(firstExample) &&
+          [...(panel()?.querySelectorAll('[data-role="assistant-assistant"] li') ?? [])].length === 2 &&
+          !has('[data-role="assistant-retry"]') &&
+          examples().length === 0,
+        `条目=${entryRoles().join('/') || '(无)'}`,
+      );
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-new"]')?.click();
+      await flush(12);
+      const clearedEntries = chatEntries();
+      multiApp.root.unmount();
+      const storedChat = JSON.parse((await assistantStore.readMeta(ASSISTANT_CHAT_META_KEY)) ?? 'null') as {
+        entries?: unknown[];
+        history?: unknown[];
+      } | null;
+      check(
+        '助手：「新对话」同时清空本机存档',
+        clearedEntries === 0 && storedChat !== null && storedChat.entries?.length === 0 && storedChat.history?.length === 0,
+        `条目=${clearedEntries} 存档=${storedChat === null ? '无' : `${storedChat.entries?.length}/${storedChat.history?.length}`}`,
+      );
+
       setAiClientForTests(undefined);
       await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
     }

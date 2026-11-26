@@ -81,6 +81,8 @@ export interface AppData {
   todayLessons: Occurrence[];
   /** 待办排序方式：按开始时间 / 按类型 */
   todoSort: TodoSort;
+  /** 首页时间线是否列出停课条目 */
+  showCancelled: boolean;
   /** 明天的课：悬浮窗的「明日课程预告」用 */
   tomorrowLessons: Occurrence[];
   /** 现在正在上的那一节课（无课或停课时为 undefined） */

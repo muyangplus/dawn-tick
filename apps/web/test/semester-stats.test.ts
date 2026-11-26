@@ -84,7 +84,7 @@ function makeData(input: DataInput = {}): AppData {
     hasLessons: lessonsByDate.size > 0, courses: input.courses ?? [], lessonsByDate,
     holidayLabels: new Map(input.holidays ?? []), workdayDates: [],
     semester: input.semester === undefined ? sem() : input.semester, semesters: [], slots: [], grid: new Map(),
-    todayLessons: [], todoSort: 'start', tomorrowLessons: [], currentLesson: undefined, nextLesson: undefined,
+    todayLessons: [], todoSort: 'start', showCancelled: false, tomorrowLessons: [], currentLesson: undefined, nextLesson: undefined,
     exams: input.exams ?? [], todos: input.todos ?? [], labs: [], countdowns: [], reschedules: input.reschedules ?? [],
   };
 }

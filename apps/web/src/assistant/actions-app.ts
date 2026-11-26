@@ -62,6 +62,7 @@ const SETTING_SPECS: Partial<Record<SettingKey, SettingSpec>> = {
   widgetBackground: choice('小组件背景', WIDGET_BACKGROUNDS),
   startHidden: bool('开机自启时只驻留托盘'),
   showOtherWeeks: bool('周视图用虚线显示非本周课程'),
+  showCancelled: bool('周视图与首页时间线显示停课的课次'),
   classReminderEnabled: bool('课前提醒总开关'),
   classReminderMinutes: { description: '课前提醒提前分钟数（1-180）', schema: { type: 'integer', minimum: 1, maximum: 180 } },
   quietHours: {

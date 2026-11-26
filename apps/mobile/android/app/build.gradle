@@ -38,8 +38,8 @@ android {
         applicationId "com.dawntick.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 900
-        versionName "0.9.0"
+        versionCode 901
+        versionName "0.9.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // 只处理真机 ABI（x86/x86_64 只有模拟器用）：ABI 过滤与拆包统一由下面的
         // android.splits.abi.include 负责；两处同时配置会被 AGP 判为冲突。

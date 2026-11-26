@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Storage } from '@dawn-tick/core';
+import { BACKUP_META_KEYS, exportBackup, type Storage } from '@dawn-tick/core';
+import { createStorage } from '@dawn-tick/core/testing';
 import { readMetaJson, readMetaNumber, writeMetaJson } from '../src/lib/meta.ts';
-import { APP_META_KEYS, isKnownMetaKey } from '../src/lib/meta-keys.ts';
+import { APP_META_KEYS, ASSISTANT_CHAT_META_KEY, isKnownMetaKey } from '../src/lib/meta-keys.ts';
 import { logEntries } from '../src/log.ts';
 
 /** 测试用读桩：只暴露 readMeta。 */
@@ -201,9 +202,21 @@ test('键清单锁定存量键名（改名等于丢数据）', () => {
     'wal_mode',
     'schema_version',
     'sync_cursor',
+    'course_end_convert_v1',
+    'assistant_chat_v1',
   ];
   for (const key of legacy) assert.ok(isKnownMetaKey(key), `${key} 已登记`);
   assert.ok(isKnownMetaKey('backup:1793000000000'), '快照前缀已登记');
   assert.equal(isKnownMetaKey('backup'), false);
   assert.equal(isKnownMetaKey('unknown_key'), false);
+});
+
+test('助手对话键已登记，只存本机，不进备份导出', async () => {
+  assert.equal(ASSISTANT_CHAT_META_KEY, 'assistant_chat_v1');
+  assert.ok(APP_META_KEYS.includes(ASSISTANT_CHAT_META_KEY));
+  assert.equal(BACKUP_META_KEYS.includes(ASSISTANT_CHAT_META_KEY), false);
+  const storage = createStorage();
+  await storage.writeMeta(ASSISTANT_CHAT_META_KEY, '{"version":1}');
+  const payload = await exportBackup(storage);
+  assert.equal(payload.meta[ASSISTANT_CHAT_META_KEY], undefined);
 });

@@ -24,6 +24,7 @@ export function appDataOf(overrides: Partial<AppData> = {}): AppData {
     grid: new Map(),
     todayLessons: [],
     todoSort: 'start',
+    showCancelled: false,
     tomorrowLessons: [],
     currentLesson: undefined,
     nextLesson: undefined,

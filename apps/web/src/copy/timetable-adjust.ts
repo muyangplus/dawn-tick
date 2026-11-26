@@ -49,7 +49,7 @@ export const adjustCopy = {
   cancelRanges: {
     this: { label: '只这一次', hint: '只停原日期这一次课' },
     range: { label: '一段日期', hint: '停掉开始日到结束日之间的课，之后照常' },
-    from: { label: '从这天起结课', hint: '从开始日到学期结束都不再上' },
+    from: { label: '从这天起结课', hint: '本周剩下的课停课，之后的周次从课表移除' },
   },
   cancelTargetsAria: '停课对象',
   cancelTargets: {
@@ -64,6 +64,13 @@ export const adjustCopy = {
   cancelConfirmDescription: (count: number, first: string, last: string) =>
     `将写入 ${count} 条停课记录（${first} 至 ${last}），可在课表上单击课次逐条删除。`,
   cancelConfirmButton: (count: number) => `停课 ${count} 次`,
+  endConfirmTitle: '结课',
+  endConfirmDescription: (week: number, count: number) =>
+    count === 0
+      ? `第 ${week} 周之后的周次将从排课里移除，可在课程编辑里改回周次。`
+      : `第 ${week} 周剩下的 ${count} 次课记停课，之后的周次从排课里移除，可在课程编辑里改回周次。`,
+  endConfirmButton: '确认结课',
+  endDone: (week: number) => `已结课：第 ${week} 周之后不再上课`,
   examBusy: '正在改为考试…',
   examDone: (date: string, range: string) => `已改为考试：${date} ${range}`,
   examFail: { what: '改为考试失败', next: RETRY_NEXT },

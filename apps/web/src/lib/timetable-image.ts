@@ -1,5 +1,5 @@
 import { WEEKDAY_LABELS, addDays, dayOfWeek, isWeekend, weekOfDate, type AppSettings } from '@dawn-tick/core';
-import type { AppData, LessonCell } from '../data.ts';
+import { lessonShown, type AppData, type LessonCell } from '../data.ts';
 import {
   FONT_FAMILY,
   PRESETS,
@@ -140,7 +140,7 @@ export function buildTimetableImageModel(input: {
   }));
   const lessons = [...data.grid.values()]
     .flat()
-    .filter((lesson) => dates.includes(lesson.date) && (lesson.inWeek || settings.showOtherWeeks))
+    .filter((lesson) => dates.includes(lesson.date) && lessonShown(lesson, settings))
     .sort((left, right) => left.date.localeCompare(right.date) || left.periodStart - right.periodStart);
   const cards: TimetableImageCard[] = [];
   for (const lesson of lessons) {
