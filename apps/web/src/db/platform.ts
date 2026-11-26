@@ -1,5 +1,6 @@
 import {
   backfillWeeksRaw,
+  convertCourseEnds,
   inspectSqlxBaseline,
   migrate,
   sqliteStorage,
@@ -123,6 +124,15 @@ export async function openStorage(options: { secondary?: boolean } = {}): Promis
     if (backfilled > 0) logDebug('storage', '排课周次文本已回填', { rows: backfilled });
   } catch (error) {
     logWarn('storage', '排课周次文本回填失败', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  // 旧版结课是逐次停课：转成截短上课周，结课后的周次不再出现
+  try {
+    const converted = await convertCourseEnds(storage);
+    if (converted > 0) logInfo('storage', '旧版结课已转为截短上课周', { schedules: converted });
+  } catch (error) {
+    logWarn('storage', '旧版结课转换失败', {
       message: error instanceof Error ? error.message : String(error),
     });
   }

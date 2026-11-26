@@ -4,6 +4,7 @@ import {
   SETTING_META_KEYS,
   WAL_META_KEY,
   WEEKS_RAW_BACKFILL_KEY,
+  COURSE_END_CONVERT_KEY,
 } from '@dawn-tick/core';
 
 /**
@@ -66,6 +67,7 @@ export const CORE_META_KEYS = {
   // 早期按行同步的游标；该同步方式已移除，键保留登记以识别旧库里的残留行
   syncCursor: 'sync_cursor',
   weeksRawBackfill: WEEKS_RAW_BACKFILL_KEY,
+  courseEndConvert: COURSE_END_CONVERT_KEY,
   walMode: WAL_META_KEY,
 } as const;
 

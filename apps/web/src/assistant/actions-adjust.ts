@@ -39,6 +39,7 @@ import {
   planSwap,
   type AdjustScope,
   type CancelEntry,
+  type CancelTruncation,
   type CancelRange,
   type CancelTarget,
   type ExamPlan,
@@ -79,7 +80,7 @@ function requireLesson(ref: LessonRef, date: string): void {
     target: 'schedule',
     from: date,
     to: date,
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
   if (!found.ok) throw new AiArgError(`「${ref.course.name}」${date} 没有这节课`);
 }
@@ -172,15 +173,17 @@ interface CancelParams {
   semester: SemesterRow;
   course: ManagedCourse;
   entries: CancelEntry[];
+  truncations: CancelTruncation[];
+  endWeek: number | null;
   range: CancelRange;
   from: string;
   last: string;
 }
 
-/** 已停课的「排课|日期」。按排课 id 匹配：导入或同步来的停课记录可能没有 semester_id。 */
-async function cancelledKeysOf(context: AiCoreContext): Promise<Set<string>> {
+/** 已停课的「排课|日期」→ 记录 id。按排课 id 匹配：导入或同步来的停课记录可能没有 semester_id。 */
+async function cancelledKeysOf(context: AiCoreContext): Promise<Map<string, string>> {
   const events = await context.storage.collection<EventRow>('events').getAll();
-  return new Set(
+  return new Map(
     events
       .filter(
         (row) =>
@@ -191,14 +194,14 @@ async function cancelledKeysOf(context: AiCoreContext): Promise<Set<string>> {
           row.ref_schedule_id !== null &&
           row.on_date !== null,
       )
-      .map((row) => `${row.ref_schedule_id}|${row.on_date}`),
+      .map((row) => [`${row.ref_schedule_id}|${row.on_date}`, row.id] as const),
   );
 }
 
 export const cancelLessonsAction = defineAction<AiCoreContext, CancelParams>({
   name: 'cancel_lessons',
   description:
-    '停课或结课。range：this 只停 from 那天；range 停 from 到 to；from 从 from 起到学期结束（结课）。target：schedule 只停 scheduleId 这个时段；course 停整门课的全部时段。已停的不重复记',
+    '停课或结课。range：this 只停 from 那天；range 停 from 到 to；from 结课：from 所在周剩下的课停课，之后的周次从排课里移除。target：schedule 只停 scheduleId 这个时段；course 停整门课的全部时段。已停的不重复记',
   parameters: objectSchema(
     {
       scheduleId: schema.string('排课 id；target 为 schedule 时必填'),
@@ -242,19 +245,34 @@ export const cancelLessonsAction = defineAction<AiCoreContext, CancelParams>({
       cancelledKeys: await cancelledKeysOf(context),
     });
     if (!result.ok) throw new AiArgError(result.message);
-    const entries = result.entries;
-    return { semester, course: course as ManagedCourse, entries, range, from, last: entries[entries.length - 1]!.date };
+    const { entries, truncations, endWeek } = result;
+    return {
+      semester,
+      course: course as ManagedCourse,
+      entries,
+      truncations,
+      endWeek,
+      range,
+      from,
+      last: entries[entries.length - 1]?.date ?? from,
+    };
   },
-  preview({ course, entries, range, from, last }) {
+  preview({ course, entries, endWeek, from, last }) {
+    if (endWeek !== null) {
+      const rest = entries.length === 0 ? '' : `，本周剩下 ${entries.length} 次课停课`;
+      return `结课「${course.name}」：第 ${endWeek} 周之后不再上课${rest}`;
+    }
     const span = entries.length === 1 ? entries[0]!.date : `${from} 至 ${last}`;
-    return `${range === 'from' ? '结课' : '停课'}「${course.name}」${span}，共 ${entries.length} 次课`;
+    return `停课「${course.name}」${span}，共 ${entries.length} 次课`;
   },
-  async run({ semester, course, entries }, context) {
-    const count = await applyCancelBatch(context.storage, entries, {
+  async run({ semester, course, entries, truncations, endWeek }, context) {
+    const count = await applyCancelBatch(context.storage, { entries, truncations }, {
       userId: context.userId,
       semesterId: semester.id,
       courseName: course.name,
+      totalWeeks: semester.total_weeks,
     });
+    if (endWeek !== null) return `已为「${course.name}」结课：第 ${endWeek} 周之后不再上课`;
     return `已为「${course.name}」记 ${count} 次停课`;
   },
 });

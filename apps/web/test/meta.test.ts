@@ -201,6 +201,7 @@ test('键清单锁定存量键名（改名等于丢数据）', () => {
     'wal_mode',
     'schema_version',
     'sync_cursor',
+    'course_end_convert_v1',
   ];
   for (const key of legacy) assert.ok(isKnownMetaKey(key), `${key} 已登记`);
   assert.ok(isKnownMetaKey('backup:1793000000000'), '快照前缀已登记');

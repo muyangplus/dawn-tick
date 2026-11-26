@@ -11,11 +11,15 @@ import {
   listTimeSlots,
   weekOfDate,
   weekStart,
+  createReschedule,
+  describeWeeks,
   validatedStorage,
+  weeksToMask,
   type ManagedCourse,
   type SemesterRow,
   type Storage,
 } from '@dawn-tick/core';
+import { createStorage } from '@dawn-tick/core/testing';
 import { weekDateOf } from '../src/data.ts';
 import { adjustCopy } from '../src/copy/timetable-adjust.ts';
 import { openIndexedDbStorage } from '../src/db/idb-storage.ts';
@@ -508,8 +512,11 @@ test('planExtra / applyExtra：用已有课程或新建课程只加这一次', a
 });
 
 /** 给高数再加一个周三 3–4 节、只上单周的时段，用来测「整门课」与周次过滤 */
-async function seedTwoSchedules(name: string): Promise<{ storage: Storage; semester: SemesterRow; math: ManagedCourse }> {
-  const storage = await open(name);
+async function seedTwoSchedules(
+  name: string,
+  given?: Storage,
+): Promise<{ storage: Storage; semester: SemesterRow; math: ManagedCourse }> {
+  const storage = given ?? (await open(name));
   const { semester, math } = await seed(storage);
   await createSchedule(storage, {
     courseId: math.id,
@@ -521,7 +528,14 @@ async function seedTwoSchedules(name: string): Promise<{ storage: Storage; semes
   const courses = await listManagedCourses(storage, semester.id);
   const refreshed = courses.find((course) => course.id === math.id);
   assert.ok(refreshed !== undefined && refreshed.schedules.length === 2);
-  return { storage, semester, math: refreshed };
+  // 存储读出的排课顺序不固定（同一毫秒内的 id 随机），按星期排好让结果顺序可断言
+  const schedules = [...refreshed.schedules].sort((left, right) => left.dayOfWeek - right.dayOfWeek);
+  return { storage, semester, math: { ...refreshed, schedules } };
+}
+
+/** 第 1 周到第 `last` 周。 */
+function weeksUpTo(last: number): number[] {
+  return Array.from({ length: last }, (_, index) => index + 1);
 }
 
 function scheduleOn(course: ManagedCourse, dayOfWeek: number): ManagedCourse['schedules'][number] {
@@ -532,7 +546,7 @@ function scheduleOn(course: ManagedCourse, dayOfWeek: number): ManagedCourse['sc
 
 test('planCancelBatch：缺学期 / 课程 / 时段时要求先选课', async () => {
   const { semester, math } = await seedTwoSchedules('cancel-batch-missing');
-  const base = { range: 'this', target: 'schedule', from: START, to: START, cancelledKeys: new Set<string>() } as const;
+  const base = { range: 'this', target: 'schedule', from: START, to: START, cancelledKeys: new Map<string, string>() } as const;
   const expected = { ok: false, message: adjustCopy.pickCancelSource };
   assert.deepEqual(planCancelBatch({ ...base, semester: null, course: math, schedule: scheduleOn(math, 1) }), expected);
   assert.deepEqual(planCancelBatch({ ...base, semester, course: undefined, schedule: scheduleOn(math, 1) }), expected);
@@ -553,9 +567,9 @@ test('planCancelBatch：只这一次 + 这个时段，只停原日期', async ()
     target: 'schedule',
     from: date,
     to: '2026-07-01',
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
-  assert.deepEqual(planned, { ok: true, entries: [{ scheduleId: monday.id, date }] });
+  assert.deepEqual(planned, { ok: true, entries: [{ scheduleId: monday.id, date }], truncations: [], endWeek: null });
 });
 
 test('planCancelBatch：只这一次 + 整门课，只停这一天里这门课的全部时段', async () => {
@@ -569,10 +583,15 @@ test('planCancelBatch：只这一次 + 整门课，只停这一天里这门课�
     target: 'course',
     from: date,
     to: date,
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
   // 周一的时段在这天不上，只有周三那个时段
-  assert.deepEqual(planned, { ok: true, entries: [{ scheduleId: scheduleOn(math, 3).id, date }] });
+  assert.deepEqual(planned, {
+    ok: true,
+    entries: [{ scheduleId: scheduleOn(math, 3).id, date }],
+    truncations: [],
+    endWeek: null,
+  });
 });
 
 test('planCancelBatch：一段日期两端都算，按日期排序并遵守周次', async () => {
@@ -589,7 +608,7 @@ test('planCancelBatch：一段日期两端都算，按日期排序并遵守周�
     target: 'course',
     from,
     to,
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
   assert.equal(planned.ok, true);
   if (!planned.ok) return;
@@ -609,7 +628,7 @@ test('planCancelBatch：一段日期两端都算，按日期排序并遵守周�
     target: 'schedule',
     from: weekDateOf(semester, 1, 1),
     to: weekDateOf(semester, 6, 7),
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
   assert.deepEqual(
     onlySchedule.ok ? onlySchedule.entries.map((entry) => entry.date) : [],
@@ -625,7 +644,7 @@ test('planCancelBatch：结束日早于开始日或在学期外时报错', async
     schedule: scheduleOn(math, 1),
     range: 'range',
     target: 'schedule',
-    cancelledKeys: new Set<string>(),
+    cancelledKeys: new Map<string, string>(),
   } as const;
   assert.deepEqual(planCancelBatch({ ...base, from: weekDateOf(semester, 4, 1), to: weekDateOf(semester, 3, 1) }), {
     ok: false,
@@ -643,9 +662,10 @@ test('planCancelBatch：结束日早于开始日或在学期外时报错', async
   });
 });
 
-test('planCancelBatch：从这天起结课，一直停到学期最后一天', async () => {
+test('planCancelBatch：从这天起结课，只停开始日所在周，之后的周次截掉', async () => {
   const { semester, math } = await seedTwoSchedules('cancel-batch-from');
   const monday = scheduleOn(math, 1);
+  const wednesday = scheduleOn(math, 3);
   const from = weekDateOf(semester, 18, 1);
   const planned = planCancelBatch({
     semester,
@@ -656,13 +676,15 @@ test('planCancelBatch：从这天起结课，一直停到学期最后一天', as
     from,
     // 「从这天起」不看结束日
     to: from,
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
-  assert.deepEqual(
-    planned.ok ? planned.entries.map((entry) => entry.date) : [],
-    [18, 19, 20].map((week) => weekDateOf(semester, week, 1)),
-  );
-  // 学期最后一天 = 首周周一 + 总周数 × 7 − 1
+  assert.deepEqual(planned, {
+    ok: true,
+    entries: [{ scheduleId: monday.id, date: from }],
+    truncations: [{ scheduleId: monday.id, keepWeeks: weeksUpTo(18), dropEventIds: [] }],
+    endWeek: 18,
+  });
+  // 整门课：周三只上单周，第 18 周没有课，截到第 17 周
   const course = planCancelBatch({
     semester,
     course: math,
@@ -671,15 +693,181 @@ test('planCancelBatch：从这天起结课，一直停到学期最后一天', as
     target: 'course',
     from,
     to: from,
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
-  assert.deepEqual(course.ok ? course.entries.map((entry) => entry.date) : [], [
-    weekDateOf(semester, 18, 1),
-    weekDateOf(semester, 19, 1),
-    weekDateOf(semester, 19, 3),
-    weekDateOf(semester, 20, 1),
+  assert.deepEqual(course, {
+    ok: true,
+    entries: [{ scheduleId: monday.id, date: from }],
+    truncations: [
+      { scheduleId: monday.id, keepWeeks: weeksUpTo(18), dropEventIds: [] },
+      { scheduleId: wednesday.id, keepWeeks: [1, 3, 5, 7, 9, 11, 13, 15, 17], dropEventIds: [] },
+    ],
+    endWeek: 18,
+  });
+});
+
+test('planCancelBatch：结课开始日在周中，本周开始日之前的课不停', async () => {
+  const { semester, math } = await seedTwoSchedules('cancel-batch-from-midweek');
+  const monday = scheduleOn(math, 1);
+  const wednesday = scheduleOn(math, 3);
+  const base = { semester, course: math, schedule: undefined, range: 'from', target: 'course' } as const;
+  const onWednesday = weekDateOf(semester, 5, 3);
+  const planned = planCancelBatch({ ...base, from: onWednesday, to: onWednesday, cancelledKeys: new Map() });
+  assert.deepEqual(planned, {
+    ok: true,
+    // 第 5 周周一在开始日之前，照常上
+    entries: [{ scheduleId: wednesday.id, date: onWednesday }],
+    truncations: [
+      { scheduleId: monday.id, keepWeeks: weeksUpTo(5), dropEventIds: [] },
+      { scheduleId: wednesday.id, keepWeeks: [1, 3, 5], dropEventIds: [] },
+    ],
+    endWeek: 5,
+  });
+  // 周四起结课：本周已没有课，只截短
+  const onThursday = weekDateOf(semester, 5, 4);
+  const late = planCancelBatch({ ...base, from: onThursday, to: onThursday, cancelledKeys: new Map() });
+  assert.equal(late.ok, true);
+  if (!late.ok) return;
+  assert.deepEqual(late.entries, []);
+  assert.equal(late.endWeek, 5);
+  assert.deepEqual(
+    late.truncations.map((item) => [item.scheduleId, item.keepWeeks]),
+    [
+      [monday.id, weeksUpTo(5)],
+      [wednesday.id, [1, 3, 5]],
+    ],
+  );
+});
+
+test('planCancelBatch：结课后才开始上的排课，保留周次为空', async () => {
+  const { semester, math } = await seedTwoSchedules('cancel-batch-from-empty');
+  const monday = scheduleOn(math, 1);
+  const later = { ...scheduleOn(math, 3), id: 'later', dayOfWeek: 5, weeks: [10, 12, 14] };
+  const course = { ...math, schedules: [monday, later] };
+  const from = weekDateOf(semester, 8, 2);
+  const planned = planCancelBatch({
+    semester,
+    course,
+    schedule: undefined,
+    range: 'from',
+    target: 'course',
+    from,
+    to: from,
+    cancelledKeys: new Map(),
+  });
+  assert.deepEqual(planned, {
+    ok: true,
+    entries: [],
+    truncations: [
+      { scheduleId: monday.id, keepWeeks: weeksUpTo(8), dropEventIds: [] },
+      { scheduleId: 'later', keepWeeks: [], dropEventIds: [] },
+    ],
+    endWeek: 8,
+  });
+});
+
+test('planCancelBatch：结课时本周已停的不重记，截掉周次上的停课记录列入删除', async () => {
+  const { semester, math } = await seedTwoSchedules('cancel-batch-from-drop');
+  const monday = scheduleOn(math, 1);
+  const wednesday = scheduleOn(math, 3);
+  const from = weekDateOf(semester, 5, 1);
+  const cancelledKeys = new Map([
+    // 结课之前的停课：保留
+    [`${monday.id}|${weekDateOf(semester, 3, 1)}`, 'mon-3'],
+    // 结课这周已停：不重记，也不删
+    [`${monday.id}|${from}`, 'mon-5'],
+    // 结课之后的停课：随周次一起清掉
+    [`${monday.id}|${weekDateOf(semester, 7, 1)}`, 'mon-7'],
+    [`${monday.id}|${weekDateOf(semester, 12, 1)}`, 'mon-12'],
+    [`${wednesday.id}|${weekDateOf(semester, 9, 3)}`, 'wed-9'],
+    // 别的排课的停课：不归这门课管
+    [`other|${weekDateOf(semester, 9, 3)}`, 'other-9'],
   ]);
-  assert.equal(weekDateOf(semester, TOTAL_WEEKS, 7), '2026-07-19');
+  const planned = planCancelBatch({
+    semester,
+    course: math,
+    schedule: undefined,
+    range: 'from',
+    target: 'course',
+    from,
+    to: from,
+    cancelledKeys,
+  });
+  assert.equal(planned.ok, true);
+  if (!planned.ok) return;
+  assert.deepEqual(planned.entries, [{ scheduleId: wednesday.id, date: weekDateOf(semester, 5, 3) }]);
+  assert.deepEqual(
+    planned.truncations.map((item) => [item.scheduleId, item.keepWeeks, [...item.dropEventIds].sort()]),
+    [
+      [monday.id, weeksUpTo(5), ['mon-12', 'mon-7']],
+      [wednesday.id, [1, 3, 5], ['wed-9']],
+    ],
+  );
+  // 只结一个时段时不动另一个时段的停课记录
+  const single = planCancelBatch({
+    semester,
+    course: math,
+    schedule: wednesday,
+    range: 'from',
+    target: 'schedule',
+    from,
+    to: from,
+    cancelledKeys,
+  });
+  assert.equal(single.ok, true);
+  if (!single.ok) return;
+  assert.deepEqual(single.truncations, [{ scheduleId: wednesday.id, keepWeeks: [1, 3, 5], dropEventIds: ['wed-9'] }]);
+});
+
+test('planCancelBatch：结课时本周没有课可停、之后也没有周次可截时报错', async () => {
+  const { semester, math } = await seedTwoSchedules('cancel-batch-from-nothing');
+  const monday = scheduleOn(math, 1);
+  const wednesday = scheduleOn(math, 3);
+  // 周一时段最后一周的周二起：本周周一已过，之后没有周次
+  const lastTuesday = weekDateOf(semester, TOTAL_WEEKS, 2);
+  assert.deepEqual(
+    planCancelBatch({
+      semester,
+      course: math,
+      schedule: monday,
+      range: 'from',
+      target: 'schedule',
+      from: lastTuesday,
+      to: lastTuesday,
+      cancelledKeys: new Map(),
+    }),
+    { ok: false, message: adjustCopy.cancelNothing },
+  );
+  // 周三时段只到第 19 周：第 19 周周四起结课同样无事可做
+  const thursday19 = weekDateOf(semester, 19, 4);
+  assert.deepEqual(
+    planCancelBatch({
+      semester,
+      course: math,
+      schedule: wednesday,
+      range: 'from',
+      target: 'schedule',
+      from: thursday19,
+      to: thursday19,
+      cancelledKeys: new Map(),
+    }),
+    { ok: false, message: adjustCopy.cancelNothing },
+  );
+  // 本周的课已停过且之后没有周次
+  const lastMonday = weekDateOf(semester, TOTAL_WEEKS, 1);
+  assert.deepEqual(
+    planCancelBatch({
+      semester,
+      course: math,
+      schedule: monday,
+      range: 'from',
+      target: 'schedule',
+      from: lastMonday,
+      to: lastMonday,
+      cancelledKeys: new Map([[`${monday.id}|${lastMonday}`, 'done']]),
+    }),
+    { ok: false, message: adjustCopy.cancelNothing },
+  );
 });
 
 test('planCancelBatch：学期起点不是周一时按那周周一推算学期范围', async () => {
@@ -693,9 +881,15 @@ test('planCancelBatch：学期起点不是周一时按那周周一推算学期�
     target: 'schedule',
     from: '2026-07-13',
     to: '2026-07-13',
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
-  assert.deepEqual(planned, { ok: true, entries: [{ scheduleId: scheduleOn(math, 1).id, date: '2026-07-13' }] });
+  // 07-13 落在最后一周（第 20 周），之后没有周次可截
+  assert.deepEqual(planned, {
+    ok: true,
+    entries: [{ scheduleId: scheduleOn(math, 1).id, date: '2026-07-13' }],
+    truncations: [],
+    endWeek: 20,
+  });
   assert.equal(
     planCancelBatch({
       semester: midweek,
@@ -705,7 +899,7 @@ test('planCancelBatch：学期起点不是周一时按那周周一推算学期�
       target: 'schedule',
       from: '2026-07-20',
       to: '2026-07-20',
-      cancelledKeys: new Set(),
+      cancelledKeys: new Map(),
     }).ok,
     false,
   );
@@ -725,13 +919,19 @@ test('planCancelBatch：已停课的跳过，全都停过或没有课时报错',
     from,
     to,
   } as const;
-  const partial = planCancelBatch({ ...base, cancelledKeys: new Set([`${monday.id}|${from}`]) });
-  assert.deepEqual(partial, { ok: true, entries: [{ scheduleId: monday.id, date: to }] });
-  const all = planCancelBatch({ ...base, cancelledKeys: new Set([`${monday.id}|${from}`, `${monday.id}|${to}`]) });
+  const partial = planCancelBatch({ ...base, cancelledKeys: new Map([[`${monday.id}|${from}`, 'e1']]) });
+  assert.deepEqual(partial, { ok: true, entries: [{ scheduleId: monday.id, date: to }], truncations: [], endWeek: null });
+  const all = planCancelBatch({
+    ...base,
+    cancelledKeys: new Map([
+      [`${monday.id}|${from}`, 'e1'],
+      [`${monday.id}|${to}`, 'e2'],
+    ]),
+  });
   assert.deepEqual(all, { ok: false, message: adjustCopy.cancelNothing });
   // 周二没有高数
   const tuesday = weekDateOf(semester, 2, 2);
-  assert.deepEqual(planCancelBatch({ ...base, range: 'this', from: tuesday, to: tuesday, cancelledKeys: new Set() }), {
+  assert.deepEqual(planCancelBatch({ ...base, range: 'this', from: tuesday, to: tuesday, cancelledKeys: new Map() }), {
     ok: false,
     message: adjustCopy.cancelNothing,
   });
@@ -747,15 +947,17 @@ test('applyCancelBatch：每个课次写一条停课记录', async () => {
     target: 'course',
     from: weekDateOf(semester, 1, 1),
     to: weekDateOf(semester, 2, 7),
-    cancelledKeys: new Set(),
+    cancelledKeys: new Map(),
   });
   assert.equal(planned.ok, true);
   if (!planned.ok) return;
   assert.equal(planned.entries.length, 3);
-  const count = await applyCancelBatch(storage, planned.entries, {
+  assert.deepEqual(planned.truncations, []);
+  const count = await applyCancelBatch(storage, planned, {
     userId: USER_ID,
     semesterId: semester.id,
     courseName: math.name,
+    totalWeeks: TOTAL_WEEKS,
   });
   assert.equal(count, 3);
   const events = (await storage.collection<Record<string, unknown>>('events').getAll()).filter(
@@ -780,5 +982,89 @@ test('applyCancelBatch：每个课次写一条停课记录', async () => {
       semesterId: semester.id,
     })),
   );
-  assert.equal(await applyCancelBatch(storage, [], { userId: USER_ID, semesterId: semester.id, courseName: math.name }), 0);
+  assert.equal(
+    await applyCancelBatch(
+      storage,
+      { entries: [] },
+      { userId: USER_ID, semesterId: semester.id, courseName: math.name, totalWeeks: TOTAL_WEEKS },
+    ),
+    0,
+  );
+});
+
+test('applyCancelBatch：结课写本周停课，截短排课、删掉截掉周次上的停课，整段在后的排课删除', async () => {
+  const { storage, semester, math } = await seedTwoSchedules('', validatedStorage(createStorage()));
+  const monday = scheduleOn(math, 1);
+  const wednesday = scheduleOn(math, 3);
+  // 第 10 周起才上的周五时段：结课后整条删除
+  await createSchedule(storage, { courseId: math.id, dayOfWeek: 5, periodStart: 5, periodEnd: 6, weeks: [10, 11, 12] });
+  const course = (await listManagedCourses(storage, semester.id)).find((item) => item.id === math.id);
+  assert.ok(course !== undefined && course.schedules.length === 3);
+  const friday = scheduleOn(course, 5);
+
+  const cancel = (scheduleId: string, week: number, dow: number) =>
+    createReschedule(storage, {
+      userId: USER_ID,
+      semesterId: semester.id,
+      refScheduleId: scheduleId,
+      onDate: weekDateOf(semester, week, dow),
+      action: 'cancel',
+    });
+  const kept = await cancel(monday.id, 3, 1);
+  const dropMonday = await cancel(monday.id, 8, 1);
+  const dropWednesday = await cancel(wednesday.id, 9, 3);
+  const events = storage.collection<Record<string, unknown>>('events');
+  const cancelledKeys = new Map(
+    (await events.getAll()).map((row) => [`${String(row['ref_schedule_id'])}|${String(row['on_date'])}`, String(row['id'])]),
+  );
+
+  const from = weekDateOf(semester, 5, 3);
+  const planned = planCancelBatch({
+    semester,
+    course,
+    schedule: undefined,
+    range: 'from',
+    target: 'course',
+    from,
+    to: from,
+    cancelledKeys,
+  });
+  assert.equal(planned.ok, true);
+  if (!planned.ok) return;
+  assert.equal(planned.endWeek, 5);
+  const count = await applyCancelBatch(storage, planned, {
+    userId: USER_ID,
+    semesterId: semester.id,
+    courseName: math.name,
+    totalWeeks: TOTAL_WEEKS,
+  });
+  assert.equal(count, 1);
+
+  const after = (await listManagedCourses(storage, semester.id)).find((item) => item.id === math.id);
+  assert.ok(after !== undefined);
+  assert.deepEqual(
+    after.schedules.map((row) => [row.dayOfWeek, row.weeks]).sort((left, right) => Number(left[0]) - Number(right[0])),
+    [
+      [1, weeksUpTo(5)],
+      [3, [1, 3, 5]],
+    ],
+  );
+  const scheduleRows = await storage.collection<Record<string, unknown>>('course_schedules').getAll();
+  const rowOf = (id: string) => scheduleRows.find((row) => row['id'] === id);
+  assert.equal(rowOf(monday.id)?.['weeks_raw'], describeWeeks(weeksToMask(weeksUpTo(5)), TOTAL_WEEKS));
+  assert.equal(rowOf(wednesday.id)?.['weeks_raw'], describeWeeks(weeksToMask([1, 3, 5]), TOTAL_WEEKS));
+  assert.notEqual(rowOf(friday.id)?.['deleted_at'] ?? null, null, '周五时段整条删除');
+
+  const live = (await events.getAll())
+    .filter((row) => row['deleted_at'] === null && row['action'] === 'cancel')
+    .map((row) => [row['ref_schedule_id'], row['on_date']])
+    .sort((left, right) => String(left[1]).localeCompare(String(right[1])));
+  assert.deepEqual(live, [
+    [monday.id, weekDateOf(semester, 3, 1)],
+    [wednesday.id, from],
+  ]);
+  assert.equal((await events.get(String(kept['id'])))?.['deleted_at'], null);
+  for (const dropped of [dropMonday, dropWednesday]) {
+    assert.notEqual((await events.get(String(dropped['id'])))?.['deleted_at'] ?? null, null);
+  }
 });

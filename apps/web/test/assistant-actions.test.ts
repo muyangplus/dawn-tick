@@ -912,16 +912,57 @@ test('cancel_lessons：整门课只给 courseId，按日期段停掉全部时段
   ]);
 });
 
-test('cancel_lessons：from 从这天起结课到学期末', async () => {
+/** 某条排课当前的周次。 */
+async function weeksOf(storage: Storage, semesterId: string, scheduleId: string): Promise<number[] | undefined> {
+  const courses = await listManagedCourses(storage, semesterId);
+  return courses.flatMap((course) => course.schedules).find((row) => row.id === scheduleId)?.weeks;
+}
+
+test('cancel_lessons：from 结课只停本周剩下的课，之后的周次从排课里移除', async () => {
   const seeded = await seed();
-  // 周四时段只上 1–16 周，最后一次是 2026-06-18
-  const { preview } = await call(seeded.context, 'cancel_lessons', { scheduleId: seeded.mathThu.id, range: 'from', from: '2026-06-01' });
-  assert.equal(preview, '结课「高等数学」2026-06-01 至 2026-06-18，共 3 次课');
-  assert.deepEqual(await cancelled(seeded.storage), [
-    [seeded.mathThu.id, '2026-06-04'],
-    [seeded.mathThu.id, '2026-06-11'],
-    [seeded.mathThu.id, '2026-06-18'],
-  ]);
+  // 2026-06-01 是第 14 周周一；周四时段只上 1–16 周
+  const { preview, result } = await call(seeded.context, 'cancel_lessons', {
+    scheduleId: seeded.mathThu.id,
+    range: 'from',
+    from: '2026-06-01',
+  });
+  assert.equal(preview, '结课「高等数学」：第 14 周之后不再上课，本周剩下 1 次课停课');
+  assert.equal(result, '已为「高等数学」结课：第 14 周之后不再上课');
+  assert.deepEqual(await cancelled(seeded.storage), [[seeded.mathThu.id, '2026-06-04']]);
+  assert.deepEqual(
+    await weeksOf(seeded.storage, seeded.semesterId, seeded.mathThu.id),
+    Array.from({ length: 14 }, (_, index) => index + 1),
+  );
+  // 同一门课的周一时段不受影响
+  assert.equal((await weeksOf(seeded.storage, seeded.semesterId, seeded.mathMon.id))?.length, TOTAL_WEEKS);
+});
+
+test('cancel_lessons：from 结课时本周已无课只截周次，截掉周次上的停课一并删除', async () => {
+  const seeded = await seed();
+  // 先停第 15 周周四（2026-06-11），结课后这条记录随周次删除
+  await call(seeded.context, 'cancel_lessons', { scheduleId: seeded.mathThu.id, from: '2026-06-11' });
+  const { preview, result } = await call(seeded.context, 'cancel_lessons', {
+    courseId: seeded.mathId,
+    target: 'course',
+    range: 'from',
+    // 第 14 周周五：周一、周四都已上过
+    from: '2026-06-05',
+  });
+  assert.equal(preview, '结课「高等数学」：第 14 周之后不再上课');
+  assert.equal(result, '已为「高等数学」结课：第 14 周之后不再上课');
+  assert.deepEqual(await cancelled(seeded.storage), []);
+  const first14 = Array.from({ length: 14 }, (_, index) => index + 1);
+  assert.deepEqual(await weeksOf(seeded.storage, seeded.semesterId, seeded.mathMon.id), first14);
+  assert.deepEqual(await weeksOf(seeded.storage, seeded.semesterId, seeded.mathThu.id), first14);
+  // 英语不在结课范围内
+  assert.equal((await weeksOf(seeded.storage, seeded.semesterId, seeded.englishWed.id))?.length, 16);
+  // 再结一次：没有可停的课，也没有可截的周次
+  await rejectsArg(
+    seeded.context,
+    'cancel_lessons',
+    { courseId: seeded.mathId, target: 'course', range: 'from', from: '2026-06-05' },
+    adjustCopy.cancelNothing,
+  );
 });
 
 test('cancel_lessons：已停的课跳过，全都停过时报错', async () => {

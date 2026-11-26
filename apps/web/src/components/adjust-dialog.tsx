@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { WEEKDAY_LABELS, deleteEvent, type Storage } from '@dawn-tick/core';
+import { MAX_WEEKS, WEEKDAY_LABELS, deleteEvent, type Storage } from '@dawn-tick/core';
 import type { AppData } from '../data.ts';
 import { useAction, type ActionApi } from '../lib/action.ts';
 import { formatPeriodRange } from '../lib/format.ts';
@@ -214,10 +214,10 @@ export function AdjustDialog({
   }
 
   async function submitCancelBatch(): Promise<void> {
-    const cancelledKeys = new Set(
+    const cancelledKeys = new Map(
       data.reschedules
         .filter((row) => row.action === 'cancel' && row.ref_schedule_id !== null && row.on_date !== null)
-        .map((row) => `${row.ref_schedule_id}|${row.on_date}`),
+        .map((row) => [`${row.ref_schedule_id}|${row.on_date}`, row.id] as const),
     );
     const planned = planCancelBatch({
       semester,
@@ -233,31 +233,46 @@ export function AdjustDialog({
       toast.error(planned.message);
       return;
     }
-    const entries = planned.entries;
-    const ok = await confirmAction({
-      title: adjustCopy.cancelConfirmTitle,
-      description: adjustCopy.cancelConfirmDescription(
-        entries.length,
-        entries[0]?.date ?? sourceDate,
-        entries[entries.length - 1]?.date ?? sourceDate,
-      ),
-      confirmLabel: adjustCopy.cancelConfirmButton(entries.length),
-    });
+    const { entries, endWeek } = planned;
+    const ok = await confirmAction(
+      endWeek === null
+        ? {
+            title: adjustCopy.cancelConfirmTitle,
+            description: adjustCopy.cancelConfirmDescription(
+              entries.length,
+              entries[0]?.date ?? sourceDate,
+              entries[entries.length - 1]?.date ?? sourceDate,
+            ),
+            confirmLabel: adjustCopy.cancelConfirmButton(entries.length),
+          }
+        : {
+            title: adjustCopy.endConfirmTitle,
+            description: adjustCopy.endConfirmDescription(endWeek, entries.length),
+            confirmLabel: adjustCopy.endConfirmButton,
+          },
+    );
     if (!ok) return;
     const result = await run({
       scope: 'timetable',
       label: adjustCopy.cancelBusy,
-      ok: adjustCopy.cancelBatchDone(entries.length),
+      ok: endWeek === null ? adjustCopy.cancelBatchDone(entries.length) : adjustCopy.endDone(endWeek),
       fail: adjustCopy.cancelFail,
       task: () =>
-        applyCancelBatch(storage, entries, {
+        applyCancelBatch(storage, planned, {
           userId: USER_ID,
           semesterId: semesterId(),
           courseName: course?.name ?? '',
+          totalWeeks: semester?.total_weeks ?? MAX_WEEKS,
         }),
     });
     if (!result.ok) return;
-    logInfo('timetable', '已批量停课', { courseId, range: cancelRange, target: cancelTarget, count: entries.length });
+    logInfo('timetable', endWeek === null ? '已批量停课' : '已结课', {
+      courseId,
+      range: cancelRange,
+      target: cancelTarget,
+      count: entries.length,
+      truncated: planned.truncations.length,
+    });
     onChanged();
     onOpenChange(false);
   }

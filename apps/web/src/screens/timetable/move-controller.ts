@@ -6,6 +6,7 @@ import {
   dateWallClockToEpoch,
   dayOfWeek,
   rangesOverlap,
+  truncateScheduleWeeks,
   updateSchedule,
   weekOfDate,
   weeksIntersect,
@@ -261,11 +262,29 @@ export interface CancelEntry {
   date: string;
 }
 
-export type CancelBatchResult = { ok: true; entries: CancelEntry[] } | { ok: false; message: string };
+/** 结课截短的一条排课：保留的周次与截掉周次上要删的停课记录。 */
+export interface CancelTruncation {
+  scheduleId: string;
+  /** 为空表示这条排课的周次全在结课之后，整条删除 */
+  keepWeeks: number[];
+  dropEventIds: string[];
+}
+
+export type CancelBatchResult =
+  | {
+      ok: true;
+      entries: CancelEntry[];
+      /** 结课时截短的排课；其他范围为空 */
+      truncations: CancelTruncation[];
+      /** 结课所在周：之后的周次不再上课；其他范围为 null */
+      endWeek: number | null;
+    }
+  | { ok: false; message: string };
 
 /**
  * 批量停课 / 结课：按范围与对象列出要写停课记录的课次。
  * 课次按排课周次与星期推算，限定在学期内；已停课的跳过，不重复写。
+ * 结课只给开始日所在周剩下的课记停课，之后的周次从排课里清掉。
  */
 export function planCancelBatch(input: {
   semester: SemesterRow | null;
@@ -275,8 +294,8 @@ export function planCancelBatch(input: {
   target: CancelTarget;
   from: string;
   to: string;
-  /** 已有的停课记录：`排课|日期` */
-  cancelledKeys: ReadonlySet<string>;
+  /** 已有的停课记录：`排课|日期` → 记录 id */
+  cancelledKeys: ReadonlyMap<string, string>;
 }): CancelBatchResult {
   const { semester, course, schedule } = input;
   if (semester === null || course === undefined || (input.target === 'schedule' && schedule === undefined)) {
@@ -284,9 +303,10 @@ export function planCancelBatch(input: {
   }
   const fromError = semesterDateError(semester, input.from, adjustCopy.sourceDateLabel);
   if (fromError !== null) return { ok: false, message: fromError };
-  const semesterLast = dayRangeOf(semester).last;
+  const ending = input.range === 'from';
+  const endWeek = ending ? weekOfDate(input.from, semester.start_date) : null;
   let last = input.from;
-  if (input.range === 'from') last = semesterLast;
+  if (ending) last = dayRangeOf(semester).last;
   if (input.range === 'range') {
     const toError = semesterDateError(semester, input.to, adjustCopy.cancelToLabel);
     if (toError !== null) return { ok: false, message: toError };
@@ -295,26 +315,38 @@ export function planCancelBatch(input: {
   }
   const schedules = input.target === 'course' ? course.schedules : schedule === undefined ? [] : [schedule];
   const entries: CancelEntry[] = [];
+  const truncations: CancelTruncation[] = [];
   for (const row of schedules) {
     for (const week of row.weeks) {
+      if (endWeek !== null && week > endWeek) continue;
       const date = weekDateOf(semester, week, row.dayOfWeek);
       if (date < input.from || date > last) continue;
       if (input.cancelledKeys.has(`${row.id}|${date}`)) continue;
       entries.push({ scheduleId: row.id, date });
     }
+    if (endWeek === null) continue;
+    const keepWeeks = row.weeks.filter((week) => week <= endWeek);
+    if (keepWeeks.length === row.weeks.length) continue;
+    const dropEventIds: string[] = [];
+    for (const [key, id] of input.cancelledKeys) {
+      const [scheduleId, date] = key.split('|');
+      if (scheduleId !== row.id || date === undefined) continue;
+      if (weekOfDate(date, semester.start_date) > endWeek) dropEventIds.push(id);
+    }
+    truncations.push({ scheduleId: row.id, keepWeeks, dropEventIds });
   }
   entries.sort((left, right) => (left.date === right.date ? 0 : left.date < right.date ? -1 : 1));
-  if (entries.length === 0) return { ok: false, message: adjustCopy.cancelNothing };
-  return { ok: true, entries };
+  if (entries.length === 0 && truncations.length === 0) return { ok: false, message: adjustCopy.cancelNothing };
+  return { ok: true, entries, truncations, endWeek };
 }
 
-/** 落库：逐条写停课记录。 */
+/** 落库：逐条写停课记录，结课时再截短排课。返回写入的停课条数。 */
 export async function applyCancelBatch(
   storage: Storage,
-  entries: readonly CancelEntry[],
-  input: { userId: string; semesterId: string; courseName: string },
+  plan: { entries: readonly CancelEntry[]; truncations?: readonly CancelTruncation[] },
+  input: { userId: string; semesterId: string; courseName: string; totalWeeks: number },
 ): Promise<number> {
-  for (const entry of entries) {
+  for (const entry of plan.entries) {
     await createReschedule(storage, {
       userId: input.userId,
       semesterId: input.semesterId,
@@ -324,7 +356,10 @@ export async function applyCancelBatch(
       title: adjustCopy.cancelRecordTitle(input.courseName),
     });
   }
-  return entries.length;
+  for (const truncation of plan.truncations ?? []) {
+    await truncateScheduleWeeks(storage, { ...truncation, totalWeeks: input.totalWeeks });
+  }
+  return plan.entries.length;
 }
 
 /** 落库：在原日期记一条停课。 */
