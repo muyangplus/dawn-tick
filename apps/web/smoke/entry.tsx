@@ -323,7 +323,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   // 而后面大量断言要从周日铺满 7 个自然日，所以先核对默认值，再用界面关掉隐藏周末。
   clickByText(view.container, '设置');
   await flush(12);
-  // AI 分组只在开发版出现（FEATURES.ai）
+  // AI 分组跟随 FEATURES.ai（三个渠道均可见）
   const settingsGroupTitles = [
     '学期设置',
     '提醒设置',
@@ -1211,7 +1211,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       view.container.querySelector('[aria-label="日程侧栏"]') !== null,
     '',
   );
-  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源；「AI 助手」跟随 FEATURES.ai，只在开发版出现
+  // P1-01：日程「添加」菜单与桌面工具栏、移动 FAB 同源；「AI 助手」跟随 FEATURES.ai（三个渠道均可见）
   const addMenuLabels = (): string[] =>
     [...view.container.querySelectorAll('[role="menu"][aria-label="添加"] [role="menuitem"]')].map((item) =>
       (item.textContent ?? '').trim(),
@@ -5832,7 +5832,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     );
     const importAiButton = importApp.container.querySelector<HTMLButtonElement>('[data-role="import-ai"]');
     check(
-      featureVisible('ai') ? '开发版粘贴步骤出现「用 AI 识别」，未粘贴时禁用' : '非开发版粘贴步骤不出现「用 AI 识别」',
+      featureVisible('ai') ? '粘贴步骤出现「用 AI 识别」，未粘贴时禁用' : 'AI 隐藏的渠道粘贴步骤不出现「用 AI 识别」',
       featureVisible('ai')
         ? importAiButton !== null && (importAiButton.textContent ?? '').includes('用 AI 识别') && importAiButton.disabled
         : importAiButton === null,
@@ -6494,7 +6494,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     );
     const todoAiButton = document.querySelector('[data-role="todo-form"] [data-role="todo-ai"]');
     check(
-      featureVisible('ai') ? '开发版新建表单出现「用 AI 生成」' : '非开发版新建表单不出现「用 AI 生成」',
+      featureVisible('ai') ? '新建表单出现「用 AI 生成」' : 'AI 隐藏的渠道新建表单不出现「用 AI 生成」',
       featureVisible('ai') ? (todoAiButton?.textContent ?? '').includes('用 AI 生成') : todoAiButton === null,
       todoAiButton?.textContent?.trim() ?? '(无按钮)',
     );
@@ -7514,7 +7514,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     const fabLabels = await openFab(entryApp);
     if (featureVisible('ai')) {
       check(
-        '开发版「＋」菜单末尾是「AI 助手」',
+        '「＋」菜单末尾是「AI 助手」',
         fabLabels.at(-1) === assistantLabel && assistantLabel === 'AI 助手',
         fabLabels.join(' / ') || '(无)',
       );
@@ -7541,7 +7541,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       );
     } else {
       check(
-        '非开发版「＋」菜单没有「AI 助手」，也不挂载助手面板',
+        'AI 隐藏的渠道「＋」菜单没有「AI 助手」，也不挂载助手面板',
         fabLabels.length > 0 && !fabLabels.includes(assistantLabel) && panel() === null,
         fabLabels.join(' / ') || '(无)',
       );

@@ -19,7 +19,7 @@ export const FEATURES = {
   /** 日志导出与诊断信息 */
   diagnostics: ['dev', 'beta'],
   /** AI 识别课表、生成日程与设置 → AI */
-  ai: ['dev'],
+  ai: ['dev', 'beta', 'release'],
 } as const satisfies Record<string, readonly Channel[]>;
 
 export type FeatureId = keyof typeof FEATURES;

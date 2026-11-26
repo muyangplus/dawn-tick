@@ -17,10 +17,17 @@ test('功能表含诊断与 AI 两项', () => {
   assert.deepEqual(Object.keys(FEATURES), ['diagnostics', 'ai']);
 });
 
-test('AI 只在开发版可见', () => {
+test('AI 在三个渠道都可见', () => {
   assert.equal(featureVisible('ai', 'dev'), true);
-  assert.equal(featureVisible('ai', 'beta'), false);
-  assert.equal(featureVisible('ai', 'release'), false);
+  assert.equal(featureVisible('ai', 'beta'), true);
+  assert.equal(featureVisible('ai', 'release'), true);
+  assert.deepEqual([...FEATURES.ai], ['dev', 'beta', 'release']);
+});
+
+test('按渠道隐藏的功能仍只在登记的渠道可见', () => {
+  assert.deepEqual([...FEATURES.diagnostics], ['dev', 'beta']);
+  assert.equal(featureVisible('diagnostics', 'release'), false);
+  assert.notEqual(featureVisible('diagnostics', 'release'), featureVisible('ai', 'release'));
 });
 
 test('功能表的渠道取值都在渠道集合内', () => {
