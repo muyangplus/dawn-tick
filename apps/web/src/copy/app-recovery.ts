@@ -41,6 +41,12 @@ export const appRecoveryCopy = {
     readOnly: '临时只读，修复存储后再改',
   },
 
+  fallbackFirstRun: {
+    title: '数据库没能打开',
+    body: '原生数据库不可用，现在只能临时只读，建不了学期',
+    next: '请先点「重试」；仍不行就重启应用，并导出日志反馈',
+  },
+
   corruptDialog: {
     title: '数据库文件损坏',
     description: '数据目录里的备份快照仍可用',

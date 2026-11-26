@@ -6205,6 +6205,41 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
     todoApp.root.unmount();
   }
 
+  // 首次使用就回退（库里没有学期）：不给建学期表单，改给原因与重试/打开日志
+  {
+    // 独立的空库，不动后面用例依赖的默认库
+    setStorageOpenerForTests(async () =>
+      markStorageFallback(
+        validatedStorage(await openIndexedDbStorage('dawn-tick-smoke-fallback-empty')),
+        'smoke 模拟首次使用时原生库打不开',
+      ),
+    );
+    const firstRunApp = mount(<App />);
+    await flush(20);
+    const firstRun = firstRunApp.container.querySelector('[data-role="storage-fallback-first-run"]');
+    const firstRunButtons = [...(firstRun?.querySelectorAll('button') ?? [])].map((item) =>
+      (item.textContent ?? '').trim(),
+    );
+    check(
+      '回退且无学期：显示「数据库没能打开」页，含原因与重试/打开日志两个按钮',
+      firstRun !== null &&
+        (firstRun.querySelector('h1')?.textContent ?? '') === appRecoveryCopy.fallbackFirstRun.title &&
+        (firstRun.textContent ?? '').includes(appRecoveryCopy.fallbackFirstRun.body) &&
+        (firstRun.textContent ?? '').includes(appRecoveryCopy.fallbackFirstRun.next) &&
+        firstRunButtons.join('|') === '重试|打开日志',
+      firstRun?.textContent?.trim().slice(0, 80) ?? '(无回退首屏)',
+    );
+    check(
+      '回退且无学期：不渲染建学期表单，也不叠警告条',
+      firstRunApp.container.querySelector('[data-role="onboarding-scroll"]') === null &&
+        firstRunApp.container.querySelector('[data-role="storage-fallback-banner"]') === null &&
+        !(firstRunApp.container.textContent ?? '').includes(onboardingCopy.importFormats),
+      (firstRunApp.container.textContent ?? '').slice(0, 80),
+    );
+    firstRunApp.root.unmount();
+    setStorageOpenerForTests(null);
+  }
+
   // P1-07：原生库失败 → 回退可见、设备页标「临时回退」、写入口只读拦截
   {
     // 回退也要有数据可看：前面的用例可能删过学期，这里补一个最小学期
@@ -6241,6 +6276,23 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         bannerButtons.includes('重试') &&
         bannerButtons.includes('打开日志'),
       banner?.textContent?.trim().slice(0, 80) ?? '(无警告条)',
+    );
+    // 窄屏上说明曾被按钮挤成一字一行：说明须独占一段，按钮不在其中
+    const bannerMessage = banner?.querySelector(':scope > p') ?? null;
+    check(
+      '回退警告条：说明独占一段，徽标与按钮在另一行',
+      bannerMessage !== null &&
+        (bannerMessage.textContent ?? '').trim() === appRecoveryCopy.fallback.banner &&
+        bannerMessage.querySelector('button') === null &&
+        (banner?.querySelectorAll(':scope > :not(p) button').length ?? 0) === 2 &&
+        !(bannerMessage.textContent ?? '').includes(appRecoveryCopy.fallback.badge),
+      `说明=${bannerMessage?.textContent?.trim().slice(0, 40) ?? '(无)'}`,
+    );
+    check(
+      '有学期时回退：主界面照常显示，不出现回退首屏',
+      fallbackApp.container.querySelector('[data-role="storage-fallback-first-run"]') === null &&
+        fallbackApp.container.querySelector('[data-role="onboarding-scroll"]') === null,
+      '',
     );
 
     clickByText(fallbackApp.container, '设备与同步');

@@ -36,7 +36,7 @@ import { storageStatusLabel } from './storage-config.ts';
 import { formatWindowRange } from './app/lesson-cell.ts';
 import { NoticeDialog, RemoteNewerDialog, UpdateDialog } from './components/app-dialogs.tsx';
 import { ReleaseNotesDialog } from './components/update/release-notes-dialog.tsx';
-import { ErrorScreen, LoadingScreen, StorageFallbackBanner } from './components/app-screens.tsx';
+import { ErrorScreen, LoadingScreen, StorageFallbackBanner, StorageFallbackFirstRun } from './components/app-screens.tsx';
 import { useAppSession } from './app/use-app-session.ts';
 import { useAppEffects } from './app/use-app-effects.ts';
 import { useTimetableActions } from './app/use-timetable-actions.ts';
@@ -227,16 +227,23 @@ export function App() {
   /** 存储就绪后各屏共用：回退时是只读包装，写操作会统一被拒绝 */
   const screenStorage = session.uiStorage ?? storage;
 
-  if (data.semester === null) {
-    const fallbackBanner = session.fallback ? (
-      <StorageFallbackBanner
-        onRetry={() => void recovery.retryStorage()}
-        onOpenLogs={() => void recovery.exportDiagnosticLogs()}
-      />
-    ) : null;
+  if (data.semester === null && session.fallback) {
+    // 首次使用就回退：只读下建不了学期，引导页的按钮全会被拒，改给原因与出路
     return (
       <>
-        {fallbackBanner !== null && <div className="fixed inset-x-0 top-0 z-40">{fallbackBanner}</div>}
+        <StorageFallbackFirstRun
+          onRetry={() => void recovery.retryStorage()}
+          onOpenLogs={() => void recovery.exportDiagnosticLogs()}
+        />
+        <Toaster mode={session.resolvedMode} />
+        <DatabaseCorruptDialog />
+      </>
+    );
+  }
+
+  if (data.semester === null) {
+    return (
+      <>
         <Onboarding
           storage={screenStorage}
           userId={USER_ID}
