@@ -421,7 +421,7 @@ test('checkAndroidLogs：缺失区域、未记日志、委托核对与失效登�
     { file: 'share/FileSharePlugin.kt', site: 'shareFile#reject(R.string.gone)', delegate: null, reason: '' },
   ];
   const result = checkAndroidLogs({ root, areas: AREAS, delegated });
-  assert.deepEqual(result.missingAreas, ['secret/', 'install/ApkInstallerPlugin.kt']);
+  assert.deepEqual(result.missingAreas, ['secret/', 'install/ApkInstallerPlugin.kt', 'ai/']);
   assert.deepEqual(result.files, ['reminder/A.kt', 'share/FileSharePlugin.kt']);
   assert.deepEqual(
     result.unlogged.map((item) => [item.file, item.site]),

@@ -58,6 +58,7 @@ import { isEncryptedBackup } from '../src/lib/backup-crypto.ts';
 import { setSecretStoreForTests } from '../src/lib/credentials.ts';
 import { setAiClientForTests } from '../src/lib/ai.ts';
 import { assistantPanelCopy } from '../src/copy/assistant.ts';
+import { ASSISTANT_CHAT_META_KEY } from '../src/lib/meta-keys.ts';
 import { listSnapshots } from '../src/backup.ts';
 import { aiCopy } from '../src/copy/settings-ai.ts';
 import { addMenuCopy } from '../src/copy/home-add-menu.ts';
@@ -7763,8 +7764,14 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       await dismissChannelNotice();
       await openFab(lateApp);
       if (clickByText(document.body, assistantLabel)) await flush(14);
-      const chatEntries = (): number =>
-        panel()?.querySelectorAll('[data-role="assistant-chat"] > [data-role^="assistant-"]').length ?? -1;
+      /** 对话里的条目（用户、助手、提示），按文档顺序；不含示例、计划与进度 */
+      const entryRoles = (): string[] =>
+        [
+          ...(panel()?.querySelectorAll<HTMLElement>(
+            ['user', 'assistant', 'note'].map((role) => `[data-role="assistant-chat"] > [data-role="assistant-${role}"]`).join(', '),
+          ) ?? []),
+        ].map((entry) => entry.getAttribute('data-role') ?? '');
+      const chatEntries = (): number => (panel() === null ? -1 : entryRoles().length);
       const panelText = (): string => panel()?.textContent ?? '';
       const sendLate = async (text: string): Promise<boolean> => {
         const box = panel()?.querySelector<HTMLTextAreaElement>('[data-role="assistant-input"]') ?? null;
@@ -7800,9 +7807,7 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
       const stopped = panel() !== null && clickByText(panel() as HTMLElement, assistantPanelCopy.stop);
       await flush(8);
       await releaseLate();
-      const lateEntries = [...(panel()?.querySelectorAll<HTMLElement>('[data-role="assistant-chat"] > [data-role^="assistant-"]') ?? [])].map(
-        (entry) => entry.getAttribute('data-role'),
-      );
+      const lateEntries = entryRoles();
       check(
         '助手：请求进行中点「停止」，迟到的回复不进对话、计划不出卡片、不再请求下一步',
         stopSent && stopped && lateEntries.join('/') === 'assistant-user' && lateCalls === 1 &&
@@ -7811,6 +7816,150 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
         `已发=${stopSent} 停止=${stopped} 条目=${lateEntries.join('/') || '(无)'} 调用=${lateCalls}`,
       );
       lateApp.root.unmount();
+
+      // —— 多轮对话：对话存在本机，重开应用读回；空对话给示例；失败可重试；回复流式显示并排版；「新对话」清空存档 ——
+      let multiFail = true;
+      let streamGate: (() => void) | null = null;
+      const multiAsked: string[] = [];
+      const multiClient: AiClient = {
+        complete: async () => {
+          throw new Error('冒烟假模型只走函数调用');
+        },
+        chat: async (request: AiChatRequest): Promise<AiChatReply> => {
+          multiAsked.push(request.messages.at(-1)?.content ?? '');
+          if (multiFail) throw new Error('冒烟假模型故障');
+          request.onText?.('**本周**有');
+          await new Promise<void>((resolve) => {
+            streamGate = resolve;
+          });
+          return { content: '**本周**有两节课：\n- 高等数学\n- 大学英语', toolCalls: [] };
+        },
+      };
+      setAiClientForTests(multiClient);
+      const examples = (): string[] =>
+        [...(panel()?.querySelectorAll<HTMLElement>('[data-role="assistant-examples"] button') ?? [])].map((button) =>
+          (button.textContent ?? '').trim(),
+        );
+      const openAssistant = async (app: { container: HTMLElement }): Promise<void> => {
+        await openFab(app);
+        if (clickByText(document.body, assistantLabel)) await flush(14);
+      };
+      const has = (selector: string): boolean => (panel()?.querySelector(selector) ?? null) !== null;
+
+      let multiApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openAssistant(multiApp);
+      const lateRestored = await waitFor(() => entryRoles().join('/') === 'assistant-user' && panelText().includes('这次会被停止'), 30);
+      check(
+        '助手：重开应用后读回上一次的对话（停止的那句还在），不显示示例',
+        lateRestored && examples().length === 0 && has('[data-role="assistant-new"]'),
+        `条目=${entryRoles().join('/') || '(无)'} 示例=${examples().length}`,
+      );
+
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-new"]')?.click();
+      await flush(8);
+      check(
+        '助手：「新对话」清空对话，空对话给出示例问题，「新对话」按钮隐藏',
+        chatEntries() === 0 &&
+          examples().join('|') === assistantPanelCopy.examples.join('|') &&
+          (panel()?.querySelector('[data-role="assistant-examples"]')?.textContent ?? '').includes(assistantPanelCopy.examplesTitle) &&
+          !has('[data-role="assistant-new"]'),
+        `条目=${chatEntries()} 示例=${examples().join(' / ') || '(无)'}`,
+      );
+
+      const firstExample = assistantPanelCopy.examples[0] ?? '';
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-examples"] button')?.click();
+      const retryShown = await waitFor(() => has('[data-role="assistant-retry"]'), 40);
+      const failNote = panel()?.querySelector('[data-role="assistant-note"]')?.textContent ?? '';
+      check(
+        '助手：点示例直接发出；模型出错时记下原因，提示里给「重试」',
+        retryShown &&
+          entryRoles().join('/') === 'assistant-user/assistant-note' &&
+          (panel()?.querySelector('[data-role="assistant-user"]')?.textContent ?? '').includes(firstExample) &&
+          failNote.includes('冒烟假模型故障') &&
+          (panel()?.querySelector('[data-role="assistant-note"] [data-role="assistant-retry"]')?.textContent ?? '').trim() ===
+            assistantPanelCopy.retry &&
+          multiAsked.join('|') === firstExample &&
+          examples().length === 0,
+        `条目=${entryRoles().join('/') || '(无)'} 提示=${failNote.slice(0, 40)} 请求=${multiAsked.join('|')}`,
+      );
+
+      multiFail = false;
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-retry"]')?.click();
+      const drafting = await waitFor(
+        () => streamGate !== null && (panel()?.querySelector('[data-role="assistant-draft"]')?.textContent ?? '').includes('本周有'),
+        40,
+      );
+      check(
+        '助手：「重试」重发同一句、不重复用户气泡；回复流式显示在草稿气泡里，进度为「正在思考」',
+        drafting &&
+          (panel()?.querySelector('[data-role="assistant-draft"] strong')?.textContent ?? '') === '本周' &&
+          (panel()?.querySelector('[data-role="assistant-progress"]')?.textContent ?? '') === assistantPanelCopy.thinking &&
+          !has('[data-role="assistant-retry"]') &&
+          multiAsked.length === 2 &&
+          multiAsked[1] === firstExample &&
+          entryRoles().filter((role) => role === 'assistant-user').length === 1,
+        `草稿=${drafting} 请求=${multiAsked.join('|')} 条目=${entryRoles().join('/')}`,
+      );
+      const releaseStream = streamGate as (() => void) | null;
+      streamGate = null;
+      releaseStream?.();
+      const replied = await waitFor(() => entryRoles().includes('assistant-assistant'), 40);
+      const replyBubble = panel()?.querySelector('[data-role="assistant-assistant"]') ?? null;
+      check(
+        '助手：回复排版为粗体与列表，草稿气泡与进度收起',
+        replied &&
+          (replyBubble?.querySelector('strong')?.textContent ?? '') === '本周' &&
+          [...(replyBubble?.querySelectorAll('ul > li') ?? [])].map((item) => item.textContent).join('|') === '高等数学|大学英语' &&
+          !has('[data-role="assistant-draft"]') &&
+          !has('[data-role="assistant-progress"]') &&
+          !has('[data-role="assistant-retry"]'),
+        `条目=${entryRoles().join('/')} 回复=${(replyBubble?.textContent ?? '(无)').slice(0, 40)}`,
+      );
+
+      document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush(8);
+      const panelClosed = panel() === null;
+      await openAssistant(multiApp);
+      check(
+        '助手：关掉面板再打开，对话与排版都还在',
+        panelClosed &&
+          entryRoles().join('/') === 'assistant-user/assistant-note/assistant-assistant' &&
+          (panel()?.querySelector('[data-role="assistant-assistant"] strong')?.textContent ?? '') === '本周',
+        `关闭=${panelClosed} 条目=${entryRoles().join('/') || '(无)'}`,
+      );
+      await flush(8);
+      multiApp.root.unmount();
+
+      multiApp = mount(<App />);
+      await flush(24);
+      await dismissChannelNotice();
+      await openAssistant(multiApp);
+      const reloaded = await waitFor(() => entryRoles().join('/') === 'assistant-user/assistant-note/assistant-assistant', 30);
+      check(
+        '助手：重开应用后对话从本机读回（上次失败的「重试」不再出现）',
+        reloaded &&
+          (panel()?.querySelector('[data-role="assistant-user"]')?.textContent ?? '').includes(firstExample) &&
+          [...(panel()?.querySelectorAll('[data-role="assistant-assistant"] li') ?? [])].length === 2 &&
+          !has('[data-role="assistant-retry"]') &&
+          examples().length === 0,
+        `条目=${entryRoles().join('/') || '(无)'}`,
+      );
+      panel()?.querySelector<HTMLElement>('[data-role="assistant-new"]')?.click();
+      await flush(12);
+      const clearedEntries = chatEntries();
+      multiApp.root.unmount();
+      const storedChat = JSON.parse((await assistantStore.readMeta(ASSISTANT_CHAT_META_KEY)) ?? 'null') as {
+        entries?: unknown[];
+        history?: unknown[];
+      } | null;
+      check(
+        '助手：「新对话」同时清空本机存档',
+        clearedEntries === 0 && storedChat !== null && storedChat.entries?.length === 0 && storedChat.history?.length === 0,
+        `条目=${clearedEntries} 存档=${storedChat === null ? '无' : `${storedChat.entries?.length}/${storedChat.history?.length}`}`,
+      );
+
       setAiClientForTests(undefined);
       await writeSettings(assistantStore, { aiBaseUrl: '', aiModel: '' });
     }

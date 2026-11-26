@@ -16,6 +16,12 @@ import { AiArgError, actionTools, findAction, type AiAction, type AiActionRisk, 
 export const ASSISTANT_MAX_STEPS = 8;
 /** 查询结果回给模型时的长度上限 */
 export const ASSISTANT_RESULT_LIMIT = 8_000;
+/** 历史裁剪：最近几轮保留函数调用细节 */
+export const ASSISTANT_KEEP_TURNS = 2;
+/** 历史裁剪：裁剪后仍超过这个字符数时，从最早的轮次整轮丢弃 */
+export const ASSISTANT_HISTORY_CHARS = 24_000;
+/** JSON 退回方式里函数结果消息的前缀：裁剪历史时据此认出不是用户的话 */
+export const JSON_RESULT_PREFIX = '函数结果：';
 
 export type AssistantMode = 'tools' | 'json';
 
@@ -46,6 +52,10 @@ export interface AssistantTurnInput<C> {
   signal?: AbortSignal;
   /** 每执行一个查询回调一次，给界面显示进度 */
   onQuery?: (action: string) => void;
+  /** 每处理一个函数调用回调一次（查询与写入都有），给界面显示正在调用的操作 */
+  onCall?: (action: string, risk: AiActionRisk | null) => void;
+  /** 函数调用方式下流式显示回复：每收到一段文字回调目前为止的全文；新一步开始时回调空串 */
+  onText?: (text: string) => void;
 }
 
 export interface AssistantTurnResult {
@@ -97,6 +107,7 @@ async function handleCall<C>(
   plan: AiPlanStep[],
 ): Promise<string> {
   const action = findAction(input.actions, call.name);
+  input.onCall?.(call.name, action?.risk ?? null);
   if (action === undefined) return JSON.stringify({ error: `没有名为 ${call.name} 的函数` });
   if (call.args === null || typeof call.args !== 'object' || Array.isArray(call.args)) {
     return JSON.stringify({ error: '参数应为 JSON 对象' });
@@ -141,10 +152,13 @@ async function toolsTurn<C>(
     // 底层请求不认 signal 时（Android 原生请求）也要在下一步之前停下
     input.signal?.throwIfAborted();
     const system: AiChatMessage = { role: 'system', content: `${SYSTEM_RULES}\n${input.contextNote}` };
+    const onText = input.onText;
+    onText?.('');
     const reply = await chat.call(input.client, {
       messages: [system, ...messages],
       tools,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(onText === undefined ? {} : { onText }),
     });
     if (reply.toolCalls.length === 0) {
       messages.push({ role: 'assistant', content: reply.content });
@@ -163,7 +177,7 @@ async function toolsTurn<C>(
 
 /** 函数调用方式留下的对话换成纯文本：调用与结果都还在，模型不会丢掉已查到的数据。 */
 function plainMessage(message: AiChatMessage): Array<{ role: 'system' | 'user'; content: string }> {
-  if (message.role === 'tool') return [{ role: 'user', content: `函数结果：${message.content}` }];
+  if (message.role === 'tool') return [{ role: 'user', content: `${JSON_RESULT_PREFIX}${message.content}` }];
   if (message.role === 'assistant') {
     const calls = (message.toolCalls ?? []).map((call) => `${call.name}(${call.arguments})`);
     const text = [message.content.trim(), ...(calls.length === 0 ? [] : [`调用：${calls.join('；')}`])].filter((part) => part !== '');
@@ -227,16 +241,67 @@ async function jsonTurn<C>(
       input.signal?.throwIfAborted();
       results.push(`${call.name}：${await handleCall(call, input, plan)}`);
     }
-    messages.push({ role: 'user', content: `函数结果：\n${results.join('\n')}` });
+    messages.push({ role: 'user', content: `${JSON_RESULT_PREFIX}\n${results.join('\n')}` });
   }
   return { reply: '', exhausted: true };
+}
+
+/** 用户说的话：每一轮从这里开始。JSON 方式回传的函数结果也是 user 消息，按前缀排除。 */
+function isTurnStart(message: AiChatMessage): boolean {
+  return message.role === 'user' && !message.content.startsWith(JSON_RESULT_PREFIX);
+}
+
+/** 一轮里只留问答：用户的话与不带函数调用的回复；JSON 方式的输出换成其中的 reply。 */
+function conclusionOf(messages: readonly AiChatMessage[]): AiChatMessage[] {
+  const out: AiChatMessage[] = [];
+  for (const message of messages) {
+    if (isTurnStart(message)) {
+      out.push(message);
+      continue;
+    }
+    if (message.role !== 'assistant' || (message.toolCalls?.length ?? 0) > 0) continue;
+    const turn = jsonTurnOf(message.content);
+    if (turn.calls.length > 0) continue;
+    if (turn.reply !== '') out.push({ role: 'assistant', content: turn.reply });
+  }
+  return out;
+}
+
+function sizeOf(messages: readonly AiChatMessage[]): number {
+  let total = 0;
+  for (const message of messages) {
+    total += message.content.length;
+    if (message.role === 'assistant') for (const call of message.toolCalls ?? []) total += call.name.length + call.arguments.length;
+  }
+  return total;
+}
+
+/**
+ * 裁剪历史：最近 `keepTurns` 轮原样保留，更早的轮次去掉函数调用与结果，只留问答；
+ * 仍超过 `maxChars` 时从最早的轮次整轮丢弃，最近一轮始终保留。
+ * 去掉的总是成对的调用与结果，留下的消息序列对两种方式都合法。
+ */
+export function compactHistory(
+  history: readonly AiChatMessage[],
+  options: { keepTurns?: number; maxChars?: number } = {},
+): AiChatMessage[] {
+  const keepTurns = options.keepTurns ?? ASSISTANT_KEEP_TURNS;
+  const maxChars = options.maxChars ?? ASSISTANT_HISTORY_CHARS;
+  const turns: AiChatMessage[][] = [];
+  for (const message of history) {
+    if (isTurnStart(message) || turns.length === 0) turns.push([]);
+    turns[turns.length - 1]!.push(message);
+  }
+  const shaped = turns.map((turn, index) => (index >= turns.length - keepTurns ? turn : conclusionOf(turn)));
+  while (shaped.length > 1 && sizeOf(shaped.flat()) > maxChars) shaped.shift();
+  return shaped.flat();
 }
 
 /** 跑一轮对话：直到模型给出回复或用完步数。 */
 export async function runAssistantTurn<C>(input: AssistantTurnInput<C>): Promise<AssistantTurnResult> {
   const maxSteps = input.maxSteps ?? ASSISTANT_MAX_STEPS;
   const plan: AiPlanStep[] = [];
-  const messages: AiChatMessage[] = [...input.history, { role: 'user', content: input.userText }];
+  const messages: AiChatMessage[] = [...compactHistory(input.history), { role: 'user', content: input.userText }];
   let mode: AssistantMode = input.mode ?? (input.client.chat === undefined ? 'json' : 'tools');
   let outcome: { reply: string; exhausted: boolean };
   if (mode === 'tools') {

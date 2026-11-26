@@ -19,9 +19,10 @@ Web 层通过 Capacitor 调用 Android 原生插件。方法名与字段名是**
     （提醒投递在 `.../reminder/ReminderNotifier.kt`、`.../reminder/ReminderAlarms.kt`，动作按钮与离线队列在 `.../reminder/ReminderReceivers.kt`、`.../reminder/ReminderStore.kt`）
   - `apps/mobile/android/app/src/main/java/com/dawntick/app/secret/SecretStorePlugin.kt`
     （AndroidKeyStore AES-GCM 实现在 `.../secret/SecretVault.kt`；Windows 对应实现在 `apps/desktop/src-tauri/src/secret_store.rs`）
+  - `apps/mobile/android/app/src/main/java/com/dawntick/app/ai/AiStreamPlugin.kt`
   - 原生诊断日志：`apps/mobile/android/app/src/main/java/com/dawntick/app/diag/NativeLog.kt`
     （教务窗口、外部链接、小组件读取的失败原因都写 `filesDir/diag/native.log`；由 `SystemActions.readNativeLog` 读出）
-- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–9 节，`plugins.test.ts` 与其余插件一并对齐。
+- TS 接线（`PLUGIN_NAMES`、`PLUGIN_METHODS`、接口）已覆盖第 1–10 节，`plugins.test.ts` 与其余插件一并对齐。
 - 静态核对：`apps/web/test/plugins.test.ts` 逐项比对 `PLUGIN_METHODS`、Java/Kotlin 的 `@PluginMethod` 与本文件；本仓库用 `gradlew.bat :app:compileDebugKotlin --no-daemon` 做 Android 编译检查，真机验证在打包机上执行 `pnpm android:dev`。
 
 ## 维护规则
@@ -253,7 +254,32 @@ Win 端对应 DPAPI（`apps/desktop/src-tauri/src/secret_store.rs`，Tauri 命�
 | `decrypt` | `ciphertext: string` | `value?: string` | 密钥丢失、密文被改动或来自别的设备时 reject |
 | `isAvailable` | 无 | `available?: boolean` | 密钥库不可用时 Web 层回退明文并在设置页显式提示 |
 
-## 10. 变更检查清单
+## 10. AiStream
+
+AI 助手的流式回复。CapacitorHttp 接管的全局 fetch 会把响应整段缓冲，SSE 逐字输出走这条通道；
+TS 侧把事件拼回 `AiFetch` 响应（`apps/web/src/lib/ai-stream.ts`），`lib/ai.ts` 在 Android 上优先用它，插件加载不到时退回全局 fetch。
+
+| 项 | 内容 |
+|---|---|
+| 插件名 | `AiStream` |
+| TS 接口 | `AiStreamPlugin`（`apps/web/src/lib/plugins.ts`） |
+| Android 实现 | `ai/AiStreamPlugin.kt` |
+
+| 方法 | 参数 | 返回字段 | 说明 |
+|---|---|---|---|
+| `start` | `id: string`、`url: string`、`headers: Record<string, string>`、`body: string` | 无（resolve 空） | 校验参数后立即 resolve，POST 在后台线程发出；只收 http / https；请求头带 API Key，不进日志 |
+| `cancel` | `id: string` | 无（resolve 空） | 断开连接；之后不再推送这个 `id` 的事件 |
+
+事件：`notifyListeners("aiStream", { id, type, … })`，同一个 `id` 依次收到：
+
+| `type` | 附带字段 | 说明 |
+|---|---|---|
+| `status` | `status: number` | HTTP 状态码；状态码 ≥ 400 时随后的 `chunk` 是错误响应体 |
+| `chunk` | `text: string` | 一段 UTF-8 文本，按到达顺序拼接 |
+| `end` | 无 | 响应读完 |
+| `error` | `message: string` | 连接或读取失败（文案取自 strings.xml，只带异常类名）；可能出现在 `status` 之前 |
+
+## 11. 变更检查清单
 
 改插件契约时按顺序过一遍：
 

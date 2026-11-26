@@ -12,7 +12,7 @@ import type { ReminderKind } from './reminder-actions.ts';
  *   下的 `system/SystemActionsPlugin.java`、`widget/WidgetPinPlugin.kt`、
  *   `school/SchoolWindowPlugin.kt`、`widget/WidgetRefreshPlugin.kt`、
  *   `install/ApkInstallerPlugin.kt`、`share/FileSharePlugin.kt`、`lan/LanSyncPlugin.kt`、
- *   `reminder/ReminderActionsPlugin.kt`、`secret/SecretStorePlugin.kt`；
+ *   `reminder/ReminderActionsPlugin.kt`、`secret/SecretStorePlugin.kt`、`ai/AiStreamPlugin.kt`；
  * - 两端对照表见 `apps/mobile/docs/plugins.contract.md`。改方法名或返回字段时三处一起改
  *   （本文件、Java/Kotlin 实现、契约文档），否则 JS 侧只会静默拿到 `undefined`；
  * - `apps/web/test/plugins.test.ts` 静态核对方法名与文档，Android 编译在打包机上另跑。
@@ -29,6 +29,7 @@ export const PLUGIN_NAMES = {
   lanSync: 'LanSync',
   reminderActions: 'ReminderActions',
   secretStore: 'SecretStore',
+  aiStream: 'AiStream',
 } as const;
 
 /** 插件名联合类型。 */
@@ -61,6 +62,7 @@ export const PLUGIN_METHODS = {
   [PLUGIN_NAMES.lanSync]: ['start', 'stop', 'networks', 'poll', 'respond', 'scanDiscovery'],
   [PLUGIN_NAMES.reminderActions]: ['schedule', 'cancel', 'pending', 'requestPermissionInfo', 'pollActions'],
   [PLUGIN_NAMES.secretStore]: ['encrypt', 'decrypt', 'isAvailable'],
+  [PLUGIN_NAMES.aiStream]: ['start', 'cancel'],
 } as const satisfies Record<PluginName, readonly string[]>;
 
 /** 安卓侧的原生系统动作插件（打开链接、电池优化白名单、通知状态）。 */
@@ -269,6 +271,29 @@ export interface SecretStorePlugin {
   decrypt(options: { ciphertext: string }): Promise<{ value?: string }>;
   /** 密钥库是否可用；不可用时 Web 层回退明文并显式提示。 */
   isAvailable(): Promise<{ available?: boolean }>;
+}
+
+/** AI 流式请求的事件：`status` 先到，随后若干 `chunk`，最后 `end` 或 `error`。 */
+export interface AiStreamEvent {
+  id?: string;
+  type?: 'status' | 'chunk' | 'end' | 'error';
+  status?: number;
+  text?: string;
+  message?: string;
+}
+
+/**
+ * AI 流式请求插件（Android）。
+ *
+ * CapacitorHttp 接管的全局 fetch 会把响应整段缓冲，SSE 逐字输出走这条通道；
+ * `start` 立即 resolve，响应经 `aiStream` 事件按 `id` 推送。
+ */
+export interface AiStreamPlugin {
+  /** 发起 POST；`headers` 带 API Key，原生侧不记日志。 */
+  start(options: { id: string; url: string; headers: Record<string, string>; body: string }): Promise<void>;
+  /** 断开连接；之后不再推送这个 `id` 的事件。 */
+  cancel(options: { id: string }): Promise<void>;
+  addListener(eventName: 'aiStream', listener: (event: AiStreamEvent) => void): Promise<{ remove: () => Promise<void> }>;
 }
 
 /**

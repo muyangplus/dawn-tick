@@ -40,6 +40,8 @@ export interface AiChatRequest {
   messages: AiChatMessage[];
   tools: AiToolSpec[];
   signal?: AbortSignal;
+  /** 给出时按流式（SSE）请求，每收到一段文字回调一次目前为止的全文 */
+  onText?: (text: string) => void;
 }
 
 export interface AiChatReply {
@@ -69,11 +71,24 @@ export interface AiConfig {
   apiKey: string;
 }
 
-export type AiFetch = (input: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{
+/** 流式读取用的最小接口：与 `ReadableStream<Uint8Array>.getReader()` 兼容。 */
+export interface AiByteReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array | undefined }>;
+  cancel?(reason?: unknown): Promise<void>;
+}
+
+export interface AiFetchResponse {
   ok: boolean;
   status: number;
+  /** 响应体流；没有时整段读 `text()` */
+  body?: { getReader(): AiByteReader } | null;
   text(): Promise<string>;
-}>;
+}
+
+export type AiFetch = (
+  input: string,
+  init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
+) => Promise<AiFetchResponse>;
 
 /** 配置缺哪一项；齐全返回 null。 */
 export function aiConfigProblem(config: AiConfig): string | null {
@@ -170,11 +185,118 @@ export function chatReplyOf(body: string): AiChatReply {
   return { content, toolCalls };
 }
 
+/** 流式回复的累加器：按 SSE 的 `data:` 行合并文字与函数调用的增量。 */
+export class ChatStreamAccumulator {
+  private content = '';
+  private readonly calls = new Map<number, { id: string; name: string; arguments: string }>();
+  private pending = '';
+  /** 收到过至少一个 `data:` 事件 */
+  sawEvent = false;
+  /** 原样留下的全文：服务没按流式返回时整段按普通响应解析 */
+  raw = '';
+
+  private readonly onText: ((text: string) => void) | undefined;
+
+  constructor(onText?: (text: string) => void) {
+    this.onText = onText;
+  }
+
+  /** 喂入一段文本（可能截断在行中间）。 */
+  push(chunk: string): void {
+    this.raw += chunk;
+    this.pending += chunk;
+    let index = this.pending.indexOf('\n');
+    while (index >= 0) {
+      this.line(this.pending.slice(0, index));
+      this.pending = this.pending.slice(index + 1);
+      index = this.pending.indexOf('\n');
+    }
+  }
+
+  private line(rawLine: string): void {
+    const line = rawLine.replace(/\r$/, '');
+    if (!line.startsWith('data:')) return;
+    const data = line.slice(5).trim();
+    this.sawEvent = true;
+    if (data === '' || data === '[DONE]') return;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const error = (parsed as { error?: { message?: unknown } | string }).error;
+    if (error !== undefined && error !== null) {
+      const message = typeof error === 'string' ? error : typeof error.message === 'string' ? error.message : '';
+      throw new Error(message === '' ? 'AI 服务中途报错' : `AI 服务中途报错：${message.slice(0, 200)}`);
+    }
+    const choices = (parsed as { choices?: unknown }).choices;
+    if (!Array.isArray(choices) || choices.length === 0) return;
+    const delta = (choices[0] as { delta?: { content?: unknown; tool_calls?: unknown } }).delta ?? {};
+    if (typeof delta.content === 'string' && delta.content !== '') {
+      this.content += delta.content;
+      this.onText?.(this.content);
+    }
+    if (Array.isArray(delta.tool_calls)) {
+      delta.tool_calls.forEach((raw: unknown, position) => {
+        const call = raw as { index?: unknown; id?: unknown; function?: { name?: unknown; arguments?: unknown } };
+        const index = typeof call.index === 'number' ? call.index : position;
+        const current = this.calls.get(index) ?? { id: '', name: '', arguments: '' };
+        if (typeof call.id === 'string' && call.id !== '') current.id = call.id;
+        if (typeof call.function?.name === 'string') current.name += call.function.name;
+        if (typeof call.function?.arguments === 'string') current.arguments += call.function.arguments;
+        this.calls.set(index, current);
+      });
+    }
+  }
+
+  /** 收尾：返回合并后的回复；没收到任何事件时按普通 JSON 响应解析。 */
+  finish(): AiChatReply {
+    if (this.pending !== '') {
+      this.line(this.pending);
+      this.pending = '';
+    }
+    if (!this.sawEvent) {
+      const reply = chatReplyOf(this.raw);
+      if (reply.content !== '') this.onText?.(reply.content);
+      return reply;
+    }
+    const toolCalls: AiToolCall[] = [...this.calls.entries()]
+      .sort(([left], [right]) => left - right)
+      .filter(([, call]) => call.name !== '')
+      .map(([index, call]) => ({ id: call.id === '' ? `call_${index}` : call.id, name: call.name, arguments: call.arguments }));
+    if (this.content.trim() === '' && toolCalls.length === 0) throw new Error('AI 服务没有返回内容');
+    return { content: this.content, toolCalls };
+  }
+}
+
+/** 读完流式响应：有响应体流时边读边解析，否则整段读出再解析。 */
+async function readChatStream(response: AiFetchResponse, accumulator: ChatStreamAccumulator): Promise<AiChatReply> {
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    accumulator.push(await response.text());
+    return accumulator.finish();
+  }
+  const decoder = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value !== undefined) accumulator.push(decoder.decode(value, { stream: true }));
+    }
+    accumulator.push(decoder.decode());
+  } catch (error) {
+    await reader.cancel?.(error).catch(() => undefined);
+    throw error;
+  }
+  return accumulator.finish();
+}
+
 export function createOpenAiCompatibleClient(config: AiConfig, fetchImpl: AiFetch): AiClient {
-  const post = async (payload: Record<string, unknown>, signal: AbortSignal | undefined) => {
+  const send = async (payload: Record<string, unknown>, signal: AbortSignal | undefined) => {
     const problem = aiConfigProblem(config);
     if (problem !== null) throw new Error(problem);
-    const response = await fetchImpl(chatCompletionsUrl(config.baseUrl), {
+    return fetchImpl(chatCompletionsUrl(config.baseUrl), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -183,6 +305,9 @@ export function createOpenAiCompatibleClient(config: AiConfig, fetchImpl: AiFetc
       body: JSON.stringify({ model: config.model.trim(), temperature: 0, ...payload }),
       ...(signal === undefined ? {} : { signal }),
     });
+  };
+  const post = async (payload: Record<string, unknown>, signal: AbortSignal | undefined) => {
+    const response = await send(payload, signal);
     return { response, body: await response.text() };
   };
   return {
@@ -192,7 +317,8 @@ export function createOpenAiCompatibleClient(config: AiConfig, fetchImpl: AiFetc
       return completionText(body);
     },
     async chat(request: AiChatRequest): Promise<AiChatReply> {
-      const { response, body } = await post(
+      const streaming = request.onText !== undefined;
+      const response = await send(
         {
           messages: wireMessages(request.messages),
           ...(request.tools.length === 0
@@ -203,15 +329,20 @@ export function createOpenAiCompatibleClient(config: AiConfig, fetchImpl: AiFetc
                   function: { name: tool.name, description: tool.description, parameters: tool.parameters },
                 })),
               }),
+          ...(streaming ? { stream: true } : {}),
         },
         request.signal,
       );
-      // 400/422 且错误里提到 tools / function：模型或服务不认函数调用；超长的报错里也有 functions 字样，照常报错
-      if ((response.status === 400 || response.status === 422) && request.tools.length > 0 && /tool|function/i.test(body) && !/context[ _]length|too long/i.test(body)) {
-        throw new AiToolsUnsupportedError(serviceError(response.status, body));
+      if (!response.ok) {
+        const body = await response.text();
+        // 400/422 且错误里提到 tools / function：模型或服务不认函数调用；超长的报错里也有 functions 字样，照常报错
+        if ((response.status === 400 || response.status === 422) && request.tools.length > 0 && /tool|function/i.test(body) && !/context[ _]length|too long/i.test(body)) {
+          throw new AiToolsUnsupportedError(serviceError(response.status, body));
+        }
+        throw new Error(serviceError(response.status, body));
       }
-      if (!response.ok) throw new Error(serviceError(response.status, body));
-      return chatReplyOf(body);
+      if (!streaming) return chatReplyOf(await response.text());
+      return readChatStream(response, new ChatStreamAccumulator(request.onText));
     },
   };
 }

@@ -37,6 +37,7 @@ export const AREAS = [
   { path: 'secret/', scope: 'credentials' },
   { path: 'install/ApkInstallerPlugin.kt', scope: 'update' },
   { path: 'share/FileSharePlugin.kt', scope: 'backup' },
+  { path: 'ai/', scope: 'app' },
 ];
 
 /**
