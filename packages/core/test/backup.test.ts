@@ -194,6 +194,19 @@ test('周视图非本周课程开关随备份迁移', async () => {
   assert.equal(settings.showOtherWeeks, false);
 });
 
+test('显示停课课程开关随备份迁移', async () => {
+  const { storage } = await seedStorage();
+  await writeSettings(storage, { showCancelled: true });
+  const payload = await exportBackup(storage, { modules: ['settings'] });
+  assert.equal(payload.meta['show_cancelled'], '1');
+
+  const target = createStorage();
+  assert.equal((await readSettings(target)).showCancelled, false);
+  await importBackup(target, payload, { modules: ['settings'], mode: 'overwrite' });
+  assert.equal((await readSettings(target)).showCancelled, true);
+  assert.equal(await target.readMeta('show_cancelled'), '1');
+});
+
 test('导入摘要给出各模块行数', async () => {
   const { storage } = await seedStorage();
   const payload = await exportBackup(storage);

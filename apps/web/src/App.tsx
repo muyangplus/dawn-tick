@@ -278,6 +278,7 @@ export function App() {
           <WeekView
             data={data}
             showOtherWeeks={settings.showOtherWeeks}
+            showCancelled={settings.showCancelled}
             compact={!isDesktop}
             onImport={actions.openImport}
             onSelectLesson={(cell) => void actions.openLesson(cell)}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { dayOfWeek as nextDayOfWeek, WEEKDAY_LABELS, weekOfDate } from '@dawn-tick/core';
-import type { AppData, LessonCell } from '../data.ts';
+import { lessonShown, type AppData, type LessonCell } from '../data.ts';
 import { NowIndicator } from '../components/now-indicator.tsx';
 import { cn } from '../lib/cn.ts';
 import { formatMonthDayRange } from '../lib/dates.ts';
@@ -29,6 +29,8 @@ export interface WeekViewProps {
   data: AppData;
   /** 非本周课程是否用虚线显示 */
   showOtherWeeks: boolean;
+  /** 停课课次是否显示 */
+  showCancelled: boolean;
   onSelectLesson: (cell: LessonCell) => void;
   /** 拖动落点的日期与节次 */
   onMoveLesson: (cell: LessonCell, date: string, period: number) => void;
@@ -45,6 +47,7 @@ export interface WeekViewProps {
 export function WeekView({
   data,
   showOtherWeeks,
+  showCancelled,
   onSelectLesson,
   onMoveLesson,
   onQuickCreate,
@@ -69,10 +72,10 @@ export function WeekView({
     [data.slots],
   );
   const lessons = useMemo(() => lessonsOf(data), [data]);
-  /** 补白只由真正画出来的格子决定：非本周课程按设置隐藏时不参与 */
+  /** 补白只由真正画出来的格子决定：非本周课程与停课课次按设置隐藏时不参与 */
   const shownLessons = useMemo(
-    () => lessons.filter((lesson) => lesson.inWeek || showOtherWeeks),
-    [lessons, showOtherWeeks],
+    () => lessons.filter((lesson) => lessonShown(lesson, { showOtherWeeks, showCancelled })),
+    [lessons, showOtherWeeks, showCancelled],
   );
   /** 窗口完全落在学期外：每一列都在第 1 周之前或总周数之后 */
   const outsideSemester = useMemo(() => {
@@ -189,9 +192,7 @@ export function WeekView({
               const holidayName = data.holidayLabels.get(columnDate);
               const weekday = WEEKDAY_LABELS[nextDayOfWeek(columnDate) - 1] ?? '';
               const week = data.semester === null ? null : Math.max(1, weekOfDate(columnDate, data.semester.start_date));
-              const dayLessons = lessons
-                .filter((lesson) => lesson.date === columnDate)
-                .filter((lesson) => lesson.inWeek || showOtherWeeks);
+              const dayLessons = shownLessons.filter((lesson) => lesson.date === columnDate);
               const isDropColumn = drag !== null && drag.date === columnDate;
               const placeholder = empty !== null && empty.date === columnDate ? empty : null;
               const placeholderClash =

@@ -9,7 +9,7 @@ export interface TimetableCardProps {
 }
 
 /**
- * 课表显示卡：周视图天数、今天为第一天、始终不显示周末与「显示非本周课程」。
+ * 课表显示卡：周视图天数、今天为第一天、始终不显示周末、「显示非本周课程」与「显示停课课程」。
  *
  * 只包含周视图排布相关的偏好，改完立即通过 `onPatch` 落库并让课表重排。
  */
@@ -50,6 +50,13 @@ export function TimetableCard({ settings, onPatch }: TimetableCardProps) {
         checked={settings.showOtherWeeks}
         onCheckedChange={(checked) => void onPatch({ showOtherWeeks: checked })}
         ariaLabel={timetableSettingsCopy.showOtherWeeksLabel}
+      />
+      <SwitchField
+        label={timetableSettingsCopy.showCancelledLabel}
+        description={timetableSettingsCopy.showCancelledDescription}
+        checked={settings.showCancelled}
+        onCheckedChange={(checked) => void onPatch({ showCancelled: checked })}
+        ariaLabel={timetableSettingsCopy.showCancelledLabel}
       />
     </>
   );

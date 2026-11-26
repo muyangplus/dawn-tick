@@ -1432,6 +1432,39 @@ export async function runSmoke(results: SmokeResult[] = []): Promise<SmokeResult
   const cancelDate = addDays(seededMonday, 9);
   await setViewDate(cancelDate);
   if (clickMenu(view.container, '更多操作', '当天全部停课')) await flush(18);
+  // 「显示停课课程」默认关：时间线不列停课条目，课表也不画停课课次
+  check(
+    '显示停课课程默认关：日程时间线不列停课条目',
+    rowIn('timeline-completed', '往期课') === undefined && rowIn('timeline-main', '往期课') === undefined,
+    `已完成=${rowsText('timeline-completed').slice(0, 40)} / 主=${rowsText('timeline-main').slice(0, 40)}`,
+  );
+  if (clickByText(view.container, '课表')) await flush(16);
+  const hiddenCancelledCards = view.container.querySelectorAll('[data-tone="cancelled"]').length;
+  check(
+    '显示停课课程默认关：课表不画停课课次',
+    hiddenCancelledCards === 0 && view.container.querySelector('[data-role="cancelled-label"]') === null,
+    `停课卡 ${hiddenCancelledCards} 张`,
+  );
+  // 设置 · 课表显示：「显示停课课程」开关默认关，打开后继续核对停课的显示
+  await gotoSettings();
+  await openSettingsGroup(view.container, '课表显示');
+  const showCancelledSwitch = (): HTMLElement | null =>
+    view.container.querySelector<HTMLElement>('[role="switch"][aria-label="显示停课课程"]');
+  check(
+    '课表显示卡有「显示停课课程」开关，默认关',
+    showCancelledSwitch()?.getAttribute('aria-checked') === 'false' &&
+      (settingsPanel(view.container)?.textContent ?? '').includes('显示停课课程'),
+    `aria-checked=${showCancelledSwitch()?.getAttribute('aria-checked') ?? '(无开关)'}`,
+  );
+  showCancelledSwitch()?.click();
+  await flush(16);
+  check(
+    '打开「显示停课课程」后开关为开',
+    showCancelledSwitch()?.getAttribute('aria-checked') === 'true',
+    `aria-checked=${showCancelledSwitch()?.getAttribute('aria-checked') ?? '(无开关)'}`,
+  );
+  if (clickByText(view.container, '日程')) await flush(12);
+  await setViewDate(cancelDate);
   const cancelledRow = rowIn('timeline-completed', '往期课');
   check(
     '日程时间线：停课默认已完成并进已完成分组',

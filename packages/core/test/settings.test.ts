@@ -59,6 +59,28 @@ test('旧库缺少 hide_weekends 时按新默认（不显示周末开）读取',
   assert.equal(await storage.readMeta('hide_weekends'), undefined, '读取默认值不写库');
 });
 
+test('显示停课课程默认关，存为 show_cancelled 并可读回', async () => {
+  assert.equal(DEFAULT_SETTINGS.showCancelled, false);
+  assert.ok(SETTING_META_KEYS.includes('show_cancelled'));
+  assert.ok(!EXPORT_EXCLUDED_KEYS.includes('show_cancelled'), '随备份导出');
+  const storage = createStorage();
+  assert.equal((await readSettings(storage)).showCancelled, false);
+  assert.equal(await storage.readMeta('show_cancelled'), undefined, '读取默认值不写库');
+
+  const on = await writeSettings(storage, { showCancelled: true });
+  assert.equal(on.showCancelled, true);
+  assert.equal(await storage.readMeta('show_cancelled'), '1');
+  assert.equal((await readSettings(storage)).showCancelled, true);
+
+  await writeSettings(storage, { showCancelled: false });
+  assert.equal(await storage.readMeta('show_cancelled'), '0');
+  assert.equal((await readSettings(storage)).showCancelled, false);
+
+  // 库里是 1 / 0 以外的值时按默认读
+  await storage.writeMeta('show_cancelled', 'yes');
+  assert.equal((await readSettings(storage)).showCancelled, false);
+});
+
 test('日志模式默认跟随存储位置，可手动开或关', async () => {
   assert.deepEqual([...WAL_MODES], ['auto', 'on', 'off']);
   const storage = createStorage();
